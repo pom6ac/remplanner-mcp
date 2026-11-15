@@ -3,7 +3,11 @@ import { join } from "node:path";
 
 export const BASE_URL = "https://remplanner.ru";
 
-export const HOME_DIR = join(homedir(), ".remplanner-mcp");
+// Каталог состояния. REMPLANNER_HOME — переопределение для тестов: снимки/рендеры
+// и состояние пишутся во временный каталог, а не в домашний (EPERM в песочницах).
+const homeOverride = process.env["REMPLANNER_HOME"];
+export const HOME_DIR =
+  homeOverride && homeOverride.trim() !== "" ? homeOverride : join(homedir(), ".remplanner-mcp");
 export const CREDENTIALS_PATH = join(HOME_DIR, "credentials.env");
 export const STATE_PATH = join(HOME_DIR, "state.json");
 export const STATE_ANON_PATH = join(HOME_DIR, "state.anon.json");

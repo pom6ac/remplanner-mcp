@@ -2,6 +2,7 @@
 // если сервер отдал непустой data или save_id > 0, а разобранная модель пустая,
 // то MODEL_PARSE_EMPTY; сохранение такого проекта блокируется без force;
 // project_save сверяет счётчики с серверной версией и предупреждает об удалениях.
+import "./helpers/tmp-home.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

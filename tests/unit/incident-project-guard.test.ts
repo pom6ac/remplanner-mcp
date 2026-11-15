@@ -2,6 +2,7 @@
 // Причина: (1) анонимные потоки могли пойти с cookies аккаунта (ServerContext.session()
 // берёт state.json); (2) workspace принимал object_id/plan_id редактора без сверки;
 // (3) save не проверял целевой object_id.Guard-тесты: сначала красные, потом зелёные.
+import "./helpers/tmp-home.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { openEditorInContext, buildHandle } from "../../src/editor/adapter.ts";
