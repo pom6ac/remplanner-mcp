@@ -9,7 +9,7 @@ import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, Edit
 import type { Model } from "./model/types.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
-import { prepareForRestore, findUnattachedEnds } from "./model/walls.ts";
+import { prepareForRestore, findUnattachedEnds, wallAxisCoverageCm, wallCoverageToleranceCm } from "./model/walls.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 
 // T17: рабочее пространство — открытые проекты, каноническая модель (GET), история
@@ -107,6 +107,24 @@ function rawJsonHasEntities(value: unknown, depth = 0): boolean {
     return Object.values(value as Record<string, unknown>).some((v) => rawJsonHasEntities(v, depth + 1));
   }
   return false;
+}
+
+/** id проёмов модели: id holes по всем стенам (ревью v0.1.1 №4/№5 — сравнение по id). */
+function openingIds(model: Model): Set<string> {
+  const out = new Set<string>();
+  for (const [wid, w] of Object.entries(model.walls ?? {})) {
+    for (const [hid, h] of Object.entries(w.holes ?? {})) {
+      out.add((h as { id?: string }).id ?? `${wid}/${hid}`);
+    }
+  }
+  return out;
+}
+
+/** Список id серверных объектов, которых нет в локальной модели (ревью v0.1.1 №5):
+ *  разность идентичностей, а не разность общих счётчиков — удаление одного объекта
+ *  с добавлением другого не маскируется. */
+function missingIds(server: Set<string>, local: Set<string>): string[] {
+  return [...server].filter((id) => !local.has(id)).sort();
 }
 
 function toModel(raw: Record<string, unknown>): Model {
@@ -414,16 +432,39 @@ export class Workspace {
     const expected = {
       walls: Object.keys(this.modelInternal!.walls).length,
       holes: Object.values(this.modelInternal!.walls).reduce((n, w) => n + Object.keys(w.holes).length, 0),
+      // покрытие осей стен: инвариант при разрезе/слиянии коллинеарных стен (ревью v0.1.1 №4)
+      coverage: wallAxisCoverageCm(this.modelInternal!.walls),
     };
     const editor = await this.ensureEditor();
     const prepared = structuredClone(this.modelInternal!);
     prepareForRestore(prepared);
     const norm = await editor.normalize(prepared as unknown as Record<string, unknown>);
     if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
-    const gotWalls = Object.keys((norm.model as { walls?: Record<string, unknown> }).walls ?? {}).length;
-    if (gotWalls < expected.walls || norm.after.walls < expected.walls) {
-      throw new McpError("NORMALIZATION_DROPPED", "редактор удалил стены при нормализации", {
-        details: { expected_walls: expected.walls, after_walls: norm.after.walls, copy_walls: gotWalls },
+    // потеря проёмов/предметов — по id в копии редактора (ревью v0.1.1 №4)
+    const localOpeningIds = openingIds(this.modelInternal!);
+    const localItemIds = new Set(Object.keys(this.modelInternal!.items ?? {}));
+    const normWalls = (norm.model as { walls?: Record<string, { holes?: Record<string, { id?: string }> }> }).walls ?? {};
+    const gotOpeningIds = new Set<string>();
+    for (const [wid, w] of Object.entries(normWalls)) {
+      for (const [hid, h] of Object.entries(w.holes ?? {})) gotOpeningIds.add(h.id ?? `${wid}/${hid}`);
+    }
+    const gotItemIds = new Set(Object.keys((norm.model as { items?: Record<string, unknown> }).items ?? {}));
+    const lostOpenings = missingIds(localOpeningIds, gotOpeningIds);
+    const lostItems = missingIds(localItemIds, gotItemIds);
+    const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
+    if (
+      gotCoverage < expected.coverage - wallCoverageToleranceCm(expected.coverage) ||
+      lostOpenings.length > 0 || lostItems.length > 0
+    ) {
+      throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
+        details: {
+          expected_walls: expected.walls,
+          after_walls: norm.after.walls,
+          coverage_before_mm: Math.round(expected.coverage * 10),
+          coverage_after_mm: Math.round(gotCoverage * 10),
+          lost_openings: lostOpenings,
+          lost_items: lostItems,
+        },
       });
     }
     let rounds = 0;
@@ -440,16 +481,18 @@ export class Workspace {
       if (!saveRes.ok) {
         throw new McpError("SITE_ERROR", "сохранение не прошло", { details: { save_id: saveRes.saveId } });
       }
-      // верификация по GET: контент, а не только save_id (save_id не монотонен)
+      // верификация по GET: контент, а не только save_id (save_id не монотонен).
+      // Стены — по покрытию осей (слияние при сохранении легитимно, ревью v0.1.1 №4)
       const after = await this.deps.loadModel(this.deps.session, p.objectId, p.planId);
       const wallsAfter = (after.model["walls"] as Record<string, unknown> | undefined) ?? {};
-      if (Object.keys(wallsAfter).length === expected.walls) {
+      const coverageAfter = wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
+      if (coverageAfter >= expected.coverage - wallCoverageToleranceCm(expected.coverage)) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
       } else if (attempt === 1) {
         throw new McpError("SITE_ERROR", "после сохранения модель на сервере не совпала с рабочей копией", {
-          details: { expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length },
+          details: { expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length, coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(coverageAfter * 10) },
         });
       }
     }
@@ -476,9 +519,18 @@ export class Workspace {
     const norm = await editor.normalize(prepared as unknown as Record<string, unknown>);
     if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
     const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items };
-    const mismatch = (["walls", "openings", "items"] as const).filter((k) => seen[k] !== expected[k]);
+    // стены — по покрытию осей: слияние/разрез коллинеарных стен — допустимая
+    // нормализация (ревью v0.1.1 №4); проёмы и предметы — по счётчикам
+    const localCoverage = wallAxisCoverageCm(this.modelInternal!.walls);
+    const editorCoverage = wallAxisCoverageCm((norm.model as { walls?: Record<string, unknown> }).walls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
+    const mismatch: string[] = [];
+    if (editorCoverage < localCoverage - wallCoverageToleranceCm(localCoverage)) {
+      mismatch.push(`стены: покрытие в модели ${Math.round(localCoverage * 10)} мм, в редакторе ${Math.round(editorCoverage * 10)} мм`);
+    }
+    if (seen.openings !== expected.openings) mismatch.push(`openings: в модели ${expected.openings}, в редакторе ${seen.openings}`);
+    if (seen.items !== expected.items) mismatch.push(`items: в модели ${expected.items}, в редакторе ${seen.items}`);
     if (mismatch.length > 0) {
-      throw new McpError("RENDER_OUT_OF_SYNC", `редактор показывает не текущую модель (${mismatch.map((k) => `${k}: в модели ${expected[k]}, в редакторе ${seen[k]}`).join(", ")}) — картинка не отдаётся`, {
+      throw new McpError("RENDER_OUT_OF_SYNC", `редактор показывает не текущую модель (${mismatch.join(", ")}) — картинка не отдаётся`, {
         hint: "повторите render_plan; при повторении сверитесь с model_get и model_validate",
         details: { workspace: expected, editor: seen },
       });

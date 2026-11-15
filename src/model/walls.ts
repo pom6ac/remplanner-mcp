@@ -936,3 +936,61 @@ export function prepareForRestore(model: Model): void {
   prepareWallFaces(model);
   prepareHolePoints(model);
 }
+
+/**
+ * Суммарное покрытие осей стен (ревью v0.1.1 №4): стены группируются по прямым,
+ * на каждой прямой берётся длина объединения отрезков, сумма по прямым, см.
+ * Инвариант при допустимой нормализации редактора (разрез и слияние коллинеарных
+ * стен, design §12): покрытие не уменьшается. Точное равенство числа стен
+ * отвергало легитимное слияние и маскировало реальную потерю стены.
+ */
+export function wallAxisCoverageCm(walls: Record<string, Pick<Wall, "p1" | "p2">> | Record<string, { p1: Point; p2: Point }> | undefined): number {
+  type Line = { spans: Array<[number, number]> };
+  const lines = new Map<string, Line>();
+  for (const w of Object.values(walls ?? {})) {
+    const dx = w.p2.x - w.p1.x;
+    const dy = w.p2.y - w.p1.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-9) continue;
+    let ux = dx / len;
+    let uy = dy / len;
+    // каноническое направление прямой: угол в [0, π)
+    if (uy < 0 || (uy === 0 && ux < 0)) {
+      ux = -ux;
+      uy = -uy;
+    }
+    const offset = -uy * w.p1.x + ux * w.p1.y;
+    // квантование: направление 1e-6 рад, смещение 0.05 см — стены на одной прямой
+    // после разреза/слияния попадают в одну группу, соседние параллельные — нет
+    const key = `${Math.round(Math.atan2(uy, ux) * 1e6)}:${Math.round(offset * 20)}`;
+    let line = lines.get(key);
+    if (!line) {
+      line = { spans: [] };
+      lines.set(key, line);
+    }
+    const t1 = (w.p1.x * ux + w.p1.y * uy);
+    const t2 = (w.p2.x * ux + w.p2.y * uy);
+    line.spans.push([Math.min(t1, t2), Math.max(t1, t2)]);
+  }
+  let total = 0;
+  for (const line of lines.values()) {
+    line.spans.sort((a, b) => a[0] - b[0]);
+    let cur = line.spans[0]!;
+    for (let i = 1; i < line.spans.length; i++) {
+      const s = line.spans[i]!;
+      if (s[0] <= cur[1] + 0.05) {
+        cur[1] = Math.max(cur[1], s[1]);
+      } else {
+        total += cur[1] - cur[0];
+        cur = s;
+      }
+    }
+    total += cur[1] - cur[0];
+  }
+  return total;
+}
+
+/** Допустимая потеря покрытия стен, см (ревью v0.1.1 №4): 1 мм + 0.1% на округления редактора. */
+export function wallCoverageToleranceCm(coverageCm: number): number {
+  return Math.max(0.1, coverageCm * 0.001);
+}

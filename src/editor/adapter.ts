@@ -6,6 +6,7 @@ import { McpError } from "../errors.ts";
 import { parseSaveResponse, isReloadResponse } from "../api.ts";
 import { saveLimiter } from "../http.ts";
 import { PAGE } from "./inject.js";
+import { wallAxisCoverageCm, wallCoverageToleranceCm } from "../model/walls.ts";
 import { readCompat, assertCompatible, trackVersion, type CompatInfo, type CompatPresent } from "./compat.ts";
 import type { SessionState } from "../session.ts";
 
@@ -225,10 +226,11 @@ export function buildHandle(
     page,
     async normalize(model, waitMs = 1200): Promise<NormalizeResult> {
       await page.evaluate(PAGE.clearFog);
-      // R2-16: сравниваем ВХОДНУЮ модель с результатом — молчаливое удаление
-      // элементов редактором не должно проходить как успех. Стен может стать
-      // БОЛЬШЕ (редактор режет стены сам), меньше — потеря; проёмы и предметы
-      // потеряны быть не могут.
+      // R2-16 + ревью v0.1.1 №4: сравниваем ВХОДНУЮ модель с результатом — молчаливое
+      // удаление элементов редактором не должно проходить как успех. Стены сравниваются
+      // по покрытию осей (wallAxisCoverageCm): разрез и слияние коллинеарных стен —
+      // допустимая нормализация (design §12), реальная потеря стены покрытие уменьшает;
+      // проёмы и предметы потеряны быть не могут.
       const input = {
         walls: Object.keys((model as { walls?: Record<string, unknown> }).walls ?? {}).length,
         holes: Object.values((model as { walls?: Record<string, { holes?: Record<string, unknown> }> }).walls ?? {})
@@ -262,9 +264,15 @@ export function buildHandle(
         last = result;
         const copyWalls = Object.keys((result.model as { walls?: Record<string, unknown> })?.walls ?? {}).length;
         if (copyWalls === 0 && result.after.walls > 0) continue; // copy отстаёт — повтор
-        // сверка «вход → редактор»: явная политика допустимых изменений (R2-16)
+        // сверка «вход → редактор»: явная политика допустимых изменений (R2-16, №4)
         const dropped: string[] = [];
-        if (result.after.walls < input.walls) dropped.push(`walls ${input.walls}→${result.after.walls}`);
+        const inputWalls = (model as { walls?: Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }> }).walls;
+        const afterWalls = (result.model as { walls?: Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }> }).walls;
+        const inputCoverage = wallAxisCoverageCm(inputWalls);
+        const afterCoverage = wallAxisCoverageCm(afterWalls);
+        if (afterCoverage < inputCoverage - wallCoverageToleranceCm(inputCoverage)) {
+          dropped.push(`walls coverage ${Math.round(inputCoverage * 10)}→${Math.round(afterCoverage * 10)} мм`);
+        }
         if (result.after.holes < input.holes) dropped.push(`openings ${input.holes}→${result.after.holes}`);
         if (result.after.items < input.items) dropped.push(`items ${input.items}→${result.after.items}`);
         if (dropped.length > 0) {
