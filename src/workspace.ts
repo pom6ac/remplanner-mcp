@@ -49,6 +49,10 @@ export type SaveOutcome = {
   backup_path: string;
   verified: boolean;
   rounds: number;
+  /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено. */
+  will_delete: { walls: number; openings: number; items: number };
+  /** Предупреждения (удаления объектов сервера). */
+  warnings: string[];
 };
 
 export type HistorySnapshot = { label: string; at: string };
@@ -84,6 +88,16 @@ function errorGrowth(before: Record<string, number> | null | undefined, after: R
   return grown;
 }
 
+/** Разобранная модель без содержимого: ни стен, ни предметов, ни прочих сущностей. */
+export function modelIsContentEmpty(model: Model): boolean {
+  const c = modelCounts(model);
+  if (c.walls > 0 || c.items > 0) return false;
+  const nonEmpty = (v: unknown): boolean => v !== null && v !== undefined && typeof v === "object" && Object.keys(v as object).length > 0;
+  if (nonEmpty(model.pillars) || nonEmpty(model.rulers) || nonEmpty(model.comments)) return false;
+  if (nonEmpty(model.rooms2) || nonEmpty(model.rooms1)) return false;
+  return true;
+}
+
 function toModel(raw: Record<string, unknown>): Model {
   const model = raw as Model;
   model.walls ??= {};
@@ -113,6 +127,8 @@ export class Workspace {
   offline = false;
   /** Базовые счётчики ошибок редактора для проверки роста (§12.4). */
   private lastErrors: Record<string, number> | null = null;
+  /** Проект открыт с пустой моделью (дефект 3, отчёт 11) — сохранение под защитой. */
+  private openedEmpty = false;
 
   constructor(deps: WorkspaceDeps, options: { offline?: boolean } = {}) {
     this.deps = deps;
@@ -145,6 +161,17 @@ export class Workspace {
    */
   async open(objectId: string, planId = "1", opts: { anon?: boolean } = {}): Promise<OpenProject> {
     const loaded = await this.deps.loadModel(this.deps.session, objectId, planId);
+    this.modelInternal = toModel(structuredClone(loaded.model));
+    // Дефект 3 (отчёт 11): пустая разобранная модель при непустом проекте на сервере —
+    // ошибка, а не молчаливое открытие (сохранение затёрло бы проект пользователя).
+    if (modelIsContentEmpty(this.modelInternal) && (loaded.data_empty === false || Number(loaded.save_id) > 0)) {
+      this.modelInternal = null;
+      throw new McpError("MODEL_PARSE_EMPTY", `сервер вернул непустой проект (save_id ${loaded.save_id}, data ${loaded.data_empty === false ? "непустой" : "пустой"}), но разобранная модель пустая`, {
+        hint: "не сохраняйте этот проект: повторите project_open; если повторяется — модель проекта не разобрана адаптером",
+        details: { object_id: objectId, plan_id: loaded.plan_id || planId, save_id: loaded.save_id, data_empty: loaded.data_empty ?? null },
+      });
+    }
+    this.openedEmpty = modelIsContentEmpty(this.modelInternal);
     if (this.editorInternal && (this.editorInternal.objectId !== objectId || this.editorInternal.planId !== planId)) {
       await this.editorInternal.close().catch(() => {});
       this.editorInternal = null;
@@ -157,7 +184,6 @@ export class Workspace {
       openedAt: new Date().toISOString(),
       anon: opts.anon ?? false,
     };
-    this.modelInternal = toModel(structuredClone(loaded.model));
     this.snapshots = [];
     this.historyIndex = -1;
     this.pushSnapshot("open");
@@ -313,6 +339,29 @@ export class Workspace {
     if (!p) throw new McpError("INVALID_ARGUMENT", "проект не открыт");
     const saveIdBefore = p.saveId;
     const fresh = await this.deps.loadModel(this.deps.session, p.objectId, p.planId);
+    // Дефект 3 (отчёт 11): защита от затирания непустого сервера пустой моделью —
+    // проект, открытый с пустой моделью, сохраняется только с явным force.
+    if (
+      !options.force && this.openedEmpty &&
+      modelIsContentEmpty(this.modelInternal!) && !modelIsContentEmpty(fresh.model as Model)
+    ) {
+      throw new McpError("SAVE_CONFLICT", "проект был открыт с пустой моделью, а на сервере модель непустая — сохранение удалило бы её объекты", {
+        hint: "перечитайте проект (project_open) или сохраните принудительно force: true",
+        details: { server: modelCounts(fresh.model) },
+      });
+    }
+    // сверка счётчиков с серверной версией: предупреждение об удалениях (дефект 3)
+    const serverCounts = modelCounts(fresh.model);
+    const localCounts = modelCounts(this.modelInternal!);
+    const willDelete = {
+      walls: Math.max(0, serverCounts.walls - localCounts.walls),
+      openings: Math.max(0, serverCounts.openings - localCounts.openings),
+      items: Math.max(0, serverCounts.items - localCounts.items),
+    };
+    const warnings: string[] = [];
+    if (willDelete.walls > 0) warnings.push(`будет удалено ${willDelete.walls} стен, которых нет в модели`);
+    if (willDelete.openings > 0) warnings.push(`будет удалено ${willDelete.openings} проёмов, которых нет в модели`);
+    if (willDelete.items > 0) warnings.push(`будет удалено ${willDelete.items} предметов, которых нет в модели`);
     if (fresh.save_id !== saveIdBefore) {
       if (!this.editorInternal && !options.force) {
         throw new McpError(
@@ -378,7 +427,7 @@ export class Workspace {
     this.snapshots = [];
     this.historyIndex = -1;
     this.pushSnapshot("saved");
-    return { save_id: finalSaveId, save_id_before: saveIdBefore, backup_path: backupPath, verified, rounds };
+    return { save_id: finalSaveId, save_id_before: saveIdBefore, backup_path: backupPath, verified, rounds, will_delete: willDelete, warnings };
   }
 
   /**

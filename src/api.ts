@@ -106,6 +106,8 @@ export type LoadedModel = {
   save_id: string;
   units: string;
   model: Record<string, unknown>;
+  /** true — сервер вернул пустую строку data (проект без сохранений). */
+  data_empty?: boolean;
 };
 
 /** Разбор ответа GET /setup/api/planner/: data — строка JSON модели. */
@@ -126,6 +128,7 @@ export function parseLoadResponse(body: RawLoadResponse): LoadedModel {
     save_id: String(body.save_id ?? ""),
     units: body.units ?? "cm",
     model,
+    data_empty: body.data.trim() === "",
   };
 }
 
