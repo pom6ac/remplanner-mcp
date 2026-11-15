@@ -487,36 +487,32 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
 }
 
 /**
- * Стратегия переключения листа. Клик по навигации (.groups_navi_item.plan_<имя>) —
- * путь пользователя: он включает видимость слоёв листа (живая проба 17: после
+ * Тело переключения листа — единственная реализация (ревью v0.1.1 №6), исполняется
+ * через page.evaluate. Клик по навигации (.groups_navi_item.plan_<имя>) — путь
+ * пользователя: он включает видимость слоёв листа (живая проба 17: после
  * $Project.setPlanName("furniture") предметы остаются display:none, после клика
  * по навигации — рисуются). setPlanName — запасной путь, когда навигации нет.
  */
-export function pickSheetStrategy(sheet: string, hasNav: boolean, hasSetPlanName: boolean): "click" | "setPlanName" | null {
-  void sheet;
-  if (hasNav) return "click";
-  if (hasSetPlanName) return "setPlanName";
+export function switchSheetInPage(name: string): "click" | "setPlanName" | null {
+  const nav = document.querySelector(`.groups_navi_item.plan_${name}`);
+  if (nav) {
+    (nav as HTMLElement).click();
+    return "click";
+  }
+  const w = window as unknown as { $Project?: { setPlanName?: (n: string) => void } };
+  if (w.$Project && typeof w.$Project.setPlanName === "function") {
+    try {
+      w.$Project.setPlanName(name);
+      return "setPlanName";
+    } catch {
+      /* не критично */
+    }
+  }
   return null;
 }
 
 async function switchSheet(page: Page, sheet: string): Promise<void> {
-  const done = await page.evaluate((name) => {
-    const nav = document.querySelector(`.groups_navi_item.plan_${name}`);
-    if (nav) {
-      (nav as HTMLElement).click();
-      return "click";
-    }
-    const w = window as unknown as { $Project?: { setPlanName?: (n: string) => void } };
-    if (w.$Project && typeof w.$Project.setPlanName === "function") {
-      try {
-        w.$Project.setPlanName(name);
-        return "setPlanName";
-      } catch {
-        /* не критично */
-      }
-    }
-    return null;
-  }, sheet).catch(() => null);
+  const done = await page.evaluate(switchSheetInPage, sheet).catch(() => null);
   if (done === null && sheet !== "init") {
     throw new McpError("INVALID_ARGUMENT", `лист плана «${sheet}» не найден (навигация .groups_navi_item.plan_${sheet})`);
   }
