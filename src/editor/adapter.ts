@@ -392,6 +392,30 @@ export function buildHandle(
 }
 
 /**
+ * Предикат видимости предметов в SVG листа (ревью v0.1.1 №3, R2-2) — единственная
+ * реализация: исполняется через page.waitForFunction и в тестах на DOM-фрагменте.
+ * Идентификатор сопоставляется ТОЧНО — атрибут id или data-id, равный id предмета,
+ * либо точный токен класса; подстрока давала ложное совпадение sofa1 ↔ sofa10,
+ * когда отсутствующий sofa1 «закрывался» видимым sofa10.
+ */
+export function itemsRenderedInSvg(ids: string[]): boolean {
+  const svg = document.querySelector("#canvas_v2_wrapper svg");
+  if (!svg) return false;
+  return ids.every((id) => {
+    const el = [...svg.querySelectorAll("*")].find((e) => {
+      if (e.getAttribute("id") === id) return true;
+      if (e.getAttribute("data-id") === id) return true;
+      return (e.getAttribute("class") ?? "").split(/\s+/).includes(id);
+    });
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== "none" && cs.visibility !== "hidden";
+  });
+}
+
+/**
  * Рендер плана в PNG: переключение листа, скриншот элемента #canvas_v2_wrapper.
  * Публичные точки редактора ($Project.setPlanName / $Project.focus) опциональны:
  * при отсутствии — клик по навигации листов (.groups_navi_item.plan_*).
@@ -405,22 +429,7 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
   // предмета на листе (ревью v0.1.1 №3); при таймауте PNG не отдаётся
   const itemIds = options.itemIds ?? [];
   if (itemIds.length > 0) {
-    await page.waitForFunction((ids) => {
-      const svg = document.querySelector("#canvas_v2_wrapper svg");
-      if (!svg) return false;
-      return (ids as string[]).every((id) => {
-        const el = [...svg.querySelectorAll("*")].find((e) => {
-          const idAttr = e.getAttribute("id") ?? "";
-          const cls = e.getAttribute("class") ?? "";
-          return idAttr.includes(id) || cls.includes(id);
-        });
-        if (!el) return false;
-        const r = el.getBoundingClientRect();
-        if (r.width < 1 || r.height < 1) return false;
-        const cs = getComputedStyle(el);
-        return cs.display !== "none" && cs.visibility !== "hidden";
-      });
-    }, itemIds, { timeout: BROWSER_TIMEOUT_MS, polling: 250 }).catch(() => {
+    await page.waitForFunction(itemsRenderedInSvg, itemIds, { timeout: BROWSER_TIMEOUT_MS, polling: 250 }).catch(() => {
       throw new McpError("RENDER_OUT_OF_SYNC", `предметы не отрисованы на листе «${sheet}» (${itemIds.join(", ")}) — картинка не отдаётся`, {
         hint: "повторите render_plan; при повторении сверитесь с model_get и model_validate",
         details: { items: itemIds, sheet },
