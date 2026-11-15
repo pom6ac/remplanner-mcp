@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildHandle } from "../../src/editor/adapter.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
-import { wallAxisCoverageCm, wallCoverageToleranceCm } from "../../src/model/walls.ts";
+import { wallAxisSegments, wallAxisSetsEqual } from "../../src/model/walls.ts";
 import type { Model, Wall } from "../../src/model/types.ts";
 import type { LoadedModel } from "../../src/api.ts";
 
@@ -32,13 +32,13 @@ function roomModel(split: boolean): Model {
 }
 
 test("coverage: слияние и разрез коллинеарных стен сохраняют покрытие осей", () => {
-  const whole = wallAxisCoverageCm(roomModel(false).walls);
-  const split = wallAxisCoverageCm(roomModel(true).walls);
-  assert.ok(Math.abs(whole - split) < 1e-9, `цельная ${whole} == разрезанной ${split}`);
-  // потеря стены уменьшает покрытие сильнее допуска
+  const whole = wallAxisSegments(roomModel(false).walls);
+  const split = wallAxisSegments(roomModel(true).walls);
+  assert.ok(wallAxisSetsEqual(whole, split), `цельная == разрезанной`);
+  // потеря стены уменьшает покрытие: набор отрезков не эквивалентен
   const lost = { ...roomModel(false).walls };
   delete lost["left"];
-  assert.ok(wallAxisCoverageCm(lost) < whole - wallCoverageToleranceCm(whole));
+  assert.ok(!wallAxisSetsEqual(wallAxisSegments(lost), whole));
 });
 
 const COMPAT = { global_version: "1", planner_version: "3", bundles: [], object_id: "123", plan_id: "1",

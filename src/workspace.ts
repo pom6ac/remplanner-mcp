@@ -9,7 +9,7 @@ import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, Edit
 import type { Model } from "./model/types.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
-import { prepareForRestore, findUnattachedEnds, wallAxisCoverageCm, wallCoverageToleranceCm } from "./model/walls.ts";
+import { prepareForRestore, findUnattachedEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm } from "./model/walls.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 
 // T17: рабочее пространство — открытые проекты, каноническая модель (GET), история
@@ -438,7 +438,9 @@ export class Workspace {
     const expected = {
       walls: Object.keys(this.modelInternal!.walls).length,
       holes: Object.values(this.modelInternal!.walls).reduce((n, w) => n + Object.keys(w.holes).length, 0),
-      // покрытие осей стен: инвариант при разрезе/слиянии коллинеарных стен (ревью v0.1.1 №4)
+      // стены — канонический набор осевых отрезков (ревью v0.1.1-r2 R2-3):
+      // разрез/слияние коллинеарных стен эквивалентны, сдвиг и лишние стены — нет
+      segments: wallAxisSegments(this.modelInternal!.walls),
       coverage: wallAxisCoverageCm(this.modelInternal!.walls),
     };
     const editor = await this.ensureEditor();
@@ -457,9 +459,10 @@ export class Workspace {
     const gotItemIds = new Set(Object.keys((norm.model as { items?: Record<string, unknown> }).items ?? {}));
     const lostOpenings = missingIds(localOpeningIds, gotOpeningIds);
     const lostItems = missingIds(localItemIds, gotItemIds);
+    const gotSegments = wallAxisSegments(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     if (
-      gotCoverage < expected.coverage - wallCoverageToleranceCm(expected.coverage) ||
+      !wallAxisSetsEqual(gotSegments, expected.segments) ||
       lostOpenings.length > 0 || lostItems.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
@@ -468,6 +471,8 @@ export class Workspace {
           after_walls: norm.after.walls,
           coverage_before_mm: Math.round(expected.coverage * 10),
           coverage_after_mm: Math.round(gotCoverage * 10),
+          axis_segments_before: expected.segments.length,
+          axis_segments_after: gotSegments.length,
           lost_openings: lostOpenings,
           lost_items: lostItems,
         },
@@ -488,17 +493,19 @@ export class Workspace {
         throw new McpError("SITE_ERROR", "сохранение не прошло", { details: { save_id: saveRes.saveId } });
       }
       // верификация по GET: контент, а не только save_id (save_id не монотонен).
-      // Стены — по покрытию осей (слияние при сохранении легитимно, ревью v0.1.1 №4)
+      // Стены — по каноническому набору осевых отрезков (ревью v0.1.1-r2 R2-3):
+      // слияние при сохранении легитимно, сдвиг/лишняя стена — нет
       const after = await this.deps.loadModel(this.deps.session, p.objectId, p.planId);
       const wallsAfter = (after.model["walls"] as Record<string, unknown> | undefined) ?? {};
-      const coverageAfter = wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
-      if (coverageAfter >= expected.coverage - wallCoverageToleranceCm(expected.coverage)) {
+      const segmentsAfter = wallAxisSegments(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments)) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
       } else if (attempt === 1) {
+        const coverageAfter = wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
         throw new McpError("SITE_ERROR", "после сохранения модель на сервере не совпала с рабочей копией", {
-          details: { expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length, coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(coverageAfter * 10) },
+          details: { expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length, coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(coverageAfter * 10), axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length },
         });
       }
     }
@@ -525,13 +532,14 @@ export class Workspace {
     const norm = await editor.normalize(prepared as unknown as Record<string, unknown>);
     if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
     const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items };
-    // стены — по покрытию осей: слияние/разрез коллинеарных стен — допустимая
-    // нормализация (ревью v0.1.1 №4); проёмы и предметы — по счётчикам
-    const localCoverage = wallAxisCoverageCm(this.modelInternal!.walls);
-    const editorCoverage = wallAxisCoverageCm((norm.model as { walls?: Record<string, unknown> }).walls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
+    // стены — по каноническому набору осевых отрезков (ревью v0.1.1-r2 R2-3):
+    // слияние/разрез коллинеарных стен — допустимая нормализация, сдвиг и лишние
+    // стены — расхождение; проёмы и предметы — по счётчикам
+    const localSegments = wallAxisSegments(this.modelInternal!.walls);
+    const editorSegments = wallAxisSegments((norm.model as { walls?: Record<string, unknown> }).walls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const mismatch: string[] = [];
-    if (editorCoverage < localCoverage - wallCoverageToleranceCm(localCoverage)) {
-      mismatch.push(`стены: покрытие в модели ${Math.round(localCoverage * 10)} мм, в редакторе ${Math.round(editorCoverage * 10)} мм`);
+    if (!wallAxisSetsEqual(editorSegments, localSegments)) {
+      mismatch.push(`стены: осевые отрезки в модели ${localSegments.length} (покрытие ${Math.round(wallAxisCoverageCm(this.modelInternal!.walls) * 10)} мм), в редакторе ${editorSegments.length} (покрытие ${Math.round(wallAxisCoverageCm((norm.model as { walls?: Record<string, unknown> }).walls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>) * 10)} мм)`);
     }
     if (seen.openings !== expected.openings) mismatch.push(`openings: в модели ${expected.openings}, в редакторе ${seen.openings}`);
     if (seen.items !== expected.items) mismatch.push(`items: в модели ${expected.items}, в редакторе ${seen.items}`);

@@ -6,7 +6,7 @@ import { McpError } from "../errors.ts";
 import { parseSaveResponse, isReloadResponse } from "../api.ts";
 import { saveLimiter } from "../http.ts";
 import { PAGE } from "./inject.js";
-import { wallAxisCoverageCm, wallCoverageToleranceCm } from "../model/walls.ts";
+import { wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm } from "../model/walls.ts";
 import { readCompat, assertCompatible, trackVersion, type CompatInfo, type CompatPresent } from "./compat.ts";
 import type { SessionState } from "../session.ts";
 
@@ -264,14 +264,14 @@ export function buildHandle(
         last = result;
         const copyWalls = Object.keys((result.model as { walls?: Record<string, unknown> })?.walls ?? {}).length;
         if (copyWalls === 0 && result.after.walls > 0) continue; // copy отстаёт — повтор
-        // сверка «вход → редактор»: явная политика допустимых изменений (R2-16, №4)
+        // сверка «вход → редактор»: явная политика допустимых изменений (R2-16, №4,
+        // R2-3): стены — эквивалентность канонических наборов осевых отрезков,
+        // разрез/слияние коллинеарных стен допустимы, сдвиг/лишняя стена — нет
         const dropped: string[] = [];
         const inputWalls = (model as { walls?: Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }> }).walls;
         const afterWalls = (result.model as { walls?: Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }> }).walls;
-        const inputCoverage = wallAxisCoverageCm(inputWalls);
-        const afterCoverage = wallAxisCoverageCm(afterWalls);
-        if (afterCoverage < inputCoverage - wallCoverageToleranceCm(inputCoverage)) {
-          dropped.push(`walls coverage ${Math.round(inputCoverage * 10)}→${Math.round(afterCoverage * 10)} мм`);
+        if (!wallAxisSetsEqual(wallAxisSegments(afterWalls), wallAxisSegments(inputWalls))) {
+          dropped.push(`walls axis segments ${wallAxisSegments(inputWalls).length}→${wallAxisSegments(afterWalls).length} (покрытие ${Math.round(wallAxisCoverageCm(inputWalls) * 10)}→${Math.round(wallAxisCoverageCm(afterWalls) * 10)} мм)`);
         }
         if (result.after.holes < input.holes) dropped.push(`openings ${input.holes}→${result.after.holes}`);
         if (result.after.items < input.items) dropped.push(`items ${input.items}→${result.after.items}`);
