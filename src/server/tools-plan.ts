@@ -546,7 +546,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     render_plan: tool(
       "Отрендерить план в PNG (скриншот листа редактора с размерами, если dimensions не выключен). " +
-        "Ответ содержит КАРТИНКУ (image content) и путь к файлу в ~/.remplanner-mcp/renders/. " +
+        "Перед скриншотом в редактор синхронизируется вся каноническая модель (стены, проёмы, предметы); " +
+        "если редактор показывает не текущую модель — ошибка RENDER_OUT_OF_SYNC без картинки. " +
+        "Ответ содержит КАРТИНКУ (image content), путь к файлу в ~/.remplanner-mcp/renders/ и ревизию " +
+        "(model_hash, счётчики стен/проёмов/предметов в модели и у редактора). " +
         "Листы: init (по умолчанию — общий чертёж), rooms, furniture, santeh. Используйте после правок для визуальной проверки.",
       {
         sheet: z.string().optional().describe("лист плана (по умолчанию init)"),
@@ -560,7 +563,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           widthPx: (a["width_px"] as number | undefined) ?? 1600,
           dimensions: a["dimensions"] as boolean | undefined,
         });
-        return ok({ path: res.path, width_px: res.widthPx, sheet: res.sheet, bytes: res.bytes },
+        return ok({ path: res.path, width_px: res.widthPx, sheet: res.sheet, bytes: res.bytes, revision: res.revision },
           [{ type: "image", data: res.base64, mimeType: "image/png" }]);
       },
     ),

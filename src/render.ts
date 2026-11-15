@@ -14,6 +14,21 @@ export type RenderedPlan = {
   widthPx: number;
   sheet: string;
   bytes: number;
+  /**
+   * Ревизия модели, которую показал редактор (дефект 1, отчёт 11): хэш канонической
+   * модели workspace, счётчики объектов и счётчики, которые видит редактор после
+   * синхронизации. Заполняется workspace, не renderPlanToFile.
+   */
+  revision?: RenderRevision;
+};
+
+export type RenderRevision = {
+  model_hash: string;
+  save_id: string | null;
+  walls: number;
+  openings: number;
+  items: number;
+  editor: { walls: number; openings: number; items: number };
 };
 
 export type RenderEditorLike = {

@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { BACKUPS_DIR } from "./config.ts";
 import { McpError } from "./errors.ts";
 import type { SessionState } from "./session.ts";
@@ -9,7 +10,7 @@ import type { Model } from "./model/types.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
 import { prepareForRestore, findUnattachedEnds } from "./model/walls.ts";
-import { renderPlanToFile, type RenderedPlan } from "./render.ts";
+import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 
 // T17: рабочее пространство — открытые проекты, каноническая модель (GET), история
 // undo/redo (до 50), dirty, save_id, снимок в backups/ перед сохранением, SAVE_CONFLICT.
@@ -56,6 +57,22 @@ export const MAX_HISTORY = 50;
 
 /** Результат мутации стен: полезное значение + предупреждения (офлайн-режим). */
 export type WallMutation<T> = { result: T; warnings: string[] };
+
+/** Счётчики объектов модели: стены, проёмы, предметы. */
+export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number } {
+  const m = model as Model;
+  const walls = m.walls ?? {};
+  return {
+    walls: Object.keys(walls).length,
+    openings: Object.values(walls).reduce((n, w) => n + Object.keys(w.holes ?? {}).length, 0),
+    items: Object.keys(m.items ?? {}).length,
+  };
+}
+
+/** Короткий хэш содержимого модели (для ревизии рендера и сверок). */
+export function modelHash(model: Model): string {
+  return createHash("sha256").update(JSON.stringify(model)).digest("hex").slice(0, 16);
+}
 
 /** Счётчики ошибок редактора (copy("server").errors) — рост → INVALID_GEOMETRY (§12.4). */
 function errorGrowth(before: Record<string, number> | null | undefined, after: Record<string, number> | null | undefined): string[] {
@@ -364,9 +381,38 @@ export class Workspace {
     return { save_id: finalSaveId, save_id_before: saveIdBefore, backup_path: backupPath, verified, rounds };
   }
 
+  /**
+   * Рендер плана (дефект 1, отчёт 11): перед скриншотом в редактор синхронизируется
+   * ВСЯ каноническая модель workspace (стены, проёмы, предметы) — тот же
+   * restore→draw→copy, что перед сохранением. Если счётчики объектов, которые
+   * видит редактор, расходятся с моделью — RENDER_OUT_OF_SYNC, картинка не отдаётся.
+   * В ответе — ревизия: хэш модели и счётчики объектов.
+   */
   async renderPlan(options: RenderOptions & { dir?: string } = {}): Promise<RenderedPlan> {
-    await this.ensureEditor();
-    return renderPlanToFile(this.editorInternal!, options);
+    const editor = await this.ensureEditor();
+    const expected = modelCounts(this.modelInternal!);
+    const prepared = structuredClone(this.modelInternal!);
+    prepareForRestore(prepared);
+    const norm = await editor.normalize(prepared as unknown as Record<string, unknown>);
+    if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
+    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items };
+    const mismatch = (["walls", "openings", "items"] as const).filter((k) => seen[k] !== expected[k]);
+    if (mismatch.length > 0) {
+      throw new McpError("RENDER_OUT_OF_SYNC", `редактор показывает не текущую модель (${mismatch.map((k) => `${k}: в модели ${expected[k]}, в редакторе ${seen[k]}`).join(", ")}) — картинка не отдаётся`, {
+        hint: "повторите render_plan; при повторении сверитесь с model_get и model_validate",
+        details: { workspace: expected, editor: seen },
+      });
+    }
+    const res = await renderPlanToFile(editor, options);
+    const revision: RenderRevision = {
+      model_hash: modelHash(this.modelInternal!),
+      save_id: this.project?.saveId ?? null,
+      walls: expected.walls,
+      openings: expected.openings,
+      items: expected.items,
+      editor: seen,
+    };
+    return { ...res, revision };
   }
 
   /** Ленивый запуск редактора (каталог, рендер, сохранение). */
