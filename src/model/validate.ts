@@ -25,6 +25,10 @@ export type ValidationProblem = {
 };
 
 const MIN_WALL_CM = 3;
+/** Геометрический допуск «в пользу внутри»: касание грани (зазор 0 и погрешность
+ *  sin/cos до 1 мм) не ошибка (ревью v0.1.1 №1). Отрицательный допуск исключал
+ *  проверку угла на границе — касание получало ITEM_OUTSIDE_ROOM с вылетом 0 мм. */
+const ITEM_TOUCH_TOLERANCE_CM = 0.1;
 
 /**
  * Инварианты модели перед сохранением (design §3) и перед $Project.restore.
@@ -220,7 +224,7 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
       }
       // выход углов bbox за комнаты: угол должен попадать хотя бы в одну комнату
       // (многокомнатный предмет — диван в проёме — не проблема)
-      const outside = rect.filter((c) => !knownRooms.some((room) => pointInPolygon(room.polygon, c, -0.05)));
+      const outside = rect.filter((c) => !knownRooms.some((room) => pointInPolygon(room.polygon, c, ITEM_TOUCH_TOLERANCE_CM)));
       if (outside.length > 0) {
         const protrusionCm = Math.max(...outside.map((c) => distToPolygon(centerRoom.polygon, c)));
         problems.push({

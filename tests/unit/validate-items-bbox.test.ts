@@ -80,6 +80,54 @@ test("validate-bbox: предмет в проёме двери не считае
   assert.ok(!problems.some((p) => p.code === "ITEM_INTERSECTS_WALL"), `в проёме стены нет: ${JSON.stringify(problems)}`);
 });
 
+// Ревью v0.1.1 №1: отрицательный tolerance исключал проверку угла на границе —
+// предмет, касающийся стены вплотную, получал ITEM_OUTSIDE_ROOM с вылетом 0 мм.
+// Касание (зазор 0, включая погрешность sin/cos) не ошибка; допуск 1 мм в пользу «внутри».
+test("validate-bbox: касание нижней и правой грани при 0° — не проблема", () => {
+  const model = loadModel("anon-rect-4000x3000.json");
+  prepareForRestore(model);
+  // низ: углы bbox ровно на y=290 (внутренняя грань), центр y = 290 − 40
+  addItem(model, { name: "sofa_triple", position: { center: { x: 2000, y: 2500 } }, widthMm: 2000, depthMm: 800, heightMm: 850 }, ROOM);
+  const problemsBottom = validateModel(model, ROOM);
+  assert.equal(problemsBottom.length, 0, JSON.stringify(problemsBottom));
+  // правая грань: углы ровно на x=390 (центр 390 − полширины 100 см)
+  const model2 = loadModel("anon-rect-4000x3000.json");
+  prepareForRestore(model2);
+  addItem(model2, { name: "sofa_triple", position: { center: { x: 2900, y: 1500 } }, widthMm: 2000, depthMm: 800, heightMm: 850 }, ROOM);
+  const problemsRight = validateModel(model2, ROOM);
+  assert.equal(problemsRight.length, 0, JSON.stringify(problemsRight));
+});
+
+test("validate-bbox: касание граней при 90° и 45° (включая погрешность sin/cos) — не проблема", () => {
+  // 90°: диван 2000×800 повёрнут, нижние углы на y=290
+  const m90 = loadModel("anon-rect-4000x3000.json");
+  prepareForRestore(m90);
+  addItem(m90, { name: "sofa_triple", position: { center: { x: 2000, y: 1900 } }, angleDeg: 90, widthMm: 2000, depthMm: 800, heightMm: 850 }, ROOM);
+  assert.equal(validateModel(m90, ROOM).length, 0, JSON.stringify(validateModel(m90, ROOM)));
+  // 45°: нижний угол ровно на y=290 с поправкой на поворот
+  const m45 = loadModel("anon-rect-4000x3000.json");
+  prepareForRestore(m45);
+  const drop45 = (100 + 80) * Math.SQRT1_2; // вылет повёрнутого угла по y, см
+  addItem(m45, { name: "sofa_triple", position: { center: { x: 2000, y: 2900 - Math.round(drop45 * 10) } }, angleDeg: 45, widthMm: 2000, depthMm: 800, heightMm: 850 }, ROOM);
+  assert.equal(validateModel(m45, ROOM).length, 0, JSON.stringify(validateModel(m45, ROOM)));
+  // верхняя грань при 90°: верхние углы ровно на y=10
+  const m90top = loadModel("anon-rect-4000x3000.json");
+  prepareForRestore(m90top);
+  addItem(m90top, { name: "sofa_triple", position: { center: { x: 2000, y: 1100 } }, angleDeg: 90, widthMm: 2000, depthMm: 800, heightMm: 850 }, ROOM);
+  assert.equal(validateModel(m90top, ROOM).length, 0, JSON.stringify(validateModel(m90top, ROOM)));
+});
+
+test("validate-bbox: реальное проникновение за грань (5 мм за пределы допуска) остаётся ошибкой", () => {
+  const model = loadModel("anon-rect-4000x3000.json");
+  prepareForRestore(model);
+  // центр на 5 мм глубже касания: углы на y=290.5 — за внутренней гранью
+  addItem(model, { name: "sofa_triple", position: { center: { x: 2000, y: 2505 } }, widthMm: 2000, depthMm: 800, heightMm: 850 }, ROOM);
+  const problems = validateModel(model, ROOM);
+  const hit = problems.find((p) => p.code === "ITEM_OUTSIDE_ROOM");
+  assert.ok(hit, `ожидался ITEM_OUTSIDE_ROOM: ${JSON.stringify(problems)}`);
+  assert.equal(hit!.details?.protrusion_mm, 5);
+});
+
 test("validate-bbox: предмет поперёк перегородки между комнатами → ITEM_INTERSECTS_WALL без OUTSIDE_ROOM", () => {
   const model = loadModel("anon-rect-4000x3000.json");
   prepareForRestore(model);
