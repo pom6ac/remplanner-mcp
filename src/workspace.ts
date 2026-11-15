@@ -123,6 +123,24 @@ function toModel(raw: Record<string, unknown>): Model {
   return model;
 }
 
+/** Короткий код листа в модели (item.plan) → код листа в навигации редактора (features §2). */
+const SHEET_CODE_BY_PLAN: Record<string, string> = {
+  a: "init",
+  b: "break_walls",
+  c: "create_walls",
+  rooms: "rooms",
+  furniture: "furniture",
+  santeh: "santeh",
+};
+
+/** id предметов, которые должны быть видны на листе sheet (ревью v0.1.1 №3):
+ *  слой предмета задаётся item.plan; предметы других листов на sheet скрыты. */
+export function itemIdsForSheet(model: Model, sheet: string): string[] {
+  return Object.entries(model.items ?? {})
+    .filter(([, it]) => (SHEET_CODE_BY_PLAN[Object.keys(it.plan ?? {})[0] ?? ""] ?? null) === sheet)
+    .map(([key, it]) => it.id ?? key);
+}
+
 export class Workspace {
   readonly deps: WorkspaceDeps;
   project: OpenProject | null = null;
@@ -467,7 +485,7 @@ export class Workspace {
     }
     const res = await renderPlanToFile(editor, {
       ...options,
-      itemIds: Object.keys(this.modelInternal!.items ?? {}),
+      itemIds: itemIdsForSheet(this.modelInternal!, options.sheet ?? "init"),
     });
     const revision: RenderRevision = {
       model_hash: modelHash(this.modelInternal!),

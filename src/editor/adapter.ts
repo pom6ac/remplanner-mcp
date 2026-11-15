@@ -57,9 +57,12 @@ export type RenderOptions = {
   widthPx?: number;
   dimensions?: boolean;
   /**
-   * id предметов, которые должны быть отрисованы на холсте (дефект 1, отчёт 11):
-   * draw и загрузка иконок асинхронны — без ожидания скриншот делается раньше,
-   * чем предметы появились в SVG (найдено живой пробой 17).
+   * id предметов, которые должны быть ВИДНЫ на листе options.sheet (ревью v0.1.1 №3).
+   * Вычисляет вызывающий: предметы не с этого листа (например, мебель на init) в
+   * список не включаются — их слой на листе заведомо скрыт. draw и загрузка иконок
+   * асинхронны — без ожидания скриншот фиксирует холст без предметов (дефект 1,
+   * живая проба 17). Проверяются реальные DOM-элементы с видимостью, не подстрока
+   * в innerHTML; при таймауте — RENDER_OUT_OF_SYNC без PNG.
    */
   itemIds?: string[];
 };
@@ -390,18 +393,30 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
   const width = options.widthPx ?? 1600;
   await page.evaluate(PAGE.clearFog);
   await switchSheet(page, sheet);
-  // предметы: draw и загрузка иконок асинхронны — ждём появления всех предметов
-  // в SVG, иначе скриншот фиксирует холст без них (дефект 1, живая проба 17)
+  // предметы: draw и загрузка иконок асинхронны — ждём видимые DOM-элементы каждого
+  // предмета на листе (ревью v0.1.1 №3); при таймауте PNG не отдаётся
   const itemIds = options.itemIds ?? [];
   if (itemIds.length > 0) {
     await page.waitForFunction((ids) => {
       const svg = document.querySelector("#canvas_v2_wrapper svg");
       if (!svg) return false;
-      const s = svg.innerHTML;
-      return (ids as string[]).every((id) => s.includes(id));
+      return (ids as string[]).every((id) => {
+        const el = [...svg.querySelectorAll("*")].find((e) => {
+          const idAttr = e.getAttribute("id") ?? "";
+          const cls = e.getAttribute("class") ?? "";
+          return idAttr.includes(id) || cls.includes(id);
+        });
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) return false;
+        const cs = getComputedStyle(el);
+        return cs.display !== "none" && cs.visibility !== "hidden";
+      });
     }, itemIds, { timeout: BROWSER_TIMEOUT_MS, polling: 250 }).catch(() => {
-      // предметы не появились за отведённое время — картинка всё равно снимается,
-      // расхождение модели ловит RENDER_OUT_OF_SYNC на уровне workspace
+      throw new McpError("RENDER_OUT_OF_SYNC", `предметы не отрисованы на листе «${sheet}» (${itemIds.join(", ")}) — картинка не отдаётся`, {
+        hint: "повторите render_plan; при повторении сверитесь с model_get и model_validate",
+        details: { items: itemIds, sheet },
+      });
     });
   }
   if (options.dimensions === false) {

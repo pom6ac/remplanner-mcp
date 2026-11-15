@@ -37,6 +37,8 @@ function countsOf(model: Model | Record<string, unknown>): Counts {
 type EditorMockOpts = {
   /** Счётчики «после», которые редактор показывает (по умолчанию — как во входной модели). */
   after?: Partial<Counts>;
+  /** Перехват опций renderPng (ревью v0.1.1 №3: itemIds листа). */
+  captureRenderOptions?: (o: unknown) => void;
 };
 
 function mockDeps(server: { saveId: string; model: Model }, editorOpts: EditorMockOpts = {}) {
@@ -58,7 +60,7 @@ function mockDeps(server: { saveId: string; model: Model }, editorOpts: EditorMo
       };
     },
     async save() { return { ok: true, saveId: server.saveId, conflict: false }; },
-    async renderPng() { calls.renderCalls++; return PNG; },
+    async renderPng(options) { calls.renderCalls++; editorOpts.captureRenderOptions?.(options); return PNG; },
     async compatInfo() { throw new Error("not used"); },
     async close() {},
   };
@@ -113,6 +115,26 @@ test("render-sync: редактор показывает не все объек�
     );
     assert.equal(calls.renderCalls, 0, "скриншот при расхождении не делается");
     assert.deepEqual(existsSync(dir) ? readdirSync(dir) : [], [], "PNG при ошибке не пишется");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("render-sync: renderPng получает только предметы запрошенного листа (ревью v0.1.1 №3)", async () => {
+  const model = fixtureModel();
+  const item = addItem(model, { name: "sofa_triple", position: { center: { x: 2000, y: 1500 } }, widthMm: 2000, depthMm: 800, heightMm: 850 });
+  assert.equal(Object.keys(item.plan ?? {})[0], "furniture", "предмет фикстуры — мебель");
+  const server = { saveId: "s1", model };
+  const seen: unknown[] = [];
+  const { deps } = mockDeps(server, { captureRenderOptions: (o) => seen.push(o) });
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  const dir = mkdtempSync(join(tmpdir(), "remplanner-render-sync-"));
+  try {
+    await ws.renderPlan({ sheet: "furniture", dir });
+    assert.deepEqual((seen[0] as { itemIds?: string[] }).itemIds, [item.id], "на furniture — диван в itemIds");
+    await ws.renderPlan({ sheet: "init", dir });
+    assert.deepEqual((seen[1] as { itemIds?: string[] }).itemIds, [], "на init слой мебели скрыт — ожидание не запускается");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
