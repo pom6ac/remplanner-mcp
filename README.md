@@ -149,6 +149,10 @@ npm run test:contract  # контракт адаптера редактора (�
 npm run test:live      # живой сценарий (только REMPLANNER_LIVE=1, анонимно)
 ```
 
+**Контрибьюторам:** изменения принимаются только через pull request — ветка от свежего `origin/main`,
+`git push -u origin <ветка>`, `gh pr create --fill`. Прямой push в `main` запрещён. Подробный процесс —
+в [CONTRIBUTING.md](CONTRIBUTING.md), раздел «Как вносить изменения: ветки и pull request».
+
 Процесс разработки и роли — в [CONTRIBUTING.md](CONTRIBUTING.md), правила для агентов —
 в [AGENTS.md](AGENTS.md).
 
