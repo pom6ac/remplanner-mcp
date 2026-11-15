@@ -399,18 +399,24 @@ export class Workspace {
         details: { server: modelCounts(fresh.model) },
       });
     }
-    // сверка счётчиков с серверной версией: предупреждение об удалениях (дефект 3)
-    const serverCounts = modelCounts(fresh.model);
-    const localCounts = modelCounts(this.modelInternal!);
+    // ревью v0.1.1 №5: предупреждение об удалениях — разность идентичностей (id
+    // объектов сервера, которых нет в рабочей копии), а не разность общих счётчиков
+    const serverModel = fresh.model as Model;
+    const deletedIds = {
+      walls: missingIds(new Set(Object.keys(serverModel.walls ?? {})), new Set(Object.keys(this.modelInternal!.walls))),
+      openings: missingIds(openingIds(serverModel), openingIds(this.modelInternal!)),
+      items: missingIds(new Set(Object.keys(serverModel.items ?? {})), new Set(Object.keys(this.modelInternal!.items ?? {}))),
+    };
     const willDelete = {
-      walls: Math.max(0, serverCounts.walls - localCounts.walls),
-      openings: Math.max(0, serverCounts.openings - localCounts.openings),
-      items: Math.max(0, serverCounts.items - localCounts.items),
+      walls: deletedIds.walls.length,
+      openings: deletedIds.openings.length,
+      items: deletedIds.items.length,
     };
     const warnings: string[] = [];
-    if (willDelete.walls > 0) warnings.push(`будет удалено ${willDelete.walls} стен, которых нет в модели`);
-    if (willDelete.openings > 0) warnings.push(`будет удалено ${willDelete.openings} проёмов, которых нет в модели`);
-    if (willDelete.items > 0) warnings.push(`будет удалено ${willDelete.items} предметов, которых нет в модели`);
+    const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
+    if (willDelete.walls > 0) warnings.push(`будут удалены стены (${willDelete.walls}), которых нет в модели: ${idList(deletedIds.walls)}`);
+    if (willDelete.openings > 0) warnings.push(`будут удалены проёмы (${willDelete.openings}), которых нет в модели: ${idList(deletedIds.openings)}`);
+    if (willDelete.items > 0) warnings.push(`будут удалены предметы (${willDelete.items}), которых нет в модели: ${idList(deletedIds.items)}`);
     if (fresh.save_id !== saveIdBefore) {
       if (!this.editorInternal && !options.force) {
         throw new McpError(

@@ -143,6 +143,40 @@ test("parse-guard: project_save на проекте, открытом пусты
   assert.ok(res.save_id);
 });
 
+// Ревью v0.1.1 №5: will_delete — разность идентичностей (id объектов сервера, которых
+// нет локально), а не разность общих счётчиков: удаление существующего предмета с
+// добавлением нового не должно маскировать удаление.
+test("parse-guard: will_delete по id — удаление + добавление при равных счётчиках не маскируется", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel(), dataEmpty: false };
+  const serverModel = server.model as Model;
+  serverModel.items["srv_old"] = {
+    id: "srv_old", name: "sofa", pc: { x: 200, y: 150 }, angle: 0, width: 100, height: 100,
+    plan: { furniture: 1 },
+  };
+  const { deps } = mockDeps(server);
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  // локально: удаляем существующие предмет и проём, добавляем новые с другими id —
+  // счётчики равны серверным, но объекты сервера будут удалены
+  ws.apply("replace", (m) => {
+    delete m.items["srv_old"];
+    m.items["srv_new"] = {
+      id: "srv_new", name: "table", pc: { x: 250, y: 150 }, angle: 0, width: 100, height: 100,
+      plan: { furniture: 1 },
+    };
+    const wallId = Object.keys(m.walls).find((k) => Object.keys(m.walls[k]!.holes).length > 0)!;
+    const holeId = Object.keys(m.walls[wallId]!.holes)[0]!;
+    delete m.walls[wallId]!.holes[holeId];
+    m.walls[wallId]!.holes["hole_new"] = { id: "hole_new", pc: { x: 300, y: 0 } } as Model["walls"][string]["holes"][string];
+    return true;
+  });
+  const res: SaveOutcome = await ws.save();
+  assert.deepEqual(res.will_delete, { walls: 0, openings: 1, items: 1 });
+  assert.ok(res.warnings.some((w) => w.includes("srv_old")), res.warnings.join("; "));
+  const lostHole = res.warnings.find((w) => /проём/.test(w)) ?? "";
+  assert.ok(/apuny6wral|pbwydi1o66/.test(lostHole), `в предупреждении id удалённого проёма: ${lostHole}`);
+});
+
 test("parse-guard: project_save предупреждает, сколько объектов сервера будет удалено", async () => {
   const server: Server = { saveId: "s1", model: fixtureModel(), dataEmpty: false };
   // на сервере есть предметы, которых нет в локальной модели
