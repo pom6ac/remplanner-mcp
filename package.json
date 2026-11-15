@@ -1,0 +1,29 @@
+{
+  "name": "remplanner-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP-сервер для рисования планировок в remplanner.ru (этап разведки)",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "serve": "node src/cli.ts serve",
+    "login": "node src/cli.ts login",
+    "check": "node src/cli.ts check",
+    "discover": "node scripts/discover.ts",
+    "test": "node --test 'tests/unit/*.test.ts'",
+    "test:contract": "node --test 'tests/contract/*.test.ts'",
+    "test:live": "node --test 'tests/live/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "playwright-core": "^1.50.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}

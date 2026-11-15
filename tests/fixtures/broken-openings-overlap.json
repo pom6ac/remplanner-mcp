@@ -1,0 +1,326 @@
+{
+  "_source": "Сломанная фикстура для тестов validate (два проёма внахлёст), база — anon-rect-4000x3000.json.",
+  "model": {
+    "v": 3,
+    "id": "0",
+    "plan_id": "0",
+    "walls": {
+      "gxugmdrasv": {
+        "id": "gxugmdrasv",
+        "plan": "a",
+        "role": "wall",
+        "child": 0,
+        "archive": 0,
+        "demount": 0,
+        "depth": 20,
+        "height": 270,
+        "p1": {
+          "x": 0,
+          "y": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "jcdj4hyyeo",
+            "z0": "p2",
+            "z1": "p1"
+          }
+        },
+        "p2": {
+          "x": 400,
+          "y": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "0kvxg69h8n",
+            "z0": "p1",
+            "z1": "p2"
+          }
+        },
+        "p1st": 0,
+        "p2st": 0,
+        "material": "a_block",
+        "color": 0,
+        "level": "1",
+        "show_dls": true,
+        "holes": {
+          "apuny6wral": {
+            "id": "apuny6wral",
+            "plan": "a",
+            "type": "window",
+            "group": "windows",
+            "pc": {
+              "x": 200,
+              "y": 0
+            },
+            "width": 120,
+            "height": 150,
+            "depth": 10,
+            "floor_height": 80,
+            "p1": {
+              "x": 140,
+              "y": 0
+            },
+            "p2": {
+              "x": 260,
+              "y": 0
+            }
+          },
+          "ov1": {
+            "id": "ov1",
+            "plan": "a",
+            "type": "window",
+            "group": "windows",
+            "pc": {
+              "x": 100,
+              "y": 0
+            },
+            "width": 120,
+            "height": 150,
+            "depth": 10,
+            "floor_height": 80,
+            "p1": {
+              "x": 40,
+              "y": 0
+            },
+            "p2": {
+              "x": 160,
+              "y": 0
+            }
+          },
+          "ov2": {
+            "id": "ov2",
+            "plan": "a",
+            "type": "door",
+            "group": "doors",
+            "pc": {
+              "x": 150,
+              "y": 0
+            },
+            "width": 80,
+            "height": 200,
+            "depth": 4,
+            "opening": "r-l",
+            "p1": {
+              "x": 110,
+              "y": 0
+            },
+            "p2": {
+              "x": 190,
+              "y": 0
+            }
+          }
+        },
+        "l1": {
+          "x": 0,
+          "y": -10
+        },
+        "l2": {
+          "x": 400,
+          "y": -10
+        },
+        "r1": {
+          "x": 0,
+          "y": 10
+        },
+        "r2": {
+          "x": 400,
+          "y": 10
+        }
+      },
+      "0kvxg69h8n": {
+        "id": "0kvxg69h8n",
+        "plan": "a",
+        "role": "wall",
+        "child": 0,
+        "archive": 0,
+        "demount": 0,
+        "depth": 20,
+        "height": 270,
+        "p1": {
+          "x": 400,
+          "y": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "gxugmdrasv",
+            "z0": "p2",
+            "z1": "p1"
+          }
+        },
+        "p2": {
+          "x": 400,
+          "y": 300,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "q3fckwe4cj",
+            "z0": "p1",
+            "z1": "p2"
+          }
+        },
+        "p1st": 0,
+        "p2st": 0,
+        "material": "a_block",
+        "color": 0,
+        "level": "1",
+        "show_dls": true,
+        "holes": {},
+        "l1": {
+          "x": 410,
+          "y": 0
+        },
+        "l2": {
+          "x": 410,
+          "y": 300
+        },
+        "r1": {
+          "x": 390,
+          "y": 0
+        },
+        "r2": {
+          "x": 390,
+          "y": 300
+        }
+      },
+      "q3fckwe4cj": {
+        "id": "q3fckwe4cj",
+        "plan": "a",
+        "role": "wall",
+        "child": 0,
+        "archive": 0,
+        "demount": 0,
+        "depth": 20,
+        "height": 270,
+        "p1": {
+          "x": 400,
+          "y": 300,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "0kvxg69h8n",
+            "z0": "p2",
+            "z1": "p1"
+          }
+        },
+        "p2": {
+          "x": 0,
+          "y": 300,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "jcdj4hyyeo",
+            "z0": "p1",
+            "z1": "p2"
+          }
+        },
+        "p1st": 0,
+        "p2st": 0,
+        "material": "a_block",
+        "color": 0,
+        "level": "1",
+        "show_dls": true,
+        "holes": {
+          "pbwydi1o66": {
+            "id": "pbwydi1o66",
+            "plan": "a",
+            "type": "single",
+            "group": "doors",
+            "pc": {
+              "x": 200,
+              "y": 300
+            },
+            "width": 80,
+            "height": 200,
+            "depth": 4,
+            "opening": "r-l",
+            "p1": {
+              "x": 240,
+              "y": 300
+            },
+            "p2": {
+              "x": 160,
+              "y": 300
+            }
+          }
+        },
+        "l1": {
+          "x": 400,
+          "y": 310
+        },
+        "l2": {
+          "x": 0,
+          "y": 310
+        },
+        "r1": {
+          "x": 400,
+          "y": 290
+        },
+        "r2": {
+          "x": 0,
+          "y": 290
+        }
+      },
+      "jcdj4hyyeo": {
+        "id": "jcdj4hyyeo",
+        "plan": "a",
+        "role": "wall",
+        "child": 0,
+        "archive": 0,
+        "demount": 0,
+        "depth": 20,
+        "height": 270,
+        "p1": {
+          "x": 0,
+          "y": 300,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "q3fckwe4cj",
+            "z0": "p2",
+            "z1": "p1"
+          }
+        },
+        "p2": {
+          "x": 0,
+          "y": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "gxugmdrasv",
+            "z0": "p1",
+            "z1": "p2"
+          }
+        },
+        "p1st": 0,
+        "p2st": 0,
+        "material": "a_block",
+        "color": 0,
+        "level": "1",
+        "show_dls": true,
+        "holes": {},
+        "l1": {
+          "x": -10,
+          "y": 300
+        },
+        "l2": {
+          "x": -10,
+          "y": 0
+        },
+        "r1": {
+          "x": 10,
+          "y": 300
+        },
+        "r2": {
+          "x": 10,
+          "y": 0
+        }
+      }
+    },
+    "items": {},
+    "pillars": {},
+    "rulers": {},
+    "comments": {},
+    "total_height": 270,
+    "final": true
+  }
+}
