@@ -1,0 +1,1259 @@
+{
+  "_source": "api-dump.normalize.json (T1, 15.11.2026, global_version=757): результат $Project.restore → $Project.draw({rooms:1}) → project.copy(\"server\") для модели anon-rect-4000x3000. Обезличено (object_id/plan_id → 0), borders удалены (перегенерируются).",
+  "global_version": 757,
+  "model": {
+    "v": 3,
+    "id": "0",
+    "plan_id": "0",
+    "walls": {
+      "gxugmdrasv": {
+        "id": "gxugmdrasv",
+        "plan": "a",
+        "role": "wall",
+        "child": 0,
+        "archive": 0,
+        "demount": 0,
+        "depth": 20,
+        "height": 270,
+        "angle": 0,
+        "p1": {
+          "role": "p1",
+          "x": 0,
+          "y": 0,
+          "demount": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "jcdj4hyyeo",
+            "z0": "c",
+            "z1": "p2"
+          }
+        },
+        "p2": {
+          "role": "p2",
+          "x": 400,
+          "y": 0,
+          "demount": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "0kvxg69h8n",
+            "z0": "c",
+            "z1": "p1"
+          }
+        },
+        "l1": {
+          "x": -10,
+          "y": -10
+        },
+        "l2": {
+          "x": 410,
+          "y": -10
+        },
+        "r1": {
+          "x": 10,
+          "y": 10
+        },
+        "r2": {
+          "x": 390,
+          "y": 10
+        },
+        "l1f": {
+          "x": -10,
+          "y": -10
+        },
+        "l2f": {
+          "x": 410,
+          "y": -10
+        },
+        "r1f": {
+          "x": 10,
+          "y": 10
+        },
+        "r2f": {
+          "x": 390,
+          "y": 10
+        },
+        "p1st": 0,
+        "p2st": 0,
+        "material": "a_block",
+        "color": 0,
+        "inRoom": 0,
+        "area": {
+          "outer": 11.34,
+          "inner": 10.26
+        },
+        "neighbors": {
+          "0kvxg69h8n": "",
+          "jcdj4hyyeo": ""
+        },
+        "level": "1",
+        "show_dls": true,
+        "room_on_left": 0,
+        "room_on_right": true,
+        "eds2": {
+          "l": [
+            {
+              "p1": {
+                "x": -10,
+                "y": -10
+              },
+              "p2": {
+                "x": 140,
+                "y": -10
+              },
+              "c": {
+                "x": 65,
+                "y": -10
+              },
+              "length": 150,
+              "id": "_nywzy",
+              "side": "l",
+              "face": "l",
+              "pc": {
+                "x": 65,
+                "y": -13
+              },
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            },
+            {
+              "p1": {
+                "x": 140,
+                "y": -10
+              },
+              "p2": {
+                "x": 260,
+                "y": -10
+              },
+              "c": {
+                "x": 200,
+                "y": -10
+              },
+              "length": 120,
+              "id": "_5mrpv",
+              "side": "l",
+              "face": "l",
+              "pc": {
+                "x": 200,
+                "y": -13
+              },
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            },
+            {
+              "p1": {
+                "x": 260,
+                "y": -10
+              },
+              "p2": {
+                "x": 410,
+                "y": -10
+              },
+              "c": {
+                "x": 335,
+                "y": -10
+              },
+              "length": 150,
+              "id": "_i6mqi",
+              "side": "l",
+              "face": "l",
+              "pc": {
+                "x": 335,
+                "y": -13
+              },
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            }
+          ],
+          "r": [
+            {
+              "p1": {
+                "x": 10,
+                "y": 10
+              },
+              "p2": {
+                "x": 140,
+                "y": 10
+              },
+              "c": {
+                "x": 75,
+                "y": 10
+              },
+              "length": 130,
+              "id": "_03ua6",
+              "side": "r",
+              "face": "r",
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            },
+            {
+              "p1": {
+                "x": 140,
+                "y": 10
+              },
+              "p2": {
+                "x": 260,
+                "y": 10
+              },
+              "c": {
+                "x": 200,
+                "y": 10
+              },
+              "length": 120,
+              "id": "_f1p64",
+              "side": "r",
+              "face": "r",
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            },
+            {
+              "p1": {
+                "x": 260,
+                "y": 10
+              },
+              "p2": {
+                "x": 390,
+                "y": 10
+              },
+              "c": {
+                "x": 325,
+                "y": 10
+              },
+              "length": 130,
+              "id": "_jsrn5",
+              "side": "r",
+              "face": "r",
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            }
+          ],
+          "s": [],
+          "e": [],
+          "sl": []
+        },
+        "holes": {
+          "apuny6wral": {
+            "id": "apuny6wral",
+            "plan": "a",
+            "type": "window",
+            "group": "windows",
+            "pc": {
+              "x": 200,
+              "y": 0
+            },
+            "width": 120,
+            "height": 150,
+            "depth": 10,
+            "floor_height": 80,
+            "p1": {
+              "x": 140,
+              "y": 0
+            },
+            "p2": {
+              "x": 260,
+              "y": 0
+            },
+            "parent": "gxugmdrasv",
+            "parent_depth": 20,
+            "dls_prs": {},
+            "position": "c",
+            "offset": 0,
+            "slope_angle": 0,
+            "casing": 1,
+            "casements": 1,
+            "sill": {
+              "thinkness": 4,
+              "overhang": 0,
+              "overmeasure": 0,
+              "side": "r"
+            },
+            "room_l": "",
+            "room_r": "",
+            "pcb": {
+              "x": 200,
+              "y": 0
+            },
+            "p1b": {
+              "x": 140,
+              "y": 0
+            },
+            "p2b": {
+              "x": 260,
+              "y": 0
+            },
+            "l1": {
+              "x": 140,
+              "y": -10
+            },
+            "r1": {
+              "x": 140,
+              "y": 10
+            },
+            "l2": {
+              "x": 259.9999999999982,
+              "y": -10
+            },
+            "r2": {
+              "x": 259.9999999999982,
+              "y": 10
+            },
+            "p1corner": 0,
+            "p2corner": 0,
+            "l1b": {
+              "x": 140,
+              "y": -5
+            },
+            "r1b": {
+              "x": 140,
+              "y": 5
+            },
+            "l2b": {
+              "x": 259.9999999999982,
+              "y": -5
+            },
+            "r2b": {
+              "x": 259.9999999999982,
+              "y": 5
+            },
+            "l1c": {
+              "x": 140,
+              "y": -10
+            },
+            "l2c": {
+              "x": 260.0000000000291,
+              "y": -10
+            },
+            "r1c": {
+              "x": 140,
+              "y": 10
+            },
+            "r2c": {
+              "x": 260.0000000000291,
+              "y": 10
+            },
+            "p1fact": {
+              "x": 140,
+              "y": 0
+            },
+            "p2fact": {
+              "x": 259.9999999999982,
+              "y": 0
+            },
+            "pcfact": {
+              "x": 199.9999999999991,
+              "y": 0
+            },
+            "bg_polygon": [
+              {
+                "x": 140,
+                "y": 10
+              },
+              {
+                "x": 140,
+                "y": 5
+              },
+              {
+                "x": 140,
+                "y": -5
+              },
+              {
+                "x": 140,
+                "y": -10
+              },
+              {
+                "x": 260.0000000000291,
+                "y": -10
+              },
+              {
+                "x": 259.9999999999982,
+                "y": -5
+              },
+              {
+                "x": 259.9999999999982,
+                "y": 5
+              },
+              {
+                "x": 260.0000000000291,
+                "y": 10
+              }
+            ],
+            "eds": {
+              "l": {
+                "p1": "[deep]",
+                "p2": "[deep]",
+                "c": "[deep]",
+                "length": 120
+              },
+              "r": {
+                "p1": "[deep]",
+                "p2": "[deep]",
+                "c": "[deep]",
+                "length": 120
+              }
+            },
+            "polygon": [
+              {
+                "x": 140,
+                "y": -10
+              },
+              {
+                "x": 260.0000000000291,
+                "y": -10
+              },
+              {
+                "x": 260.0000000000291,
+                "y": 10
+              },
+              {
+                "x": 140,
+                "y": 10
+              }
+            ],
+            "pc1h": {
+              "x": 200,
+              "y": -36
+            }
+          }
+        }
+      },
+      "0kvxg69h8n": {
+        "id": "0kvxg69h8n",
+        "plan": "a",
+        "role": "wall",
+        "child": 0,
+        "archive": 0,
+        "demount": 0,
+        "depth": 20,
+        "height": 270,
+        "angle": 90,
+        "p1": {
+          "role": "p1",
+          "x": 400,
+          "y": 0,
+          "demount": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "gxugmdrasv",
+            "z0": "c",
+            "z1": "p2"
+          }
+        },
+        "p2": {
+          "role": "p2",
+          "x": 400,
+          "y": 300,
+          "demount": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "q3fckwe4cj",
+            "z0": "c",
+            "z1": "p1"
+          }
+        },
+        "l1": {
+          "x": 410,
+          "y": -10
+        },
+        "l2": {
+          "x": 410,
+          "y": 310
+        },
+        "r1": {
+          "x": 390,
+          "y": 10
+        },
+        "r2": {
+          "x": 390,
+          "y": 289.999
+        },
+        "l1f": {
+          "x": 410,
+          "y": -10
+        },
+        "l2f": {
+          "x": 410,
+          "y": 310
+        },
+        "r1f": {
+          "x": 390,
+          "y": 10
+        },
+        "r2f": {
+          "x": 390,
+          "y": 289.999
+        },
+        "p1st": 0,
+        "p2st": 0,
+        "material": "a_block",
+        "color": 0,
+        "inRoom": 0,
+        "area": {
+          "outer": 8.64,
+          "inner": 7.56
+        },
+        "neighbors": {
+          "gxugmdrasv": "",
+          "q3fckwe4cj": ""
+        },
+        "level": "1",
+        "show_dls": true,
+        "room_on_left": 0,
+        "room_on_right": true,
+        "eds2": {
+          "l": [
+            {
+              "p1": {
+                "x": 410,
+                "y": -10
+              },
+              "p2": {
+                "x": 410,
+                "y": 310
+              },
+              "c": {
+                "x": 410,
+                "y": 150
+              },
+              "length": 320,
+              "id": "_jez6z",
+              "side": "l",
+              "face": "l",
+              "pc": {
+                "x": 413,
+                "y": 150
+              },
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            }
+          ],
+          "r": [
+            {
+              "p1": {
+                "x": 390,
+                "y": 10
+              },
+              "p2": {
+                "x": 390,
+                "y": 289.9999
+              },
+              "c": {
+                "x": 390,
+                "y": 149.9999
+              },
+              "length": 280,
+              "id": "_9tw5z",
+              "side": "r",
+              "face": "r",
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            }
+          ],
+          "s": [],
+          "e": [],
+          "sl": []
+        }
+      },
+      "q3fckwe4cj": {
+        "id": "q3fckwe4cj",
+        "plan": "a",
+        "role": "wall",
+        "child": 0,
+        "archive": 0,
+        "demount": 0,
+        "depth": 20,
+        "height": 270,
+        "angle": 180,
+        "p1": {
+          "role": "p1",
+          "x": 400,
+          "y": 300,
+          "demount": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "0kvxg69h8n",
+            "z0": "c",
+            "z1": "p2"
+          }
+        },
+        "p2": {
+          "role": "p2",
+          "x": 0,
+          "y": 300,
+          "demount": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "jcdj4hyyeo",
+            "z0": "c",
+            "z1": "p1"
+          }
+        },
+        "l1": {
+          "x": 410,
+          "y": 310
+        },
+        "l2": {
+          "x": -10,
+          "y": 310
+        },
+        "r1": {
+          "x": 390,
+          "y": 290
+        },
+        "r2": {
+          "x": 9.999,
+          "y": 290
+        },
+        "l1f": {
+          "x": 410,
+          "y": 310
+        },
+        "l2f": {
+          "x": -10,
+          "y": 310
+        },
+        "r1f": {
+          "x": 390,
+          "y": 289.999
+        },
+        "r2f": {
+          "x": 9.999,
+          "y": 290
+        },
+        "p1st": 0,
+        "p2st": 0,
+        "material": "a_block",
+        "color": 0,
+        "inRoom": 0,
+        "area": {
+          "outer": 11.34,
+          "inner": 10.26
+        },
+        "neighbors": {
+          "0kvxg69h8n": "",
+          "jcdj4hyyeo": ""
+        },
+        "level": "1",
+        "show_dls": true,
+        "room_on_left": 0,
+        "room_on_right": true,
+        "eds2": {
+          "l": [
+            {
+              "p1": {
+                "x": 410,
+                "y": 310
+              },
+              "p2": {
+                "x": 240,
+                "y": 310
+              },
+              "c": {
+                "x": 325,
+                "y": 310
+              },
+              "length": 170,
+              "id": "_11xem",
+              "side": "l",
+              "face": "l",
+              "pc": {
+                "x": 325,
+                "y": 313
+              },
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            },
+            {
+              "p1": {
+                "x": 240,
+                "y": 310
+              },
+              "p2": {
+                "x": 160,
+                "y": 310
+              },
+              "c": {
+                "x": 200,
+                "y": 310
+              },
+              "length": 80,
+              "id": "_bkgu2",
+              "side": "l",
+              "face": "l",
+              "pc": {
+                "x": 200,
+                "y": 313
+              },
+              "role": "hole",
+              "group": "doors",
+              "is_terrace": 0,
+              "is_territory": 0
+            },
+            {
+              "p1": {
+                "x": 160,
+                "y": 310
+              },
+              "p2": {
+                "x": -10,
+                "y": 310
+              },
+              "c": {
+                "x": 75,
+                "y": 310
+              },
+              "length": 170,
+              "id": "_4nf64",
+              "side": "l",
+              "face": "l",
+              "pc": {
+                "x": 75,
+                "y": 313
+              },
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            }
+          ],
+          "r": [
+            {
+              "p1": {
+                "x": 390,
+                "y": 289.9999
+              },
+              "p2": {
+                "x": 240,
+                "y": 290
+              },
+              "c": {
+                "x": 315,
+                "y": 289.9999
+              },
+              "length": 150,
+              "id": "_3e67z",
+              "side": "r",
+              "face": "r",
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            },
+            {
+              "p1": {
+                "x": 240,
+                "y": 290
+              },
+              "p2": {
+                "x": 160,
+                "y": 290
+              },
+              "c": {
+                "x": 200,
+                "y": 290
+              },
+              "length": 80,
+              "id": "_zrwcp",
+              "side": "r",
+              "face": "r",
+              "role": "hole",
+              "group": "doors",
+              "is_terrace": 0,
+              "is_territory": 0
+            },
+            {
+              "p1": {
+                "x": 160,
+                "y": 290
+              },
+              "p2": {
+                "x": 9.9999,
+                "y": 290
+              },
+              "c": {
+                "x": 84.9999,
+                "y": 290
+              },
+              "length": 150,
+              "id": "_wfvbv",
+              "side": "r",
+              "face": "r",
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            }
+          ],
+          "s": [],
+          "e": [],
+          "sl": []
+        },
+        "holes": {
+          "pbwydi1o66": {
+            "id": "pbwydi1o66",
+            "plan": "a",
+            "type": "single",
+            "group": "doors",
+            "pc": {
+              "x": 200,
+              "y": 300
+            },
+            "width": 80,
+            "height": 200,
+            "depth": 4,
+            "opening": "r-l",
+            "p1": {
+              "x": 240,
+              "y": 300
+            },
+            "p2": {
+              "x": 160,
+              "y": 300
+            },
+            "parent": "q3fckwe4cj",
+            "parent_depth": 20,
+            "dls_prs": {},
+            "position": "c",
+            "offset": 0,
+            "slope_angle": 0,
+            "casing": 1,
+            "casements": 1,
+            "pcb": {
+              "x": 200,
+              "y": 300
+            },
+            "p1b": {
+              "x": 240,
+              "y": 300
+            },
+            "p2b": {
+              "x": 160,
+              "y": 300
+            },
+            "l1": {
+              "x": 240,
+              "y": 310
+            },
+            "r1": {
+              "x": 240,
+              "y": 290
+            },
+            "l2": {
+              "x": 160.0000000000009,
+              "y": 310
+            },
+            "r2": {
+              "x": 160.0000000000009,
+              "y": 290
+            },
+            "p1corner": 0,
+            "p2corner": 0,
+            "l1b": {
+              "x": 240,
+              "y": 302
+            },
+            "r1b": {
+              "x": 240,
+              "y": 298
+            },
+            "l2b": {
+              "x": 160.0000000000009,
+              "y": 302
+            },
+            "r2b": {
+              "x": 160.0000000000009,
+              "y": 298
+            },
+            "l1c": {
+              "x": 240,
+              "y": 310
+            },
+            "l2c": {
+              "x": 160,
+              "y": 310
+            },
+            "r1c": {
+              "x": 240,
+              "y": 290
+            },
+            "r2c": {
+              "x": 160,
+              "y": 290
+            },
+            "p1fact": {
+              "x": 240,
+              "y": 300
+            },
+            "p2fact": {
+              "x": 160.0000000000009,
+              "y": 300
+            },
+            "pcfact": {
+              "x": 200.00000000000045,
+              "y": 300
+            },
+            "bg_polygon": [
+              {
+                "x": 240,
+                "y": 290
+              },
+              {
+                "x": 240,
+                "y": 298
+              },
+              {
+                "x": 240,
+                "y": 302
+              },
+              {
+                "x": 240,
+                "y": 310
+              },
+              {
+                "x": 160,
+                "y": 310
+              },
+              {
+                "x": 160.0000000000009,
+                "y": 302
+              },
+              {
+                "x": 160.0000000000009,
+                "y": 298
+              },
+              {
+                "x": 160,
+                "y": 290
+              }
+            ],
+            "eds": {
+              "l": {
+                "p1": "[deep]",
+                "p2": "[deep]",
+                "c": "[deep]",
+                "length": 80
+              },
+              "r": {
+                "p1": "[deep]",
+                "p2": "[deep]",
+                "c": "[deep]",
+                "length": 80
+              }
+            },
+            "polygon": [
+              {
+                "x": 240,
+                "y": 310
+              },
+              {
+                "x": 160.0000000000009,
+                "y": 310
+              },
+              {
+                "x": 160.0000000000009,
+                "y": 290
+              },
+              {
+                "x": 240,
+                "y": 290
+              }
+            ],
+            "pc1h": {
+              "x": 200,
+              "y": 264
+            },
+            "f0offset": 0
+          }
+        }
+      },
+      "jcdj4hyyeo": {
+        "id": "jcdj4hyyeo",
+        "plan": "a",
+        "role": "wall",
+        "child": 0,
+        "archive": 0,
+        "demount": 0,
+        "depth": 20,
+        "height": 270,
+        "angle": -90,
+        "p1": {
+          "role": "p1",
+          "x": 0,
+          "y": 300,
+          "demount": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "q3fckwe4cj",
+            "z0": "c",
+            "z1": "p2"
+          }
+        },
+        "p2": {
+          "role": "p2",
+          "x": 0,
+          "y": 0,
+          "demount": 0,
+          "link": {
+            "ct": "node",
+            "ot": "wall",
+            "id": "gxugmdrasv",
+            "z0": "c",
+            "z1": "p1"
+          }
+        },
+        "l1": {
+          "x": -10,
+          "y": 310
+        },
+        "l2": {
+          "x": -10,
+          "y": -10
+        },
+        "r1": {
+          "x": 10,
+          "y": 290
+        },
+        "r2": {
+          "x": 10,
+          "y": 10
+        },
+        "l1f": {
+          "x": -10,
+          "y": 310
+        },
+        "l2f": {
+          "x": -10,
+          "y": -10
+        },
+        "r1f": {
+          "x": 9.999,
+          "y": 290
+        },
+        "r2f": {
+          "x": 10,
+          "y": 10
+        },
+        "p1st": 0,
+        "p2st": 0,
+        "material": "a_block",
+        "color": 0,
+        "inRoom": 0,
+        "area": {
+          "outer": 8.64,
+          "inner": 7.56
+        },
+        "neighbors": {
+          "q3fckwe4cj": "",
+          "gxugmdrasv": ""
+        },
+        "level": "1",
+        "show_dls": true,
+        "room_on_left": 0,
+        "room_on_right": true,
+        "eds2": {
+          "l": [
+            {
+              "p1": {
+                "x": -10,
+                "y": 310
+              },
+              "p2": {
+                "x": -10,
+                "y": -10
+              },
+              "c": {
+                "x": -10,
+                "y": 150
+              },
+              "length": 320,
+              "id": "_gljtu",
+              "side": "l",
+              "face": "l",
+              "pc": {
+                "x": -13,
+                "y": 150
+              },
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            }
+          ],
+          "r": [
+            {
+              "p1": {
+                "x": 9.9999,
+                "y": 290
+              },
+              "p2": {
+                "x": 10,
+                "y": 10
+              },
+              "c": {
+                "x": 9.9999,
+                "y": 150
+              },
+              "length": 280,
+              "id": "_ct96z",
+              "side": "r",
+              "face": "r",
+              "role": "wall",
+              "is_terrace": 0,
+              "is_territory": 0
+            }
+          ],
+          "s": [],
+          "e": [],
+          "sl": []
+        }
+      }
+    },
+    "rigels": {},
+    "pillars": {},
+    "rooms1": {
+      "_1or4i": {
+        "points": [
+          {
+            "x": 390,
+            "y": 10
+          },
+          {
+            "x": 390,
+            "y": 290
+          },
+          {
+            "x": 10,
+            "y": 290
+          },
+          {
+            "x": 10,
+            "y": 10
+          }
+        ],
+        "pc": {
+          "x": 200,
+          "y": 150
+        },
+        "id": "_1or4i",
+        "plan": "a",
+        "height": 270,
+        "area": 10.64
+      }
+    },
+    "rooms2": {},
+    "terrace_borders": {},
+    "territory_borders": {},
+    "items": {},
+    "led_strips": {},
+    "line_strips": {},
+    "cables": {},
+    "pipes": {},
+    "pipes_conditioner": {},
+    "pipes_gas": {},
+    "zone_delimiters": {},
+    "pipes_ventilation": {},
+    "cables_conditioner": {},
+    "pipes_heat": {},
+    "cables_socket": {},
+    "cables_warm_floor": {},
+    "pipes_warm_floor": {},
+    "stripes_light": {},
+    "comments": {},
+    "rulers": {},
+    "free_figures": {},
+    "pictures": {},
+    "groups_items": {},
+    "wall_moldings": {},
+    "wall_niches": {},
+    "freelines": {},
+    "thick_lines": {},
+    "warm_floors": {},
+    "level_holes": {},
+    "drawings": [
+      [
+        {
+          "x": 410,
+          "y": -10
+        },
+        {
+          "x": 410,
+          "y": 310
+        },
+        {
+          "x": -10,
+          "y": 310
+        },
+        {
+          "x": -10,
+          "y": -10
+        }
+      ]
+    ],
+    "total_height": 270,
+    "errors": {
+      "roomRebuild": 0,
+      "wallWrongLabel": 0,
+      "wallTooShort": 0,
+      "wallOverWall": 0,
+      "wallNoPointS": 0,
+      "wallNoPointE": 0
+    },
+    "shields": {},
+    "custom_plans": {},
+    "drawing": {
+      "x_min": -10,
+      "x_max": 410,
+      "y_min": -10,
+      "y_max": 310,
+      "cx": 200,
+      "cy": 150,
+      "center": {
+        "x": 200,
+        "y": 150
+      },
+      "tl_point": {
+        "x": -10,
+        "y": -10
+      },
+      "br_point": {
+        "x": 410,
+        "y": 310
+      },
+      "width": 420,
+      "height": 320
+    },
+    "settings": {
+      "background_image": 0
+    },
+    "session": 49315,
+    "version": 757,
+    "log_plan": {
+      "wall1": 0,
+      "wall2": 0,
+      "items1": 0,
+      "items2": 0,
+      "break_json": 0,
+      "counter_saving_one_session": 0
+    },
+    "signals": [],
+    "smeta_water_pipes": {
+      "data": [],
+      "hash_pipes": [],
+      "hash_rooms": [],
+      "hash_waters": []
+    },
+    "final": true,
+    "claddings": {}
+  },
+  "rooms2": {}
+}

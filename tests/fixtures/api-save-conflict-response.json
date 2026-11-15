@@ -1,0 +1,4 @@
+{
+  "result": "fail",
+  "html_code": "<div>Последний раз проект был сохранен в другой вкладке... <button onclick=save_project_from_fog>Сохранить все равно</button></div>"
+}

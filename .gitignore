@@ -1,0 +1,12 @@
+node_modules/
+api-dump*.json
+*.har
+screenshots/
+.env*
+.orca-reports/
+.claude/
+state*.json
+*state.json
+credentials*.env
+backups/
+cache/

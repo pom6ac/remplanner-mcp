@@ -1,0 +1,472 @@
+import { createHash } from "node:crypto";
+import type { BrowserContext, Page } from "playwright-core";
+import { getSharedBrowser } from "../browser.ts";
+import { BASE_URL, BROWSER_TIMEOUT_MS } from "../config.ts";
+import { McpError } from "../errors.ts";
+import { parseSaveResponse, isReloadResponse } from "../api.ts";
+import { saveLimiter } from "../http.ts";
+import { PAGE } from "./inject.js";
+import { readCompat, assertCompatible, trackVersion, type CompatInfo, type CompatPresent } from "./compat.ts";
+import type { SessionState } from "../session.ts";
+
+export { type CompatInfo, type CompatPresent } from "./compat.ts";
+
+export type EditorRoom = {
+  id: string;
+  name: string | null;
+  /** Площадь по внутренним граням, м² (поле ROOMS2.area — в м²·100? нет: см²/10000 уже даёт м²; берём как есть). */
+  area: number | null;
+  area_m2: number | null;
+  height: number | null;
+  /** Полигон комнаты в см (живой ROOMS2/ROOMS1). */
+  polygon?: { x: number; y: number }[];
+};
+
+/** Стена после draw (design §12.4): связи концов и признак наложения. */
+export type NormalizedWall = {
+  id: string;
+  p1: { x: number; y: number };
+  p2: { x: number; y: number };
+  depth: number;
+  link1: { ct: string; id: string; z0?: string; z1?: string; pos?: string } | null;
+  link2: { ct: string; id: string; z0?: string; z1?: string; pos?: string } | null;
+  overWall: boolean | null;
+};
+
+export type NormalizeResult = {
+  /** project.copy("server") после restore → draw({rooms:1}). */
+  model: Record<string, unknown>;
+  rooms: EditorRoom[];
+  before: { walls: number; holes: number; items: number };
+  after: { walls: number; holes: number; items: number };
+  /** Стены живого редактора после draw: связи концов и isOverWall (§12.4). */
+  walls?: NormalizedWall[];
+  /** Счётчики ошибок редактора из copy("server"). */
+  errors?: Record<string, number> | null;
+};
+
+export type EditorSaveResult = {
+  ok: boolean;
+  saveId: string | null;
+  conflict: boolean;
+};
+
+export type RenderOptions = {
+  /** Лист плана: init, create_walls, rooms, furniture, santeh, … */
+  sheet?: string;
+  widthPx?: number;
+  dimensions?: boolean;
+};
+
+export type EditorHandle = {
+  objectId: string;
+  planId: string;
+  compat: CompatInfo;
+  page: Page;
+  normalize(model: Record<string, unknown>, waitMs?: number): Promise<NormalizeResult>;
+  save(timeoutMs?: number): Promise<EditorSaveResult>;
+  renderPng(options?: RenderOptions): Promise<Buffer>;
+  compatInfo(): Promise<CompatInfo>;
+  close(): Promise<void>;
+};
+
+/** Опции открытия редактора. */
+export type OpenEditorOptions = {
+  /**
+   * Анонимный проект: контекст редактора не должен содержать cookies аккаунта
+   * (инцидент 2026-11-15). object_id/plan_id редактора для свежего анонимного
+   * проекта могут отличаться от запрошенных — они принимаются как фактические.
+   */
+  anonymous?: boolean;
+};
+
+/**
+ * Защита от записи в чужой проект (инцидент 2026-11-15): анонимный поток не может
+ * идти с cookies аккаунта, аккаунтный проект — открываться под другим object_id.
+ */
+export function assertProjectSession(
+  session: SessionState,
+  opts: OpenEditorOptions | undefined,
+): void {
+  if (opts?.anonymous && session.account) {
+    throw new McpError("EDITOR_PROJECT_MISMATCH", "анонимный проект нельзя открывать с cookies аккаунта (state.json) — редактор открыл бы текущий проект аккаунта", {
+      hint: "анонимные потоки используют отдельную сессию без аккаунтных cookies",
+    });
+  }
+}
+
+function cookieArgs(session: SessionState): { name: string; value: string; domain: string; path: string }[] {
+  return session.cookies
+    .filter((c) => c.domain.endsWith("remplanner.ru"))
+    .map((c) => ({ name: c.name, value: c.value, domain: c.domain, path: c.path || "/" }));
+}
+
+/**
+ * Открывает редактор /planner/ для проекта (проект должен быть «текущим» по cookies:
+ * object_id / object_plan_id / authkey / visitor_id из анонимной или аккаунтной сессии).
+ * opts.anonymous — анонимный поток: cookies аккаунта запрещены; несовпадение id для
+ * анонимного проекта допустимо (редактор создаёт свои), для аккаунтного — ошибка.
+ */
+export async function openEditor(
+  session: SessionState,
+  objectId: string,
+  planId = "1",
+  timeoutMs: number = BROWSER_TIMEOUT_MS,
+  opts: OpenEditorOptions = {},
+): Promise<EditorHandle> {
+  assertProjectSession(session, opts);
+  const browser = await getSharedBrowser();
+  const context: BrowserContext = await browser.newContext({
+    viewport: { width: 1600, height: 1000 },
+    locale: "ru-RU",
+  });
+  try {
+    if (session.cookies.length > 0) {
+      await context.addCookies(cookieArgs(session)).catch(() => {});
+    }
+    return await openEditorInContext(session, objectId, planId, context, timeoutMs, opts);
+  } catch (e) {
+    await context.close().catch(() => {});
+    throw e;
+  }
+}
+
+/**
+ * Открытие редактора в уже созданном контексте. try начинается СРАЗУ после выделения
+ * контекста: отказ newPage/goto тоже должен закрывать контекст (R2-11).
+ * @internal экспортирована для офлайн-тестов (мок контекста, без браузера).
+ */
+export async function openEditorInContext(
+  session: SessionState,
+  objectId: string,
+  planId: string,
+  context: Pick<BrowserContext, "newPage"> & { close(): Promise<void>; addCookies?: unknown },
+  timeoutMs: number = BROWSER_TIMEOUT_MS,
+  opts: OpenEditorOptions = {},
+): Promise<EditorHandle> {
+  // до всякой навигации: анонимный поток с аккаунтной сессией запрещён (инцидент 2026-11-15)
+  assertProjectSession(session, opts);
+  try {
+    const page = await context.newPage();
+    await page.goto(`${BASE_URL}/planner/`, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+    // Дождаться загрузки модели проекта (GET /setup/api/planner/): без этого restore/draw
+    // гоняются с асинхронной инициализацией редактора (copy('server') пуст).
+    await page
+      .waitForResponse((r) => r.url().includes("/setup/api/planner/?"), { timeout: timeoutMs })
+      .catch(() => {});
+    await page
+      .waitForFunction(PAGE.readyCheck, undefined, { timeout: timeoutMs, polling: 250 })
+      .catch(async () => {
+        const snippet = await page
+          .evaluate(() => `${document.title} | ${location.pathname}`)
+          .catch(() => "страница недоступна");
+        throw new McpError("EDITOR_INCOMPATIBLE", `редактор не готов после открытия /planner/ (${snippet})`, {
+          hint: "проверьте доступ к remplanner.ru и наличие Chrome (npm run check)",
+        });
+      });
+    await page.evaluate(PAGE.clearFog);
+    // осадка после инициализации: walls/rooms глобалы дорисовываются асинхронно
+    await page.waitForTimeout(1500);
+    const compat = await readCompat(page);
+    assertCompatible(compat);
+    trackVersion(compat);
+    // защита от чужого проекта (инцидент 2026-11-15): редактор открыл не тот object_id/plan_id.
+    // Для анонимных проектов расхождение допустимо: редактор создаёт свои id, их принимаем.
+    if (!opts.anonymous) {
+      const mismatch: string[] = [];
+      if (compat.object_id && objectId && compat.object_id !== String(objectId)) {
+        mismatch.push(`object_id ${compat.object_id} ≠ запрошенного ${objectId}`);
+      }
+      if (compat.plan_id && planId && compat.plan_id !== String(planId)) {
+        mismatch.push(`plan_id ${compat.plan_id} ≠ запрошенного ${planId}`);
+      }
+      if (mismatch.length > 0) {
+        throw new McpError("EDITOR_PROJECT_MISMATCH", `редактор открыл не запрошенный проект: ${mismatch.join(", ")}`, {
+          hint: "cookies сессии указывают на другой проект; сохранение в чужой проект запрещено",
+          details: { requested_object_id: objectId, requested_plan_id: planId, editor_object_id: compat.object_id, editor_plan_id: compat.plan_id },
+        });
+      }
+    }
+    return buildHandle(page, context, objectId, planId, compat, saveLimiter, opts);
+  } catch (e) {
+    await context.close().catch(() => {});
+    throw e;
+  }
+}
+
+/** @internal экспортирован для офлайн-тестов адаптера (мок Page, без браузера). */
+export function buildHandle(
+  page: Page,
+  context: { close(): Promise<void> },
+  objectId: string,
+  planId: string,
+  compat: CompatInfo,
+  /** Квота сохранений; подменяется в офлайн-тестах, по умолчанию общая (R2-10). */
+  limiter: { acquire(): Promise<void> } = saveLimiter,
+  opts: OpenEditorOptions = {},
+): EditorHandle {
+  // Целевой проект (инцидент 2026-11-15): фактические id страницы на момент открытия.
+  // Для анонимных проектов редактор создаёт свои id — целевой тот, что сообщил редактор.
+  const expectedObjectId = opts.anonymous ? (compat.object_id ?? objectId) : (compat.object_id || objectId);
+  const expectedPlanId = opts.anonymous ? (compat.plan_id ?? planId) : (compat.plan_id || planId);
+  const handle: EditorHandle = {
+    objectId: expectedObjectId,
+    planId: expectedPlanId,
+    compat,
+    page,
+    async normalize(model, waitMs = 1200): Promise<NormalizeResult> {
+      await page.evaluate(PAGE.clearFog);
+      // R2-16: сравниваем ВХОДНУЮ модель с результатом — молчаливое удаление
+      // элементов редактором не должно проходить как успех. Стен может стать
+      // БОЛЬШЕ (редактор режет стены сам), меньше — потеря; проёмы и предметы
+      // потеряны быть не могут.
+      const input = {
+        walls: Object.keys((model as { walls?: Record<string, unknown> }).walls ?? {}).length,
+        holes: Object.values((model as { walls?: Record<string, { holes?: Record<string, unknown> }> }).walls ?? {})
+          .reduce((n: number, w: { holes?: Record<string, unknown> }) => n + Object.keys(w.holes ?? {}).length, 0),
+        items: Object.keys((model as { items?: Record<string, unknown> }).items ?? {}).length,
+      };
+      // Playwright не вызывает строковые функции с аргументами — аргумент через window.
+      // Повтор попытки: сразу после открытия редактора copy('server') может отставать
+      // от живых WALLS (внутри inject.js есть опрос, здесь — подстраховка).
+      let last: { restoreError: string } | NormalizeResult | undefined;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await page.waitForTimeout(1200);
+        await page.evaluate((arg) => {
+          (window as unknown as { __remplanner_arg?: unknown }).__remplanner_arg = arg;
+        }, { model, waitMs });
+        const res = (await page.evaluate(PAGE.restoreDrawCopy)) as
+          | { restoreError: string; copy?: Record<string, unknown> }
+          | (Omit<NormalizeResult, "model"> & { copy: Record<string, unknown> });
+        if ("restoreError" in res) {
+          throw new McpError("NORMALIZATION_DROPPED", `редактор отверг модель при restore: ${res.restoreError}`);
+        }
+        const result: NormalizeResult = {
+          rooms: res.rooms,
+          before: res.before,
+          after: res.after,
+          model: res.copy,
+          // старые моки/страницы без этих полей — пустые значения по умолчанию
+          walls: (res as { walls?: NormalizedWall[] }).walls ?? [],
+          errors: (res as { errors?: Record<string, number> | null }).errors ?? null,
+        };
+        last = result;
+        const copyWalls = Object.keys((result.model as { walls?: Record<string, unknown> })?.walls ?? {}).length;
+        if (copyWalls === 0 && result.after.walls > 0) continue; // copy отстаёт — повтор
+        // сверка «вход → редактор»: явная политика допустимых изменений (R2-16)
+        const dropped: string[] = [];
+        if (result.after.walls < input.walls) dropped.push(`walls ${input.walls}→${result.after.walls}`);
+        if (result.after.holes < input.holes) dropped.push(`openings ${input.holes}→${result.after.holes}`);
+        if (result.after.items < input.items) dropped.push(`items ${input.items}→${result.after.items}`);
+        if (dropped.length > 0) {
+          throw new McpError("NORMALIZATION_DROPPED", `редактор молча удалил элементы: ${dropped.join(", ")}`, {
+            details: { dropped },
+          });
+        }
+        return result;
+      }
+      return last as NormalizeResult;
+    },
+    async save(timeoutMs = BROWSER_TIMEOUT_MS): Promise<EditorSaveResult> {
+      // квота сохранений сайта (≤ 1 в 5 с, R2-10): браузерный save не минует лимитер
+      await limiter.acquire();
+      await page.evaluate(PAGE.clearFog);
+      // предсохранительная сверка целевого проекта (инцидент 2026-11-15): если object_id
+      // на странице сменился после открытия — project.save не запускается вовсе
+      const current = await page.evaluate(PAGE.currentIds).catch(() => null) as { object_id?: string | null; plan_id?: string | null } | null;
+      if (current && typeof current.object_id === "string" && current.object_id !== "" && current.object_id !== expectedObjectId) {
+        throw new McpError("EDITOR_PROJECT_MISMATCH", `страница редактора сменила проект: object_id ${current.object_id} ≠ целевого ${expectedObjectId} — сохранение отменено`, {
+          details: { expected_object_id: expectedObjectId, current_object_id: current.object_id },
+        });
+      }
+      // R2-8: ОДИН постоянный listener регистрируется ДО триггера сохранения и
+      // остаётся до конца сбора — ни чужой рано летящий автосейв, ни наш поздний
+      // ответ не пропускаются; никаких повторных подписок waitForResponse.
+      type SaveResponse = { url(): string; status(): number; text(): Promise<string>; request(): { postData(): string | null } | null };
+      const responses: SaveResponse[] = [];
+      const handler = (r: SaveResponse): void => {
+        if (!r.url().includes("/setup/api/planner/save/")) return;
+        responses.push(r);
+      };
+      (page as unknown as { on(ev: string, fn: (r: SaveResponse) => void): void }).on("response", handler);
+      try {
+        const started = (await page.evaluate(PAGE.savePlan)) as { started: boolean; error?: string };
+        if (!started.started) {
+          throw new McpError("SITE_ERROR", `project.save не сработал: ${started.error ?? "?"}`);
+        }
+        // ждём первый ответ, затем — окно тишины: отложенные автосейвы редактора
+        const t0 = Date.now();
+        while (responses.length === 0 && Date.now() - t0 < timeoutMs) {
+          await new Promise((r) => setTimeout(r, 150));
+        }
+        // корреляция: наш project.save(false,true) отвечает is_forced=1 в query,
+        // чужие автосейвы — без него (R2-8)
+        const isForced = (r: SaveResponse): boolean => /[?&]is_forced=1(?:&|$)/.test(r.url());
+        let lastCount = 0;
+        let quietSince = Date.now();
+        const QUIET_MS = 1500;
+        // ждём окно тишины И наш принудительный ответ: чужой ранний автосейв не
+        // завершает ожидание — наш save может прийти позже (R2-8)
+        while (Date.now() - t0 < timeoutMs) {
+          const hasForced = responses.some(isForced);
+          if (hasForced && Date.now() - quietSince >= QUIET_MS) break;
+          await new Promise((r) => setTimeout(r, 150));
+          if (responses.length !== lastCount) {
+            lastCount = responses.length;
+            quietSince = Date.now();
+          }
+        }
+        if (responses.length === 0) {
+          throw new McpError("TIMEOUT", "редактор не ответил на сохранение за отведённое время");
+        }
+        // статусы всех относящихся ответов (R2-8): 5xx/429 не превращаем в «не-JSON»
+        for (const r of responses) {
+          if (r.status() >= 400) {
+            throw new McpError("SITE_ERROR", `сайт ответил ${r.status()} на сохранение`);
+          }
+        }
+        const bodies: unknown[] = [];
+        for (const r of responses) {
+          const text = await r.text();
+          try {
+            bodies.push(JSON.parse(text));
+          } catch {
+            // сырое тело НЕ включаем: может содержать секреты (R2-1); только размер
+            bodies.push({ __nonjson: true, bytes: text.length });
+          }
+        }
+        // reload:101 в ЛЮБОМ ответе — истекшая сессия (R2-9), а не «не удалось»
+        for (const body of bodies) {
+          if (isReloadResponse(body)) {
+            throw new McpError("SESSION_EXPIRED", "сессия истекла (reload:101) при сохранении через редактор", {
+              hint: "выполните npm run login",
+            });
+          }
+        }
+        const json = bodies.filter((b) => !(b as { __nonjson?: boolean }).__nonjson) as {
+          result?: "success" | "fail"; save_id?: string; html_code?: string;
+        }[];
+        if (json.length === 0) {
+          throw new McpError("SITE_ERROR", "ни один ответ на сохранение не разобран");
+        }
+        // корреляция (R2-8): разбираем ПОСЛЕДНИЙ ответ с is_forced=1 (наш save),
+        // при отсутствии — последний ответ вообще
+        const forcedIdx = responses.map((r, i) => (isForced(r) ? i : -1)).filter((i) => i >= 0);
+        const pickIdx = forcedIdx.length > 0 ? forcedIdx[forcedIdx.length - 1]! : responses.length - 1;
+        const parsed = parseSaveResponse(json[pickIdx] as { result: "success" | "fail"; save_id?: string; html_code?: string });
+        return { ok: parsed.ok, saveId: parsed.save_id, conflict: parsed.conflict };
+      } finally {
+        (page as unknown as { off(ev: string, fn: (r: SaveResponse) => void): void }).off("response", handler);
+      }
+    },
+    async renderPng(options?: RenderOptions): Promise<Buffer> {
+      return renderPlan(page, options ?? {});
+    },
+    async compatInfo(): Promise<CompatInfo> {
+      const info = await readCompat(page);
+      handle.compat = info;
+      return info;
+    },
+    async close(): Promise<void> {
+      await context.close().catch(() => {});
+    },
+  };
+  return handle;
+}
+
+/**
+ * Рендер плана в PNG: переключение листа, скриншот элемента #canvas_v2_wrapper.
+ * Публичные точки редактора ($Project.setPlanName / $Project.focus) опциональны:
+ * при отсутствии — клик по навигации листов (.groups_navi_item.plan_*).
+ */
+export async function renderPlan(page: Page, options: RenderOptions): Promise<Buffer> {
+  const sheet = options.sheet ?? "init";
+  const width = options.widthPx ?? 1600;
+  await page.evaluate(PAGE.clearFog);
+  await switchSheet(page, sheet);
+  if (options.dimensions === false) {
+    await page.evaluate(() => {
+      const t = document.querySelector("#plannertool_ruler, .toolid16");
+      if (t && t.classList.contains("active")) (t as HTMLElement).click();
+    }).catch(() => {});
+  }
+  // Ширина скриншота — через viewport (без image-зависимостей).
+  if (width !== 1600) {
+    const vp = page.viewportSize();
+    if (vp && vp.width !== width) {
+      await page.setViewportSize({ width, height: Math.round((width * vp.height) / vp.width) });
+      await page.waitForTimeout(400);
+    }
+  }
+  // центрирование плана (T16): $Project.focus при наличии
+  await page.evaluate(() => {
+    const p = (window as unknown as { $Project?: { focus?: () => void } }).$Project;
+    try { p?.focus?.(); } catch { /* не критично */ }
+  }).catch(() => {});
+  await page.waitForTimeout(600);
+  // план редактора — SVG внутри #canvas_v2_wrapper; сам wrapper может иметь нулевую
+  // высоту (SVG inline переполняет его) — берём первый ВИДИМЫЙ элемент (живая проба)
+  const target = await page.evaluate(() => {
+    const box = (el: Element | null): { w: number; h: number } => {
+      if (!el) return { w: 0, h: 0 };
+      const r = el.getBoundingClientRect();
+      return { w: r.width, h: r.height };
+    };
+    const wrapper = document.querySelector("#canvas_v2_wrapper");
+    if (box(wrapper).h > 50) return { selector: "#canvas_v2_wrapper", index: 0 };
+    const svgs = [...(wrapper?.querySelectorAll("svg") ?? [])];
+    let best = -1;
+    let bestArea = 0;
+    svgs.forEach((svg, i) => {
+      const b = box(svg);
+      if (b.w > 100 && b.h > 100 && b.w * b.h > bestArea) {
+        best = i;
+        bestArea = b.w * b.h;
+      }
+    });
+    if (best >= 0) return { selector: "#canvas_v2_wrapper svg", index: best };
+    const canvases = [...document.querySelectorAll("canvas")];
+    const visIdx = canvases.findIndex((c) => { const b = box(c); return b.w > 100 && b.h > 100; });
+    if (visIdx >= 0) return { selector: "canvas", index: visIdx };
+    return null;
+  }).catch(() => null);
+  if (!target) {
+    throw new McpError("EDITOR_INCOMPATIBLE", "не найден видимый элемент плана (#canvas_v2_wrapper/svg/canvas)");
+  }
+  const el = page.locator(target.selector).nth(target.index);
+  const buf = await el.screenshot({ timeout: BROWSER_TIMEOUT_MS }).catch(async (e: unknown) => {
+    throw new McpError("SITE_ERROR", `скриншот плана (${target.selector}[${target.index}]) не удался: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+  });
+  if (width !== 1600) {
+    await page.setViewportSize({ width: 1600, height: 1000 }).catch(() => {});
+  }
+  return buf;
+}
+
+async function switchSheet(page: Page, sheet: string): Promise<void> {
+  const done = await page.evaluate((name) => {
+    const w = window as unknown as { $Project?: { setPlanName?: (n: string) => void } };
+    if (w.$Project && typeof w.$Project.setPlanName === "function") {
+      try {
+        w.$Project.setPlanName(name);
+        return "fn";
+      } catch {
+        /* fallback ниже */
+      }
+    }
+    const nav = document.querySelector(`.groups_navi_item.plan_${name}`);
+    if (nav) {
+      (nav as HTMLElement).click();
+      return "click";
+    }
+    return null;
+  }, sheet).catch(() => null);
+  if (done === null && sheet !== "init") {
+    throw new McpError("INVALID_ARGUMENT", `лист плана «${sheet}» не найден (навигация .groups_navi_item.plan_${sheet})`);
+  }
+}
+
+/** Хеш содержимого бандла (для compat-лога). */
+export function bundleHash(content: string): string {
+  return createHash("sha256").update(content).digest("hex").slice(0, 16);
+}

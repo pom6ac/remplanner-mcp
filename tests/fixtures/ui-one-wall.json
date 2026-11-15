@@ -1,0 +1,379 @@
+{
+ "_source": "GET /setup/api/planner/?object_id&plan_id — проект аккаунта пользователя (только чтение), 15.11.2026, global_version=757. Модель сохранена самим редактором (нормализована): 1 стена, нарисованная в UI на листе init. id проекта обезличены.",
+ "response_meta": {
+  "units": "cm",
+  "save_id": "1",
+  "floors": {
+   "prev": [],
+   "next": []
+  }
+ },
+ "model": {
+  "v": 3,
+  "id": "0",
+  "plan_id": "0",
+  "walls": {
+   "_kh76n": {
+    "id": "_kh76n",
+    "plan": "a",
+    "role": "wall",
+    "child": 0,
+    "archive": 0,
+    "demount": 0,
+    "depth": 10,
+    "height": 270,
+    "angle": 0,
+    "p1": {
+     "role": "p1",
+     "x": -228.93749319066373,
+     "y": -170.7881444529698,
+     "demount": 0,
+     "bak": {
+      "x": -228.93749319066373,
+      "y": -170.7881444529698
+     }
+    },
+    "p2": {
+     "role": "p2",
+     "x": 16,
+     "y": -170.7881,
+     "demount": 0,
+     "bak": {
+      "x": 16,
+      "y": -170.7881
+     }
+    },
+    "l1": {
+     "x": -228.937,
+     "y": -175.788
+    },
+    "l2": {
+     "x": 16,
+     "y": -175.788
+    },
+    "r1": {
+     "x": -228.937,
+     "y": -165.788
+    },
+    "r2": {
+     "x": 15.999,
+     "y": -165.788
+    },
+    "l1f": {
+     "x": -228.937,
+     "y": -175.788
+    },
+    "l2f": {
+     "x": 16,
+     "y": -175.788
+    },
+    "r1f": {
+     "x": -228.937,
+     "y": -165.788
+    },
+    "r2f": {
+     "x": 15.999,
+     "y": -165.788
+    },
+    "p1st": 0,
+    "p2st": 0,
+    "material": "a_block",
+    "color": 0,
+    "inRoom": 0,
+    "area": {
+     "outer": 6.61,
+     "inner": 6.61
+    },
+    "neighbors": {},
+    "level": "1",
+    "show_dls": true,
+    "room_on_left": 0,
+    "room_on_right": 0,
+    "eds2": {
+     "l": [
+      {
+       "p1": {
+        "x": -228.9374,
+        "y": -175.7881
+       },
+       "p2": {
+        "x": 16,
+        "y": -175.788
+       },
+       "c": {
+        "x": -106.4687,
+        "y": -175.788
+       },
+       "length": 244.9375,
+       "id": "_dr67y",
+       "side": "l",
+       "face": "l",
+       "pc": {
+        "x": -106.46869877518111,
+        "y": -178.78805
+       },
+       "role": "wall",
+       "is_terrace": 0,
+       "is_territory": 0
+      }
+     ],
+     "r": [
+      {
+       "p1": {
+        "x": -228.9374,
+        "y": -165.7881
+       },
+       "p2": {
+        "x": 15.9999,
+        "y": -165.788
+       },
+       "c": {
+        "x": -106.4687,
+        "y": -165.788
+       },
+       "length": 244.9375,
+       "id": "_su5ax",
+       "side": "r",
+       "face": "r",
+       "role": "wall",
+       "is_terrace": 0,
+       "is_territory": 0
+      }
+     ],
+     "s": [
+      {
+       "p1": {
+        "x": -228.9374,
+        "y": -175.7881
+       },
+       "p2": {
+        "x": -228.9374,
+        "y": -165.7881
+       },
+       "c": {
+        "x": -228.9374,
+        "y": -170.7881
+       },
+       "length": 10,
+       "id": "_pt4l3",
+       "side": "s",
+       "face": "r",
+       "role": "wall"
+      }
+     ],
+     "e": [
+      {
+       "p1": {
+        "x": 16,
+        "y": -175.788
+       },
+       "p2": {
+        "x": 15.9999,
+        "y": -165.788
+       },
+       "c": {
+        "x": 15.9999,
+        "y": -170.788
+       },
+       "length": 10,
+       "id": "_6bomy",
+       "side": "e",
+       "face": "l",
+       "role": "wall"
+      }
+     ],
+     "sl": []
+    }
+   }
+  },
+  "rigels": {},
+  "pillars": {},
+  "rooms1": {},
+  "rooms2": {},
+  "terrace_borders": {},
+  "territory_borders": {},
+  "items": {},
+  "led_strips": {},
+  "line_strips": {},
+  "cables": {},
+  "pipes": {},
+  "pipes_conditioner": {},
+  "pipes_gas": {},
+  "zone_delimiters": {},
+  "pipes_ventilation": {},
+  "cables_conditioner": {},
+  "pipes_heat": {},
+  "cables_socket": {},
+  "cables_warm_floor": {},
+  "pipes_warm_floor": {},
+  "stripes_light": {},
+  "comments": {},
+  "rulers": {},
+  "free_figures": {},
+  "pictures": {},
+  "groups_items": {},
+  "wall_moldings": {},
+  "wall_niches": {},
+  "freelines": {},
+  "thick_lines": {},
+  "warm_floors": {},
+  "level_holes": {},
+  "drawings": [
+   [
+    {
+     "x": 16,
+     "y": -175.788
+    },
+    {
+     "x": 15.9999,
+     "y": -165.788
+    },
+    {
+     "x": -228.9374,
+     "y": -165.788
+    },
+    {
+     "x": -228.9374,
+     "y": -175.788
+    }
+   ]
+  ],
+  "total_height": 270,
+  "errors": {
+   "roomRebuild": 0,
+   "wallWrongLabel": 0,
+   "wallTooShort": 0,
+   "wallOverWall": 0,
+   "wallNoPointS": 0,
+   "wallNoPointE": 0
+  },
+  "is_forced": true,
+  "shields": {},
+  "custom_plans": {},
+  "params": false,
+  "drawing": {
+   "x_min": -228.93749408156145,
+   "x_max": 16.00000089086825,
+   "y_min": -175.7881218213209,
+   "y_max": -165.78807817867786,
+   "cx": -106.4687465953466,
+   "cy": -170.7880999999994,
+   "center": {
+    "x": -106.4687465953466,
+    "y": -170.7880999999994
+   },
+   "tl_point": {
+    "x": -228.93749408156145,
+    "y": -175.7881218213209
+   },
+   "br_point": {
+    "x": 16.00000089086825,
+    "y": -165.78807817867786
+   },
+   "width": 244.9374949724297,
+   "height": 10.00004364264305
+  },
+  "settings": {
+   "background_image": 0
+  },
+  "session": 0,
+  "version": 757,
+  "log_plan": {
+   "wall1": 0,
+   "wall2": 0,
+   "items1": 0,
+   "items2": 0,
+   "break_json": 0,
+   "counter_saving_one_session": 1
+  },
+  "signals": [],
+  "smeta_water_pipes": {
+   "data": [],
+   "hash_pipes": [],
+   "hash_rooms": [],
+   "hash_waters": []
+  },
+  "logs": {
+   "plan": "c",
+   "plan_source": "a"
+  },
+  "final": true,
+  "claddings": {},
+  "borders": [
+   {
+    "p1": {
+     "x": -228.9374,
+     "y": -175.7881
+    },
+    "p2": {
+     "x": 16,
+     "y": -175.788
+    },
+    "face": "l",
+    "parent": {
+     "type": "wall",
+     "id": "_kh76n"
+    },
+    "roomId": false,
+    "holes": [],
+    "items": []
+   },
+   {
+    "p1": {
+     "x": -228.9374,
+     "y": -165.7881
+    },
+    "p2": {
+     "x": 15.9999,
+     "y": -165.788
+    },
+    "face": "r",
+    "parent": {
+     "type": "wall",
+     "id": "_kh76n"
+    },
+    "roomId": false,
+    "holes": [],
+    "items": []
+   },
+   {
+    "p1": {
+     "x": -228.9374,
+     "y": -175.7881
+    },
+    "p2": {
+     "x": -228.9374,
+     "y": -165.7881
+    },
+    "face": "r",
+    "parent": {
+     "type": "wall",
+     "id": "_kh76n",
+     "end": 1
+    },
+    "roomId": false,
+    "holes": [],
+    "items": []
+   },
+   {
+    "p1": {
+     "x": 16,
+     "y": -175.788
+    },
+    "p2": {
+     "x": 15.9999,
+     "y": -165.788
+    },
+    "face": "l",
+    "parent": {
+     "type": "wall",
+     "id": "_kh76n",
+     "end": 1
+    },
+    "roomId": false,
+    "holes": [],
+    "items": []
+   }
+  ]
+ }
+}
