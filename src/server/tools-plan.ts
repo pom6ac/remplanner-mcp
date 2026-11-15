@@ -535,7 +535,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     model_validate: tool(
       "Проверить инварианты модели: короткие стены, стены поверх стен, незамкнутые контуры, проёмы вне стены/на краю/с пересечением, " +
-        "предметы вне помещений. Пустой список = всё хорошо. Вызывайте перед project_save и render_plan.",
+        "предметы: выход прямоугольника (с учётом поворота) за внутренние грани комнат (ITEM_OUTSIDE_ROOM с вылетом в мм) " +
+        "и пересечение со стеной (ITEM_INTERSECTS_WALL). Пустой список = всё хорошо. Вызывайте перед project_save и render_plan.",
       {},
       async () => {
         const ws = wsOf();
