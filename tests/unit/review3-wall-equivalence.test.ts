@@ -2,6 +2,8 @@
 // редактор сливает коллинеарные стены (design §12: разрез/слияние). Сравнивается то,
 // что важно для рендера: покрытие осей стен (wallAxisCoverageCm); предметы и проёмы —
 // по id. NORMALIZATION_DROPPED не должен маскировать слияние, но ловит реальную потерю.
+// R2-1: save-тесты пишут бэкапы — состояние изолируется во временный каталог.
+import "./helpers/tmp-home.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildHandle } from "../../src/editor/adapter.ts";

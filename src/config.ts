@@ -6,8 +6,21 @@ export const BASE_URL = "https://remplanner.ru";
 // Каталог состояния. REMPLANNER_HOME — переопределение для тестов: снимки/рендеры
 // и состояние пишутся во временный каталог, а не в домашний (EPERM в песочницах).
 const homeOverride = process.env["REMPLANNER_HOME"];
+const REAL_HOME_DIR = join(homedir(), ".remplanner-mcp");
 export const HOME_DIR =
-  homeOverride && homeOverride.trim() !== "" ? homeOverride : join(homedir(), ".remplanner-mcp");
+  homeOverride && homeOverride.trim() !== "" ? homeOverride : REAL_HOME_DIR;
+// Guard (ревью v0.1.1-r2 R2-1): тестовый процесс (npm test ставит REMPLANNER_HOME
+// через tests/setup.ts до этого импорта) с реальным ~/.remplanner-mcp — ошибка сразу,
+// а не тихая запись бэкапов/состояния в домашний каталог пользователя.
+const testContext =
+  process.env["NODE_TEST_CONTEXT"] !== undefined || process.env["REMPLANNER_TEST"] === "1";
+if (testContext && HOME_DIR === REAL_HOME_DIR) {
+  throw new Error(
+    "тестовый процесс указывает на настоящий ~/.remplanner-mcp — состояние тестов обязано " +
+      "быть изолировано: запускайте тесты через npm test (tests/setup.ts выставляет REMPLANNER_HOME) " +
+      "или задайте REMPLANNER_HOME вручную",
+  );
+}
 export const CREDENTIALS_PATH = join(HOME_DIR, "credentials.env");
 export const STATE_PATH = join(HOME_DIR, "state.json");
 export const STATE_ANON_PATH = join(HOME_DIR, "state.anon.json");
