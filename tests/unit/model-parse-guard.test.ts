@@ -199,3 +199,42 @@ test("parse-guard: project_save предупреждает, сколько об�
   assert.deepEqual(res.will_delete, { walls: 0, openings: 0, items: 1 });
   assert.ok(res.warnings.some((w) => w.includes("1") && w.includes("предмет")), res.warnings.join("; "));
 });
+
+// Ревью v0.1.1 финал F-1: смена идентификатора стены (нормализация редактора
+// переименовала стену, геометрия сохранена) — не удаление. Предупреждение
+// «будут удалены стены» при сохранённой геометрии ложно.
+test("parse-guard: will_delete — переименование стены с сохранённой геометрией — не удаление", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel(), dataEmpty: false };
+  const { deps } = mockDeps(server);
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  // локально: стена сервера переименована (id другой, координаты и проёмы те же)
+  ws.apply("replace", (m) => {
+    const [oldId, wall] = Object.entries(m.walls)[0]!;
+    delete m.walls[oldId];
+    m.walls["renamed_wall"] = structuredClone(wall) as Model["walls"][string];
+    m.walls["renamed_wall"]!.id = "renamed_wall";
+    return true;
+  });
+  const res: SaveOutcome = await ws.save();
+  assert.deepEqual(res.will_delete.walls, 0);
+  assert.ok(
+    res.warnings.some((w) => /идентификатор/.test(w) && /стен/.test(w)),
+    `предупреждение о смене идентификаторов стен: ${res.warnings.join("; ")}`,
+  );
+});
+
+test("parse-guard: will_delete — реальное удаление стены остаётся удалением", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel(), dataEmpty: false };
+  const { deps } = mockDeps(server);
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("replace", (m) => {
+    const wallId = Object.keys(m.walls)[0]!;
+    delete m.walls[wallId];
+    return true;
+  });
+  const res: SaveOutcome = await ws.save();
+  assert.deepEqual(res.will_delete.walls, 1);
+  assert.ok(res.warnings.some((w) => /будут удалены стены/.test(w)), res.warnings.join("; "));
+});

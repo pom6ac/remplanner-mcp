@@ -6,10 +6,10 @@ import { McpError } from "./errors.ts";
 import type { SessionState } from "./session.ts";
 import type { LoadedModel } from "./api.ts";
 import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, EditorRoom } from "./editor/adapter.ts";
-import type { Model } from "./model/types.ts";
+import type { Model, Point } from "./model/types.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
-import { prepareForRestore, findUnattachedEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm } from "./model/walls.ts";
+import { prepareForRestore, findUnattachedEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 
 // T17: рабочее пространство — открытые проекты, каноническая модель (GET), история
@@ -125,6 +125,26 @@ function openingIds(model: Model): Set<string> {
  *  с добавлением другого не маскируется. */
 function missingIds(server: Set<string>, local: Set<string>): string[] {
   return [...server].filter((id) => !local.has(id)).sort();
+}
+
+/**
+ * Ось стены покрыта локальными стенами (ревью v0.1.1 финал F-1): отрезок оси стены
+ * лежит на той же прямой, что и какой-то локальный осевой отрезок, и целиком внутри
+ * него (с допуском 1 мм). Смена идентификатора стены при нормализации редактора
+ * геометрию не меняет — это не потеря.
+ */
+function wallAxisCoveredBy(wall: { p1: Point; p2: Point } | undefined, localSegments: WallAxisSegment[], tolCm = 0.1): boolean {
+  if (!wall) return false;
+  const segs = wallAxisSegments({ w: wall });
+  if (segs.length === 0) return false;
+  return segs.every((s) =>
+    localSegments.some(
+      (t) =>
+        Math.abs(t.ux - s.ux) <= 1e-6 && Math.abs(t.uy - s.uy) <= 1e-6 &&
+        Math.abs(t.offset - s.offset) <= tolCm &&
+        t.a <= s.a + tolCm && t.b >= s.b - tolCm,
+    ),
+  );
 }
 
 function toModel(raw: Record<string, unknown>): Model {
@@ -400,10 +420,17 @@ export class Workspace {
       });
     }
     // ревью v0.1.1 №5: предупреждение об удалениях — разность идентичностей (id
-    // объектов сервера, которых нет в рабочей копии), а не разность общих счётчиков
+    // объектов сервера, которых нет в рабочей копии), а не разность общих счётчиков.
+    // Ревью v0.1.1 финал F-1: стена, чья ось покрыта локальными стенами, не потеряна —
+    // нормализация редактора могла сменить её идентификатор; это отдельное замечание
     const serverModel = fresh.model as Model;
+    const localWallSegments = wallAxisSegments(this.modelInternal!.walls);
+    const serverWallsMissing = missingIds(new Set(Object.keys(serverModel.walls ?? {})), new Set(Object.keys(this.modelInternal!.walls)));
+    const renamedWalls = serverWallsMissing.filter((id) => wallAxisCoveredBy(serverModel.walls?.[id] as { p1: Point; p2: Point } | undefined, localWallSegments));
+    const deletedWalls = serverWallsMissing.filter((id) => !renamedWalls.includes(id));
     const deletedIds = {
-      walls: missingIds(new Set(Object.keys(serverModel.walls ?? {})), new Set(Object.keys(this.modelInternal!.walls))),
+      walls: deletedWalls,
+      renamedWalls,
       openings: missingIds(openingIds(serverModel), openingIds(this.modelInternal!)),
       items: missingIds(new Set(Object.keys(serverModel.items ?? {})), new Set(Object.keys(this.modelInternal!.items ?? {}))),
     };
@@ -415,6 +442,7 @@ export class Workspace {
     const warnings: string[] = [];
     const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
     if (willDelete.walls > 0) warnings.push(`будут удалены стены (${willDelete.walls}), которых нет в модели: ${idList(deletedIds.walls)}`);
+    if (deletedIds.renamedWalls.length > 0) warnings.push(`идентификаторы стен изменились (${deletedIds.renamedWalls.length}) — геометрия сохранена, это нормализация, а не потеря: ${idList(deletedIds.renamedWalls)}`);
     if (willDelete.openings > 0) warnings.push(`будут удалены проёмы (${willDelete.openings}), которых нет в модели: ${idList(deletedIds.openings)}`);
     if (willDelete.items > 0) warnings.push(`будут удалены предметы (${willDelete.items}), которых нет в модели: ${idList(deletedIds.items)}`);
     if (fresh.save_id !== saveIdBefore) {
