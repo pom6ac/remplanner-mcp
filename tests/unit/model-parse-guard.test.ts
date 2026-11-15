@@ -3,6 +3,10 @@
 // то MODEL_PARSE_EMPTY; сохранение такого проекта блокируется без force;
 // project_save сверяет счётчики с серверной версией и предупреждает об удалениях.
 import "./helpers/tmp-home.ts";
+// Ревью v0.1.1 №2: валидная пустая модель — не потеря данных. Новый или очищенный
+// проект должен открываться. MODEL_PARSE_EMPTY — только когда data непустой, разбор
+// дал пустую модель, а в сыром JSON есть объекты (схема не распознана); проверка по
+// сырому JSON, не по save_id (save_id > 0 не доказывает наличие объектов).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -64,8 +68,24 @@ function mockDeps(server: Server) {
   return { deps, editor };
 }
 
-test("parse-guard: data непустой, а разобранная модель пустая → MODEL_PARSE_EMPTY", async () => {
+test("parse-guard: валидная пустая модель в непустом data открывается (было MODEL_PARSE_EMPTY)", async () => {
   const server: Server = { saveId: "0", model: emptyModel(), dataEmpty: false };
+  const ws = new Workspace(mockDeps(server).deps);
+  const p = await ws.open("123", "1");
+  assert.equal(p.saveId, "0");
+  assert.equal(Object.keys(ws.model.walls).length, 0);
+});
+
+test("parse-guard: data пустой, save_id > 0 → открывается (save_id не доказывает объекты)", async () => {
+  const server: Server = { saveId: "8", model: emptyModel(), dataEmpty: true };
+  const ws = new Workspace(mockDeps(server).deps);
+  const p = await ws.open("123", "1");
+  assert.equal(p.saveId, "8");
+});
+
+test("parse-guard: data непустой, разобранная модель пустая, в сыром JSON объекты → MODEL_PARSE_EMPTY", async () => {
+  // схема, которую адаптер не разобрал: сущности в необработанных полях
+  const server: Server = { saveId: "0", model: { v: 3, floors: [{ id: "f1" }] } as unknown as Model, dataEmpty: false };
   const ws = new Workspace(mockDeps(server).deps);
   await assert.rejects(
     ws.open("123", "1"),
@@ -77,10 +97,20 @@ test("parse-guard: data непустой, а разобранная модель
   );
 });
 
-test("parse-guard: data пустой, но save_id > 0 (инцидент с пустым открытием) → MODEL_PARSE_EMPTY", async () => {
-  const server: Server = { saveId: "8", model: emptyModel(), dataEmpty: true };
-  const ws = new Workspace(mockDeps(server).deps);
-  await assert.rejects(ws.open("123", "1"), (e: unknown) => e instanceof McpError && e.code === "MODEL_PARSE_EMPTY");
+test("parse-guard: круг сохранения пустого проекта — save, повторный open, снова save", async () => {
+  const server: Server = { saveId: "0", model: emptyModel(), dataEmpty: false };
+  const { deps } = mockDeps(server);
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  const res = await ws.save();
+  assert.ok(res.verified);
+  // проект очищен на сервере (data непустой JSON пустой модели) — открывается
+  server.dataEmpty = false;
+  const ws2 = new Workspace(deps);
+  const p = await ws2.open("123", "1");
+  assert.equal(Object.keys(ws2.model.walls).length, 0);
+  const res2 = await ws2.save();
+  assert.ok(res2.verified);
 });
 
 test("parse-guard: пустой проект без сохранений (data пустой, save_id 0) открывается", async () => {

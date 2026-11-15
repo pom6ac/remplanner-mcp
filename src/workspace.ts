@@ -98,6 +98,17 @@ export function modelIsContentEmpty(model: Model): boolean {
   return true;
 }
 
+/** Есть ли в сыром JSON модели непустые объекты/массивы вне корня (ревью v0.1.1 №2):
+ *  при пустой разобранной модели это признак необработанных сущностей. */
+function rawJsonHasEntities(value: unknown, depth = 0): boolean {
+  if (Array.isArray(value)) return value.length > 0;
+  if (value !== null && typeof value === "object") {
+    if (depth > 0 && Object.keys(value).length > 0) return true;
+    return Object.values(value as Record<string, unknown>).some((v) => rawJsonHasEntities(v, depth + 1));
+  }
+  return false;
+}
+
 function toModel(raw: Record<string, unknown>): Model {
   const model = raw as Model;
   model.walls ??= {};
@@ -162,11 +173,13 @@ export class Workspace {
   async open(objectId: string, planId = "1", opts: { anon?: boolean } = {}): Promise<OpenProject> {
     const loaded = await this.deps.loadModel(this.deps.session, objectId, planId);
     this.modelInternal = toModel(structuredClone(loaded.model));
-    // Дефект 3 (отчёт 11): пустая разобранная модель при непустом проекте на сервере —
-    // ошибка, а не молчаливое открытие (сохранение затёрло бы проект пользователя).
-    if (modelIsContentEmpty(this.modelInternal) && (loaded.data_empty === false || Number(loaded.save_id) > 0)) {
+    // Ревью v0.1.1 №2: валидная пустая модель — не потеря данных, новый или очищенный
+    // проект должен открываться. MODEL_PARSE_EMPTY — только когда data непустой, разбор
+    // дал пустую модель, а в сыром JSON есть объекты (схема не распознана адаптером).
+    // Проверка по сырому JSON, не по save_id: save_id > 0 не доказывает наличие объектов.
+    if (modelIsContentEmpty(this.modelInternal) && loaded.data_empty === false && rawJsonHasEntities(loaded.model)) {
       this.modelInternal = null;
-      throw new McpError("MODEL_PARSE_EMPTY", `сервер вернул непустой проект (save_id ${loaded.save_id}, data ${loaded.data_empty === false ? "непустой" : "пустой"}), но разобранная модель пустая`, {
+      throw new McpError("MODEL_PARSE_EMPTY", `сервер вернул модель с данными, но разобранная модель пустая (save_id ${loaded.save_id}) — схема данных не распознана`, {
         hint: "не сохраняйте этот проект: повторите project_open; если повторяется — модель проекта не разобрана адаптером",
         details: { object_id: objectId, plan_id: loaded.plan_id || planId, save_id: loaded.save_id, data_empty: loaded.data_empty ?? null },
       });
