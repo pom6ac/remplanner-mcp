@@ -56,6 +56,12 @@ export type RenderOptions = {
   sheet?: string;
   widthPx?: number;
   dimensions?: boolean;
+  /**
+   * id предметов, которые должны быть отрисованы на холсте (дефект 1, отчёт 11):
+   * draw и загрузка иконок асинхронны — без ожидания скриншот делается раньше,
+   * чем предметы появились в SVG (найдено живой пробой 17).
+   */
+  itemIds?: string[];
 };
 
 export type EditorHandle = {
@@ -384,6 +390,20 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
   const width = options.widthPx ?? 1600;
   await page.evaluate(PAGE.clearFog);
   await switchSheet(page, sheet);
+  // предметы: draw и загрузка иконок асинхронны — ждём появления всех предметов
+  // в SVG, иначе скриншот фиксирует холст без них (дефект 1, живая проба 17)
+  const itemIds = options.itemIds ?? [];
+  if (itemIds.length > 0) {
+    await page.waitForFunction((ids) => {
+      const svg = document.querySelector("#canvas_v2_wrapper svg");
+      if (!svg) return false;
+      const s = svg.innerHTML;
+      return (ids as string[]).every((id) => s.includes(id));
+    }, itemIds, { timeout: BROWSER_TIMEOUT_MS, polling: 250 }).catch(() => {
+      // предметы не появились за отведённое время — картинка всё равно снимается,
+      // расхождение модели ловит RENDER_OUT_OF_SYNC на уровне workspace
+    });
+  }
   if (options.dimensions === false) {
     await page.evaluate(() => {
       const t = document.querySelector("#plannertool_ruler, .toolid16");
@@ -443,21 +463,34 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
   return buf;
 }
 
+/**
+ * Стратегия переключения листа. Клик по навигации (.groups_navi_item.plan_<имя>) —
+ * путь пользователя: он включает видимость слоёв листа (живая проба 17: после
+ * $Project.setPlanName("furniture") предметы остаются display:none, после клика
+ * по навигации — рисуются). setPlanName — запасной путь, когда навигации нет.
+ */
+export function pickSheetStrategy(sheet: string, hasNav: boolean, hasSetPlanName: boolean): "click" | "setPlanName" | null {
+  void sheet;
+  if (hasNav) return "click";
+  if (hasSetPlanName) return "setPlanName";
+  return null;
+}
+
 async function switchSheet(page: Page, sheet: string): Promise<void> {
   const done = await page.evaluate((name) => {
-    const w = window as unknown as { $Project?: { setPlanName?: (n: string) => void } };
-    if (w.$Project && typeof w.$Project.setPlanName === "function") {
-      try {
-        w.$Project.setPlanName(name);
-        return "fn";
-      } catch {
-        /* fallback ниже */
-      }
-    }
     const nav = document.querySelector(`.groups_navi_item.plan_${name}`);
     if (nav) {
       (nav as HTMLElement).click();
       return "click";
+    }
+    const w = window as unknown as { $Project?: { setPlanName?: (n: string) => void } };
+    if (w.$Project && typeof w.$Project.setPlanName === "function") {
+      try {
+        w.$Project.setPlanName(name);
+        return "setPlanName";
+      } catch {
+        /* не критично */
+      }
     }
     return null;
   }, sheet).catch(() => null);

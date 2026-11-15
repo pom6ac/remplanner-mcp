@@ -452,7 +452,10 @@ export class Workspace {
         details: { workspace: expected, editor: seen },
       });
     }
-    const res = await renderPlanToFile(editor, options);
+    const res = await renderPlanToFile(editor, {
+      ...options,
+      itemIds: Object.keys(this.modelInternal!.items ?? {}),
+    });
     const revision: RenderRevision = {
       model_hash: modelHash(this.modelInternal!),
       save_id: this.project?.saveId ?? null,
