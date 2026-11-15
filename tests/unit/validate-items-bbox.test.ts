@@ -104,12 +104,21 @@ test("validate-bbox: касание граней при 90° и 45° (включ
   prepareForRestore(m90);
   addItem(m90, { name: "sofa_triple", position: { center: { x: 2000, y: 1900 } }, angleDeg: 90, widthMm: 2000, depthMm: 800, heightMm: 850 }, ROOM);
   assert.equal(validateModel(m90, ROOM).length, 0, JSON.stringify(validateModel(m90, ROOM)));
-  // 45°: нижний угол ровно на y=290 с поправкой на поворот
+  // 45°: вылет повёрнутого угла по y — ПОЛУразмеры (полширины 100 + полглубины 40) на
+  // √½ (раунд 2 ревью: прежние (100+80)·√½ оставляли зазор ~28 см и касание не доказывали).
+  // Касание: 0 проблем; на 5 мм глубже — ITEM_OUTSIDE_ROOM: границы проверены с двух сторон.
   const m45 = loadModel("anon-rect-4000x3000.json");
   prepareForRestore(m45);
-  const drop45 = (100 + 80) * Math.SQRT1_2; // вылет повёрнутого угла по y, см
-  addItem(m45, { name: "sofa_triple", position: { center: { x: 2000, y: 2900 - Math.round(drop45 * 10) } }, angleDeg: 45, widthMm: 2000, depthMm: 800, heightMm: 850 }, ROOM);
+  const drop45 = (100 + 40) * Math.SQRT1_2; // см
+  const touch45mm = 2900 - Math.round(drop45 * 10);
+  addItem(m45, { name: "sofa_triple", position: { center: { x: 2000, y: touch45mm } }, angleDeg: 45, widthMm: 2000, depthMm: 800, heightMm: 850 }, ROOM);
   assert.equal(validateModel(m45, ROOM).length, 0, JSON.stringify(validateModel(m45, ROOM)));
+  const m45deep = loadModel("anon-rect-4000x3000.json");
+  prepareForRestore(m45deep);
+  addItem(m45deep, { name: "sofa_triple", position: { center: { x: 2000, y: touch45mm + 5 } }, angleDeg: 45, widthMm: 2000, depthMm: 800, heightMm: 850 }, ROOM);
+  const deep45 = validateModel(m45deep, ROOM).find((p) => p.code === "ITEM_OUTSIDE_ROOM");
+  assert.ok(deep45, `проникновение 5 мм за касание должно отмечаться: ${JSON.stringify(validateModel(m45deep, ROOM))}`);
+  assert.equal(deep45!.details?.protrusion_mm, 5);
   // верхняя грань при 90°: верхние углы ровно на y=10
   const m90top = loadModel("anon-rect-4000x3000.json");
   prepareForRestore(m90top);
