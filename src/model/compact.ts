@@ -126,8 +126,8 @@ export type CompactPipe = {
   to: [number, number];
   /** Число вершин графа. */
   vertexes: number;
-  /** Длина трубы, м. */
-  length_m: number;
+  /** Длина трубы, мм (все длины API — в мм, design §7.2; ревью 79 №6). */
+  length_mm: number;
   /** id предметов-вершин (выводы воды, стояки, ввод), мм-узлы не перечисляются. */
   connected: string[];
 };
@@ -326,7 +326,8 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       from: [round0(cmToMm(first?.x ?? 0)), round0(cmToMm(first?.y ?? 0))],
       to: [round0(cmToMm(last?.x ?? 0)), round0(cmToMm(last?.y ?? 0))],
       vertexes: pipe.vertexes.length,
-      length_m: pipe.length ?? 0,
+      // все длины API — в мм (design §7.2, ревью 79 №6); метры редактора остаются внутри адаптации
+      length_mm: Math.round((pipe.length ?? 0) * 1000),
       connected: pipe.vertexes.filter((v) => v.type !== "node").map((v) => v.id),
     };
   });

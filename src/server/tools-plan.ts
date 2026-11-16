@@ -9,7 +9,7 @@ import {
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
 import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../model/rigels.ts";
-import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, type PipeKind } from "../model/pipes.ts";
+import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind } from "../model/pipes.ts";
 import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
 import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
@@ -924,7 +924,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         path: z.array(z.union([
           mmPoint.describe("узел трубы, мм"),
           z.object({ item_id: z.string().min(1).describe("предмет-вершина (вывод воды, стояк, ввод) — метка I<n> или id сайта") }),
-        ])).min(2).describe("путь трубы по порядку: узлы ({x, y}) и подключения предметов ({item_id})"),
+        ])).min(2).max(MAX_PIPE_PATH_NODES).describe("путь трубы по порядку: узлы ({x, y}) и подключения предметов ({item_id}); не более 32 точек"),
       },
       async (a) => {
         const ws = wsOf();
@@ -949,7 +949,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           vertex: mmInt.describe("индекс вершины (0-based)"),
           x_mm: mmInt,
           y_mm: mmInt,
-        })).min(1),
+        })).min(1).max(MAX_PIPE_PATH_NODES),
       },
       async (a) => {
         const ws = wsOf();

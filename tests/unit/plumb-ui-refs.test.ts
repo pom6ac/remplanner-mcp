@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import type { Model, ItemProps, Pipe } from "../../src/model/types.ts";
 import { addRoomRect } from "../../src/model/walls.ts";
 import { addItem, updateItem, deleteItem } from "../../src/model/items.ts";
-import { addPipe, updatePipe, deletePipe, PIPE_TYPE_BY_KIND } from "../../src/model/pipes.ts";
+import { addPipe, updatePipe, deletePipe, addGasLine, gasLineLengthM, PIPE_TYPE_BY_KIND } from "../../src/model/pipes.ts";
 import { compactModel } from "../../src/model/compact.ts";
 import { clearEntityCollections, replaceEntityCollections } from "../../src/model/collections.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
@@ -224,8 +224,9 @@ test("78: compactModel — трубы TP<n> с типом, длиной и по�
   assert.equal(compact.pipes.length, 1);
   assert.deepEqual(compact.pipes[0], {
     id: "TP1", site_id: pipe.id, type: "water_pipe",
-    from: [1000, 1000], to: [2000, 1000], vertexes: 2, length_m: 1, connected: [a.id],
+    from: [1000, 1000], to: [2000, 1000], vertexes: 2, length_mm: 1000, connected: [a.id],
   });
+  assert.equal((compact.pipes[0] as unknown as Record<string, unknown>)["length_m"], undefined, "длина труб — только в мм (ревью 79 №6)");
 });
 
 test("78: реестр коллекций — clear удаляет трубы, import переносит, walls/items не трогает", () => {
@@ -278,7 +279,10 @@ function saveMock(server: SaveServer, afterSave: (s: SaveServer) => void, transf
     },
     async openEditor() { return editor; },
   };
-  return new Workspace(deps);
+  const ws = new Workspace(deps);
+  // ревью 79 №11: helper изолирован и от записи бэкапов (тройная подмена)
+  ws.writeBackup = () => "/mock/no-write";
+  return ws;
 }
 
 function pipeScenario(): { model: Model; pipe: Pipe } {
@@ -296,6 +300,7 @@ test("78: mock save — труба и подключения доходят до
   await ws.open("0", "1");
   const res = await ws.save();
   assert.equal(res.verified, true);
+  assert.equal(res.backup_path, "/mock/no-write", "бэкап подменён в helper (ревью 79 №11)");
   assert.equal(Object.keys((server.model as { pipes?: Record<string, Pipe> }).pipes ?? {}).length, 1);
 });
 
@@ -406,4 +411,190 @@ test("78: эталон ui-ref-plumb-pipe — pipe_add воспроизводит
       assert.doesNotThrow(() => addPipe(model2, { kind: pk as never, path: [{ itemId: spot.id }, { x: 2000, y: 1000 }] }), `${name} → ${kind}`);
     }
   }
+});
+
+// ---------- ревью 79: исправления major №1–6, minor №7/№8 ----------
+
+/** Предмет с заданными габаритами (для проверок геометрии подключения). */
+function addWideSpot(model: Model, xCm: number, yCm: number, name = "waterspot_cold"): ItemProps {
+  return addItem(model, {
+    name,
+    position: { center: { x: xCm * 10, y: yCm * 10 } },
+    catalogEntry: { id: 0, name, title: name, group: "waterspots", width: 16, height: 9, self_height: 0, plan: { water: 27 }, over_floor: { value: 50, display: false } },
+  });
+}
+
+// №1: второе скалярное подключение того же вида не перезаписывает обратную ссылку
+test("ревью 79 №1: повторное подключение обычного вывода к трубе того же вида отвергается, модель не меняется", () => {
+  const model = baseModel();
+  const s = addWideSpot(model, 100, 100);
+  const p1 = addPipe(model, { kind: "water", path: [{ itemId: s.id }, { x: 2000, y: 1000 }] });
+  const before = JSON.stringify(model);
+  assert.throws(
+    () => addPipe(model, { kind: "water", path: [{ itemId: s.id }, { x: 3000, y: 1000 }] }),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+  );
+  assert.equal(JSON.stringify(model), before, "модель не изменилась");
+  // после отказа первая труба цела, обратная ссылка указывает на неё
+  assert.equal(model.pipes![p1.id]!.vertexes.some((v) => v.id === s.id), true);
+  assert.equal((s as ItemProps & { pipes?: Record<string, unknown> }).pipes!.water_pipe_id, p1.id);
+});
+
+// №2: повтор item-id в разных вершинах пути запрещён во всём пути
+test("ревью 79 №2: один предмет дважды в пути (не подряд) — INVALID_ARGUMENT, модель не меняется", () => {
+  const model = baseModel();
+  const s = addWideSpot(model, 100, 100);
+  const before = JSON.stringify(model);
+  assert.throws(
+    () => addPipe(model, { kind: "water", path: [{ itemId: s.id }, { x: 2000, y: 1000 }, { itemId: s.id }] }),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+  );
+  assert.equal(JSON.stringify(model), before, "модель не изменилась");
+});
+
+// №3: пересчёт длины от точки подключения — не ложный отказ save
+test("ревью 79 №3: редактор пересчитал точку подключения и длину — save проходит (verified)", async () => {
+  const { model, pipe } = pipeScenario();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (m) => {
+    const got = (m as { pipes?: Record<string, Pipe> }).pipes![pipe.id]!;
+    got.vertexes[0]!.point = { x: got.vertexes[0]!.point.x + 5, y: got.vertexes[0]!.point.y };
+    got.length = gasLineLengthM(got);
+  });
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+});
+
+// №3-negative: пересчёт длины не отключает проверку целиком — сдвиг узла с изменением длины ловится
+// (порча внесена при нормализации → NORMALIZATION_DROPPED до записи)
+test("ревью 79 №3: ложная блокировка снята, но реальная порча длины узла всё ещё отвергается", async () => {
+  const { model, pipe } = pipeScenario();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  let saves = 0;
+  const ws = saveMock(server, () => { saves++; }, (m) => {
+    const got = (m as { pipes?: Record<string, Pipe> }).pipes![pipe.id]!;
+    got.vertexes[1]!.point = { x: got.vertexes[1]!.point.x + 50, y: got.vertexes[1]!.point.y };
+    got.length = gasLineLengthM(got);
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => e instanceof McpError && e.code === "NORMALIZATION_DROPPED");
+  assert.equal(saves, 0, "до записи дело не дошло");
+});
+
+// №4: переименование свободного узла + сдвиг точки предмета — не ложная блокировка
+test("ревью 79 №4: rename свободного узла при согласованном items не роняет сопоставление по id", async () => {
+  const { model, pipe } = pipeScenario();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (m) => {
+    const got = (m as { pipes?: Record<string, Pipe> }).pipes![pipe.id]!;
+    got.vertexes[0]!.point = { x: got.vertexes[0]!.point.x, y: got.vertexes[0]!.point.y + 1 };
+    const nodeIdx = got.vertexes.findIndex((v) => v.type === "node");
+    const old = got.vertexes[nodeIdx]!.id;
+    got.vertexes[nodeIdx]!.id = "renamed";
+    delete got.items[old];
+    got.items["renamed"] = "node";
+  });
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+});
+
+// №5: identity вершины-предмета после save — только по id; обратные ссылки и множество труб сверяются
+test("ревью 79 №5a: сервер потерял props.pipes у предмета — SITE_ERROR, не verified", async () => {
+  const { model } = pipeScenario();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const items = (s.model as { items?: Record<string, ItemProps> }).items ?? {};
+    for (const it of Object.values(items)) delete (it as ItemProps & { pipes?: unknown }).pipes;
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    assert.ok(JSON.stringify((e as McpError).details).includes("ссылк"), JSON.stringify((e as McpError).details));
+    return true;
+  });
+});
+
+test("ревью 79 №5b: сервер подменил id вершины-предмета — SITE_ERROR (identity только по id)", async () => {
+  const { model, pipe } = pipeScenario();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const got = (s.model as { pipes?: Record<string, Pipe> }).pipes![pipe.id]!;
+    const old = got.vertexes[0]!.id;
+    got.vertexes[0]!.id = "missing";
+    delete got.items[old];
+    got.items["missing"] = "waterspot";
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => e instanceof McpError && e.code === "SITE_ERROR");
+});
+
+test("ревью 79 №5c: лишняя труба на сервере — SITE_ERROR (сверка множества в обе стороны)", async () => {
+  const { model, pipe } = pipeScenario();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const pipes = (s.model as { pipes?: Record<string, Pipe> }).pipes ?? {};
+    pipes["extra"] = { ...structuredClone(pipe), id: "extra" };
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    assert.ok(JSON.stringify((e as McpError).details).includes("лишн"), JSON.stringify((e as McpError).details));
+    return true;
+  });
+});
+
+// №5 на общей сверке: то же для газовых линий (общий слой, не копия для воды)
+test("ревью 79 №5 (общий слой): лишняя газовая линия на сервере — SITE_ERROR", async () => {
+  const model = baseModel();
+  const line = addGasLine(model, { start: { x: 1000, y: 1000 }, end: { x: 2000, y: 1000 } });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const gas = (s.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {};
+    gas["extra"] = structuredClone((gas as Record<string, unknown>)[line.id]!);
+    (gas as Record<string, unknown>)["extra"] = { ...structuredClone((gas as Record<string, unknown>)[line.id] as object), id: "extra" } as unknown;
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    assert.ok(JSON.stringify((e as McpError).details).includes("лишн"), JSON.stringify((e as McpError).details));
+    return true;
+  });
+});
+
+// №7: верхняя граница пути до аллокации квадратичной матрицы
+test("ревью 79 №7: путь трубы длиннее лимита — INVALID_ARGUMENT до построения матрицы", () => {
+  const model = baseModel();
+  const s = addWideSpot(model, 100, 100);
+  const path: ({ x: number; y: number } | { itemId: string })[] = [{ itemId: s.id }];
+  for (let i = 0; i < 200; i++) path.push({ x: 1000 + i * 10, y: 1000 });
+  const before = JSON.stringify(model);
+  assert.throws(
+    () => addPipe(model, { kind: "water", path }),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+  );
+  assert.equal(JSON.stringify(model), before, "модель не изменилась");
+});
+
+// №8: validatePipePath подключён — пустой путь, одна точка и NaN отвергаются моделью
+test("ревью 79 №8: addPipe отвергает пустой путь, одну точку и NaN до любых мутаций", () => {
+  const model = baseModel();
+  const s = addWideSpot(model, 100, 100);
+  const before = JSON.stringify(model);
+  for (const bad of [
+    [],
+    [{ itemId: s.id }],
+    [{ x: Number.NaN, y: 0 }, { x: 2000, y: 0 }],
+    [{ x: 0, y: 0 }, { x: Number.POSITIVE_INFINITY, y: 0 }],
+  ]) {
+    assert.throws(
+      () => addPipe(model, { kind: "water", path: bad as never }),
+      (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+    );
+  }
+  assert.equal(JSON.stringify(model), before, "модель не изменилась");
 });

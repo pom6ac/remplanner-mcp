@@ -220,18 +220,42 @@ export function pipeVertexType(itemName: string): string {
 
 export type PipePathElement = { x: number; y: number } | { itemId: string };
 
-/** Проверка аргументов трубы (до любых мутаций): конечные числа, путь ≥ 2 точек. */
+/**
+ * Лимит точек пути трубы (ревью 79 №7): матрица смежности квадратична по числу
+ * вершин, а у U-образных водяных труб может быть до 5 сегментов — 32 точки
+ * с запасом, ограничение проверяется до аллокации матрицы (и в zod-схеме).
+ */
+export const MAX_PIPE_PATH_NODES = 32;
+
+/** Проверка аргументов трубы (до любых мутаций): конечные числа, путь ≥ 2 точек,
+ *  лимит размера (ревью 79 №7), предмет не повторяется в пути (ревью 79 №2). */
 function validatePipePath(path: PipePathElement[]): void {
   if (!Array.isArray(path) || path.length < 2) {
     throw new McpError("INVALID_ARGUMENT", "путь трубы должен содержать минимум 2 точки (узлы и/или предметы)");
   }
+  if (path.length > MAX_PIPE_PATH_NODES) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `путь трубы слишком длинный: ${path.length} точек (лимит ${MAX_PIPE_PATH_NODES})`,
+    );
+  }
+  const seenItems = new Set<string>();
   for (const el of path) {
     if ("x" in el) {
       if (!Number.isFinite(el.x) || !Number.isFinite(el.y)) {
         throw new McpError("INVALID_ARGUMENT", "координаты узла трубы должны быть конечными числами");
       }
-    } else if (typeof el.itemId !== "string" || el.itemId === "") {
-      throw new McpError("INVALID_ARGUMENT", "элемент пути трубы: ожидается {x, y} (мм) или {item_id}");
+    } else {
+      if (typeof el.itemId !== "string" || el.itemId === "") {
+        throw new McpError("INVALID_ARGUMENT", "элемент пути трубы: ожидается {x, y} (мм) или {item_id}");
+      }
+      if (seenItems.has(el.itemId)) {
+        throw new McpError(
+          "INVALID_ARGUMENT",
+          `предмет ${el.itemId} встречается в пути трубы дважды — у вершины-предмета одно подключение`,
+        );
+      }
+      seenItems.add(el.itemId);
     }
   }
 }
@@ -286,14 +310,25 @@ export function unlinkItems(model: Model, pipe: Pipe): void {
   }
 }
 
-/** Вершины трубы в цепочку: последовательные дубли запрещены. */
+/** Вершины трубы в цепочку: дубликаты предметов запрещены во всём пути (ревью 79 №2),
+ *  соседние дубли узлов/точек — тоже. */
 function chainVertices(model: Model, kind: PipeKind, path: PipePathElement[]): GasLineVertex[] {
   const out: GasLineVertex[] = [];
+  const seenItems = new Set<string>();
   let prev = "";
   for (const el of path) {
     const v = "x" in el
       ? { id: `_${newId(5)}`, point: cmPoint({ x: el.x, y: el.y }), type: "node" as const }
       : itemVertex(model, kind, el.itemId);
+    if (v.type !== "node") {
+      if (seenItems.has(v.id)) {
+        throw new McpError(
+          "INVALID_ARGUMENT",
+          `предмет ${v.id} встречается в пути трубы дважды — у вершины-предмета одно подключение`,
+        );
+      }
+      seenItems.add(v.id);
+    }
     const sig = v.type === "node" ? `p:${v.point.x},${v.point.y}` : `i:${v.id}`;
     if (sig === prev) {
       throw new McpError("INVALID_ARGUMENT", "в пути трубы подряд идут одинаковые точки (узел-дубликат или предмет дважды)");
@@ -324,10 +359,34 @@ function pipeCandidate(id: string, kind: PipeKind, vertexes: GasLineVertex[]): P
 }
 
 /**
+ * Скалярное подключение занято? (ревью 79 №1): у обычного (не multi) вывода
+ * props.pipes[`${type}_id`] — одна труба. Вторая труба того же вида не может
+ * подключиться: обратная ссылка перезаписалась бы, а старая труба осталась бы
+ * подключённой без ссылки. Проверка до любых мутаций.
+ */
+function assertScalarSlotsFree(model: Model, kind: PipeKind, vertexes: GasLineVertex[]): void {
+  const key = pipeLinkKey(PIPE_TYPE_BY_KIND[kind]);
+  for (const v of vertexes) {
+    if (v.type === "node") continue;
+    const item = model.items[v.id] as (ItemProps & { pipes?: Record<string, unknown> }) | undefined;
+    if (!item || PIPE_MULTI_SPOTS.has(item.name)) continue;
+    const cur = item.pipes?.[key];
+    if (typeof cur === "string" && cur !== "") {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `предмет «${item.name}» (${v.id}) уже подключён к трубе ${cur} этого вида — у обычного вывода одно подключение; сначала отключите его (pipe_delete) или подключите к multi-предмету (коллектор, стояк)`,
+        { details: { kind: "already_connected", item: v.id, pipe: cur } },
+      );
+    }
+  }
+}
+
+/**
  * pipe_add: труба по пути из узлов ({x, y}, мм) и предметов ({item_id}: выводы воды,
  * стояки, ввод водоснабжения — см. PIPE_CONNECTABLE). Цепочка: соседние элементы
  * пути соединяются ребром. Коллекция model.pipes; у предметов-вершин ставится
- * обратная ссылка props.pipes[`${type}_id`]. Кандидат-копия до записи; при ошибке
+ * обратная ссылка props.pipes[`${type}_id`]. Повторное скалярное подключение того
+ * же вида отклоняется (ревью 79 №1). Кандидат-копия до записи; при ошибке
  * модель не меняется.
  */
 export function addPipe(model: Model, params: { kind: PipeKind; path: PipePathElement[] }): Pipe {
@@ -335,7 +394,9 @@ export function addPipe(model: Model, params: { kind: PipeKind; path: PipePathEl
   if (!PIPE_TYPE_BY_KIND[kind]) {
     throw new McpError("INVALID_ARGUMENT", `неизвестный вид трубы «${String(kind)}» (water | hot | drainage)`);
   }
+  validatePipePath(params.path ?? []);
   const vertexes = chainVertices(model, kind, params.path ?? []);
+  assertScalarSlotsFree(model, kind, vertexes);
   const candidate = pipeCandidate(newId(10), kind, vertexes);
   const had = model.pipes !== undefined;
   const backupPipes = had ? structuredClone(model.pipes) : undefined;
