@@ -27,13 +27,17 @@ import { refreshRigelsAfterWallOrPillarChange } from "./rigels.ts";
 
 export type MmPoint = { x: number; y: number };
 
+export type WallRole = "wall" | "balcony" | "terrace_fence";
+
 export type AddWallParams = {
   start: MmPoint;
   end: MmPoint;
   thicknessMm?: number;
   material?: string;
   plan?: "a" | "c";
-  role?: "wall" | "balcony" | "terrace_fence";
+  role?: WallRole;
+  /** Высота стены, мм; по умолчанию — общая высота проекта (total_height). */
+  heightMm?: number;
 };
 
 export type AddPolylineParams = {
@@ -42,6 +46,9 @@ export type AddPolylineParams = {
   thicknessMm?: number;
   material?: string;
   plan?: "a" | "c";
+  role?: WallRole;
+  /** Высота стен, мм; по умолчанию — общая высота проекта. */
+  heightMm?: number;
 };
 
 export type ThicknessSides = { top: number; right: number; bottom: number; left: number };
@@ -123,6 +130,7 @@ function atomic<T>(model: Model, fn: () => T): T {
   const backupWalls = structuredClone(model.walls);
   const backupPillars = structuredClone(model.pillars ?? {});
   const backupRigels = structuredClone(model.rigels ?? {});
+  const hadRigels = model.rigels !== undefined;
   try {
     const result = fn();
     refreshPillarsAfterWallChange(model);
@@ -131,7 +139,9 @@ function atomic<T>(model: Model, fn: () => T): T {
   } catch (e) {
     model.walls = backupWalls;
     model.pillars = backupPillars;
-    model.rigels = backupRigels;
+    // побайтная атомарность: у модели без rigels ключ не появляется
+    if (hadRigels) model.rigels = backupRigels;
+    else delete model.rigels;
     throw e;
   }
 }
@@ -230,7 +240,7 @@ function assertNoCrossing(model: Model, p1: Point, p2: Point, skipIds: ReadonlyS
   }
 }
 
-function makeWall(model: Model, p1: Point, p2: Point, params: { thicknessMm?: number; material?: string; plan?: "a" | "c"; role?: "wall" | "balcony" | "terrace_fence" }): Wall {
+function makeWall(model: Model, p1: Point, p2: Point, params: { thicknessMm?: number; material?: string; plan?: "a" | "c"; role?: WallRole; heightMm?: number }): Wall {
   const depth = mmToCm(params.thicknessMm ?? 200);
   const id = uniqueId(model);
   const wall: Wall = {
@@ -241,7 +251,7 @@ function makeWall(model: Model, p1: Point, p2: Point, params: { thicknessMm?: nu
     archive: 0,
     demount: 0,
     depth,
-    height: totalHeight(model),
+    height: params.heightMm !== undefined ? mmToCm(params.heightMm) : totalHeight(model),
     p1: { x: r2(p1.x), y: r2(p1.y) },
     p2: { x: r2(p2.x), y: r2(p2.y) },
     p1st: 0,
@@ -331,7 +341,7 @@ function mergeCollinear(model: Model): void {
       if (!(a.id in model.walls) || wallLen(a) < 1e-9) continue;
       for (const b of walls) {
         if (b.id === a.id || !(b.id in model.walls) || wallLen(b) < 1e-9) continue;
-        if (Math.abs(a.depth - b.depth) > 0.01 || a.material !== b.material || a.plan !== b.plan) continue;
+        if (Math.abs(a.depth - b.depth) > 0.01 || a.material !== b.material || a.plan !== b.plan || a.role !== b.role) continue;
         if (!collinearDirs(a, b.p1, b.p2)) continue;
         if (projectPt(a.p1, a.p2, b.p1).perp > AXIS_TOL_CM) continue;
         let p1: Point | null = null;
@@ -405,7 +415,7 @@ export function addWall(model: Model, params: AddWallParams): Wall {
  * оси стороны, до прижатия концов), концы кусков прижимаются правилами 1–2;
  * остатки короче 3 см — INVALID_GEOMETRY (редактор их удалит).
  */
-function buildSide(model: Model, sideP1: Point, sideP2: Point, thicknessCm: number, params: { material?: string; plan?: "a" | "c" }): Wall[] {
+function buildSide(model: Model, sideP1: Point, sideP2: Point, thicknessCm: number, params: { material?: string; plan?: "a" | "c"; role?: WallRole; heightMm?: number }): Wall[] {
   const len = dist(sideP1, sideP2);
   if (len < MIN_WALL_CM) return []; // сторона целиком покрыта или вырождена
   const u = { x: (sideP2.x - sideP1.x) / len, y: (sideP2.y - sideP1.y) / len };
@@ -451,7 +461,7 @@ function buildSide(model: Model, sideP1: Point, sideP2: Point, thicknessCm: numb
     const q2 = snapEnd(model, add(sideP1, scale(u, hi)), q1, new Set());
     assertNoCrossing(model, q1, q2, new Set());
     if (dist(q1, q2) < MIN_WALL_CM) continue;
-    const wall = makeWall(model, q1, q2, { thicknessMm: thicknessCm * 10, material: params.material, plan: params.plan });
+    const wall = makeWall(model, q1, q2, { thicknessMm: thicknessCm * 10, material: params.material, plan: params.plan, role: params.role, heightMm: params.heightMm });
     extendExistingEnds(model, wall.p1, wall.p2, wall.depth, new Set([wall.id]));
     walls.push(wall);
   }
@@ -507,7 +517,7 @@ export function addPolyline(model: Model, params: AddPolylineParams): Wall[] {
     for (let i = 0; i < segs; i++) {
       const a = cm(pts[i]!);
       const b = cm(pts[(i + 1) % pts.length]!);
-      walls.push(...buildSide(model, a, b, mmToCm(params.thicknessMm ?? 200), { material: params.material, plan: params.plan }));
+      walls.push(...buildSide(model, a, b, mmToCm(params.thicknessMm ?? 200), { material: params.material, plan: params.plan, role: params.role, heightMm: params.heightMm }));
     }
     mergeCollinear(model);
     snapAllEndsToFaces(model);

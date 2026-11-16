@@ -550,6 +550,13 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
   if (!wall) {
     throw new McpError("NOT_FOUND", `стена ${params.wallId} не найдена`);
   }
+  // на балконные ограждения проёмы не ставятся (редактор: hole__dont_install_over_balcony)
+  if (wall.role === "balcony") {
+    throw new McpError("INVALID_ARGUMENT", `стена ${wall.id} — балконное ограждение, на нём нельзя ставить окна и двери (правило редактора hole__dont_install_over_balcony)`, {
+      hint: "для проёма в наружной стене используйте обычную стену; балконный блок (window_balcony) тоже ставится только на стену",
+      details: { kind: "opening_on_balcony", wall_id: wall.id },
+    });
+  }
   const kind = OPENING_KINDS[params.type];
   if (!kind) {
     throw new McpError("INVALID_ARGUMENT", `неизвестный тип проёма: ${params.type}`, {
@@ -789,6 +796,13 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   if (!wall) throw new McpError("NOT_FOUND", `стена ${params.wallId} не найдена`);
   const hole = wall.holes[params.holeId];
   if (!hole) throw new McpError("NOT_FOUND", `проём ${params.holeId} не найден`);
+  // на балконных ограждениях проёмов быть не может (hole__dont_install_over_balcony):
+  // чужая/повреждённая модель правкой проёма не исправляется — только удалением
+  if (wall.role === "balcony") {
+    throw new McpError("INVALID_ARGUMENT", `стена ${wall.id} — балконное ограждение, проём на нём недопустим (правило редактора hole__dont_install_over_balcony); удалите проём (opening_delete)`, {
+      details: { kind: "opening_on_balcony", wall_id: wall.id, hole_id: params.holeId },
+    });
+  }
   // смена типа — до любой мутации (№3); legacy window_balcony нормализуется к windoor
   // и в сравнении, и в сообщении об ошибке (ревью 28, R2)
   const holeType = normalizeHoleType(hole.type);

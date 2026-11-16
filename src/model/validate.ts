@@ -16,6 +16,7 @@ export type ValidationProblem = {
     | "WALL_OVER_WALL"
     | "WALL_DANGLING"
     | "OPENING_OUTSIDE_WALL"
+    | "OPENING_ON_BALCONY"
     | "OPENING_OFF_AXIS"
     | "OPENINGS_OVERLAP"
     | "ITEM_OUTSIDE_ROOM"
@@ -152,6 +153,14 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
       return Math.abs((p.x - wall.p1.x) * (wall.p2.y - wall.p1.y) - (p.y - wall.p1.y) * (wall.p2.x - wall.p1.x)) / Math.sqrt(axisLen2);
     };
     for (const hole of holes) {
+      // на балконных ограждениях проёмы недопустимы (hole__dont_install_over_balcony)
+      if (wall.role === "balcony") {
+        problems.push({
+          code: "OPENING_ON_BALCONY",
+          message: `проём ${hole.id} стоит на балконном ограждении ${wall.id} — редактор такие проёмы не ставит`,
+          details: { wall_id: wall.id, hole_id: hole.id },
+        });
+      }
       const offAxisPoints = [hole.pc, hole.p1, hole.p2].filter(isPoint).filter((p) => distToAxis(p) > 0.05);
       if (offAxisPoints.length > 0) {
         problems.push({
