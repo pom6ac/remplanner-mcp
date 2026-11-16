@@ -116,6 +116,8 @@ pillar_add                # несущая колонна (20×20 см по ум
 rigel_add                 # потолочный ригель (ось start→end, толщина/высота 300 мм по умолчанию)
 catalog_search + item_add # мебель, сантехника, лестницы (21 вид) и коммуникации (стояки, короб) из каталога
 gas_line_add              # газовая линия (пункт меню «Коммуникации», отдельная сущность pipes_gas)
+pipe_add                  # трубы водоснабжения/канализации (лист «Водоснабжение», kind: water|hot|drainage,
+                          #  подключения к выводам воды waterspot_*, стоякам и коллектору)
 floor_hole_add            # проем в полу (прямоугольник в комнате, level_holes)
 terrace_add               # терраса (замкнутое кольцо границ terrace_borders) + terrace_fence_add / terrace_column_add
 territory_add             # участок (замкнутое кольцо границ territory_borders)
