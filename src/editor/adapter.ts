@@ -38,8 +38,8 @@ export type NormalizeResult = {
   /** project.copy("server") после restore → draw({rooms:1}). */
   model: Record<string, unknown>;
   rooms: EditorRoom[];
-  before: { walls: number; holes: number; items: number; pillars?: number };
-  after: { walls: number; holes: number; items: number; pillars?: number };
+  before: { walls: number; holes: number; items: number; pillars?: number; rigels?: number };
+  after: { walls: number; holes: number; items: number; pillars?: number; rigels?: number };
   /** Стены живого редактора после draw: связи концов и isOverWall (§12.4). */
   walls?: NormalizedWall[];
   /** Счётчики ошибок редактора из copy("server"). */
@@ -237,6 +237,7 @@ export function buildHandle(
           .reduce((n: number, w: { holes?: Record<string, unknown> }) => n + Object.keys(w.holes ?? {}).length, 0),
         items: Object.keys((model as { items?: Record<string, unknown> }).items ?? {}).length,
         pillars: Object.keys((model as { pillars?: Record<string, unknown> }).pillars ?? {}).length,
+        rigels: Object.keys((model as { rigels?: Record<string, unknown> }).rigels ?? {}).length,
       };
       // Playwright не вызывает строковые функции с аргументами — аргумент через window.
       // Повтор попытки: сразу после открытия редактора copy('server') может отставать
@@ -277,6 +278,7 @@ export function buildHandle(
         if (result.after.holes < input.holes) dropped.push(`openings ${input.holes}→${result.after.holes}`);
         if (result.after.items < input.items) dropped.push(`items ${input.items}→${result.after.items}`);
         if (result.after.pillars !== undefined && result.after.pillars < (input.pillars ?? 0)) dropped.push(`pillars ${input.pillars}→${result.after.pillars}`);
+        if (result.after.rigels !== undefined && result.after.rigels < (input.rigels ?? 0)) dropped.push(`rigels ${input.rigels}→${result.after.rigels}`);
         if (dropped.length > 0) {
           throw new McpError("NORMALIZATION_DROPPED", `редактор молча удалил элементы: ${dropped.join(", ")}`, {
             details: { dropped },

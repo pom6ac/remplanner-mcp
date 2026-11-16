@@ -6,6 +6,7 @@ import { wallFaces } from "./walls.ts";
 import { McpError } from "../errors.ts";
 import { lineIntersection, overlapArea, pointInPolygon, type Polygon } from "./geometry.ts";
 import type { RoomPolygon } from "./items.ts";
+import { refreshRigelsAfterWallOrPillarChange } from "./rigels.ts";
 
 /**
  * Колонны (пункт меню «Несущая колонна», model.pillars, этап 41, 2026-11-16).
@@ -426,6 +427,25 @@ function finalizeCandidate(candidate: Pillar, model: Model): void {
   candidate.inRoom = pillarInRoom(candidate, model);
 }
 
+/**
+ * Атомарная финализация колонных операций с ригелями (ревью 48 №5): мутация и
+ * пересчёт ригелей — одна операция; при ошибке колонны и ригели восстанавливаются
+ * побайтно, а не только обещаны в документации.
+ */
+function atomicPillar<T>(model: Model, fn: () => T): T {
+  const backupPillars = structuredClone(model.pillars ?? {});
+  const backupRigels = structuredClone(model.rigels ?? {});
+  try {
+    const result = fn();
+    refreshRigelsAfterWallOrPillarChange(model);
+    return result;
+  } catch (e) {
+    model.pillars = backupPillars;
+    model.rigels = backupRigels;
+    throw e;
+  }
+}
+
 /** pillar_add: ставит колонну (мм), прижимает к грани стены при расстоянии ≤ 3 см, проверяет коллизии. */
 export function addPillar(model: Model, params: AddPillarParams, rooms?: RoomPolygon[]): Pillar {
   validatePillarParams(params);
@@ -442,8 +462,10 @@ export function addPillar(model: Model, params: AddPillarParams, rooms?: RoomPol
   }
   finalizeCandidate(candidate, model);
   assertPillarInvariants(candidate, model, rooms); // инварианты кандидата — до записи в модель
-  model.pillars[candidate.id] = candidate;
-  return candidate;
+  return atomicPillar(model, () => {
+    model.pillars[candidate.id] = candidate;
+    return candidate;
+  });
 }
 
 /**
@@ -476,14 +498,18 @@ export function updatePillar(model: Model, params: UpdatePillarParams, rooms?: R
   }
   finalizeCandidate(candidate, model);
   assertPillarInvariants(candidate, model, rooms);
-  assignPillar(pillar, candidate);
-  return pillar;
+  return atomicPillar(model, () => {
+    assignPillar(pillar, candidate);
+    return pillar;
+  });
 }
 
-/** pillar_delete: удаляет колонну. */
+/** pillar_delete: удаляет колонну (связи ригелей с её гранями пересчитываются атомарно). */
 export function deletePillar(model: Model, pillarId: string): void {
   if (!model.pillars[pillarId]) throw new McpError("NOT_FOUND", `колонна ${pillarId} не найдена`);
-  delete model.pillars[pillarId];
+  atomicPillar(model, () => {
+    delete model.pillars[pillarId];
+  });
 }
 
 /**

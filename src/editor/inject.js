@@ -75,6 +75,7 @@ export const PAGE = {
       holes: countHoles(w.WALLS),
       items: Object.keys(w.ITEMS || {}).length,
       pillars: Object.keys(w.PILLARS || {}).length,
+      rigels: Object.keys(w.RIGELS || {}).length,
     };
     let restoreError = null;
     try {
@@ -119,6 +120,7 @@ export const PAGE = {
           holes: countHoles(wallsNow),
           items: Object.keys(w.ITEMS || {}).length,
           pillars: Object.keys(w.PILLARS || {}).length,
+          rigels: Object.keys(w.RIGELS || {}).length,
         };
         // связи концов и наложение каждой стены (design §12.4): проверка результата draw
         const linkOf = (l) => (l ? { ct: l.ct, id: l.id, z0: l.z0, z1: l.z1, pos: l.pos } : null);

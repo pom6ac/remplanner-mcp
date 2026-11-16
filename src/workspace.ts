@@ -50,7 +50,7 @@ export type SaveOutcome = {
   verified: boolean;
   rounds: number;
   /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено. */
-  will_delete: { walls: number; openings: number; items: number; pillars: number };
+  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number };
   /** Предупреждения (удаления объектов сервера). */
   warnings: string[];
 };
@@ -62,8 +62,8 @@ export const MAX_HISTORY = 50;
 /** Результат мутации стен: полезное значение + предупреждения (офлайн-режим). */
 export type WallMutation<T> = { result: T; warnings: string[] };
 
-/** Счётчики объектов модели: стены, проёмы, предметы, колонны. */
-export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number } {
+/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели. */
+export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number } {
   const m = model as Model;
   const walls = m.walls ?? {};
   return {
@@ -71,6 +71,7 @@ export function modelCounts(model: Model | Record<string, unknown>): { walls: nu
     openings: Object.values(walls).reduce((n, w) => n + Object.keys(w.holes ?? {}).length, 0),
     items: Object.keys(m.items ?? {}).length,
     pillars: Object.keys(m.pillars ?? {}).length,
+    rigels: Object.keys(m.rigels ?? {}).length,
   };
 }
 
@@ -94,7 +95,7 @@ export function modelIsContentEmpty(model: Model): boolean {
   const c = modelCounts(model);
   if (c.walls > 0 || c.items > 0) return false;
   const nonEmpty = (v: unknown): boolean => v !== null && v !== undefined && typeof v === "object" && Object.keys(v as object).length > 0;
-  if (nonEmpty(model.pillars) || nonEmpty(model.rulers) || nonEmpty(model.comments)) return false;
+  if (nonEmpty(model.pillars) || nonEmpty(model.rigels) || nonEmpty(model.rulers) || nonEmpty(model.comments)) return false;
   if (nonEmpty(model.rooms2) || nonEmpty(model.rooms1)) return false;
   return true;
 }
@@ -182,10 +183,42 @@ function pillarVerificationMismatches(expected: Record<string, PillarSig>, got: 
   return out;
 }
 
+/** Значимая геометрия ригеля для сверки после сохранения (этап 47). */
+type RigelSig = { p1?: Point; p2?: Point; depth?: number; height?: number; ceiling_type?: string };
+
+/**
+ * Расхождение ригелей между нормализованной моделью и сервером после save (этап 47):
+ * идентичности и значимая геометрия (концы оси, толщина, высота, тип отделки;
+ * допуск 0,1 см). Возвращает список человекочитаемых расхождений.
+ */
+function rigelVerificationMismatches(expected: Record<string, RigelSig>, got: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
+    a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
+  for (const [id, r] of Object.entries(expected)) {
+    const g = got[id] as RigelSig | undefined;
+    if (!g) {
+      out.push(`${id}: ригель исчез после сохранения`);
+      continue;
+    }
+    if (!near(g.p1?.x, r.p1?.x, 0.1) || !near(g.p1?.y, r.p1?.y, 0.1)) {
+      out.push(`${id}: начало оси сместилось (на сервере ${g.p1?.x},${g.p1?.y}; ожидалось ${r.p1?.x},${r.p1?.y})`);
+    }
+    if (!near(g.p2?.x, r.p2?.x, 0.1) || !near(g.p2?.y, r.p2?.y, 0.1)) {
+      out.push(`${id}: конец оси сместился (на сервере ${g.p2?.x},${g.p2?.y}; ожидалось ${r.p2?.x},${r.p2?.y})`);
+    }
+    if (!near(g.depth, r.depth, 0.1)) out.push(`${id}: толщина изменилась (на сервере ${g.depth}; ожидалось ${r.depth})`);
+    if (!near(g.height, r.height, 0.1)) out.push(`${id}: высота изменилась (на сервере ${g.height}; ожидалось ${r.height})`);
+    if ((g.ceiling_type ?? "") !== (r.ceiling_type ?? "")) out.push(`${id}: тип отделки изменился (на сервере «${g.ceiling_type ?? ""}»; ожидалось «${r.ceiling_type ?? ""}»)`);
+  }
+  return out;
+}
+
 function toModel(raw: Record<string, unknown>): Model {  const model = raw as Model;
   model.walls ??= {};
   model.items ??= {};
   model.pillars ??= {};
+  model.rigels ??= {};
   model.rulers ??= {};
   model.comments ??= {};
   // сервер отдаёт holes: null у стен без проёмов — нормализуем в {}
@@ -368,6 +401,15 @@ export class Workspace {
           details: { lost_pillars: lostPillarsNorm },
         });
       }
+      // этап 47: ригели после нормализации не теряются (сверка идентичностей)
+      const wsRigelIds = new Set(Object.keys(this.modelInternal!.rigels ?? {}));
+      const normRigelIds = new Set(Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}));
+      const lostRigelsNorm = missingIds(wsRigelIds, normRigelIds);
+      if (lostRigelsNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял ригели (${lostRigelsNorm.join(", ")}) — мутация отменена`, {
+          details: { lost_rigels: lostRigelsNorm },
+        });
+      }
       // нормализованная копия становится канонической
       this.modelInternal = toModel(structuredClone(norm.model as unknown as Record<string, unknown>));
       if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
@@ -477,12 +519,14 @@ export class Workspace {
       openings: missingIds(openingIds(serverModel), openingIds(this.modelInternal!)),
       items: missingIds(new Set(Object.keys(serverModel.items ?? {})), new Set(Object.keys(this.modelInternal!.items ?? {}))),
       pillars: missingIds(new Set(Object.keys(serverModel.pillars ?? {})), new Set(Object.keys(this.modelInternal!.pillars ?? {}))),
+      rigels: missingIds(new Set(Object.keys(serverModel.rigels ?? {})), new Set(Object.keys(this.modelInternal!.rigels ?? {}))),
     };
     const willDelete = {
       walls: deletedIds.walls.length,
       openings: deletedIds.openings.length,
       items: deletedIds.items.length,
       pillars: deletedIds.pillars.length,
+      rigels: deletedIds.rigels.length,
     };
     const warnings: string[] = [];
     const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
@@ -491,6 +535,7 @@ export class Workspace {
     if (willDelete.openings > 0) warnings.push(`будут удалены проёмы (${willDelete.openings}), которых нет в модели: ${idList(deletedIds.openings)}`);
     if (willDelete.items > 0) warnings.push(`будут удалены предметы (${willDelete.items}), которых нет в модели: ${idList(deletedIds.items)}`);
     if (willDelete.pillars > 0) warnings.push(`будут удалены колонны (${willDelete.pillars}), которых нет в модели: ${idList(deletedIds.pillars)}`);
+    if (willDelete.rigels > 0) warnings.push(`будут удалены ригели (${willDelete.rigels}), которых нет в модели: ${idList(deletedIds.rigels)}`);
     if (fresh.save_id !== saveIdBefore) {
       if (!this.editorInternal && !options.force) {
         throw new McpError(
@@ -540,9 +585,16 @@ export class Workspace {
     }
     const gotItemIds = new Set(Object.keys((norm.model as { items?: Record<string, unknown> }).items ?? {}));
     const gotPillarIds = new Set(Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}));
+    // этап 47: ожидаемые ригели — из нормализованной модели (того, что ушло на save):
+    // редактор при нормализации пересчитывает polygon/l/r, сверять надо то, что реально
+    // записано, а не устаревшую рабочую копию
+    const expectedRigels = structuredClone((norm.model as { rigels?: Record<string, RigelSig> }).rigels ?? {});
+    const localRigelIds = new Set(Object.keys(this.modelInternal!.rigels ?? {}));
+    const gotRigelIds = new Set(Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}));
     const lostOpenings = missingIds(localOpeningIds, gotOpeningIds);
     const lostItems = missingIds(localItemIds, gotItemIds);
     const lostPillars = missingIds(localPillarIds, gotPillarIds);
+    const lostRigels = missingIds(localRigelIds, gotRigelIds);
     const gotSegments = wallAxisSegments(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
@@ -552,7 +604,7 @@ export class Workspace {
     }
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
-      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0
+      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -565,6 +617,7 @@ export class Workspace {
           lost_openings: lostOpenings,
           lost_items: lostItems,
           lost_pillars: lostPillars,
+          lost_rigels: lostRigels,
         },
       });
     }
@@ -592,8 +645,10 @@ export class Workspace {
       const pillarsAfter = (after.model["pillars"] as Record<string, unknown> | undefined) ?? {};
       const roomsAfter = Object.keys((after.model["rooms2"] as Record<string, unknown> | undefined) ?? {}).length;
       const pillarMismatch = pillarVerificationMismatches(expectedPillars, pillarsAfter);
+      const rigelsAfter = (after.model["rigels"] as Record<string, unknown> | undefined) ?? {};
+      const rigelMismatch = rigelVerificationMismatches(expectedRigels, rigelsAfter);
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -604,7 +659,7 @@ export class Workspace {
             expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length,
             coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>) * 10),
             axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,
-            pillar_mismatches: pillarMismatch, rooms_expected: normRooms, rooms_on_server: roomsAfter,
+            pillar_mismatches: pillarMismatch, rigel_mismatches: rigelMismatch, rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });
       }
@@ -631,7 +686,7 @@ export class Workspace {
     prepareForRestore(prepared);
     const norm = await editor.normalize(prepared as unknown as Record<string, unknown>);
     if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
-    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items, pillars: norm.after.pillars ?? Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}).length };
+    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items, pillars: norm.after.pillars ?? Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}).length, rigels: norm.after.rigels ?? Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}).length };
     // стены — по каноническому набору осевых отрезков (ревью v0.1.1-r2 R2-3):
     // слияние/разрез коллинеарных стен — допустимая нормализация, сдвиг и лишние
     // стены — расхождение; проёмы и предметы — по счётчикам
@@ -644,6 +699,7 @@ export class Workspace {
     if (seen.openings !== expected.openings) mismatch.push(`openings: в модели ${expected.openings}, в редакторе ${seen.openings}`);
     if (seen.items !== expected.items) mismatch.push(`items: в модели ${expected.items}, в редакторе ${seen.items}`);
     if (seen.pillars !== expected.pillars) mismatch.push(`pillars: в модели ${expected.pillars}, в редакторе ${seen.pillars}`);
+    if (seen.rigels !== expected.rigels) mismatch.push(`rigels: в модели ${expected.rigels}, в редакторе ${seen.rigels}`);
     if (mismatch.length > 0) {
       throw new McpError("RENDER_OUT_OF_SYNC", `редактор показывает не текущую модель (${mismatch.join(", ")}) — картинка не отдаётся`, {
         hint: "повторите render_plan; при повторении сверитесь с model_get и model_validate",
@@ -661,6 +717,7 @@ export class Workspace {
       openings: expected.openings,
       items: expected.items,
       pillars: expected.pillars,
+      rigels: expected.rigels,
       editor: seen,
     };
     return { ...res, revision };
