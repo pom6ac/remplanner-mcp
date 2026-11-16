@@ -14,6 +14,21 @@ export type RenderedPlan = {
   widthPx: number;
   sheet: string;
   bytes: number;
+  /**
+   * Ревизия модели, которую показал редактор (дефект 1, отчёт 11): хэш канонической
+   * модели workspace, счётчики объектов и счётчики, которые видит редактор после
+   * синхронизации. Заполняется workspace, не renderPlanToFile.
+   */
+  revision?: RenderRevision;
+};
+
+export type RenderRevision = {
+  model_hash: string;
+  save_id: string | null;
+  walls: number;
+  openings: number;
+  items: number;
+  editor: { walls: number; openings: number; items: number };
 };
 
 export type RenderEditorLike = {
@@ -40,7 +55,9 @@ export async function renderPlanToFile(
 ): Promise<RenderedPlan> {
   const sheet = options.sheet ?? "init";
   const widthPx = options.widthPx ?? 1600;
-  const png = await editor.renderPng({ sheet, widthPx, dimensions: options.dimensions });
+  // itemIds — предметы, которые должны быть видны на этом листе; без passthrough
+  // проверка видимости в адаптере не получала бы ids вовсе (ревью v0.1.1 №3)
+  const png = await editor.renderPng({ sheet, widthPx, dimensions: options.dimensions, itemIds: options.itemIds });
   if (!pngMagic(png)) {
     throw new McpError("SITE_ERROR", "скриншот холста не похож на PNG", { details: { bytes: png.length } });
   }
