@@ -34,6 +34,8 @@ export type CompactOpening = {
   slope_angle_deg?: number;
   /** Сторона открывания из модели (окна: "r", "l", "r-l", "l-r"). */
   opening?: string;
+  /** Короб с наличниками (двери и окна; 1 — включён). */
+  casing?: number;
   /** Арочный проём. */
   arched?: boolean;
   /** Подоконник (окна). */
@@ -129,6 +131,7 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       if (hole.casements !== undefined) c.casements = hole.casements;
       if (hole.slope_angle !== undefined) c.slope_angle_deg = hole.slope_angle as number;
       if (hole.opening !== undefined) c.opening = hole.opening;
+      if (hole.casing !== undefined) c.casing = hole.casing as number;
       if (hole.arched !== undefined && hole.arched !== 0) c.arched = true;
       if (hole.window_width !== undefined) c.window_width_mm = round0(cmToMm(hole.window_width as number));
       if (hole.window_height !== undefined) c.window_height_mm = round0(cmToMm(hole.window_height as number));

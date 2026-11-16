@@ -45,7 +45,7 @@ test("addOpening: дверь 800 с отступом 300 от угла внут�
   assert.deepEqual(hole.pc, { x: 70, y: -10 });
   assert.deepEqual(hole.p1, { x: 30, y: -10 });
   assert.deepEqual(hole.p2, { x: 110, y: -10 });
-  assert.equal(hole.height, 200);
+  assert.equal(hole.height, 210); // эталон UI (этап 37): высота двери 210, а не 200
   assert.equal(hole.depth, 4);
   assert.equal(hole.floor_height, undefined);
 });
