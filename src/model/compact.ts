@@ -71,10 +71,25 @@ export type CompactItem = {
   height_mm: number;
 };
 
+export type CompactPillar = {
+  id: string;
+  site_id: string;
+  x_mm: number;
+  y_mm: number;
+  angle_deg: number;
+  /** Габарит по X, мм. */
+  width_mm: number;
+  /** Габарит по Y (глубина), мм. */
+  depth_mm: number;
+  /** Высота, мм. */
+  total_height_mm: number;
+};
+
 export type CompactModel = {
   walls: CompactWall[];
   rooms: CompactRoom[];
   items: CompactItem[];
+  pillars: CompactPillar[];
   total_height_mm: number;
 };
 
@@ -183,11 +198,23 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     height_mm: round0(cmToMm(item.self_height ?? 0)),
   }));
 
+  const pillars: CompactPillar[] = Object.values(model.pillars ?? {}).map((pillar, i) => ({
+    id: `P${i + 1}`,
+    site_id: pillar.id,
+    x_mm: round0(cmToMm(pillar.pc.x)),
+    y_mm: round0(cmToMm(pillar.pc.y)),
+    angle_deg: pillar.angle ?? 0,
+    width_mm: round0(cmToMm(pillar.width)),
+    depth_mm: round0(cmToMm(pillar.height)),
+    total_height_mm: round0(cmToMm(pillar.total_height ?? 270)),
+  }));
+
   const totalHeight = typeof model.total_height === "number" ? model.total_height : 270;
   return {
     walls,
     rooms: compactRooms,
     items,
+    pillars,
     total_height_mm: round0(cmToMm(totalHeight)),
   };
 }

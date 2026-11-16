@@ -158,7 +158,7 @@ test("render-sync: ответ render_plan содержит ревизию — х
     assert.equal(res.revision!.walls, 4);
     assert.equal(res.revision!.openings, 2);
     assert.equal(res.revision!.items, 1);
-    assert.deepEqual(res.revision!.editor, { walls: 4, openings: 2, items: 1 }, "счётчики, которые видит редактор");
+    assert.deepEqual(res.revision!.editor, { walls: 4, openings: 2, items: 1, pillars: 0 }, "счётчики, которые видит редактор");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -93,6 +93,57 @@ export type ItemProps = {
   [key: string]: unknown;
 };
 
+/**
+ * Колонна (model.pillars, модель редактора в см): эталоны
+ * tests/fixtures/ui-ref-pillar-<вариант>.json (этап 41, 2026-11-16).
+ * width/height — габариты пятна на плане (до поворота), total_height — высота
+ * (как высота потолка комнаты), pc — центр, p1..p4 — углы (обязательны при restore),
+ * edges — четыре грани с side t/r/b/l, eds — примыкания граней к стенам
+ * (пересчитываются редактором при restore, но пишутся для каноничного вида).
+ */
+export type PillarEdge = {
+  p1: Point;
+  p2: Point;
+  /** Сторона относительно углов p1→p2→p3→p4: t (p1-p2), r (p2-p3), b (p3-p4), l (p4-p1). */
+  side: "t" | "r" | "b" | "l";
+  /** 1 — грань без стены (свободная); отсутствует у грани-примыкания. */
+  no_wall?: number;
+  [key: string]: unknown;
+};
+
+export type Pillar = {
+  id: string;
+  /** 1 — целиком внутри контура квартиры; 0 — грань лежит на линии стены/границы. */
+  inRoom?: number;
+  /** Лист: "a" — init. */
+  plan: string;
+  role: "pillar" | "gypsum" | "terrace_column" | (string & {});
+  /** Габарит по X до поворота, см. */
+  width: number;
+  /** Габарит по Y (глубина) до поворота, см. */
+  height: number;
+  /** Высота колонны, см (по умолчанию — высота потолка проекта). */
+  total_height?: number;
+  /** Поворот, градусы. */
+  angle: number;
+  /** Смещение по этажу (у колонны меню — 0). */
+  f0offset?: number;
+  /** Центр, см. */
+  pc: Point;
+  /** Углы (обязательны при restore: Pillar.restore читает p1..p4 до пересчёта граней). */
+  p1: Point;
+  p2: Point;
+  p3: Point;
+  p4: Point;
+  /** Грани (пересчитываются редактором при restore; пишем для каноничного вида). */
+  edges?: PillarEdge[];
+  /** Примыкания граней к стенам: side → {p1, p2, wall:{id, balc}} (пересчитываются редактором). */
+  eds?: Record<string, unknown>;
+  /** Показывать размеры на плане (переключатель панели). */
+  show_dls?: boolean;
+  [key: string]: unknown;
+};
+
 export type Model = {
   v: number;
   id: string;
@@ -103,7 +154,8 @@ export type Model = {
    * обёртка {props} — только формат живых объектов редактора (ITEMS).
    */
   items: Record<string, ItemProps>;
-  pillars: Record<string, unknown>;
+  /** Колонны (пункт меню «Несущая колонна») и прочие pillar-объекты модели редактора. */
+  pillars: Record<string, Pillar>;
   rulers: Record<string, unknown>;
   comments: Record<string, unknown>;
   total_height: number;
