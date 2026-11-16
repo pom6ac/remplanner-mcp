@@ -109,6 +109,7 @@ export function addBorderRing(model: Model, key: BordersKey, kind: string, param
   }
   const pointsCm = params.points.map((p) => ({ x: mmToCm(p.x), y: mmToCm(p.y) }));
   assertRingPoints(pointsCm, kind);
+  const hadCollection = model[key] !== undefined;
   model[key] ??= {};
   const borders = (model[key] as Record<string, TerraceBorder>);
   const created: TerraceBorder[] = [];
@@ -119,8 +120,10 @@ export function addBorderRing(model: Model, key: BordersKey, kind: string, param
     if (key === "terrace_borders") {
       const fence = borderOnFence(model, p1, p2);
       if (fence) {
-        // атомарность: созданные границы до ошибки не сохраняются
+        // атомарность: созданные границы до ошибки не сохраняются; пустая коллекция,
+        // созданная этим вызовом, не остаётся (ось B ревью 66)
         for (const c of created) delete borders[c.id];
+        if (!hadCollection) delete model[key];
         throw new McpError("GEOMETRY_CONFLICT", `граница террасы лежит на ограждении ${fence} — редактор удаляет такие границы при восстановлении; вместо границы проведите ограждение (terrace_fence_add)`, {
           details: { kind: "border_on_fence", fence_id: fence },
         });
@@ -161,6 +164,8 @@ export function updateBorder(model: Model, key: BordersKey, kind: string, params
   finite("end.y", params.end?.y);
   const borders = bordersOf(model, key);
   const backup = structuredClone(borders);
+  // id границ, чьи концы переехали (для них повторяется проверка ограждения)
+  const movedIds = new Set<string>();
   const applyMove = (from: Point, toCm: Point): void => {
     const tol = 0.5;
     // транзитивный перенос узла: все границы, чей конец совпадает с точкой (включая новые позиции)
@@ -177,6 +182,7 @@ export function updateBorder(model: Model, key: BordersKey, kind: string, params
             if (Math.abs(p.x - toCm.x) > 1e-9 || Math.abs(p.y - toCm.y) > 1e-9) {
               p.x = r2(toCm.x);
               p.y = r2(toCm.y);
+              movedIds.add(b.id);
               moved = true;
             }
           }
@@ -224,6 +230,9 @@ export function updateBorder(model: Model, key: BordersKey, kind: string, params
   }
   if (key === "terrace_borders") {
     for (const b of Object.values(borders)) {
+      // проверка только для перенесённых границ: граница, уже лежавшая на ограждении
+      // (например, из импорта), не должна блокировать правку других границ
+      if (!movedIds.has(b.id)) continue;
       const fence = borderOnFence(model, b.p1, b.p2);
       if (fence) {
         model[key] = backup as Record<string, TerraceBorder>;
