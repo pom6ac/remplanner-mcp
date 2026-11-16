@@ -611,6 +611,14 @@ test("rev67 minor8: id_room проёма — комната по провере�
   assert.equal(updated.id_room, "r1");
 });
 
+test("rev67: length проёма — периметр в метрах (живая проверка 67: редактор пересчитывает)", () => {
+  const { model } = roomModel();
+  // 300×200 мм = 30×20 см → периметр 1 м
+  const hole = addFloorHole(model, { corner1: { x: 1000, y: -2000 }, corner2: { x: 1300, y: -2200 } }, [ROOM_POLY]);
+  assert.ok(near(hole.length, 1), `length ${hole.length}`);
+  assert.ok(near(hole.area, 0.06), `area ${hole.area}`);
+});
+
 // ---------- стеновая операция рядом с проёмом (пересчёт только затронутых) ----------
 
 test("wall ops: новая стена рядом с проёмом и террасой не ломает модель", () => {

@@ -59,7 +59,9 @@ function buildCandidate(id: string, c1Cm: Point, c2Cm: Point, roomId: string | n
     vertexes,
     items,
     type: FLOOR_HOLE_TYPE,
-    length: vertexes.length,
+    // length — периметр в метрах (живая проверка 67: редактор пересчитывает,
+    // для эталона 100×100 см это 4 м); число вершин задаёт polygon/vertexes
+    length: Math.round((((w + h) * 2) / 100) * 100) / 100,
     id_room: roomId,
     area: Math.round(((w * h) / 10_000) * 100) / 100,
     pc: { x: r2((c1Cm.x + c2Cm.x) / 2), y: r2((c1Cm.y + c2Cm.y) / 2) },
