@@ -285,6 +285,9 @@ export const SCENARIO_HINT =
 
 /** Zod-примитивы (мм). */
 export const mmInt = z.number().finite().int().nonnegative().describe("мм, целое, ≥ 0");
+// координаты узлов/точек могут быть отрицательными (ревью 85 №1: план не обязан
+// умещаться в положительный квадрант — как в mmPoint)
+export const mmIntSigned = z.number().finite().int().describe("мм, целое (может быть отрицательным)");
 export const mm = z.number().finite().describe("мм");
 // координаты точек могут быть отрицательными (план не обязан умещаться в положительный квадрант)
 export const mmPoint = z.object({

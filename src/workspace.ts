@@ -95,7 +95,7 @@ export type SaveOutcome = {
   verified: boolean;
   rounds: number;
   /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено. */
-  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number };
+  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number; led_strips: number; stripes_light: number; line_strips: number };
   /** Предупреждения (удаления объектов сервера). */
   warnings: string[];
 };
@@ -107,8 +107,8 @@ export const MAX_HISTORY = 50;
 /** Результат мутации стен: полезное значение + предупреждения (офлайн-режим). */
 export type WallMutation<T> = { result: T; warnings: string[] };
 
-/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии, трубы воды, границы террас/участка, проёмы пола. */
-export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number } {
+/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии, трубы воды, границы террас/участка, проёмы пола, световые линии. */
+export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number; led_strips: number; stripes_light: number; line_strips: number } {
   const m = model as Model;
   const walls = m.walls ?? {};
   return {
@@ -122,6 +122,9 @@ export function modelCounts(model: Model | Record<string, unknown>): { walls: nu
     terrace_borders: Object.keys(m.terrace_borders ?? {}).length,
     territory_borders: Object.keys(m.territory_borders ?? {}).length,
     level_holes: Object.keys(m.level_holes ?? {}).length,
+    led_strips: Object.keys(m.led_strips ?? {}).length,
+    stripes_light: Object.keys(m.stripes_light ?? {}).length,
+    line_strips: Object.keys(m.line_strips ?? {}).length,
   };
 }
 
@@ -149,6 +152,7 @@ export function modelIsContentEmpty(model: Model): boolean {
   if (nonEmpty(model.pipes_gas)) return false;
   if (nonEmpty(model.pipes)) return false;
   if (nonEmpty(model.terrace_borders) || nonEmpty(model.territory_borders) || nonEmpty(model.level_holes)) return false;
+  if (nonEmpty(model.led_strips) || nonEmpty(model.stripes_light) || nonEmpty(model.line_strips)) return false;
   if (nonEmpty(model.rooms2) || nonEmpty(model.rooms1)) return false;
   return true;
 }
@@ -164,8 +168,23 @@ function rawJsonHasEntities(value: unknown, depth = 0): boolean {
   return false;
 }
 
-/** id проёмов модели: id holes по всем стенам (ревью v0.1.1 №4/№5 — сравнение по id). */
-function openingIds(model: Model): Set<string> {
+/**
+ * Убрать id_room вершин световых линий (этап 84): редактор сам пересчитывает
+ * принадлежность узла комнате при draw/normalize (живая проба 84: узлы получили
+ * id_room комнаты вместо "" из serialize LedStrip) — в сверке РАБОЧЕЙ копии с
+ * нормализованной это производное поле; сверка после save идёт по нормализованному
+ * ожиданию и остаётся строгой.
+ */
+function stripVertexIdRoom<T>(lines: T): T {
+  for (const line of Object.values(lines as Record<string, { vertexes?: Array<Record<string, unknown>> }>)) {
+    if (Array.isArray(line?.vertexes)) {
+      for (const v of line.vertexes) delete v["id_room"];
+    }
+  }
+  return lines;
+}
+
+/** id проёмов модели: id holes по всем стенам (ревью v0.1.1 №4/№5 — сравнение по id). */function openingIds(model: Model): Set<string> {
   const out = new Set<string>();
   for (const [wid, w] of Object.entries(model.walls ?? {})) {
     for (const [hid, h] of Object.entries(w.holes ?? {})) {
@@ -1083,6 +1102,24 @@ export class Workspace {
           details: { level_hole_mismatches: lostHoles },
         });
       }
+      // этап 84: световые линии листа «Освещение» после нормализации не теряются и
+      // не искажаются (семантическая сверка графа — общий слой газовых графов)
+      const lightCollections: [keyof Model, string, string][] = [
+        ["led_strips", "led_strips", "светодиодная лента"],
+        ["stripes_light", "stripes_light", "трековая шина"],
+        ["line_strips", "line_strips", "линейный свет"],
+      ];
+      for (const [key, _coll, label] of lightCollections) {
+        const wsLines = stripVertexIdRoom(structuredClone((this.modelInternal![key] ?? {}) as Record<string, GasLineSig>)) as Record<string, GasLineSig>;
+        const normLines = ((norm.model as Record<string, unknown>)[key as string] ?? {}) as Record<string, unknown>;
+        const lostLines = missingIds(new Set(Object.keys(wsLines)), new Set(Object.keys(normLines)));
+        const graphNorm = gasLineGraphMismatches(structuredClone(wsLines), normLines, label);
+        if (lostLines.length > 0 || graphNorm.length > 0) {
+          throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил световые линии (${label}) — мутация отменена`, {
+            details: { [`lost_${key}`]: lostLines, [`${key}_mismatches`]: graphNorm },
+          });
+        }
+      }
       // нормализованная копия становится канонической
       this.modelInternal = toModel(structuredClone(norm.model as unknown as Record<string, unknown>));
       if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
@@ -1204,6 +1241,9 @@ export class Workspace {
       terrace_borders: missingIds(new Set(Object.keys(serverModel.terrace_borders ?? {})), new Set(Object.keys(this.modelInternal!.terrace_borders ?? {}))),
       territory_borders: missingIds(new Set(Object.keys(serverModel.territory_borders ?? {})), new Set(Object.keys(this.modelInternal!.territory_borders ?? {}))),
       level_holes: missingIds(new Set(Object.keys(serverModel.level_holes ?? {})), new Set(Object.keys(this.modelInternal!.level_holes ?? {}))),
+      led_strips: missingIds(new Set(Object.keys(serverModel.led_strips ?? {})), new Set(Object.keys(this.modelInternal!.led_strips ?? {}))),
+      stripes_light: missingIds(new Set(Object.keys(serverModel.stripes_light ?? {})), new Set(Object.keys(this.modelInternal!.stripes_light ?? {}))),
+      line_strips: missingIds(new Set(Object.keys(serverModel.line_strips ?? {})), new Set(Object.keys(this.modelInternal!.line_strips ?? {}))),
     };
     const willDelete = {
       walls: deletedIds.walls.length,
@@ -1216,6 +1256,9 @@ export class Workspace {
       terrace_borders: deletedIds.terrace_borders.length,
       territory_borders: deletedIds.territory_borders.length,
       level_holes: deletedIds.level_holes.length,
+      led_strips: deletedIds.led_strips.length,
+      stripes_light: deletedIds.stripes_light.length,
+      line_strips: deletedIds.line_strips.length,
     };
     const warnings: string[] = [];
     const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
@@ -1230,6 +1273,9 @@ export class Workspace {
     if (willDelete.terrace_borders > 0) warnings.push(`будут удалены границы террас (${willDelete.terrace_borders}), которых нет в модели: ${idList(deletedIds.terrace_borders)}`);
     if (willDelete.territory_borders > 0) warnings.push(`будут удалены границы участка (${willDelete.territory_borders}), которых нет в модели: ${idList(deletedIds.territory_borders)}`);
     if (willDelete.level_holes > 0) warnings.push(`будут удалены проёмы в полу (${willDelete.level_holes}), которых нет в модели: ${idList(deletedIds.level_holes)}`);
+    if (willDelete.led_strips > 0) warnings.push(`будут удалены светодиодные ленты (${willDelete.led_strips}), которых нет в модели: ${idList(deletedIds.led_strips)}`);
+    if (willDelete.stripes_light > 0) warnings.push(`будут удалены трековые шины (${willDelete.stripes_light}), которых нет в модели: ${idList(deletedIds.stripes_light)}`);
+    if (willDelete.line_strips > 0) warnings.push(`будет удалено линейное освещение (${willDelete.line_strips}), которого нет в модели: ${idList(deletedIds.line_strips)}`);
     if (fresh.save_id !== saveIdBefore) {
       if (!this.editorInternal && !options.force) {
         throw new McpError(
@@ -1304,12 +1350,26 @@ export class Workspace {
       territory_borders: structuredClone((norm.model as { territory_borders?: Record<string, unknown> }).territory_borders ?? {}),
     };
     const expectedLevelHoles = structuredClone((norm.model as { level_holes?: Record<string, unknown> }).level_holes ?? {});
+    // этап 84: световые линии листа «Освещение» — ожидаемые из нормализованной модели
+    const expectedLedStrips = structuredClone((norm.model as { led_strips?: Record<string, GasLineSig> }).led_strips ?? {});
+    const expectedStripesLight = structuredClone((norm.model as { stripes_light?: Record<string, GasLineSig> }).stripes_light ?? {});
+    const expectedLineStrips = structuredClone((norm.model as { line_strips?: Record<string, GasLineSig> }).line_strips ?? {});
+    const localLedIds = new Set(Object.keys(this.modelInternal!.led_strips ?? {}));
+    const localStripeIds = new Set(Object.keys(this.modelInternal!.stripes_light ?? {}));
+    const localLineIds = new Set(Object.keys(this.modelInternal!.line_strips ?? {}));
+    const gotLedIds = new Set(Object.keys((norm.model as { led_strips?: Record<string, unknown> }).led_strips ?? {}));
+    const gotStripeIds = new Set(Object.keys((norm.model as { stripes_light?: Record<string, unknown> }).stripes_light ?? {}));
+    const gotLineIds = new Set(Object.keys((norm.model as { line_strips?: Record<string, unknown> }).line_strips ?? {}));
     const lostOpenings = missingIds(localOpeningIds, gotOpeningIds);
     const lostItems = missingIds(localItemIds, gotItemIds);
     const lostPillars = missingIds(localPillarIds, gotPillarIds);
     const lostRigels = missingIds(localRigelIds, gotRigelIds);
     const lostGasLines = missingIds(localGasIds, gotGasIds);
     const lostPipes = missingIds(localPipeIds, gotPipeIds);
+    // этап 84: потери световых линий при нормализации
+    const lostLedStrips = missingIds(localLedIds, gotLedIds);
+    const lostStripesLight = missingIds(localStripeIds, gotStripeIds);
+    const lostLineStrips = missingIds(localLineIds, gotLineIds);
     // ревью 59 №1: до save сверяется семантический граф локальной и нормализованной
     // моделей (узлы, тип, рёбра matrix, длина) — normalizer, обнуливший рёбра,
     // не проходит как «verified»
@@ -1334,6 +1394,25 @@ export class Workspace {
     // этап 64: потери границ и проёмов пола при нормализации
     const bordersNorm = checkBordersAfterNormalize(this.modelInternal!, norm.model as Model);
     const holesNorm = checkLevelHolesAfterNormalize(this.modelInternal!, norm.model as Model);
+    // этап 84: семантическая сверка световых линий локальной и нормализованной моделей.
+    // id_room вершин — производное (редактор пересчитывает принадлежность узла комнате
+    // при draw/normalize), в предсохранительной сверке исключается — иначе штатный
+    // допис-id_room объявлялся бы потерей (живая проба 84: узлы получили id_room комнаты).
+    const ledGraphNorm = gasLineGraphMismatches(
+      stripVertexIdRoom(structuredClone(this.modelInternal!.led_strips ?? {})) as Record<string, GasLineSig>,
+      (norm.model as { led_strips?: Record<string, unknown> }).led_strips ?? {},
+      "светодиодная лента",
+    );
+    const stripesGraphNorm = gasLineGraphMismatches(
+      stripVertexIdRoom(structuredClone(this.modelInternal!.stripes_light ?? {})) as Record<string, GasLineSig>,
+      (norm.model as { stripes_light?: Record<string, unknown> }).stripes_light ?? {},
+      "трековая шина",
+    );
+    const lineStripsGraphNorm = gasLineGraphMismatches(
+      stripVertexIdRoom(structuredClone(this.modelInternal!.line_strips ?? {})) as Record<string, GasLineSig>,
+      (norm.model as { line_strips?: Record<string, unknown> }).line_strips ?? {},
+      "линейный свет",
+    );
     // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
     const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
     const rolesNorm = wallRoleMismatches(this.modelInternal!.walls as unknown as Record<string, { role?: string; p1: Point; p2: Point }>, expectedWalls);
@@ -1352,7 +1431,9 @@ export class Workspace {
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
       lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 || lostPipes.length > 0 ||
-      gasGraphNorm.length > 0 || pipesGraphNorm.length > 0 || pipesConnNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0 || propsNorm.length > 0
+      gasGraphNorm.length > 0 || pipesGraphNorm.length > 0 || pipesConnNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0 || propsNorm.length > 0 ||
+      lostLedStrips.length > 0 || lostStripesLight.length > 0 || lostLineStrips.length > 0 ||
+      ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -1375,6 +1456,12 @@ export class Workspace {
           border_mismatches: bordersNorm,
           level_hole_mismatches: holesNorm,
           wall_role_mismatches: rolesNorm,
+          lost_led_strips: lostLedStrips,
+          lost_stripes_light: lostStripesLight,
+          lost_line_strips: lostLineStrips,
+          led_strip_mismatches: ledGraphNorm,
+          stripes_light_mismatches: stripesGraphNorm,
+          line_strips_mismatches: lineStripsGraphNorm,
         },
       });
     }
@@ -1435,6 +1522,13 @@ export class Workspace {
       );
       const holesAfter = (after.model["level_holes"] as Record<string, unknown> | undefined) ?? {};
       const holeMismatch = levelHoleMismatches(expectedLevelHoles as Record<string, import("./model/types.ts").LevelHole>, holesAfter);
+      // этап 84: световые линии после save — по нормализованной семантике графа
+      const ledAfter = (after.model["led_strips"] as Record<string, unknown> | undefined) ?? {};
+      const stripesAfter = (after.model["stripes_light"] as Record<string, unknown> | undefined) ?? {};
+      const lineStripsAfter = (after.model["line_strips"] as Record<string, unknown> | undefined) ?? {};
+      const ledMismatch = gasLineGraphMismatches(expectedLedStrips, ledAfter, "светодиодная лента");
+      const stripesMismatch = gasLineGraphMismatches(expectedStripesLight, stripesAfter, "трековая шина");
+      const lineStripsMismatch = gasLineGraphMismatches(expectedLineStrips, lineStripsAfter, "линейный свет");
       // ревью 66 №3: роли стен после save — ограждение, ставшее обычной стеной, не «verified»
       const wallsAfterTyped = wallsAfter as Record<string, { role?: string; p1: Point; p2: Point }>;
       const wallRoleMismatch = wallRoleMismatches(expectedWalls, wallsAfterTyped);
@@ -1445,7 +1539,7 @@ export class Workspace {
         wallsAfterTyped as unknown as Record<string, BalconyWallProps>,
       );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -1464,6 +1558,9 @@ export class Workspace {
             level_hole_mismatches: holeMismatch,
             wall_role_mismatches: wallRoleMismatch,
             wall_property_mismatches: wallPropMismatch,
+            led_strip_mismatches: ledMismatch,
+            stripes_light_mismatches: stripesMismatch,
+            line_strips_mismatches: lineStripsMismatch,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });
@@ -1491,7 +1588,7 @@ export class Workspace {
     prepareForRestore(prepared);
     const norm = await editor.normalize(prepared as unknown as Record<string, unknown>);
     if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
-    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items, pillars: norm.after.pillars ?? Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}).length, rigels: norm.after.rigels ?? Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}).length, pipes: Object.keys((norm.model as { pipes?: Record<string, unknown> }).pipes ?? {}).length };
+    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items, pillars: norm.after.pillars ?? Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}).length, rigels: norm.after.rigels ?? Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}).length, pipes: Object.keys((norm.model as { pipes?: Record<string, unknown> }).pipes ?? {}).length, led_strips: Object.keys((norm.model as { led_strips?: Record<string, unknown> }).led_strips ?? {}).length, stripes_light: Object.keys((norm.model as { stripes_light?: Record<string, unknown> }).stripes_light ?? {}).length, line_strips: Object.keys((norm.model as { line_strips?: Record<string, unknown> }).line_strips ?? {}).length };
     // стены — по каноническому набору осевых отрезков (ревью v0.1.1-r2 R2-3):
     // слияние/разрез коллинеарных стен — допустимая нормализация, сдвиг и лишние
     // стены — расхождение; проёмы и предметы — по счётчикам
@@ -1506,6 +1603,9 @@ export class Workspace {
     if (seen.pillars !== expected.pillars) mismatch.push(`pillars: в модели ${expected.pillars}, в редакторе ${seen.pillars}`);
     if (seen.pipes !== expected.pipes) mismatch.push(`pipes: в модели ${expected.pipes}, в редакторе ${seen.pipes}`);
     if (seen.rigels !== expected.rigels) mismatch.push(`rigels: в модели ${expected.rigels}, в редакторе ${seen.rigels}`);
+    if (seen.led_strips !== expected.led_strips) mismatch.push(`led_strips: в модели ${expected.led_strips}, в редакторе ${seen.led_strips}`);
+    if (seen.stripes_light !== expected.stripes_light) mismatch.push(`stripes_light: в модели ${expected.stripes_light}, в редакторе ${seen.stripes_light}`);
+    if (seen.line_strips !== expected.line_strips) mismatch.push(`line_strips: в модели ${expected.line_strips}, в редакторе ${seen.line_strips}`);
     if (mismatch.length > 0) {
       throw new McpError("RENDER_OUT_OF_SYNC", `редактор показывает не текущую модель (${mismatch.join(", ")}) — картинка не отдаётся`, {
         hint: "повторите render_plan; при повторении сверитесь с model_get и model_validate",

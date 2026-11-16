@@ -171,7 +171,7 @@ test("parse-guard: will_delete по id — удаление + добавлени
     return true;
   });
   const res: SaveOutcome = await ws.save();
-  assert.deepEqual(res.will_delete, { walls: 0, openings: 1, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0 });
+  assert.deepEqual(res.will_delete, { walls: 0, openings: 1, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0 });
   assert.ok(res.warnings.some((w) => w.includes("srv_old")), res.warnings.join("; "));
   const lostHole = res.warnings.find((w) => /проём/.test(w)) ?? "";
   assert.ok(/apuny6wral|pbwydi1o66/.test(lostHole), `в предупреждении id удалённого проёма: ${lostHole}`);
@@ -196,7 +196,7 @@ test("parse-guard: project_save предупреждает, сколько об�
   // при записи он пропадёт с сервера, project_save обязан об этом предупредить
   ws.apply("item_delete", (m) => { delete m.items["srv2"]; return true; });
   const res: SaveOutcome = await ws.save();
-  assert.deepEqual(res.will_delete, { walls: 0, openings: 0, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0 });
+  assert.deepEqual(res.will_delete, { walls: 0, openings: 0, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0 });
   assert.ok(res.warnings.some((w) => w.includes("1") && w.includes("предмет")), res.warnings.join("; "));
 });
 

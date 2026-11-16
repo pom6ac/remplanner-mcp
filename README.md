@@ -118,6 +118,8 @@ catalog_search + item_add # мебель, сантехника, лестницы
 gas_line_add              # газовая линия (пункт меню «Коммуникации», отдельная сущность pipes_gas)
 pipe_add                  # трубы водоснабжения/канализации (лист «Водоснабжение», kind: water|hot|drainage,
                           #  подключения к выводам воды waterspot_*, стоякам и коллектору)
+led_strip_add / stripe_add / line_light_add  # освещение: лента, трековые шины (recessed|surface|pendent),
+                          #  линейный свет (лист «Освещение», ломаные; светильники — item_add)
 floor_hole_add            # проем в полу (прямоугольник в комнате, level_holes)
 terrace_add               # терраса (замкнутое кольцо границ terrace_borders) + terrace_fence_add / terrace_column_add
 territory_add             # участок (замкнутое кольцо границ territory_borders)

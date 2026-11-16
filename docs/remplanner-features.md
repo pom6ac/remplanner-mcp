@@ -589,6 +589,63 @@ design.md); лимиты `defs.wall` (толщина 4..100 см, длина ≥
   коллекции `pipes_warm_floor`, `pipes_conditioner`, `pipes_heat`, `pipes_ventilation`);
   их коллекции в модели существуют, но этап 78 их не покрывает (следующий PR).
 
+### 7.4. Освещение [код + пробы 84-light-*/84-live-check, 2026-11-17]
+
+Лист «Освещение» (`plan_light`). Состав по каталогу (`global_tools`, группа `lights`,
+**49 позиций**) и бандлу app.3.0 (классы `LedStrip`/`StripLight`/`LineStrip extends
+GraphLines`):
+
+- **Светильники-предметы** — 40 позиций группы `lights`, ставятся `item_add` в `items`
+  (эталоны `tests/fixtures/ui-ref-light-*.json` — 26 снято кликами в анонимном проекте;
+  live-круг `84-anon-items` подтвердил постановку и save/reopen для пунктов без UI-кнопки):
+  - потолочные (`anchor:"ceiling"`): люстры `chandelier`, `ceiling_chandelier_*`,
+    `hanging_chandelier_*`, встраиваемые `lightspot*`, накладные `lightspot_surface*`,
+    подвесные `hanging_light*`, `hanging_lightspot*`, рейлинговые `track_single/double/triple`,
+    `armstrong_light` — свободная постановка (`in_room center` = «люстра по центру»),
+    `over_floor` в модели нет (`null`);
+  - подвесные редактор нормализует с `over_floor {value:160..200, display:false}`
+    (производное, значения по видам; сверка — по нормализованной модели);
+  - настенные (`anchor:"wall"`): `bra`, `bra_shades`, `led_lamp`, `light_stick`, `wall_spot`,
+    `wall_lamp`, `painting_lighting` (free) и `sauna_bra`, `sauna_bra_corner`,
+    `outdoor_wall_lamp`, `stair_spot` (PRO) — только у стены, высота из каталога
+    (`bra` 140 см, `light_stick` 120, `painting_lighting` 220, `stair_spot` 20 —
+    поле `display` из каталога);
+  - **PRO** в UI: `lightspot_double/triple`, `lightspot_surface_double/triple`,
+    `sauna_bra`, `sauna_bra_corner`, `outdoor_wall_lamp`, `stair_spot` — запись в модель
+    тарифом не гейтится (как трубы);
+  - панель свойств (`cm-light`) — только «Высота от пола» (`over_floor`); мощности/цвета/
+    групп у светильников в панели нет (цвет линии — рантайм отрисовки).
+  - `stair_spot` — из меню «Лестницы» (этап 55, план `{light:10, a:1}`), покрыт там.
+- **Светодиодные ленты** — `led_strip`, **PRO**, отдельная коллекция `model.led_strips`
+  (`LedStrip extends GraphLines`): serialize `{id, matrix, vertexes, items, type, length,
+  props, on_size}` — без `plan`; вершины только узлы (`type:"node"`), serialize дописывает
+  вершинам `id_room` (принадлежность узла комнате — редактор пересчитывает сам при draw,
+  в модели после reopen это id комнаты). Инструменты `led_strip_add` (ломаная до 32 узлов),
+  `led_strip_update` (перенос узлов, длина по рёбрам), `led_strip_delete`; метки `LS<n>`
+  в `model_get`. Эталон: `ui-ref-light-led_strip.json` (из живой модели, обезличен).
+- **Трековые шины** — `recessed_strip` (встроенная), `surface_stripe` (накладная),
+  `pendent_strip` (подвесная, умолчание `height_lowering: 20` см) — **PRO**, коллекция
+  `model.stripes_light` (`StripLight`): serialize то же + `spots {}` (трековые споты на
+  шине) и `line_spots []` (линейные споты). Инструменты `stripe_add` (kind:
+  recessed|surface|pendent), `stripe_update`, `stripe_delete`; метки `SL<n>`. Эталон:
+  `ui-ref-light-pendent_strip.json`.
+- **Линейное освещение** — `line_light`, **PRO**, коллекция `model.line_strips`
+  (`LineStrip`): serialize то же + `plan:"light"`, `prs {}` (у линий на развёртках —
+  `plan:"projections"`, этап 84 их не пишет). Инструменты `line_light_add/update/delete`;
+  метки `LL<n>`. Эталон: `ui-ref-light-line_light.json`.
+- **Трековые споты** — `track_spot`, `track_pendent_spot`, `track_panel_spot` (точечные,
+  `props.strip_light_id` + `strip.spots[id] = {name, line_id, d}` — двусторонняя связь с
+  шиной) и `track_line_spot` (линейный, `strip.line_spots[]`): связь со шиной в этапе 84
+  не пишется — `item_add` отклоняет с подсказкой (следующий PR).
+- **Выключатели и связи «выключатель → светильник»** — листы «Выключатели»/
+  «Световые линии» (`cables[]`, класс `Cable`, `type:"cable"`) — раздел «Электрика»,
+  следующий PR.
+- Сверка всех трёх коллекций при save — семантическая (общий слой графов газовых линий:
+  узлы с согласованным сопоставлением, рёбра matrix в обе стороны, тип, длина,
+  `props`/`on_size`/`spots`/`line_spots`/`height_lowering`/`plan`/`prs`), `id_room`
+  вершин — производное поле, в сверке рабочей копии с нормализованной не участвует.
+  Реестр коллекций clear/import покрывает `led_strips`/`stripes_light`/`line_strips`.
+
 ## 8. Импорт и экспорт
 
 | Формат | Направление | Тариф |

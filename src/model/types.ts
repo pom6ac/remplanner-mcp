@@ -281,6 +281,72 @@ export type LevelHole = {
   [key: string]: unknown;
 };
 
+/**
+ * Световая линия листа «Освещение» (этап 84, 2026-11-17): LedStrip/StripLight/LineStrip
+ * extends GraphLines (бандл app.3.0, классы в одном файле с классами труб). Формат —
+ * тот же граф, что pipes_gas/pipes: vertexes — узлы type "node" (point в см;
+ * serialize дописывает id_room:"" — у узла-не-предмета комнаты нет), matrix —
+ * матрица смежности N×N (диагональ null, у связной пары {length:1}), items — карта
+ * id узла → "node", length — длина в метрах (сумма сегментов, 2 знака). Общие поля:
+ * props {id, name: type}, on_size 1. Отличия по коллекциям (serialize классов):
+ * - led_strips (LedStrip, инструмент led_strip): {id, matrix, vertexes, items, type,
+ *   length, props, on_size}; type "led_strip";
+ * - stripes_light (StripLight, инструменты recessed_strip/surface_stripe/pendent_strip):
+ *   то же + spots {} (точки-споты на шине — трековые светильники, этап 84 не пишет),
+ *   line_spots [] (линейные споты track_line_spot — не пишет), height_lowering —
+ *   у pendent_strip 20 (см), у остальных поле отсутствует; type = имени инструмента;
+ * - line_strips (LineStrip, инструмент line_light): то же + plan "light", prs {}
+ *   (plan_ у линий основного плана не пишется); type "line_light".
+ * Все три вида — PRO-инструменты UI; запись в модель сервер не гейтит (как трубы).
+ */
+export type LightStripVertex = {
+  id: string;
+  point: Point;
+  type: "node" | (string & {});
+  id_room?: string;
+};
+
+export type LedStrip = {
+  id: string;
+  matrix: ({ length: number } | null)[][];
+  vertexes: LightStripVertex[];
+  items: Record<string, string>;
+  type: "led_strip" | (string & {});
+  length: number;
+  props: { id: string; name: string };
+  on_size: number;
+  [key: string]: unknown;
+};
+
+export type StripLight = {
+  id: string;
+  matrix: ({ length: number } | null)[][];
+  vertexes: LightStripVertex[];
+  items: Record<string, string>;
+  type: "recessed_strip" | "surface_stripe" | "pendent_strip" | (string & {});
+  length: number;
+  props: { id: string; name: string };
+  on_size: number;
+  spots: Record<string, unknown>;
+  line_spots: unknown[];
+  height_lowering?: number;
+  [key: string]: unknown;
+};
+
+export type LineStrip = {
+  id: string;
+  matrix: ({ length: number } | null)[][];
+  vertexes: LightStripVertex[];
+  items: Record<string, string>;
+  type: "line_light" | (string & {});
+  length: number;
+  props: { id: string; name: string };
+  on_size: number;
+  plan: string;
+  prs: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
 export type Model = {
   v: number;
   id: string;
@@ -305,6 +371,12 @@ export type Model = {
   territory_borders?: Record<string, TerraceBorder>;
   /** Проёмы в полу/потолке (пункт меню «Проем в полу» → floor_hole); может отсутствовать. */
   level_holes?: Record<string, LevelHole>;
+  /** Светодиодные ленты (лист «Освещение» → led_strip); у старых моделей может отсутствовать. */
+  led_strips?: Record<string, LedStrip>;
+  /** Трековые шины (лист «Освещение» → recessed_strip/surface_stripe/pendent_strip); может отсутствовать. */
+  stripes_light?: Record<string, StripLight>;
+  /** Линейное освещение (лист «Освещение» → line_light); у старых моделей может отсутствовать. */
+  line_strips?: Record<string, LineStrip>;
   rulers: Record<string, unknown>;
   comments: Record<string, unknown>;
   total_height: number;
