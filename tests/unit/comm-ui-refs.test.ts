@@ -91,6 +91,73 @@ test("comm: план a:1 — все 15 предметов меню «Комму�
   assert.ok(LINE_TOOLS.has(COMM_MENU_LINE));
 });
 
+test("comm: applyToolFixes — патчи fix_tools редактора (этап 57): размеры/группа/anchor стояков", async () => {
+  const { applyToolFixes } = await import("../../src/catalog.ts");
+  // бандл planner.tools отдаёт стоякам group walls и нулевые размеры; fix_tools редактора
+  // (app.3.0) правит их — эталоны ui-ref-comm-* сняты с УЖЕ пропатченных значений
+  const bundle = {
+    water: { id: 18, title: "Сантехнический стояк", group: "walls", width: 0, height: 0, anchor: "free", plan: { init: 1 } },
+    water_column_hot: { id: 1512, title: "Стояк гор. водоснабжения", group: "walls", width: 0, height: 0, anchor: "free", plan: { init: 1 } },
+    ceiling_water: { id: 1361, title: "Ввод водоснабжения", group: "waterspots", width: 0, height: 0, anchor: "free", plan: { init: 1 } },
+    air: { id: 19, title: "Вентиляционный короб", group: "walls", width: 0, height: 0, anchor: "free", plan: { init: 1 } },
+    gas_pipe: { id: 492, title: "Газовый стояк", group: "furniture", width: 8, height: 8, anchor: "free", plan: { init: 1 }, delete_only: false },
+    conditioner_cage: { id: 1538, title: "Корзина для кондиционера", group: "furniture", width: 95, height: 65, anchor: "wall", plan: { init: 1 } },
+  };
+  applyToolFixes(bundle as never);
+  assert.equal(bundle.water.width, 20);
+  assert.equal(bundle.water.height, 20);
+  assert.equal(bundle.water.group, "furniture");
+  assert.equal(bundle.water_column_hot.width, 10);
+  assert.equal(bundle.ceiling_water.anchor, "wall", "ввод водоснабжения — у стены (как в UI)");
+  assert.equal(bundle.ceiling_water.width, 20);
+  assert.equal(bundle.air.width, 30);
+  assert.equal(bundle.air.group, "furniture");
+  assert.equal(bundle.gas_pipe.delete_only, true, "газовый стояк в UI не ставится повторно");
+  assert.equal(bundle.conditioner_cage.width, 95, "conditioner_cage fix_tools не трогает");
+});
+
+test("comm: applyToolFixes — идемпотентен", async () => {
+  const { applyToolFixes } = await import("../../src/catalog.ts");
+  const tools = { water: { width: 0, height: 0, group: "walls", anchor: "free" } };
+  applyToolFixes(tools as never);
+  applyToolFixes(tools as never);
+  assert.equal(tools.water.width, 20);
+  assert.equal(tools.water.group, "furniture");
+});
+
+test("comm: applyToolFixes — НЕ-коммуникационные записи (мебель/сантехника/лестницы) не меняются", async () => {
+  const { applyToolFixes } = await import("../../src/catalog.ts");
+  const sample = JSON.parse(readFileSync(join(here, "../fixtures/catalog-sample.json"), "utf8")) as {
+    tools: Record<string, Record<string, unknown>>;
+  };
+  // мебель (sofa), сантехника (toilet, group santeh_furniture), лестницы (ladder_2march)
+  const bundle = structuredClone(sample.tools);
+  const before = JSON.stringify(bundle);
+  applyToolFixes(bundle as never);
+  assert.equal(JSON.stringify(bundle), before, "applyToolFixes не трогает не-коммуникационные записи");
+  // в том числе delete_only не включается (в бандле он false)
+  assert.equal(bundle.sofa?.delete_only, false);
+  assert.equal(bundle.ladder_2march?.delete_only, false);
+});
+
+test("comm: applyToolFixes — сырая запись water с нулевыми размерами → toToolEntry исправленная", async () => {
+  const { applyToolFixes, toToolEntry } = await import("../../src/catalog.ts");
+  // как в бандле planner.tools ДО fix_tools редактора (проба 57-comm-gt: сырой extract)
+  const raw = {
+    water: { id: 18, title: "Сантехнический стояк", group: "walls", width: 0, height: 0, anchor: "free", plan: { init: 1 } },
+  };
+  // без патча toToolEntry отдаёт нули/чужую группу (воспроизведение находки №3)
+  const rawEntry = toToolEntry("water", raw.water);
+  assert.equal(rawEntry.width, 0);
+  assert.equal(rawEntry.group, "walls");
+  // с патчем — как в UI редактора (эталон ui-ref-comm-water: 20×20, furniture)
+  const entry = toToolEntry("water", applyToolFixes(structuredClone(raw) as never).water!);
+  assert.equal(entry.width, 20);
+  assert.equal(entry.height, 20);
+  assert.equal(entry.group, "furniture");
+  assert.equal(entry.anchor, "free");
+});
+
 test("comm: LINE_TOOLS — item_add для gas_line INVALID_ARGUMENT, модель не меняется", () => {
   const model = roomModel();
   const snapshot = JSON.stringify(model);

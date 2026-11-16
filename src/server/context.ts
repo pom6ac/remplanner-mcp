@@ -5,7 +5,7 @@ import { McpError, type ErrorCode } from "../errors.ts";
 import { loadSession, hasLiveCookies, type SessionState } from "../session.ts";
 import { createAnonProject, loadModel, renameProject, checkStatus, type LoadedModel } from "../api.ts";
 import { openEditor, type EditorHandle } from "../editor/adapter.ts";
-import { loadCachedTools, fetchTools, extractToolsBundleName, searchTools, toToolEntry, type ToolsBundle, type ToolEntry } from "../catalog.ts";
+import { loadCachedTools, fetchTools, extractToolsBundleName, applyToolFixes, searchTools, toToolEntry, type ToolsBundle, type ToolEntry } from "../catalog.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike, type OpenProject } from "../workspace.ts";
 import type { Model, FixtureEnvelope } from "../model/types.ts";
 import type { CompactModel } from "../model/compact.ts";
@@ -224,7 +224,7 @@ export class ServerContext {
       const last = files[files.length - 1];
       if (last) {
         try {
-          this.toolsBundle = JSON.parse(readFileSync(`${cacheDir}/${last}`, "utf8")) as ToolsBundle;
+          this.toolsBundle = applyToolFixes(JSON.parse(readFileSync(`${cacheDir}/${last}`, "utf8")) as ToolsBundle);
           return this.toolsBundle;
         } catch { /* битый кэш — тянем из редактора */ }
       }
