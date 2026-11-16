@@ -1,0 +1,79 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), проба 57-comm-ui3 (клик у стены, anchor:wall), model project.copy(\"server\"), без сохранения; id предмета и id_room/id_room_zone/id_wall/id_pillar обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); план {\"a\":1} (ключ каталога init отображён в a)",
+ "menu_title": "Корзина для кондиционера",
+ "tool_id": "plannertool_conditioner_cage",
+ "catalog_defaults_cm": {
+  "id": 1538,
+  "width": 95,
+  "height": 65,
+  "self_height": 60,
+  "plan": {
+   "init": 1
+  },
+  "anchor": "wall",
+  "is_magnetized": true,
+  "can_be_outside": true
+ },
+ "model_object": {
+  "name": "conditioner_cage",
+  "pc": {
+   "x": 936.7,
+   "y": 377.6
+  },
+  "angle": 180,
+  "projection": {
+   "x": 936.7,
+   "y": 345.1
+  },
+  "id_room": "0",
+  "width": 95,
+  "height": 65,
+  "plan": {
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 1538,
+  "over_floor": {
+   "value": 15,
+   "display": false
+  },
+  "self_height": 60,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 936.7,
+   "y": 377.6
+  },
+  "center3d": {
+   "x": 936.7,
+   "y": 377.6
+  },
+  "id_room_zone": "0",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r",
+  "wall_line": {
+   "p1": {
+    "x": 889.2,
+    "y": 345.1
+   },
+   "p2": {
+    "x": 984.2,
+    "y": 345.1
+   }
+  }
+ }
+}

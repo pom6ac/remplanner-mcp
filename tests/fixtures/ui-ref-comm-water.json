@@ -1,0 +1,75 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), проба 57-comm-ui3 (клик в комнате, магнит к колонне dev-проекта), model project.copy(\"server\"), без сохранения; id предмета и id_room/id_room_zone/id_wall/id_pillar обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); план {\"a\":1} (ключ каталога init отображён в a)",
+ "menu_title": "Сантехнический стояк",
+ "tool_id": "plannertool_water",
+ "catalog_defaults_cm": {
+  "id": 18,
+  "width": 20,
+  "height": 20,
+  "self_height": 0,
+  "plan": {
+   "init": 1
+  },
+  "anchor": "free",
+  "is_magnetized": true,
+  "can_be_outside": false
+ },
+ "model_object": {
+  "name": "water",
+  "pc": {
+   "x": 931.2,
+   "y": 220.7
+  },
+  "angle": 180,
+  "projection": {
+   "x": 931.2,
+   "y": 210.7
+  },
+  "width": 20,
+  "height": 20,
+  "plan": {
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 18,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": false
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 931.2,
+   "y": 220.7
+  },
+  "center3d": {
+   "x": 931.2,
+   "y": 220.7
+  },
+  "id_room": "0",
+  "id_room_zone": "0",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r",
+  "wall_line": {
+   "p1": {
+    "x": 921.2,
+    "y": 210.7
+   },
+   "p2": {
+    "x": 941.2,
+    "y": 210.7
+   }
+  }
+ }
+}

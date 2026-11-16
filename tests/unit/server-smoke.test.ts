@@ -28,6 +28,8 @@ const EXPECTED_TOOLS = [
   "pillar_add", "pillar_update", "pillar_delete",
   // §7.4c — потолочные ригели (пункт меню «Потолочный ригель», этап 47)
   "rigel_add", "rigel_update", "rigel_delete",
+  // §7.4d — газовая линия (пункт меню «Коммуникации», этап 57)
+  "gas_line_add", "gas_line_update", "gas_line_delete",
   // §7.6
   "model_get", "model_validate", "render_plan",
 ];

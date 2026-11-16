@@ -1,0 +1,59 @@
+{
+ "_source": "drag в UI dev-проекта (headless Chromium, ID проекта/плана обезличены), проба 57-comm-ui, model project.copy(\"server\"), без сохранения; id линии и вершин обезличены; координаты — реальные точки листа init (не идентифицируют); длина в метрах (модель редактора)",
+ "menu_title": "Газовый трубопровод",
+ "tool_id": "plannertool_gas_line",
+ "catalog_defaults_cm": {
+  "id": 1662,
+  "width": 0,
+  "height": 0,
+  "self_height": 0,
+  "plan": {
+   "init": 1
+  },
+  "anchor": "free",
+  "is_magnetized": true,
+  "can_be_outside": false
+ },
+ "model_object": {
+  "id": "0",
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "1",
+    "point": {
+     "x": 677.39,
+     "y": 611.14
+    },
+    "type": "node"
+   },
+   {
+    "id": "2",
+    "point": {
+     "x": 827.19,
+     "y": 661.47
+    },
+    "type": "node"
+   }
+  ],
+  "items": {
+   "1": "node",
+   "2": "node"
+  },
+  "type": "gas_line",
+  "plan": "a",
+  "length": 1.58
+ }
+}

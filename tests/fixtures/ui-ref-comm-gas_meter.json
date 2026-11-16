@@ -1,0 +1,65 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), проба 57-comm-ui3 (клик у стены, магнит к стене dev-проекта), model project.copy(\"server\"), без сохранения; id предмета и id_wall/id_wall_old обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); план {\"a\":1} (ключ каталога init отображён в a); эталон этапа 59 — из дампа .orca-reports/57-comm-ui/gas_meter.json (raw бандл уже содержит 20×15/self_height 21 — fix_tools его не правит)",
+ "menu_title": "Газовый счетчик",
+ "tool_id": "plannertool_gas_meter",
+ "catalog_defaults_cm": {
+  "id": 1663,
+  "width": 20,
+  "height": 15,
+  "self_height": 21,
+  "plan": {
+   "init": 1
+  },
+  "anchor": "free",
+  "is_magnetized": true,
+  "can_be_outside": true
+ },
+ "model_object": {
+  "name": "gas_meter",
+  "pc": {
+   "x": 47,
+   "y": 287.56
+  },
+  "angle": 0,
+  "width": 20,
+  "height": 15,
+  "plan": {
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 1663,
+  "over_floor": {
+   "value": 140,
+   "display": true
+  },
+  "self_height": 21,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 47,
+   "y": 290.335
+  },
+  "center3d": {
+   "x": 47,
+   "y": 290.335
+  },
+  "id_room": "0",
+  "id_room_zone": "0",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r"
+ }
+}

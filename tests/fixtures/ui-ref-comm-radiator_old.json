@@ -1,0 +1,62 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), проба 57-comm-ui3 (клик в комнате), model project.copy(\"server\"), без сохранения; id предмета и id_room/id_room_zone/id_wall/id_pillar обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); план {\"a\":1} (ключ каталога init отображён в a)",
+ "menu_title": "Радиатор отопления",
+ "tool_id": "plannertool_radiator_old",
+ "catalog_defaults_cm": {
+  "id": 497,
+  "width": 80,
+  "height": 12,
+  "self_height": 60,
+  "plan": {
+   "init": 1
+  },
+  "anchor": "free",
+  "is_magnetized": true,
+  "can_be_outside": false
+ },
+ "model_object": {
+  "name": "radiator_old",
+  "pc": {
+   "x": 527.58,
+   "y": 461.33
+  },
+  "angle": 0,
+  "width": 80,
+  "height": 12,
+  "plan": {
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 497,
+  "over_floor": {
+   "value": 10,
+   "display": false
+  },
+  "self_height": 60,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 527.58,
+   "y": 461.33
+  },
+  "center3d": {
+   "x": 527.58,
+   "y": 461.33
+  },
+  "id_room": "0",
+  "id_room_zone": "0"
+ }
+}

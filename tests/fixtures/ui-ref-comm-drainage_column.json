@@ -1,0 +1,75 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), проба 57-comm-ui3 (клик в комнате, магнит к стене dev-проекта), model project.copy(\"server\"), без сохранения; id предмета и id_room/id_room_zone/id_wall/id_wall_old обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); план {\"a\":1} (ключ каталога init отображён в a); эталон этапа 59 — из дампа .orca-reports/57-comm-ui/drainage_column.json (raw бандл отдаёт 0×0/walls, в UI редактора fix_tools правит на 15×15/furniture)",
+ "menu_title": "Канализационный стояк",
+ "tool_id": "plannertool_drainage_column",
+ "catalog_defaults_cm": {
+  "id": 1360,
+  "width": 15,
+  "height": 15,
+  "self_height": 0,
+  "plan": {
+   "init": 1
+  },
+  "anchor": "free",
+  "is_magnetized": true,
+  "can_be_outside": false
+ },
+ "model_object": {
+  "name": "drainage_column",
+  "pc": {
+   "x": 384.799,
+   "y": 611.14
+  },
+  "angle": 90,
+  "projection": {
+   "x": 377.299,
+   "y": 611.139
+  },
+  "width": 15,
+  "height": 15,
+  "plan": {
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 1360,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": false
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 384.799,
+   "y": 611.14
+  },
+  "center3d": {
+   "x": 384.799,
+   "y": 611.14
+  },
+  "id_room": "0",
+  "id_room_zone": "0",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r",
+  "wall_line": {
+   "p1": {
+    "x": 377.299,
+    "y": 618.64
+   },
+   "p2": {
+    "x": 377.299,
+    "y": 603.64
+   }
+  }
+ }
+}

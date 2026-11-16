@@ -1,0 +1,58 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), проба 57-comm-ui3 (клик в комнате), model project.copy(\"server\"), без сохранения; id предмета и id_room/id_room_zone/id_wall/id_pillar обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); план {\"a\":1} (ключ каталога init отображён в a)",
+ "menu_title": "Вентиляционный короб",
+ "tool_id": "plannertool_air",
+ "catalog_defaults_cm": {
+  "id": 19,
+  "width": 30,
+  "height": 30,
+  "self_height": 0,
+  "plan": {
+   "init": 1
+  },
+  "anchor": "free",
+  "is_magnetized": true,
+  "can_be_outside": false
+ },
+ "model_object": {
+  "name": "air",
+  "pc": {
+   "x": 527.58,
+   "y": 636.3
+  },
+  "angle": 0,
+  "width": 30,
+  "height": 30,
+  "plan": {
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 19,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": false
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 527.58,
+   "y": 636.3
+  },
+  "center3d": {
+   "x": 527.58,
+   "y": 636.3
+  },
+  "id_room": "0",
+  "id_room_zone": "0"
+ }
+}
