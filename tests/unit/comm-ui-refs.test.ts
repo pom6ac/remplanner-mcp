@@ -358,6 +358,41 @@ test("comm: gas_line update-цепочка — перемещение концо
   void v1;
 });
 
+// ревью 59 №2: длина по рёбрам matrix, а не по порядку вершин; update без
+// координат ничего не меняет; произвольная топология явно отвергается
+
+test("comm: газовая линия A–B + A–C — длина по рёбрам matrix (2.0 м, не 2.41 по порядку вершин)", async () => {
+  const { gasLineLengthM } = await import("../../src/model/pipes.ts");
+  const model = roomModel();
+  // вершины в см: A=(0,0), B=(100,0), C=(0,100); рёбра AB и AC; длина 2.0 м
+  const line: GasLine = {
+    id: "_g3",
+    matrix: [[null, { length: 1 }, { length: 1 }], [{ length: 1 }, null, null], [{ length: 1 }, { length: 1 }, null]],
+    vertexes: [
+      { id: "_a", point: { x: 0, y: 0 }, type: "node" },
+      { id: "_b", point: { x: 100, y: 0 }, type: "node" },
+      { id: "_c", point: { x: 0, y: 100 }, type: "node" },
+    ],
+    items: { _a: "node", _b: "node", _c: "node" },
+    type: "gas_line",
+    plan: "a",
+    length: 2,
+  };
+  model.pipes_gas = { [line.id]: line };
+  assert.equal(gasLineLengthM(line), 2, "сумма по рёбрам AB+AC = 2 м");
+  // update без координат не меняет length и вообще ничего
+  const snapshot = JSON.stringify(line);
+  const got = updateGasLine(model, { gasLineId: line.id });
+  assert.equal(JSON.stringify(model.pipes_gas![line.id]), snapshot, "update без координат не меняет линию");
+  assert.equal(got.length, 2);
+  // update с координатами на таком графе отвергается (инструменты создают только 2 узла)
+  assert.throws(
+    () => updateGasLine(model, { gasLineId: line.id, end: { x: 5000, y: 0 } }),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+  );
+  assert.equal(JSON.stringify(model.pipes_gas![line.id]), snapshot, "модель не изменилась");
+});
+
 test("comm: gas_line_update/delete — NOT_FOUND для чужого id; удаление убирает линию", () => {
   const model = roomModel();
   const snapshot = JSON.stringify(model);

@@ -47,11 +47,25 @@ function validateAxis(p1: Point, p2: Point): void {
   }
 }
 
-/** Полная длина трубы по вершинам, м (сумма сегментов, округление до 2 знаков). */
-export function gasLineLengthM(line: Pick<GasLine, "vertexes">): number {
+/**
+ * Полная длина трубы по рёбрам matrix, м (ревью 59 №2: топология графа задаётся
+ * матрицей смежности, порядок vertexes её не отражает). Сумма длин связных пар
+ * узлов, округление до 2 знаков. Если матрицы нет (не должен случаться в
+ * model.pipes_gas), резерв — сумма по порядку соседних вершин.
+ */
+export function gasLineLengthM(line: Pick<GasLine, "vertexes" | "matrix">): number {
   let cm = 0;
-  for (let i = 1; i < line.vertexes.length; i++) {
-    cm += dist(line.vertexes[i - 1]!.point, line.vertexes[i]!.point);
+  const m = line.matrix;
+  if (Array.isArray(m) && m.length > 0) {
+    for (let i = 0; i < line.vertexes.length; i++) {
+      for (let j = i + 1; j < line.vertexes.length; j++) {
+        if ((m[i]?.[j] ?? null) !== null) cm += dist(line.vertexes[i]!.point, line.vertexes[j]!.point);
+      }
+    }
+  } else {
+    for (let i = 1; i < line.vertexes.length; i++) {
+      cm += dist(line.vertexes[i - 1]!.point, line.vertexes[i]!.point);
+    }
   }
   return roundM(cm);
 }
@@ -60,14 +74,15 @@ export function gasLineLengthM(line: Pick<GasLine, "vertexes">): number {
 function buildCandidate(id: string, p1: Point, p2: Point): GasLine {
   const v1: GasLineVertex = { id: `_${newId(5)}`, point: { ...p1 }, type: "node" };
   const v2: GasLineVertex = { id: `_${newId(5)}`, point: { ...p2 }, type: "node" };
+  const matrix = [[null, { length: 1 }], [{ length: 1 }, null]];
   return {
     id,
-    matrix: [[null, { length: 1 }], [{ length: 1 }, null]],
+    matrix,
     vertexes: [v1, v2],
     items: { [v1.id]: "node", [v2.id]: "node" },
     type: "gas_line",
     plan: "a",
-    length: gasLineLengthM({ vertexes: [v1, v2] }),
+    length: gasLineLengthM({ vertexes: [v1, v2], matrix }),
   };
 }
 
@@ -108,7 +123,11 @@ export function addGasLine(model: Model, params: { start: MmPoint; end: MmPoint 
 
 /**
  * gas_line_update: перемещение концов (start/end, мм — только явно переданные),
- * пересчёт длины. Кандидат-копия; при ошибке модель не меняется.
+ * пересчёт длины по рёбрам matrix (ревью 59 №2). Кандидат-копия; при ошибке
+ * модель не меняется. Без start/end — но-оп (длина не пересчитывается).
+ * Инструменты создают только прямые линии из 2 узлов: графы с другим числом
+ * узлов (произвольная топология из редактора) update'ом не правятся —
+ * INVALID_ARGUMENT до любых мутаций.
  */
 export function updateGasLine(
   model: Model,
@@ -116,6 +135,13 @@ export function updateGasLine(
 ): GasLine {
   const line = model.pipes_gas?.[params.gasLineId];
   if (!line) throw new McpError("NOT_FOUND", `газовая линия ${params.gasLineId} не найдена`);
+  if (params.start === undefined && params.end === undefined) return line;
+  if (line.vertexes.length !== 2) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `инструменты создают только прямые газовые линии из 2 узлов (у линии ${line.vertexes.length} узлов) — измените её в редакторе`,
+    );
+  }
   finite("start.x", params.start?.x);
   finite("start.y", params.start?.y);
   finite("end.x", params.end?.x);
