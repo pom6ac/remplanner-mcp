@@ -14,6 +14,7 @@ import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorho
 import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
 } from "../model/terraces.ts";
+import { addBalcony, updateBalcony, deleteBalcony, balconyWall } from "../model/balcony.ts";
 import type { TerraceBorder } from "../model/types.ts";
 import { addItem, updateItem, deleteItem, itemsList, roomPolygons, type RoomPolygon } from "../model/items.ts";
 import { compactModel, wallLengthMm } from "../model/compact.ts";
@@ -1008,6 +1009,90 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           thicknessMm: a["thickness_mm"] as number | undefined,
         }));
         return ok({ id: fence.id, from: [Math.round(fence.p1.x * 10), Math.round(fence.p1.y * 10)], to: [Math.round(fence.p2.x * 10), Math.round(fence.p2.y * 10)], thickness_mm: Math.round(fence.depth * 10), hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Балкон (пункт меню «Нарисовать балкон», этап 71) ----------
+    balcony_add: tool(
+      "Нарисовать балкон (пункт меню «Нарисовать балкон»): ломаная зелёных ограждений — стены role «balcony» " +
+        "на исходном плане, points — осевые точки (мм). Концы пристают к наружным стенам (узел или грань); " +
+        "контур, замкнутый с наружной стеной, даёт комнату-балкон с площадью (rooms_list). Толщина по умолчанию " +
+        "100 мм (defs.wall), высота ограждения 1000 мм, материал a_block — как у инструмента редактора. " +
+        "Проёмы на ограждения ставить нельзя (opening_add отклонит с INVALID_ARGUMENT). Контур без самопересечений; " +
+        "отказ любого сегмента отменяет весь балкон. После добавления вызывайте model_validate и project_save.",
+      {
+        points: z.array(mmPoint).min(2).max(64).describe("осевые точки ограждения, мм"),
+        closed: z.boolean().optional().describe("замкнуть контур (обычно нет — балкон замыкается наружной стеной)"),
+        thickness_mm: mmInt.optional().describe("толщина, мм (по умолчанию 100, лимиты 40..1000)"),
+        height_mm: mmInt.optional().describe("высота ограждения, мм (по умолчанию 1000)"),
+        material: z.string().optional().describe("материал (по умолчанию a_block)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const { result: walls, warnings } = await ws.applyWalls("balcony_add", (m) => addBalcony(m, {
+          points: a["points"] as MmPoint[],
+          closed: a["closed"] as boolean | undefined,
+          thicknessMm: a["thickness_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+          material: a["material"] as string | undefined,
+        }));
+        return ok({
+          created: walls.length,
+          walls: walls.map((w) => ({
+            id: w.id,
+            from: [Math.round(w.p1.x * 10), Math.round(w.p1.y * 10)],
+            to: [Math.round(w.p2.x * 10), Math.round(w.p2.y * 10)],
+            thickness_mm: Math.round(w.depth * 10),
+            height_mm: Math.round(w.height * 10),
+          })),
+          ...(warnings.length ? { warnings } : {}),
+          hint: SCENARIO_HINT,
+        });
+      },
+    ),
+
+    balcony_update: tool(
+      "Изменить балконное ограждение: длина (length_mm с anchor start|end), толщина (thickness_mm), перенос конца " +
+        "(start/end, мм). Соседние ограждения в общем узле двигаются вместе. balcony_wall_id — id сайта из " +
+        "model_get (стены с role «balcony»). Проёмы на ограждении появиться не могут.",
+      {
+        balcony_wall_id: z.string().min(1).describe("id балконного ограждения из model_get"),
+        length_mm: mmInt.optional().describe("новая длина, мм"),
+        anchor: z.enum(["start", "end"]).optional().describe("какой конец остаётся на месте (по умолчанию end)"),
+        thickness_mm: mmInt.optional(),
+        start: mmPoint.optional().describe("новое начало оси, мм"),
+        end: mmPoint.optional().describe("новый конец оси, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const { result: wall, warnings } = await ws.applyWalls("balcony_update", (m) =>
+          updateBalcony(m, {
+            wallId: resolveWall(m, a["balcony_wall_id"] as string).id,
+            lengthMm: a["length_mm"] as number | undefined,
+            anchor: a["anchor"] as "start" | "end" | undefined,
+            thicknessMm: a["thickness_mm"] as number | undefined,
+            start: a["start"] as MmPoint | undefined,
+            end: a["end"] as MmPoint | undefined,
+          }));
+        return ok({
+          id: wall.id,
+          from: [Math.round(wall.p1.x * 10), Math.round(wall.p1.y * 10)],
+          to: [Math.round(wall.p2.x * 10), Math.round(wall.p2.y * 10)],
+          thickness_mm: Math.round(wall.depth * 10),
+          ...(warnings.length ? { warnings } : {}),
+          hint: SCENARIO_HINT,
+        });
+      },
+    ),
+
+    balcony_delete: tool(
+      "Удалить балконное ограждение (id из model_get). Контур может разомкнуться — комната-балкон исчезнет, " +
+        "как при удалении стены в UI. Балконная стена не демонтируется (demolish), только удаляется целиком.",
+      { balcony_wall_id: z.string().min(1).describe("id балконного ограждения из model_get") },
+      async (a) => {
+        const ws = wsOf();
+        await ws.applyWalls("balcony_delete", (m) => deleteBalcony(m, resolveWall(m, a["balcony_wall_id"] as string).id));
+        return ok({ deleted: a["balcony_wall_id"], hint: SCENARIO_HINT });
       },
     ),
 
