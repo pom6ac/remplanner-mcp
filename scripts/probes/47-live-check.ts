@@ -142,10 +142,10 @@ const up1 = json(await client.callTool({ name: "rigel_update", arguments: { rige
 if (up1.code) { console.error("rigel_update 1:", up1.code, up1.message); process.exit(1); }
 const e1 = added.find((x) => x.id === r1.entity.site_id)!;
 e1.expect.depth_mm = 150; e1.expect.height_mm = 250;
-const up2 = json(await client.callTool({ name: "rigel_update", arguments: { rigel_id: r2.entity.site_id, depth_mm: 120, height_mm: 450, ceiling_type: "gypsum" } }));
+const up2 = json(await client.callTool({ name: "rigel_update", arguments: { rigel_id: r2.entity.site_id, depth_mm: 120, height_mm: 450, ceiling_type: "gypsum_ceiling" } }));
 if (up2.code) { console.error("rigel_update 2:", up2.code, up2.message); process.exit(1); }
 const e2 = added.find((x) => x.id === r2.entity.site_id)!;
-e2.expect.depth_mm = 120; e2.expect.height_mm = 450; e2.expect.ceiling_type = "gypsum";
+e2.expect.depth_mm = 120; e2.expect.height_mm = 450; e2.expect.ceiling_type = "gypsum_ceiling";
 console.log("update-цепочка: ok");
 
 // 3. Ошибочные вызовы не меняют модель

@@ -141,11 +141,11 @@ test("rigel_add: нестандартные толщина/высота (мм→
   const { model } = roomModel();
   const rigel = addRigel(model, {
     start: { x: 1000, y: 1000 }, end: { x: 2000, y: 1000 },
-    depthMm: 150, heightMm: 250, ceilingType: "gypsum",
+    depthMm: 150, heightMm: 250, ceilingType: "gypsum_ceiling",
   });
   assert.equal(rigel.depth, 15);
   assert.equal(rigel.height, 25);
-  assert.equal(rigel.ceiling_type, "gypsum");
+  assert.equal(rigel.ceiling_type, "gypsum_ceiling");
   // полигон: толщина 15 см → ±7.5 см от оси
   assert.ok(near(rigel.polygon[0]!.y, 92.5), "верхняя грань полигона");
   assert.ok(near(rigel.polygon[3]!.y, 107.5), "нижняя грань полигона");

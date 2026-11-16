@@ -24,11 +24,38 @@ export const RIGEL_DEFS = {
   depthMaxCm: 100,
   heightMinCm: 10,
   heightMaxCm: 100,
-  /** Допуск прилипания конца к грани, см (магнит редактора; у колонн — 3 см). */
+  /** Допуск прилипания конца к грани, см (магнит MCP; в редакторе радиус ≥ 40 см, проба 47). */
   snapTolCm: 3,
   /** Допуск контакта конца с гранью для связи, см. */
   linkTolCm: 0.05,
 };
+
+/**
+ * Допустимые ceiling_type — ключи инструментов группы ceiling_elements редактора
+ * (проба 49-ceiling-elements-tools.ts: window.tools, planner.tools___94___*.js),
+ * которые Rigel.mousedown ставит в ceiling_type ("ceiling"===plan, tool не
+ * "molding" и не "complex_ceiling"; ceiling_remove до ригеля не доходит —
+ * заменяется на eraser). Редактор рисует отделку цветом tools[type].filling;
+ * пустая строка — без отделки.
+ */
+export const RIGEL_CEILING_TYPES = [
+  "stretch_ceiling",
+  "stretch_ceiling_tissue",
+  "paint_ceiling",
+  "gypsum_ceiling",
+  "rack_ceiling",
+  "wooden_ceiling",
+  "plastic_panels_ceiling",
+  "whitewash_ceiling",
+  "armstrong_ceiling",
+  "grillato_ceiling",
+  "plaster_visual_ceiling",
+  "plaster_full_ceiling",
+  "isolation_ceiling_cotton",
+  "ceiling_niche",
+] as const;
+
+export type RigelCeilingType = (typeof RIGEL_CEILING_TYPES)[number];
 
 export type AddRigarParams = {
   /** Начало оси, мм. */
@@ -76,6 +103,12 @@ export function validateRigelsParams(p: Partial<AddRigarParams>): void {
   }
   if (p.ceilingType !== undefined && typeof p.ceilingType !== "string") {
     throw new McpError("INVALID_ARGUMENT", "ceiling_type должен быть строкой");
+  }
+  if (typeof p.ceilingType === "string" && p.ceilingType !== "" && !(RIGEL_CEILING_TYPES as readonly string[]).includes(p.ceilingType)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `ceiling_type: допустимо "" или одно из значений инструментов листа потолка: ${RIGEL_CEILING_TYPES.join(", ")}`,
+    );
   }
 }
 
@@ -176,6 +209,15 @@ function round4(v: number): number {
 
 function roundSeg(s: Segment): { p1: Point; p2: Point } {
   return { p1: { x: round4(s.p1.x), y: round4(s.p1.y) }, p2: { x: round4(s.p2.x), y: round4(s.p2.y) } };
+}
+
+/** Гашение одинаковых связей (как в редакторе): у обоих концов тот же id и z1 → p2.link = 0. */
+export function cancelSameLinks(
+  l1: RigelLink | 0,
+  l2: RigelLink | 0,
+): { p1: RigelLink | 0; p2: RigelLink | 0 } {
+  if (l1 !== 0 && l2 !== 0 && l1.id === l2.id && l1.z1 === l2.z1) return { p1: l1, p2: 0 };
+  return { p1: l1, p2: l2 };
 }
 
 /**
@@ -318,15 +360,12 @@ function buildCandidate(
     l: { p1: { x: 0, y: 0 }, p2: { x: 0, y: 0 } },
     r: { p1: { x: 0, y: 0 }, p2: { x: 0, y: 0 } },
   };
+  // ревью 48 №3: ось после магнита и округления — до записи любых полей
+  assertAxis(candidate.p1, candidate.p2);
   const axis: Segment = { p1: candidate.p1, p2: candidate.p2 };
-  candidate.p1.link = rigelLink(candidate.p1, axis, model, id);
-  candidate.p2.link = rigelLink(candidate.p2, axis, model, id);
-  if (
-    candidate.p1.link !== 0 && candidate.p2.link !== 0 &&
-    candidate.p1.link.id === candidate.p2.link.id && candidate.p1.link.z1 === candidate.p2.link.z1
-  ) {
-    candidate.p2.link = 0;
-  }
+  const canceled = cancelSameLinks(rigelLink(candidate.p1, axis, model, id), rigelLink(candidate.p2, axis, model, id));
+  candidate.p1.link = canceled.p1;
+  candidate.p2.link = canceled.p2;
   const shape = buildPolygon(candidate.p1, candidate.p2, candidate.depth, model, id, {
     p1: candidate.p1.link,
     p2: candidate.p2.link,
@@ -350,6 +389,8 @@ function assignRigel(target: Rigel, candidate: Rigel): void {
  * rigel_add: ставит потолочный ригель (мм): ось start→end, толщина depth_mm
  * (по умолчанию 300), высота height_mm (по умолчанию 300). Концы при расстоянии
  * ≤ 30 мм от грани стены/колонны/ригеля прилипают к ней, как в UI.
+ * Ревью 48 №1: вход в общую атомарную финализацию — зависимые ригели
+ * пересчитывают связи и полигоны; при ошибке модель идентична snapshot.
  */
 export function addRigel(model: Model, params: AddRigarParams): Rigel {
   validateRigelsParams(params);
@@ -359,9 +400,18 @@ export function addRigel(model: Model, params: AddRigarParams): Rigel {
   const height = params.heightMm !== undefined ? mmToCm(params.heightMm) : RIGEL_DEFS.heightCm;
   // ось проверяем до создания коллекции: при ошибке модель не меняется вовсе
   assertAxis(p1Cm, p2Cm);
-  model.rigels ??= {};
   const candidate = buildCandidate(model, newId(10), p1Cm, p2Cm, depth, height, params.ceilingType ?? "");
-  model.rigels[candidate.id] = candidate;
+  const hadRigels = model.rigels !== undefined;
+  const backup = hadRigels ? structuredClone(model.rigels) : undefined;
+  model.rigels ??= {};
+  try {
+    model.rigels[candidate.id] = candidate;
+    refreshRigelsAfterWallOrPillarChange(model);
+  } catch (e) {
+    if (backup) model.rigels = backup;
+    else delete model.rigels;
+    throw e;
+  }
   return candidate;
 }
 
@@ -382,51 +432,85 @@ export function updateRigel(model: Model, params: UpdateRigarParams): Rigel {
   const moved = params.start !== undefined || params.end !== undefined;
   const rebuilt = buildCandidate(model, candidate.id, candidate.p1, candidate.p2, candidate.depth, candidate.height, candidate.ceiling_type, moved);
   rebuilt.id = candidate.id;
-  assignRigel(rigel, rebuilt);
+  // ревью 48 №1: изменённый ригель входит в общую атомарную финализацию —
+  // зависимые ригели пересчитываются; при ошибке модель идентична snapshot
+  const backup = structuredClone(model.rigels ?? {});
+  try {
+    assignRigel(rigel, rebuilt);
+    refreshRigelsAfterWallOrPillarChange(model);
+  } catch (e) {
+    model.rigels = backup;
+    throw e;
+  }
   return rigel;
 }
 
-/** rigel_delete: удаляет ригель. */
+/** rigel_delete: удаляет ригель с атомарным пересчётом зависимых ригелей (ревью 48 №1). */
 export function deleteRigel(model: Model, rigelId: string): void {
   if (!model.rigels?.[rigelId]) throw new McpError("NOT_FOUND", `ригель ${rigelId} не найден`);
-  delete model.rigels[rigelId];
+  const backup = structuredClone(model.rigels);
+  try {
+    delete model.rigels[rigelId];
+    refreshRigelsAfterWallOrPillarChange(model);
+  } catch (e) {
+    model.rigels = backup;
+    throw e;
+  }
 }
 
 /**
- * Пересчёт связей ригелей после изменения стен/колонн/ригелей (этап 47): связи,
- * указывающие на изменившиеся/удалённые грани, пересчитываются предикатом
- * Rigel.link; у затронутых ригелей пересчитываются полигон и грани. Положение
- * ригеля (p1/p2) редактор не двигает — связи не притягивают ригель. Ошибок не
- * даёт (модель не меняется при невозможности пересчёта — связи просто гасятся).
- * Вызывается внутри atomic() стен и после операций с колоннами.
+ * Пересчёт связей ригелей после изменения стен/колонн/ригелей (этап 47; ревью 48
+ * №1 и №2): связи, указывающие на изменившиеся/удалённые грани, пересчитываются
+ * предикатом Rigel.link, а у ригелей с ненулевыми связями пересчитывается форма
+ * (polygon/l/r) даже при неизменных id/z1 — геометрия связанной грани могла
+ * измениться (поворот колонны, перенос стены). Ригели с погашенными связями
+ * (обе 0) и без изменений не трогаются — побайтово прежние. Положение ригеля
+ * (p1/p2) редактор не двигает — связи не притягивают ригель. Ошибок не даёт
+ * (модель не меняется при невозможности пересчёта — связи просто гасятся).
+ * Вызывается внутри atomic() стен и атомарных операций колонн и ригелей.
  */
 export function refreshRigelsAfterWallOrPillarChange(model: Model): void {
   const rigels = model.rigels;
   if (!rigels || Object.keys(rigels).length === 0) return;
   for (const rigel of Object.values(rigels)) {
     const axis: Segment = { p1: rigel.p1, p2: rigel.p2 };
-    const link1 = rigelLink(rigel.p1, axis, model, rigel.id);
-    const link2 = rigelLink(rigel.p2, axis, model, rigel.id);
-    let link2Final = link2;
-    if (link1 !== 0 && link2Final !== 0 && link1.id === link2Final.id && link1.z1 === link2Final.z1) {
-      link2Final = 0;
-    }
-    if (
+    const canceled = cancelSameLinks(rigelLink(rigel.p1, axis, model, rigel.id), rigelLink(rigel.p2, axis, model, rigel.id));
+    const link1 = canceled.p1;
+    const link2 = canceled.p2;
+    const linksSame =
       JSON.stringify(rigel.p1.link ?? 0) === JSON.stringify(link1) &&
-      JSON.stringify(rigel.p2.link ?? 0) === JSON.stringify(link2Final)
-    ) {
-      continue; // связи не изменились — ригель не трогаем (байт в байт)
+      JSON.stringify(rigel.p2.link ?? 0) === JSON.stringify(link2);
+    if (linksSame && link1 === 0 && link2 === 0) {
+      continue; // несвязанный ригель не трогаем (байт в байт)
     }
     const candidate = structuredClone(rigel);
     candidate.p1.link = link1;
-    candidate.p2.link = link2Final;
+    candidate.p2.link = link2;
     const shape = buildPolygon(candidate.p1, candidate.p2, candidate.depth, model, candidate.id, {
       p1: link1,
-      p2: link2Final,
+      p2: link2,
     });
     candidate.polygon = shape.polygon;
     candidate.l = roundSeg(shape.l);
     candidate.r = roundSeg(shape.r);
+    if (
+      linksSame &&
+      sameShape(candidate.polygon, rigel.polygon) &&
+      samePoint(candidate.l.p1, rigel.l.p1) && samePoint(candidate.l.p2, rigel.l.p2) &&
+      samePoint(candidate.r.p1, rigel.r.p1) && samePoint(candidate.r.p2, rigel.r.p2)
+    ) {
+      continue; // связи и форма не изменились — ригель не трогаем (байт в байт)
+    }
     assignRigel(rigel, candidate);
   }
+}
+
+/** Совпадение точек с допуском (шум точности редактора не считается изменением). */
+function samePoint(a: Point, b: Point, tol = 1e-3): boolean {
+  return Math.abs(a.x - b.x) <= tol && Math.abs(a.y - b.y) <= tol;
+}
+
+function sameShape(a: Point[], b: Point[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((p, i) => samePoint(p, b[i]!));
 }
