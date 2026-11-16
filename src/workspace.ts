@@ -11,6 +11,49 @@ import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
 import { prepareForRestore, findUnattachedEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
+import { borderMismatches } from "./model/terraces.ts";
+import { levelHoleMismatches } from "./model/floorhole.ts";
+import type { Model as TerracesModel } from "./model/types.ts";
+
+/** Потеря/изменение границ террас и участка (сверка семантики, этап 64). */
+function borderMismatchesOf(model: TerracesModel, got: { terrace_borders?: Record<string, unknown>; territory_borders?: Record<string, unknown> }): string[] {
+  return [
+    ...borderMismatches(structuredClone(model.terrace_borders ?? {}), got.terrace_borders ?? {}, "граница террасы"),
+    ...borderMismatches(structuredClone(model.territory_borders ?? {}), got.territory_borders ?? {}, "граница участка"),
+  ];
+}
+
+/** Сверка границ террас/участка локальной модели с редактором (нормализация/save). */
+function checkBordersAfterNormalize(local: Model, norm: { terrace_borders?: Record<string, unknown>; territory_borders?: Record<string, unknown> }): string[] {
+  const mismatches = borderMismatchesOf(local as unknown as TerracesModel, norm);
+  const wsTerraceIds = new Set(Object.keys(local.terrace_borders ?? {}));
+  const wsTerritoryIds = new Set(Object.keys(local.territory_borders ?? {}));
+  const normTerraceIds = new Set(Object.keys(norm.terrace_borders ?? {}));
+  const normTerritoryIds = new Set(Object.keys(norm.territory_borders ?? {}));
+  const missing = [
+    ...missingIds(wsTerraceIds, normTerraceIds).map((id) => `${id}: граница террасы потеряна`),
+    ...missingIds(wsTerritoryIds, normTerritoryIds).map((id) => `${id}: граница участка потеряна`),
+  ];
+  const extra = [
+    ...missingIds(normTerraceIds, wsTerraceIds).map((id) => `${id}: граница террасы добавлена редактором`),
+    ...missingIds(normTerritoryIds, wsTerritoryIds).map((id) => `${id}: граница участка добавлена редактором`),
+  ];
+  return [...missing, ...extra, ...mismatches.filter((m) => !missing.some((k) => m.startsWith(`${k.split(":")[0]!}:`)))];
+}
+
+/** Сверка проёмов в полу локальной модели с редактором (нормализация/save).
+ *  levelHoleMismatches (этап 67) сверяет идентичности в обе стороны, включая
+ *  лишние проёмы на стороне редактора/сервера. */
+function checkLevelHolesAfterNormalize(local: Model, norm: Model): string[] {
+  const wsIds = new Set(Object.keys(local.level_holes ?? {}));
+  const normIds = new Set(Object.keys(norm.level_holes ?? {}));
+  const lost = missingIds(wsIds, normIds);
+  const mismatches = levelHoleMismatches(structuredClone(local.level_holes ?? {}), norm.level_holes ?? {});
+  return [
+    ...lost.map((id) => `${id}: проём в полу потерян`),
+    ...mismatches.filter((m) => !lost.some((id) => m.startsWith(`${id}:`))),
+  ];
+}
 
 // T17: рабочее пространство — открытые проекты, каноническая модель (GET), история
 // undo/redo (до 50), dirty, save_id, снимок в backups/ перед сохранением, SAVE_CONFLICT.
@@ -50,7 +93,7 @@ export type SaveOutcome = {
   verified: boolean;
   rounds: number;
   /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено. */
-  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number };
+  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; terrace_borders: number; territory_borders: number; level_holes: number };
   /** Предупреждения (удаления объектов сервера). */
   warnings: string[];
 };
@@ -62,8 +105,8 @@ export const MAX_HISTORY = 50;
 /** Результат мутации стен: полезное значение + предупреждения (офлайн-режим). */
 export type WallMutation<T> = { result: T; warnings: string[] };
 
-/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии. */
-export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number } {
+/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии, границы террас/участка, проёмы пола. */
+export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; terrace_borders: number; territory_borders: number; level_holes: number } {
   const m = model as Model;
   const walls = m.walls ?? {};
   return {
@@ -73,6 +116,9 @@ export function modelCounts(model: Model | Record<string, unknown>): { walls: nu
     pillars: Object.keys(m.pillars ?? {}).length,
     rigels: Object.keys(m.rigels ?? {}).length,
     gas_lines: Object.keys(m.pipes_gas ?? {}).length,
+    terrace_borders: Object.keys(m.terrace_borders ?? {}).length,
+    territory_borders: Object.keys(m.territory_borders ?? {}).length,
+    level_holes: Object.keys(m.level_holes ?? {}).length,
   };
 }
 
@@ -98,6 +144,7 @@ export function modelIsContentEmpty(model: Model): boolean {
   const nonEmpty = (v: unknown): boolean => v !== null && v !== undefined && typeof v === "object" && Object.keys(v as object).length > 0;
   if (nonEmpty(model.pillars) || nonEmpty(model.rigels) || nonEmpty(model.rulers) || nonEmpty(model.comments)) return false;
   if (nonEmpty(model.pipes_gas)) return false;
+  if (nonEmpty(model.terrace_borders) || nonEmpty(model.territory_borders) || nonEmpty(model.level_holes)) return false;
   if (nonEmpty(model.rooms2) || nonEmpty(model.rooms1)) return false;
   return true;
 }
@@ -151,8 +198,10 @@ function wallAxisCoveredBy(wall: { p1: Point; p2: Point } | undefined, localSegm
   );
 }
 
-/** Значимая геометрия колонны для сверки после сохранения (ревью 43 №2). */
-type PillarSig = { pc?: { x: number; y: number }; width?: number; height?: number; angle?: number };
+/** Значимая геометрия колонны для сверки после сохранения (ревью 43 №2);
+ *  ревью 66 №3: role тоже значима — террасный столб, ставший обычной колонной,
+ *  не проходит как «verified». */
+type PillarSig = { pc?: { x: number; y: number }; width?: number; height?: number; angle?: number; role?: string };
 
 /**
  * Расхождение колонн между рабочей копией и сервером после save (ревью 43 №2):
@@ -181,6 +230,47 @@ function pillarVerificationMismatches(expected: Record<string, PillarSig>, got: 
     if (!near(g.width, p.width, 0.1)) out.push(`${id}: ширина изменилась (на сервере ${g.width}; ожидалось ${p.width})`);
     if (!near(g.height, p.height, 0.1)) out.push(`${id}: глубина изменилась (на сервере ${g.height}; ожидалось ${p.height})`);
     if (angleDiff(g.angle ?? 0, p.angle ?? 0) > 0.1) out.push(`${id}: угол изменился (на сервере ${g.angle ?? 0}; ожидалось ${p.angle ?? 0})`);
+    if ((g.role ?? "") !== (p.role ?? "")) out.push(`${id}: role изменилась (на сервере «${g.role ?? ""}»; ожидалось «${p.role ?? ""}»)`);
+  }
+  return out;
+}
+
+/**
+ * Роли стен после нормализации/save (ревью 66 №3): ограждение террасы, ставшее
+ * обычной стеной, геометрию не меняет — сверяется role у стен с совпадающей
+ * геометрией. Стена с тем же id — role обязана совпасть; у стены с новым id
+ * (переименование нормализацией) role сравнивается с геометрически совпадающей
+ * ожидаемой стеной.
+ */
+function wallRoleMismatches(
+  expected: Record<string, { role?: string; p1: Point; p2: Point }>,
+  got: Record<string, { role?: string; p1: Point; p2: Point }>,
+): string[] {
+  const out: string[] = [];
+  const segOf = (w: { p1: Point; p2: Point }): WallAxisSegment[] => wallAxisSegments({ w });
+  const covers = (a: { p1: Point; p2: Point }, b: { p1: Point; p2: Point }): boolean => {
+    const segsA = segOf(a);
+    const segsB = segOf(b);
+    return segsA.length > 0 && segsA.every((s) =>
+      segsB.some((t) =>
+        Math.abs(t.ux - s.ux) <= 1e-6 && Math.abs(t.uy - s.uy) <= 1e-6 &&
+        Math.abs(t.offset - s.offset) <= 0.1 && t.a <= s.a + 0.1 && t.b >= s.b - 0.1,
+      ),
+    );
+  };
+  for (const [id, g] of Object.entries(got)) {
+    const e = expected[id];
+    if (e) {
+      if ((g.role ?? "") !== (e.role ?? "")) {
+        out.push(`${id}: role изменилась (на сервере «${g.role ?? ""}»; ожидалось «${e.role ?? ""}»)`);
+      }
+      continue;
+    }
+    // переименование: ищем ожидаемую стену с той же геометрией оси
+    const renamed = Object.entries(expected).find(([, e]) => (e.role ?? "") !== (g.role ?? "") && (covers(g, e) || covers(e, g)));
+    if (renamed) {
+      out.push(`${id}: role изменилась (на сервере «${g.role ?? ""}»; ожидалось «${renamed[1].role ?? ""}» у ${renamed[0]})`);
+    }
   }
   return out;
 }
@@ -658,6 +748,19 @@ export class Workspace {
           details: { lost_gas_lines: lostGasNorm, gas_line_mismatches: gasGraphNorm },
         });
       }
+      // этап 64: границы террас/участка и проёмы в полу после нормализации не теряются
+      const lostBorders = checkBordersAfterNormalize(this.modelInternal!, norm.model as Model);
+      if (lostBorders.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил границы террас/участка — мутация отменена`, {
+          details: { border_mismatches: lostBorders },
+        });
+      }
+      const lostHoles = checkLevelHolesAfterNormalize(this.modelInternal!, norm.model as Model);
+      if (lostHoles.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил проёмы в полу — мутация отменена`, {
+          details: { level_hole_mismatches: lostHoles },
+        });
+      }
       // нормализованная копия становится канонической
       this.modelInternal = toModel(structuredClone(norm.model as unknown as Record<string, unknown>));
       if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
@@ -775,6 +878,9 @@ export class Workspace {
       pillars: missingIds(new Set(Object.keys(serverModel.pillars ?? {})), new Set(Object.keys(this.modelInternal!.pillars ?? {}))),
       rigels: missingIds(new Set(Object.keys(serverModel.rigels ?? {})), new Set(Object.keys(this.modelInternal!.rigels ?? {}))),
       gas_lines: missingIds(new Set(Object.keys(serverModel.pipes_gas ?? {})), new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}))),
+      terrace_borders: missingIds(new Set(Object.keys(serverModel.terrace_borders ?? {})), new Set(Object.keys(this.modelInternal!.terrace_borders ?? {}))),
+      territory_borders: missingIds(new Set(Object.keys(serverModel.territory_borders ?? {})), new Set(Object.keys(this.modelInternal!.territory_borders ?? {}))),
+      level_holes: missingIds(new Set(Object.keys(serverModel.level_holes ?? {})), new Set(Object.keys(this.modelInternal!.level_holes ?? {}))),
     };
     const willDelete = {
       walls: deletedIds.walls.length,
@@ -783,6 +889,9 @@ export class Workspace {
       pillars: deletedIds.pillars.length,
       rigels: deletedIds.rigels.length,
       gas_lines: deletedIds.gas_lines.length,
+      terrace_borders: deletedIds.terrace_borders.length,
+      territory_borders: deletedIds.territory_borders.length,
+      level_holes: deletedIds.level_holes.length,
     };
     const warnings: string[] = [];
     const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
@@ -793,6 +902,9 @@ export class Workspace {
     if (willDelete.pillars > 0) warnings.push(`будут удалены колонны (${willDelete.pillars}), которых нет в модели: ${idList(deletedIds.pillars)}`);
     if (willDelete.rigels > 0) warnings.push(`будут удалены ригели (${willDelete.rigels}), которых нет в модели: ${idList(deletedIds.rigels)}`);
     if (willDelete.gas_lines > 0) warnings.push(`будут удалены газовые линии (${willDelete.gas_lines}), которых нет в модели: ${idList(deletedIds.gas_lines)}`);
+    if (willDelete.terrace_borders > 0) warnings.push(`будут удалены границы террас (${willDelete.terrace_borders}), которых нет в модели: ${idList(deletedIds.terrace_borders)}`);
+    if (willDelete.territory_borders > 0) warnings.push(`будут удалены границы участка (${willDelete.territory_borders}), которых нет в модели: ${idList(deletedIds.territory_borders)}`);
+    if (willDelete.level_holes > 0) warnings.push(`будут удалены проёмы в полу (${willDelete.level_holes}), которых нет в модели: ${idList(deletedIds.level_holes)}`);
     if (fresh.save_id !== saveIdBefore) {
       if (!this.editorInternal && !options.force) {
         throw new McpError(
@@ -856,6 +968,12 @@ export class Workspace {
     const expectedGasLines = structuredClone((norm.model as { pipes_gas?: Record<string, GasLineSig> }).pipes_gas ?? {});
     const localGasIds = new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}));
     const gotGasIds = new Set(Object.keys((norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {}));
+    // этап 64: ожидаемые границы террас/участка и проёмы в полу — из нормализованной модели
+    const expectedBorders = {
+      terrace_borders: structuredClone((norm.model as { terrace_borders?: Record<string, unknown> }).terrace_borders ?? {}),
+      territory_borders: structuredClone((norm.model as { territory_borders?: Record<string, unknown> }).territory_borders ?? {}),
+    };
+    const expectedLevelHoles = structuredClone((norm.model as { level_holes?: Record<string, unknown> }).level_holes ?? {});
     const lostOpenings = missingIds(localOpeningIds, gotOpeningIds);
     const lostItems = missingIds(localItemIds, gotItemIds);
     const lostPillars = missingIds(localPillarIds, gotPillarIds);
@@ -868,6 +986,12 @@ export class Workspace {
       structuredClone(this.modelInternal!.pipes_gas ?? {}) as Record<string, GasLineSig>,
       (norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {},
     );
+    // этап 64: потери границ и проёмов пола при нормализации
+    const bordersNorm = checkBordersAfterNormalize(this.modelInternal!, norm.model as Model);
+    const holesNorm = checkLevelHolesAfterNormalize(this.modelInternal!, norm.model as Model);
+    // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
+    const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
+    const rolesNorm = wallRoleMismatches(this.modelInternal!.walls as unknown as Record<string, { role?: string; p1: Point; p2: Point }>, expectedWalls);
     const gotSegments = wallAxisSegments(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
@@ -878,7 +1002,7 @@ export class Workspace {
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
       lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 ||
-      gasGraphNorm.length > 0
+      gasGraphNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -894,6 +1018,9 @@ export class Workspace {
           lost_rigels: lostRigels,
           lost_gas_lines: lostGasLines,
           gas_line_mismatches: gasGraphNorm,
+          border_mismatches: bordersNorm,
+          level_hole_mismatches: holesNorm,
+          wall_role_mismatches: rolesNorm,
         },
       });
     }
@@ -931,8 +1058,22 @@ export class Workspace {
       // и длине (ревью 59 №1 — топология входит в сверку)
       const gasAfter = (after.model["pipes_gas"] as Record<string, unknown> | undefined) ?? {};
       const gasMismatch = gasLineGraphMismatches(expectedGasLines, gasAfter);
+      // этап 64: границы террас/участка и проёмы в полу после save — по нормализованной семантике
+      const bordersAfter = {
+        terrace_borders: (after.model["terrace_borders"] as Record<string, unknown> | undefined) ?? {},
+        territory_borders: (after.model["territory_borders"] as Record<string, unknown> | undefined) ?? {},
+      };
+      const borderMismatch = checkBordersAfterNormalize(
+        { terrace_borders: expectedBorders.terrace_borders, territory_borders: expectedBorders.territory_borders } as Model,
+        bordersAfter,
+      );
+      const holesAfter = (after.model["level_holes"] as Record<string, unknown> | undefined) ?? {};
+      const holeMismatch = levelHoleMismatches(expectedLevelHoles as Record<string, import("./model/types.ts").LevelHole>, holesAfter);
+      // ревью 66 №3: роли стен после save — ограждение, ставшее обычной стеной, не «verified»
+      const wallsAfterTyped = wallsAfter as Record<string, { role?: string; p1: Point; p2: Point }>;
+      const wallRoleMismatch = wallRoleMismatches(expectedWalls, wallsAfterTyped);
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -945,6 +1086,9 @@ export class Workspace {
             axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,
             pillar_mismatches: pillarMismatch, rigel_mismatches: rigelMismatch, item_mismatches: itemMismatch,
             gas_line_mismatches: gasMismatch,
+            border_mismatches: borderMismatch,
+            level_hole_mismatches: holeMismatch,
+            wall_role_mismatches: wallRoleMismatch,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });

@@ -216,6 +216,44 @@ export type GasLine = {
   [key: string]: unknown;
 };
 
+/**
+ * Граница террасы/участка (model.terrace_borders / model.territory_borders, пункты меню
+ * «Терраса и участок» → «Нарисовать террасу»/«Нарисовать участок», этап 64, 2026-11-16):
+ * эталоны tests/fixtures/ui-ref-terrace-border.json и ui-ref-terrace-territory.json.
+ * Отрезок оси в см; терраса/участок — замкнутое кольцо таких границ, площадь и заливка —
+ * расчёт редактора. p1link/p2link редактор восстанавливает сам (getLinks), в модели их нет.
+ */
+export type TerraceBorder = {
+  id: string;
+  p1: Point;
+  p2: Point;
+  [key: string]: unknown;
+};
+
+/**
+ * Проём в полу (model.level_holes, пункт меню «Проем в полу», этап 64, 2026-11-16):
+ * эталон tests/fixtures/ui-ref-floorhole-floor_hole.json. Прямоугольник на плане:
+ * polygon — 4 угла (см, Y вниз), matrix — кольцо 4×4 в обе стороны ({length:1}),
+ * vertexes — узлы type "node", items — карта id узла → "node", type "floor_hole",
+ * plan "a", length — периметр в метрах (пересчитывается редактором), area — площадь в м², pc — центр.
+ * id_room редактор при restore не пересчитывает (проба 64-norm2) — пишем id комнаты
+ * по проверенному включению (ревью 66 №8).
+ */
+export type LevelHole = {
+  id: string;
+  plan: string;
+  polygon: Point[];
+  matrix: ({ length: number } | null)[][];
+  vertexes: { id: string; point: Point; type: string }[];
+  items: Record<string, string>;
+  type: "floor_hole" | "ceiling_hole" | (string & {});
+  length: number;
+  id_room: string | null;
+  area: number;
+  pc: Point;
+  [key: string]: unknown;
+};
+
 export type Model = {
   v: number;
   id: string;
@@ -232,6 +270,12 @@ export type Model = {
   rigels?: Record<string, Rigel>;
   /** Газовые линии (пункт меню «Коммуникации» → «Газовый трубопровод»); у старых моделей может отсутствовать. */
   pipes_gas?: Record<string, GasLine>;
+  /** Границы террас (пункт меню «Терраса и участок» → «Нарисовать террасу»); может отсутствовать. */
+  terrace_borders?: Record<string, TerraceBorder>;
+  /** Границы участка (пункт меню «Терраса и участок» → «Нарисовать участок»); может отсутствовать. */
+  territory_borders?: Record<string, TerraceBorder>;
+  /** Проёмы в полу/потолке (пункт меню «Проем в полу» → floor_hole); может отсутствовать. */
+  level_holes?: Record<string, LevelHole>;
   rulers: Record<string, unknown>;
   comments: Record<string, unknown>;
   total_height: number;

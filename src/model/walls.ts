@@ -33,7 +33,7 @@ export type AddWallParams = {
   thicknessMm?: number;
   material?: string;
   plan?: "a" | "c";
-  role?: "wall" | "balcony";
+  role?: "wall" | "balcony" | "terrace_fence";
 };
 
 export type AddPolylineParams = {
@@ -230,7 +230,7 @@ function assertNoCrossing(model: Model, p1: Point, p2: Point, skipIds: ReadonlyS
   }
 }
 
-function makeWall(model: Model, p1: Point, p2: Point, params: { thicknessMm?: number; material?: string; plan?: "a" | "c"; role?: "wall" | "balcony" }): Wall {
+function makeWall(model: Model, p1: Point, p2: Point, params: { thicknessMm?: number; material?: string; plan?: "a" | "c"; role?: "wall" | "balcony" | "terrace_fence" }): Wall {
   const depth = mmToCm(params.thicknessMm ?? 200);
   const id = uniqueId(model);
   const wall: Wall = {
@@ -947,6 +947,13 @@ export function prepareForRestore(model: Model): void {
     delete wall.p1.bak;
     delete wall.p2.bak;
   }
+  // этап 64: LEVEL_HOLES.restore редактора не очищает старые проёмы, когда коллекция
+  // undefined (delete вызывается только внутри цикла по непустому аргументу) — удалённый
+  // через MCP проём воскресал бы из предыдущего restore. TerritoryBorders.restore тоже
+  // не делает remove() при пустом аргументе. Передаём пустые коллекции явно.
+  model.terrace_borders ??= {};
+  model.territory_borders ??= {};
+  model.level_holes ??= {};
   prepareWallFaces(model);
   prepareHolePoints(model);
 }

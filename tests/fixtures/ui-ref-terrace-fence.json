@@ -1,0 +1,20 @@
+{
+ "_source": "проба 64-fence/64-norm2 (анонимный проект, headless Chromium): стена role \"terrace_fence\" через restore→draw→copy редактора (соответствует инструменту «Ограждение террасы», defs.terrace_fence.depth=5). id обезличен (0); координаты — реальные точки листа init (не идентифицируют). Полная стена модели: role \"terrace_fence\", plan \"a\", depth 5 (см), производные l*/r*, eds2 с is_terrace/is_territory — расчёт редактора, восстановление по p1/p2/depth/role. В UI ограждение рисуется только при существующей террасе (l10n.terrace_fence__terrace_required).",
+ "entity": {
+  "id": "0",
+  "plan": "a",
+  "role": "terrace_fence",
+  "depth": 5,
+  "angle": 90,
+  "p1": { "role": "p1", "x": 900, "y": 100, "demount": 0 },
+  "p2": { "role": "p2", "x": 900, "y": 300, "demount": 0 },
+  "l1": { "x": 902.5, "y": 100 },
+  "l2": { "x": 902.5, "y": 300 },
+  "r1": { "x": 897.5, "y": 100 },
+  "r2": { "x": 897.5, "y": 300 },
+  "inRoom": 1,
+  "material": "a_block",
+  "level": "1",
+  "show_dls": true
+ }
+}
