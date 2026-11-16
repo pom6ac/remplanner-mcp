@@ -26,6 +26,8 @@ const EXPECTED_TOOLS = [
   "catalog_search", "catalog_get", "item_add", "item_update", "item_delete", "items_list",
   // §7.4b — колонны (пункт меню «Несущая колонна», этап 41)
   "pillar_add", "pillar_update", "pillar_delete",
+  // §7.4c — потолочные ригели (пункт меню «Потолочный ригель», этап 47)
+  "rigel_add", "rigel_update", "rigel_delete",
   // §7.6
   "model_get", "model_validate", "render_plan",
 ];

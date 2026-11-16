@@ -22,6 +22,7 @@ export type ValidationProblem = {
     | "PILLAR_INTERSECTS_WALL"
     | "PILLARS_OVERLAP"
     | "PILLAR_OUTSIDE_ROOM"
+    | "RIGEL_BAD_GEOMETRY"
     | "MISSING_WALL_FACES"
     | "MISSING_HOLE_POINTS";
   message: string;
@@ -337,6 +338,27 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
           details: { pillar_id: pillar.id, pc: pillar.pc },
         });
       }
+    }
+  }
+
+  // ригели (этап 47): редактор геометрию ригеля не проверяет, но restore падает на
+  // неконечной оси и нулевой длине (Rigel.calc) — проверяем только это
+  for (const rigel of Object.values(model.rigels ?? {})) {
+    const bad: string[] = [];
+    for (const [name, pt] of [["p1", rigel.p1], ["p2", rigel.p2]] as const) {
+      if (!pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) bad.push(`${name}`);
+    }
+    if (!Number.isFinite(rigel.depth) || !(rigel.depth > 0)) bad.push("depth");
+    if (!Number.isFinite(rigel.height) || !(rigel.height > 0)) bad.push("height");
+    if (bad.length === 0 && rigel.p1 && rigel.p2 && Math.hypot(rigel.p2.x - rigel.p1.x, rigel.p2.y - rigel.p1.y) < 1e-6) {
+      bad.push("axis");
+    }
+    if (bad.length > 0) {
+      problems.push({
+        code: "RIGEL_BAD_GEOMETRY",
+        message: `ригель ${rigel.id}: некорректная геометрия (${bad.join(", ")}) — редактор не восстановит такой ригель`,
+        details: { rigel_id: rigel.id, fields: bad },
+      });
     }
   }
 

@@ -8,6 +8,7 @@ import {
 import { McpError } from "../errors.ts";
 import { prepareHolePoints, refreshWallHoles, holeRange, normalizeWallOpeningFormats } from "./openings.ts";
 import { refreshPillarsAfterWallChange } from "./pillars.ts";
+import { refreshRigelsAfterWallOrPillarChange } from "./rigels.ts";
 
 // Топология стен (design §12.3): Node задаёт ТОЛЬКО геометрию — оси, толщину, T-концы на
 // гранях. Связи (node/edge), грани на стыках и комнаты редактор строит сам из геометрии
@@ -121,13 +122,16 @@ function geomError(code: "INVALID_GEOMETRY" | "UNSUPPORTED_JUNCTION", message: s
 function atomic<T>(model: Model, fn: () => T): T {
   const backupWalls = structuredClone(model.walls);
   const backupPillars = structuredClone(model.pillars ?? {});
+  const backupRigels = structuredClone(model.rigels ?? {});
   try {
     const result = fn();
     refreshPillarsAfterWallChange(model);
+    refreshRigelsAfterWallOrPillarChange(model);
     return result;
   } catch (e) {
     model.walls = backupWalls;
     model.pillars = backupPillars;
+    model.rigels = backupRigels;
     throw e;
   }
 }

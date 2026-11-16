@@ -144,6 +144,47 @@ export type Pillar = {
   [key: string]: unknown;
 };
 
+/**
+ * Потолочный ригель (model.rigels, пункт меню «Потолочный ригель», этап 47, 2026-11-16):
+ * эталоны tests/fixtures/ui-ref-rigel-<вариант>.json. p1/p2 — концы оси (см) со связями
+ * к граням стен/колонн/ригелей (пересчитываются редактором при restore), depth — толщина
+ * на плане, height — опускание от потолка, ceiling_type — тип отделки потолка,
+ * polygon/l/r — расчёт редактора (Rigel.calc/serialize), пишется каноничный вид.
+ */
+export type RigelLink = {
+  /** К чему прилип конец оси: стена, колонна или другой ригель. */
+  ot: "wall" | "pillar" | "rigel";
+  id: string;
+  /** Сторона грани: у стены l/r/s/e, у колонны t/r/b/l, у ригеля l/r/s/e. */
+  z1: string;
+};
+
+export type RigelEndpoint = Point & {
+  /** Связь конца с гранью или 0 (нет связи); пересчитывается редактором при restore. */
+  link?: RigelLink | 0;
+};
+
+export type Rigel = {
+  id: string;
+  /** Начало оси, см. */
+  p1: RigelEndpoint;
+  /** Конец оси, см. */
+  p2: RigelEndpoint;
+  /** Толщина ригеля на плане, см (defs.rigel.depth: 10..100). */
+  depth: number;
+  /** Опускание от потолка, см (defs.rigel.height: 10..100). */
+  height: number;
+  /** Тип отделки потолка ("" — ригель без отделки). */
+  ceiling_type: string;
+  /** Полигон ригеля на плане (4 угла, расчёт редактора). */
+  polygon: Point[];
+  /** Левая боковая грань (расчёт редактора, 4 знака). */
+  l: { p1: Point; p2: Point };
+  /** Правая боковая грань (расчёт редактора, 4 знака). */
+  r: { p1: Point; p2: Point };
+  [key: string]: unknown;
+};
+
 export type Model = {
   v: number;
   id: string;
@@ -156,6 +197,8 @@ export type Model = {
   items: Record<string, ItemProps>;
   /** Колонны (пункт меню «Несущая колонна») и прочие pillar-объекты модели редактора. */
   pillars: Record<string, Pillar>;
+  /** Потолочные ригели (пункт меню «Потолочный ригель»); у старых моделей может отсутствовать. */
+  rigels?: Record<string, Rigel>;
   rulers: Record<string, unknown>;
   comments: Record<string, unknown>;
   total_height: number;
