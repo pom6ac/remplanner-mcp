@@ -257,6 +257,33 @@ test("84: update — перенос узлов, длина по рёбрам; н
   assert.throws(() => updateLightLine(model, { kind: "led", lineId: line.id, positions: [{ vertex: 5, x: 0, y: 0 }] }), (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT");
 });
 
+test("85 №2: stripe_update шины со спотами (spots/line_spots) — INVALID_ARGUMENT атомарно: спот на шине пересчитывается редактором за шиной, предсохранительная сверка сочла бы перенос потерей", () => {
+  const model = baseModel();
+  const stripe = addLightLine(model, { kind: "pendent", path: [{ x: 500, y: 500 }, { x: 1500, y: 500 }] }) as StripLight;
+  // синтетическая связь «спот на шине» (формат spots бандла app.3.0; этап 84 её не пишет)
+  model.items ??= {};
+  model.items["spot1"] = { name: "track_spot", pc: { x: 100, y: 50 }, width: 10, height: 10, angle: 0, strip_light_id: stripe.id, props: {} } as never;
+  stripe.spots["spot1"] = { name: "track_spot", line_id: 0, d: 0.5 } as never;
+  const stripe2 = addLightLine(model, { kind: "surface", path: [{ x: 500, y: 1500 }, { x: 1500, y: 1500 }] }) as StripLight;
+  stripe2.line_spots = [{ line_id: 0, d_s: 0.2, d_e: 0.5, p1: { x: 70, y: 50 }, p2: { x: 100, y: 50 } }] as never;
+  const before = JSON.stringify(model);
+  for (const [kind, lineId] of [["pendent", stripe.id], ["surface", stripe2.id]] as const) {
+    assert.throws(
+      () => updateLightLine(model, { kind, lineId, positions: [{ vertex: 0, x: 1000, y: 1000 }] }),
+      (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+      `${kind}: перенос шины со спотами отвергается`,
+    );
+  }
+  assert.equal(JSON.stringify(model), before, "атомарность: отказ не меняет модель");
+});
+
+test("85 №2: update шины без спотов и led/line-линий не ограничен (связей нет)", () => {
+  const model = baseModel();
+  const stripe = addLightLine(model, { kind: "recessed", path: [{ x: 500, y: 500 }, { x: 1500, y: 500 }] }) as StripLight;
+  updateLightLine(model, { kind: "recessed", lineId: stripe.id, positions: [{ vertex: 0, x: 1000, y: 1000 }] });
+  assert.deepEqual(stripe.vertexes[0]!.point, { x: 100, y: 100 });
+});
+
 test("84: delete — линия уходит, NOT_FOUND; разные коллекции независимы", () => {
   const model = baseModel();
   const led = addLightLine(model, { kind: "led", path: [{ x: 500, y: 500 }, { x: 1500, y: 500 }] });

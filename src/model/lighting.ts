@@ -171,6 +171,18 @@ export function addLightLine(
 }
 
 /**
+ * Световые споты на шине (spots/line_spots) — связи этапа 84 не поддержаны
+ * (ревью 85 №2/№3): редактор при нормализации пересчитывает точки спота за шиной
+ * (StripLight.drawLineSpotsByLine), поэтому перенос такой шины MCP-моделью дал бы
+ * ложную блокировку save. Пока связи отложены — операции над шиной со спотами
+ * атомарно отвергаются.
+ */
+export function hasLightSpots(line: unknown): boolean {
+  const l = line as { spots?: Record<string, unknown>; line_spots?: unknown[] } | null;
+  return Boolean(l && ((l.spots && Object.keys(l.spots).length > 0) || (Array.isArray(l.line_spots) && l.line_spots.length > 0)));
+}
+
+/**
  * <light>_update: перенос узлов графа — positions [{vertex, x_mm, y_mm}] (0-based).
  * Кандидат-копия; при ошибке модель не меняется; длина пересчитывается по рёбрам.
  * Все вершины — узлы (у световых линий вершин-предметов нет).
@@ -183,6 +195,12 @@ export function updateLightLine(
   const line = collectionOf(model, kind)[params.lineId];
   if (!line) {
     throw new McpError("NOT_FOUND", `световая линия ${params.lineId} не найдена в ${LIGHT_COLLECTION_BY_KIND[kind]}`);
+  }
+  if (hasLightSpots(line)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `шина ${params.lineId} содержит световые споты (spots/line_spots) — их перенос MCP пока не поддерживает: спот на шине пересчитывается редактором; измените шину в редакторе или удалите споты`,
+    );
   }
   const positions = params.positions ?? [];
   if (positions.length === 0) return line;
