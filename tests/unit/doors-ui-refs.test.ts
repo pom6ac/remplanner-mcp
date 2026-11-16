@@ -246,16 +246,30 @@ test("цепочка update: дверь меняет размеры, полож�
 // ---------- Совместимость с v0.1.1 (9ae566f) ----------
 
 /**
+ * Дефолты таблицы OPENING_KINDS релиза v0.1.1 (коммит 9ae566f, `git show 9ae566f:src/model/openings.ts`):
+ * литералы, а не текущая таблица — у старого doorway 900 мм и глубина 10, у system_x3 800×2000
+ * (ревью 38, R3: генерация «старого» объекта по НОВОЙ таблице не воспроизводит дефолты релиза).
+ */
+const LEGACY_KINDS_9AE566F: Record<string, { type: string; group: "doors"; widthMm: number; heightMm: number; depthCm: number; sillCm: number }> = {
+  doorway: { type: "doorway", group: "doors", widthMm: 900, heightMm: 2100, depthCm: 10, sillCm: 0 },
+  door: { type: "single", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
+  door_coupe: { type: "door_coupe", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
+  door_garage: { type: "door_garage", group: "doors", widthMm: 3000, heightMm: 2250, depthCm: 4, sillCm: 0 },
+  door_system_x3: { type: "door_system_x3", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
+};
+
+/**
  * Точный объект, который создаёт addOpening из релиза v0.1.1 (коммит 9ae566f) для двери:
  * логика скопирована из git show 9ae566f:src/model/openings.ts (функция addOpening)
- * дословно для случая двери — без applyWindowFields (тогда его не было).
+ * дословно для случая двери — без applyWindowFields (тогда его не было), дефолты —
+ * из LEGACY_KINDS_9AE566F, opening — только из swing (двухчастный, дефолтов вида не было).
  */
 function legacyAddOpening9ae566f(model: Model, params: {
-  wallId: string; type: string; centerMm?: number; widthMm?: number; heightMm?: number;
+  wallId: string; type: keyof typeof LEGACY_KINDS_9AE566F & string; centerMm?: number; widthMm?: number; heightMm?: number;
   swing?: { hinge: "start" | "end"; into: "left" | "right" }; casing?: boolean; leaves?: number;
 }): Hole {
   const wall = model.walls[params.wallId]!;
-  const kind = OPENING_KINDS[params.type]!;
+  const kind = LEGACY_KINDS_9AE566F[params.type]!;
   const width = mmToCm(params.widthMm ?? kind.widthMm);
   const at = params.centerMm !== undefined ? mmToCm(params.centerMm) - width / 2 : 0;
   const pc = pointAtLength({ p1: wall.p1, p2: wall.p2 }, at + width / 2);
@@ -328,6 +342,66 @@ test("legacy v0.1.1 (9ae566f): у legacy-двери, не тронутой updat
   assert.equal(d.casing, undefined);
   assert.equal(d.casements, undefined);
   assert.equal(d.slope_angle, undefined);
+});
+
+test("legacy v0.1.1 (9ae566f): старые дефолты doorway/coupe/system_x3/garage обновляются и нормализуются (ревью 38, R3)", () => {
+  const model = emptyModel();
+  const { top, bottom, right, left } = rect(model);
+  // объекты, созданные релизом v0.1.1 со СТАРЫМИ дефолтами таблицы (без width/height в params)
+  const dw = legacyAddOpening9ae566f(model, { wallId: top.id, type: "doorway", centerMm: 600 });
+  assert.equal(dw.width, 90, "старый doorway 900 мм");
+  assert.equal(dw.depth, 10, "старая глубина doorway 10");
+  assert.equal(dw.height, 210);
+  const cp = legacyAddOpening9ae566f(model, { wallId: top.id, type: "door_coupe", centerMm: 2000 });
+  assert.equal(cp.width, 80, "старый door_coupe 800 мм");
+  assert.equal(cp.height, 200, "старая высота 200");
+  assert.equal(cp.opening, undefined, "v0.1.1 без swing не писал opening");
+  const s3 = legacyAddOpening9ae566f(model, { wallId: left.id, type: "door_system_x3", centerMm: 800 });
+  assert.equal(s3.width, 80, "старый door_system_x3 800 мм (не 2400)");
+  assert.equal(s3.height, 200);
+  const gr = legacyAddOpening9ae566f(model, { wallId: bottom.id, type: "door_garage", centerMm: 2000 });
+  assert.equal(gr.width, 300, "старый door_garage 3000 мм");
+  assert.equal(gr.height, 225);
+  for (const h of [dw, cp, s3, gr]) {
+    assert.equal(h.casing, undefined, "v0.1.1 не писал casing");
+    assert.equal(h.casements, undefined, "v0.1.1 не писал casements");
+    assert.equal(h.slope_angle, undefined, "v0.1.1 не писал slope_angle");
+  }
+  // нетронутая legacy-дверь (та же стена, что dw/cp) не меняется при update чужих проёмов
+  const untouched = legacyAddOpening9ae566f(model, { wallId: top.id, type: "door", centerMm: 3300, heightMm: 2000 });
+  const untouchedSnap = structuredClone(untouched);
+
+  // update ширины и позиции у каждого типа
+  updateOpening(model, { wallId: top.id, holeId: dw.id, widthMm: 1000, centerMm: 800 });
+  assert.equal(dw.width, 100);
+  assert.deepEqual(holeRange(top, dw), [30, 130]);
+  updateOpening(model, { wallId: top.id, holeId: cp.id, widthMm: 900, centerMm: 2200 });
+  assert.equal(cp.width, 90);
+  assert.deepEqual(holeRange(top, cp), [175, 265]);
+  updateOpening(model, { wallId: left.id, holeId: s3.id, widthMm: 2400, heightMm: 2100, centerMm: 1300 });
+  assert.equal(s3.width, 240, "системная дверь принимает новую ширину x3");
+  assert.equal(s3.height, 210);
+  updateOpening(model, { wallId: bottom.id, holeId: gr.id, centerMm: 2400 });
+  assert.deepEqual(holeRange(bottom, gr), [90, 390]);
+
+  // casing и swing: у doorway формат свободный (swing даёт двухчастную строку v0.1.1),
+  // у coupe/system_x3 двухчастный обязателен, у garage однобуквенный
+  updateOpening(model, { wallId: top.id, holeId: dw.id, casing: true, swing: { hinge: "start", into: "left" } });
+  assert.equal(dw.casing, 1);
+  assert.equal(dw.opening, "l-l");
+  updateOpening(model, { wallId: top.id, holeId: cp.id, casing: false, swing: { hinge: "end", into: "right" } });
+  assert.equal(cp.casing, 0);
+  assert.equal(cp.opening, "r-r", "door_coupe: двухчастный формат обязателен");
+  updateOpening(model, { wallId: left.id, holeId: s3.id, swing: { hinge: "end", into: "left" } });
+  assert.equal(s3.opening, "r-l");
+  updateOpening(model, { wallId: bottom.id, holeId: gr.id, swing: { hinge: "start", into: "left" } });
+  assert.equal(gr.opening, "l", "door_garage: однобуквенный формат");
+  // coupe без swing и без opening нормализуется к дефолту вида при любом update
+  const cp2 = legacyAddOpening9ae566f(model, { wallId: right.id, type: "door_coupe", centerMm: 800 });
+  updateOpening(model, { wallId: right.id, holeId: cp2.id, centerMm: 800 });
+  assert.equal(cp2.opening, "r-l");
+
+  assert.deepEqual(untouched, untouchedSnap, "нетронутая legacy-дверь не изменилась");
 });
 
 // ---------- Регрессия окон (этап 25) ----------
