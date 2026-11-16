@@ -134,7 +134,26 @@ async function main() {
     delete c.errors; delete c.logs; delete c.session; delete c.version; delete c.drawing;
     delete c.params; delete c.settings; delete c.final; delete c.signals; delete c.smeta_water_pipes;
     delete c.rooms2; delete c.rooms1; delete c.save_id;
-    return JSON.stringify(c);
+    // id внутри eds2 редактор перегенерирует при каждом restore — не расхождение
+    const normIds = (v: any): any => {
+      if (Array.isArray(v)) return v.map(normIds);
+      if (v !== null && typeof v === "object") {
+        const out: any = {};
+        for (const [k, val] of Object.entries(v)) out[k] = k === "eds2" ? normEds(val) : normIds(val);
+        return out;
+      }
+      return v;
+    };
+    const normEds = (v: any): any => {
+      if (Array.isArray(v)) return v.map(normEds);
+      if (v !== null && typeof v === "object") {
+        const out: any = {};
+        for (const [k, val] of Object.entries(v)) out[k] = k === "id" && typeof val === "string" ? "<regen>" : normEds(val);
+        return out;
+      }
+      return v;
+    };
+    return JSON.stringify(normIds(c));
   };
   const equal = strip(restored) === strip(before);
   console.log("восстановление (сверка модели без служебных полей):", equal ? "OK — модель совпала" : "РАСХОЖДЕНИЕ");
