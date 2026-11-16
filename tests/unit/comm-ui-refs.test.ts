@@ -486,6 +486,10 @@ function mockDeps(
     corruptGasItemsSave?: boolean;
     /** ревью 60 №1: save портит обратное ребро matrix[1][0] при сохранённом [0][1]. */
     corruptLowerEdgeSave?: boolean;
+    /** ревью 62 №7: normalizer ставит петлю matrix[0][0] у газовых линий. */
+    corruptDiagonalNorm?: boolean;
+    /** ревью 62 №7: save ставит петлю matrix[0][0] у газовых линий (сервер). */
+    corruptDiagonalSave?: boolean;
     /** ревью 60 №6: нормализация переупорядочивает vertexes с перестановкой
      *  строк/столбцов matrix — семантически эквивалентный граф. */
     reorderGasNorm?: boolean;
@@ -511,6 +515,10 @@ function mockDeps(
       (out as { items: Record<string, unknown> }).items = structuredClone(kept);
       if (opts.droppedAll) (out as { pipes_gas?: Record<string, unknown> }).pipes_gas = {};
       if (opts.droppedGasMatrixNorm) zeroGasMatrix(out);
+      if (opts.corruptDiagonalNorm) eachGas(out, (g) => {
+        g.matrix = g.matrix.map((row) => row.slice());
+        g.matrix[0]![0] = { length: 1 };
+      });
       if (opts.droppedGasPlanNorm) eachGas(out, (g) => delete (g as unknown as Record<string, unknown>).plan);
       if (opts.reorderGasNorm) {
         eachGas(out, (g) => {
@@ -539,6 +547,10 @@ function mockDeps(
       if (opts.corruptLowerEdgeSave) eachGas(saved as unknown as Record<string, unknown>, (g) => {
         g.matrix = g.matrix.map((row) => row.slice());
         g.matrix[1]![0] = null;
+      });
+      if (opts.corruptDiagonalSave) eachGas(saved as unknown as Record<string, unknown>, (g) => {
+        g.matrix = g.matrix.map((row) => row.slice());
+        g.matrix[0]![0] = { length: 1 };
       });
       if (opts.changedGasAfterSave) {
         const first = Object.values((saved as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {})[0] as GasLine | undefined;
@@ -824,6 +836,53 @@ test("comm: mock save — save испортил обратное ребро matr
       return true;
     },
   );
+});
+
+// ревью 62 №7: диагональ matrix обязана быть пустой — петля не проходит
+// ни на границе normalize, ни на границе save
+
+test("comm: mock save — normalizer поставил петлю matrix[0][0] → NORMALIZATION_DROPPED, модель не пишется", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel() };
+  const { deps } = mockDeps(server, { corruptDiagonalNorm: true });
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("comm_add", (m) => {
+    addGasLine(m, { start: { x: 20000, y: 15000 }, end: { x: 21500, y: 15500 } });
+    return true;
+  });
+  await assert.rejects(
+    () => ws.save(),
+    (e: unknown) => {
+      assert.ok(e instanceof McpError && e.code === "NORMALIZATION_DROPPED", e instanceof McpError ? e.code : String(e));
+      const mism = ((e as McpError).details as { gas_line_mismatches?: string[] }).gas_line_mismatches ?? [];
+      assert.ok(mism.some((s) => s.includes("петля на узле 0 добавлена")), mism.join("; "));
+      return true;
+    },
+  );
+  assert.equal(Object.keys(server.model.pipes_gas ?? {}).length, 0, "серверная модель не изменилась");
+});
+
+test("comm: mock save — save поставил петлю matrix[0][0] → SITE_ERROR, verified не выставляется", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel() };
+  const { deps } = mockDeps(server, { corruptDiagonalSave: true });
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("comm_add", (m) => {
+    addGasLine(m, { start: { x: 20000, y: 15000 }, end: { x: 21500, y: 15500 } });
+    return true;
+  });
+  await assert.rejects(
+    () => ws.save(),
+    (e: unknown) => {
+      assert.ok(e instanceof McpError && e.code === "SITE_ERROR", e instanceof McpError ? e.code : String(e));
+      const mism = ((e as McpError).details as { gas_line_mismatches?: string[] }).gas_line_mismatches ?? [];
+      assert.ok(mism.some((s) => s.includes("петля на узле 0 добавлена")), mism.join("; "));
+      return true;
+    },
+  );
+  const gasLocal = Object.values((ws.model as { pipes_gas?: Record<string, GasLine> }).pipes_gas ?? {})[0] as GasLine | undefined;
+  assert.ok(gasLocal, "локальная линия на месте");
+  assert.equal(gasLocal!.matrix[0]![0], null, "локальная диагональ не затронута");
 });
 
 test("comm: mock save — переупорядочивание узлов с перестановкой matrix проходит как эквивалентный граф (ревью 60 №6)", async () => {
