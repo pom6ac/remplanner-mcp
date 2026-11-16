@@ -1,0 +1,56 @@
+{
+ "_source": "живая проверка PRO-проекта (headless MCP, схема «бэкап → запись → проверка → восстановление», id проекта/плана из env, проба 84-live-check), нормализованная модель редактора после save→reopen (model_get detail full); id линии/вершин/комнаты обезличены (\"0\"/\"1\"/\"2\"), координаты заменены на синтетические, length пересчитан по ним; формат — LedStrip.serialize бандла app.3.0",
+ "menu_title": "Подвесная трековая шина",
+ "tool_id": "plannertool_pendent_strip",
+ "model_object": {
+  "id": "0",
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "1",
+    "point": {
+     "x": 100,
+     "y": 100
+    },
+    "type": "node",
+    "id_room": "0"
+   },
+   {
+    "id": "2",
+    "point": {
+     "x": 200,
+     "y": 100
+    },
+    "type": "node",
+    "id_room": "0"
+   }
+  ],
+  "items": {
+   "1": "node",
+   "2": "node"
+  },
+  "type": "pendent_strip",
+  "length": 1,
+  "props": {
+   "id": "0",
+   "name": "pendent_strip"
+  },
+  "on_size": 1,
+  "spots": {},
+  "line_spots": [],
+  "height_lowering": 20
+ }
+}

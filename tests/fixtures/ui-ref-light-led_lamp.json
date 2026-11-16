@@ -1,0 +1,71 @@
+{
+ "_source": "клик по UI анонимного проекта (headless Chromium, ID проекта/плана обезличены), проба 84-light-fixtures, model project.copy(\"server\"), без сохранения; id предмета и id_wall/id_wall_old обезличены (\"0\"); wall_line удалён; координаты — реальные точки листа (не идентифицируют)",
+ "menu_title": "led_lamp",
+ "tool_id": "plannertool_led_lamp",
+ "catalog_defaults_cm": {
+  "id": 1197,
+  "width": 15,
+  "height": 20,
+  "self_height": 18,
+  "plan": {
+   "light": 10
+  },
+  "anchor": "wall",
+  "over_floor": {
+   "value": 140,
+   "display": true
+  }
+ },
+ "model_object": {
+  "name": "led_lamp",
+  "pc": {
+   "x": 190,
+   "y": -279.98
+  },
+  "angle": 180,
+  "projection": {
+   "x": 190,
+   "y": -290
+  },
+  "id_room": "_5v6ct",
+  "width": 15,
+  "height": 20,
+  "plan": {
+   "light": 10
+  },
+  "id": "0",
+  "item_id": 1197,
+  "over_floor": {
+   "value": 140,
+   "display": true
+  },
+  "self_height": 18,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 190,
+   "y": -279.98
+  },
+  "center3d": {
+   "x": 190,
+   "y": -279.98
+  },
+  "id_room_zone": "_ynbvp",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r"
+ }
+}

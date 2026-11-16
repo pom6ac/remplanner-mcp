@@ -1,4 +1,4 @@
-import type { Model, Wall, GasLine, Pipe } from "./types.ts";
+import type { Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
 import type { RoomPolygon } from "./items.ts";
 import { roomPolygons } from "./items.ts";
@@ -132,6 +132,23 @@ export type CompactPipe = {
   connected: string[];
 };
 
+/** Световая линия листа «Освещение» (этап 84): лента, трековая шина, линейный свет. */
+export type CompactLightStrip = {
+  id: string;
+  site_id: string;
+  /** Вид: led_strip | recessed_strip | surface_stripe | pendent_strip | line_light. */
+  type: string;
+  /** Концы цепочки узлов, мм. */
+  from: [number, number];
+  to: [number, number];
+  /** Число узлов графа. */
+  vertexes: number;
+  /** Длина линии, мм (все длины API — в мм; в модели редактора метры). */
+  length_mm: number;
+  /** Опускание подвеса шины, мм (только pendent_strip). */
+  height_lowering_mm?: number;
+};
+
 export type CompactFloorHole = {
   id: string;
   site_id: string;
@@ -165,6 +182,9 @@ export type CompactModel = {
   terrace_borders: CompactBorder[];
   territory_borders: CompactBorder[];
   level_holes: CompactFloorHole[];
+  led_strips: CompactLightStrip[];
+  stripes_light: CompactLightStrip[];
+  line_strips: CompactLightStrip[];
   total_height_mm: number;
 };
 
@@ -364,6 +384,29 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     };
   });
 
+  // световые линии листа «Освещение» (этап 84): метки LS/SL/LL
+  const compactLightStrips = (
+    src: Record<string, LedStrip | StripLight | LineStrip> | undefined,
+    label: string,
+  ): CompactLightStrip[] =>
+    Object.values(src ?? {}).map((line, i) => {
+      const first = line.vertexes[0]?.point;
+      const last = line.vertexes[line.vertexes.length - 1]?.point;
+      return {
+        id: `${label}${i + 1}`,
+        site_id: line.id,
+        type: line.type,
+        from: [round0(cmToMm(first?.x ?? 0)), round0(cmToMm(first?.y ?? 0))],
+        to: [round0(cmToMm(last?.x ?? 0)), round0(cmToMm(last?.y ?? 0))],
+        vertexes: line.vertexes.length,
+        // все длины API — в мм (design §7.2); в модели редактора метры
+        length_mm: Math.round((line.length ?? 0) * 1000),
+        ...(line.type === "pendent_strip" && (line as StripLight).height_lowering !== undefined
+          ? { height_lowering_mm: round0(cmToMm((line as StripLight).height_lowering!)) }
+          : {}),
+      };
+    });
+
   return {
     walls,
     rooms: compactRooms,
@@ -375,6 +418,9 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     terrace_borders: terraceBorders,
     territory_borders: territoryBorders,
     level_holes: levelHoles,
+    led_strips: compactLightStrips(model.led_strips, "LS"),
+    stripes_light: compactLightStrips(model.stripes_light, "SL"),
+    line_strips: compactLightStrips(model.line_strips, "LL"),
     total_height_mm: round0(cmToMm(totalHeight)),
   };
 }
