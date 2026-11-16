@@ -84,6 +84,21 @@ test(
 );
 
 test(
+  "render-items-dom: разметка редактора (глобал 757) item_x_<id> — считается видимой",
+  withDom([{ cls: "item_x__ladder1" }, { cls: "item_y__windoor2" }], () => {
+    assert.equal(itemsRenderedInSvg(["_ladder1", "_windoor2"]), true);
+  }),
+);
+
+test(
+  "render-items-dom: суффикс ровно id — item_x__ladder10 не закрывает _ladder1",
+  withDom([{ cls: "item_x__ladder10" }], () => {
+    assert.equal(itemsRenderedInSvg(["_ladder1"]), false);
+    assert.equal(itemsRenderedInSvg(["_ladder10"]), true);
+  }),
+);
+
+test(
   "render-items-dom: data-id матчится точно",
   withDom([{ dataId: "chair2" }], () => {
     assert.equal(itemsRenderedInSvg(["chair2"]), true);

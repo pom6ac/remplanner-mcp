@@ -399,8 +399,10 @@ export function buildHandle(
  * Предикат видимости предметов в SVG листа (ревью v0.1.1 №3, R2-2) — единственная
  * реализация: исполняется через page.waitForFunction и в тестах на DOM-фрагменте.
  * Идентификатор сопоставляется ТОЧНО — атрибут id или data-id, равный id предмета,
- * либо точный токен класса; подстрока давала ложное совпадение sofa1 ↔ sofa10,
- * когда отсутствующий sofa1 «закрывался» видимым sofa10.
+ * либо точный токен класса (этап 53: у текущего редактора предмет — класс вида
+ * `item_x_<id>`, принимается токен `item_*<id>` с префиксом «item_»); подстрока
+ * давала ложное совпадение sofa1 ↔ sofa10, когда отсутствующий sofa1 «закрывался»
+ * видимым sofa10.
  */
 export function itemsRenderedInSvg(ids: string[]): boolean {
   const svg = document.querySelector("#canvas_v2_wrapper svg");
@@ -409,7 +411,10 @@ export function itemsRenderedInSvg(ids: string[]): boolean {
     const el = [...svg.querySelectorAll("*")].find((e) => {
       if (e.getAttribute("id") === id) return true;
       if (e.getAttribute("data-id") === id) return true;
-      return (e.getAttribute("class") ?? "").split(/\s+/).includes(id);
+      // текущая разметка редактора (глобал 757): предмет — класс вида `item_x_<id>`
+      // (id сайта уже начинается с «_», поэтому в классе он выглядит как «__<id>»);
+      // префикс «item_» и суффикс ровно `<id>` исключают ложные совпадения sofa1 ↔ sofa10/sofa10x
+      return (e.getAttribute("class") ?? "").split(/\s+/).some((tok) => tok === id || (tok.startsWith("item_") && tok.endsWith(id)));
     });
     if (!el) return false;
     const r = el.getBoundingClientRect();
