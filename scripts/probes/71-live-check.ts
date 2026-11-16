@@ -1,7 +1,8 @@
 // 71: живая проверка раздела «Нарисовать балкон» через MCP-инструменты (проект из env).
 // Схема: бэкап модели до (GET) → выбор наружной стены без проёмов → balcony_add (U-ограждение) →
 // validate → project_save (без NORMALIZATION_DROPPED) → project_open (reopen) → сверка
-// (role/height/геометрия, комната-балкон) → render_plan PNG → удаление созданных ограждений →
+// (role/height/геометрия, комната-балкон) → roundtrip имени/отделки комнаты-балкона
+// (как в пробе 43-live-rooms) → render_plan PNG → удаление созданных ограждений →
 // save → сверка восстановления с бэкапом.
 // ID проекта/плана — только из env REMPLANNER_PROBE_OBJECT_ID / REMPLANNER_PROBE_PLAN_ID.
 // Контрольный проект (только GET до и после, запись запрещена) — REMPLANNER_SNAPSHOT_OBJECT_ID /
@@ -35,11 +36,15 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 function strip(m: any): string {
   const c = structuredClone(m);
   for (const k of ["errors", "logs", "log_plan", "session", "version", "drawing", "params", "settings", "final", "signals", "smeta_water_pipes", "rooms2", "rooms1", "save_id", "is_forced"]) delete c[k];
+  // порядок производных массивов (borders/drawings) и ключей задаёт редактор — сравниваем как множества
+  for (const k of ["borders", "drawings"]) {
+    if (Array.isArray(c[k])) c[k] = [...c[k]].map((e: any) => JSON.stringify(e)).sort().map((s: string) => JSON.parse(s));
+  }
   const norm = (v: any): any => {
     if (Array.isArray(v)) return v.map(norm);
     if (v !== null && typeof v === "object") {
       const out: any = {};
-      for (const [k, val] of Object.entries(v)) out[k] = k === "eds2" ? normEds(val) : norm(val);
+      for (const k of Object.keys(v).sort()) out[k] = k === "eds2" ? normEds(v[k]) : norm(v[k]);
       return out;
     }
     return v;
@@ -172,6 +177,47 @@ async function main() {
   console.log("rooms после reopen:", roomsAfter.length, "(было", roomsBefore.length, ") площади:", roomsAfter.map((r: any) => r.area_m2).join(", "), ")");
   if (roomsAfter.length !== roomsBefore.length + 1) throw new Error(`комната-балкон не появилась: ${roomsBefore.length} → ${roomsAfter.length}`);
 
+  // 4b. roundtrip имени/отделки комнаты-балкона (как в пробе 43-live-rooms):
+  //     имя зоны + отделка пола через каноническую модель → save → reopen → сверка.
+  //     Ключ в rooms2 — служебный id (_abc12), не номер из rooms_list: новую комнату
+  //     ищем по отсутствию её ключа в rooms2 бэкапа; запись только существующая.
+  const afterModel = await call(client, "model_get", { detail: "full" });
+  const beforeRoomKeys = new Set(Object.keys(before.rooms2 ?? {}));
+  const newRoomKey = Object.keys(afterModel.rooms2 ?? {}).find((k) => !beforeRoomKeys.has(k));
+  if (!newRoomKey) throw new Error("не найдена новая запись rooms2 для комнаты-балкона");
+  const newRoom = afterModel.rooms2[newRoomKey];
+  console.log("комната-балкон: rooms2", newRoomKey, "площадь", roomsAfter.find((r: any) => String(r.area_m2) === "2.02")?.area_m2 ?? "?", "m2, зон", (newRoom.zones ?? []).length, "этажей отделки", (newRoom.floors ?? []).length);
+  if (!(newRoom.zones ?? []).length) throw new Error("у комнаты-балкона нет зоны");
+  ws.apply("71-room-userdata", (m) => {
+    const r = (m.rooms2 as Record<string, any>)[newRoomKey];
+    if (!r) throw new Error("запись rooms2 комнаты-балкона исчезла до правки имени");
+    r.name = "Балкон";
+    for (const z of r.zones ?? []) z.name = "Балкон";
+    for (const f of r.floors ?? []) {
+      f.exist = true;
+      f.cover = "floor_tile";
+      f.type_laying = "tile";
+      f.angle = 0;
+      f.custom_angle = 0;
+      f.width = 40;
+      f.height = 40;
+      f.f0offset = 0;
+      f.pc = structuredClone(r.pc ?? { x: 0, y: 0 });
+    }
+    return true;
+  });
+  await new Promise((res) => setTimeout(res, 5000)); // сохранение не чаще раза в 5 с
+  const savedName = await ws.save();
+  console.log("save имени/отделки:", `verified=${savedName.verified}, rounds=${savedName.rounds}`);
+  if (!savedName.verified) throw new Error("save имени/отделки не verified");
+  await call(client, "project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
+  const afterName = await call(client, "model_get", { detail: "full" });
+  const balcRoomAfter = (afterName.rooms2 ?? {})[newRoomKey];
+  const floorsOk = balcRoomAfter ? (balcRoomAfter.floors ?? []).some((f: any) => f.exist) : false;
+  const nameOk = balcRoomAfter ? balcRoomAfter.name === "Балкон" || (balcRoomAfter.zones ?? []).some((z: any) => z.name === "Балкон") : false;
+  console.log("имя/отделка после reopen:", balcRoomAfter ? `name=${balcRoomAfter.name}, zoneName=${balcRoomAfter.zones?.[0]?.name ?? null}, floorsExist=${floorsOk}` : "ЗАПИСЬ ПОТЕРЯНА");
+  if (!balcRoomAfter || !nameOk || !floorsOk) throw new Error("имя/отделка комнаты-балкона не пережили save→reopen");
+
   // 5. render PNG
   const rendered = await call(client, "render_plan", { sheet: "init", width_px: 1600 });
   console.log("render_plan ok:", rendered.path, rendered.bytes, "bytes");
@@ -191,6 +237,9 @@ async function main() {
   const restored = await call(client, "model_get", { detail: "full" });
   const equal = strip(restored) === strip(before);
   console.log("восстановление (сверка модели без служебных полей):", equal ? "OK — модель совпала" : "РАСХОЖДЕНИЕ");
+  const roomsRestored = await call(client, "rooms_list", {});
+  const nameGone = roomsRestored.every((r: any) => !r.name || !String(r.name).includes("Балкон"));
+  console.log("rooms после восстановления:", roomsRestored.length, "; имя «Балкон» исчезло:", nameGone ? "OK" : "НЕТ");
   if (!equal) {
     const b0 = strip(before), b1 = strip(restored);
     for (let i = 0; i < Math.max(b0.length, b1.length); i++) {
@@ -211,6 +260,6 @@ async function main() {
   }
 
   await client.close();
-  process.exit(equal && (snapOk !== false) ? 0 : 2);
+  process.exit(equal && nameGone && (snapOk !== false) ? 0 : 2);
 }
 main().catch((e) => { console.error("FAIL:", String(e).slice(0, 1200)); process.exit(1); });
