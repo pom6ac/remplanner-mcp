@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { Model, LevelHole, Pillar } from "../../src/model/types.ts";
 import { addBorderRing, addTerraceFence, addTerraceColumn } from "../../src/model/terraces.ts";
 import { addRoomRect } from "../../src/model/walls.ts";
+import { addBalcony } from "../../src/model/balcony.ts";
 import { addFloorHole } from "../../src/model/floorhole.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
@@ -151,6 +152,36 @@ test("rev67 M3: роль стены-ограждения terrace_fence смен�
     const details = (e as { details?: Record<string, unknown> }).details ?? {};
     assert.ok(
       JSON.stringify(details).includes("terrace_fence") || JSON.stringify(details).includes("роль"),
+      JSON.stringify(details),
+    );
+    return true;
+  });
+});
+
+test("этап 71: роль балконного ограждения balcony сменилась на wall — SITE_ERROR", async () => {
+  const model = emptyModel();
+  addRoomRect(model, { origin: { x: 0, y: 0 }, widthMm: 4000, depthMm: 3000, thicknessMm: 200 });
+  addBalcony(model, {
+    points: [
+      { x: 1500, y: 3100 },
+      { x: 1500, y: 5100 },
+      { x: 4000, y: 5100 },
+      { x: 4000, y: 3100 },
+    ],
+  });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    for (const w of Object.values((s.model as { walls?: Record<string, { role?: string }> }).walls ?? {})) {
+      if (w.role === "balcony") w.role = "wall";
+    }
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    const details = (e as { details?: Record<string, unknown> }).details ?? {};
+    assert.ok(
+      JSON.stringify(details).includes("balcony") || JSON.stringify(details).includes("роль"),
       JSON.stringify(details),
     );
     return true;
