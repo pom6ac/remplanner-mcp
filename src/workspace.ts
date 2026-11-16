@@ -191,15 +191,32 @@ type RigelSig = { p1?: Point; p2?: Point; depth?: number; height?: number; ceili
 /** Значимая геометрия/тип предмета для сверки после сохранения (этап 55, ревью №1). */
 type ItemSig = { name?: string; pc?: { x: number; y: number }; width?: number; height?: number; angle?: number };
 
-/** Значимая геометрия газовой линии для сверки после сохранения (этап 57). */
-type GasLineSig = { vertexes?: { point?: Point }[]; length?: number; type?: string };
+/**
+ * Значимая семантика газовой линии для сверки (этап 57, ревью 59 №1): узлы, тип,
+ * рёбра матрицы (топология) и скалярная длина. Рёбра сверяются по индексам узлов
+ * (узлы уже сверяются позиционно), допуск — только на округления координат/длины.
+ */
+type GasLineSig = {
+  vertexes?: { point?: Point }[];
+  length?: number;
+  type?: string;
+  matrix?: (null | { length?: number })[][];
+  items?: Record<string, unknown>;
+};
+
+/** Есть ли ребро между узлами i и j в матрице смежности (некорректные индексы — нет). */
+function gasEdge(line: GasLineSig, i: number, j: number): boolean {
+  return Boolean((line.matrix?.[i]?.[j] ?? null) !== null);
+}
 
 /**
- * Расхождение газовых линий между нормализованной моделью и сервером после save
- * (этап 57): идентичности, тип, концы узлов (допуск 0,1 см) и длина (допуск 2 см —
- * редактор пересчитывает длину сам при restore, округление до 2 знаков).
+ * Расхождение газовых линий между двумя наборами (ревью 59 №1): идентичности, тип,
+ * узлы (допуск 0,1 см), рёбра matrix (топология) и длина (допуск 2 см — редактор
+ * пересчитывает длину сам при restore, округление до 2 знаков), соответствие
+ * items узлам. Возвращает список человекочитаемых расхождений; пустой список —
+ * графы совпадают.
  */
-function gasLineVerificationMismatches(expected: Record<string, GasLineSig>, got: Record<string, unknown>): string[] {
+function gasLineGraphMismatches(expected: Record<string, GasLineSig>, got: Record<string, unknown>): string[] {
   const out: string[] = [];
   const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
     a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
@@ -220,6 +237,21 @@ function gasLineVerificationMismatches(expected: Record<string, GasLineSig>, got
       if (!near(gotV[i]?.point?.x, expV[i]?.point?.x, 0.1) || !near(gotV[i]?.point?.y, expV[i]?.point?.y, 0.1)) {
         out.push(`${id}: узел ${i} сместился (на сервере ${gotV[i]?.point?.x},${gotV[i]?.point?.y}; ожидалось ${expV[i]?.point?.x},${expV[i]?.point?.y})`);
       }
+    }
+    // топология: рёбра matrix сверяются по индексам узлов (узлы сверены позиционно выше)
+    const n = expV.length;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (gasEdge(g0, i, j) !== gasEdge(g, i, j)) {
+          out.push(`${id}: ребро ${i}–${j} ${gasEdge(g0, i, j) ? "потеряно" : "добавлено"} на сервере (топология matrix изменилась)`);
+        }
+      }
+    }
+    // соответствие items узлам: каждый узел должен остаться в items
+    const gotItems = g.items ?? {};
+    for (const v of expV) {
+      const vid = (v as { id?: string }).id;
+      if (vid && !(vid in gotItems)) out.push(`${id}: узел ${vid} пропал из items`);
     }
     if (!near(g.length, g0.length, 0.02)) out.push(`${id}: длина изменилась (на сервере ${g.length}; ожидалось ${g0.length})`);
   }
@@ -481,13 +513,20 @@ export class Workspace {
           details: { lost_rigels: lostRigelsNorm },
         });
       }
-      // этап 57: газовые линии после нормализации не теряются (сверка идентичностей)
+      // этап 57: газовые линии после нормализации не теряются (сверка идентичностей);
+      // ревью 59 №1: кроме идентичностей сверяется семантический граф (узлы, тип,
+      // рёбра matrix, длина) — normalizer, обнуливший рёбра, не проходит молча
       const wsGasIds = new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}));
-      const normGasIds = new Set(Object.keys((norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {}));
+      const normGas = (norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {};
+      const normGasIds = new Set(Object.keys(normGas));
       const lostGasNorm = missingIds(wsGasIds, normGasIds);
-      if (lostGasNorm.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял газовые линии (${lostGasNorm.join(", ")}) — мутация отменена`, {
-          details: { lost_gas_lines: lostGasNorm },
+      const gasGraphNorm = gasLineGraphMismatches(
+        structuredClone(this.modelInternal!.pipes_gas ?? {}) as Record<string, GasLineSig>,
+        normGas,
+      );
+      if (lostGasNorm.length > 0 || gasGraphNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил газовые линии — мутация отменена`, {
+          details: { lost_gas_lines: lostGasNorm, gas_line_mismatches: gasGraphNorm },
         });
       }
       // нормализованная копия становится канонической
@@ -693,6 +732,13 @@ export class Workspace {
     const lostPillars = missingIds(localPillarIds, gotPillarIds);
     const lostRigels = missingIds(localRigelIds, gotRigelIds);
     const lostGasLines = missingIds(localGasIds, gotGasIds);
+    // ревью 59 №1: до save сверяется семантический граф локальной и нормализованной
+    // моделей (узлы, тип, рёбра matrix, длина) — normalizer, обнуливший рёбра,
+    // не проходит как «verified»
+    const gasGraphNorm = gasLineGraphMismatches(
+      structuredClone(this.modelInternal!.pipes_gas ?? {}) as Record<string, GasLineSig>,
+      (norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {},
+    );
     const gotSegments = wallAxisSegments(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
@@ -702,7 +748,8 @@ export class Workspace {
     }
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
-      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0
+      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 ||
+      gasGraphNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -717,6 +764,7 @@ export class Workspace {
           lost_pillars: lostPillars,
           lost_rigels: lostRigels,
           lost_gas_lines: lostGasLines,
+          gas_line_mismatches: gasGraphNorm,
         },
       });
     }
@@ -750,9 +798,10 @@ export class Workspace {
       // а не только счётчиком при нормализации
       const itemsAfter = (after.model["items"] as Record<string, unknown> | undefined) ?? {};
       const itemMismatch = itemVerificationMismatches(expectedItems, itemsAfter);
-      // этап 57: газовые линии после save сверяются по id, типу, узлам и длине
+      // этап 57: газовые линии после save сверяются по id, типу, узлам, рёбрам matrix
+      // и длине (ревью 59 №1 — топология входит в сверку)
       const gasAfter = (after.model["pipes_gas"] as Record<string, unknown> | undefined) ?? {};
-      const gasMismatch = gasLineVerificationMismatches(expectedGasLines, gasAfter);
+      const gasMismatch = gasLineGraphMismatches(expectedGasLines, gasAfter);
       const roomsLost = normRooms > 0 && roomsAfter === 0;
       if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && !roomsLost) {
         verified = true;

@@ -400,9 +400,22 @@ type Server = { saveId: string; model: Model };
 
 function mockDeps(
   server: Server,
-  opts: { droppedAll?: boolean; lostGasAfterSave?: boolean; changedGasAfterSave?: boolean } = {},
+  opts: {
+    droppedAll?: boolean;
+    lostGasAfterSave?: boolean;
+    changedGasAfterSave?: boolean;
+    /** ревью 59 №1: normalizer обнуляет рёбра matrix у газовых линий. */
+    droppedGasMatrixNorm?: boolean;
+    /** ревью 59 №1: save обнуляет рёбра matrix у газовых линий (сервер). */
+    droppedGasMatrixSave?: boolean;
+  } = {},
 ) {
   let lastNormalized: Record<string, unknown> | null = null;
+  const zeroGasMatrix = (m: Record<string, unknown>): void => {
+    for (const g of Object.values((m as { pipes_gas?: Record<string, GasLine> }).pipes_gas ?? {})) {
+      g.matrix = g.matrix.map((row) => row.map(() => null));
+    }
+  };
   const editor: EditorLike = {
     objectId: "123", planId: "1",
     async normalize(model) {
@@ -413,6 +426,7 @@ function mockDeps(
       const out = structuredClone(model) as Record<string, unknown>;
       (out as { items: Record<string, unknown> }).items = structuredClone(kept);
       if (opts.droppedAll) (out as { pipes_gas?: Record<string, unknown> }).pipes_gas = {};
+      if (opts.droppedGasMatrixNorm) zeroGasMatrix(out);
       return {
         model: out,
         rooms: [],
@@ -426,6 +440,7 @@ function mockDeps(
       // этап 55, ревью №1: сценарии потери ПОСЛЕ save — то, что ушло на save, и то,
       // что реально оказалось на сервере (по GET), расходятся
       if (opts.lostGasAfterSave) (saved as { pipes_gas?: Record<string, unknown> }).pipes_gas = {};
+      if (opts.droppedGasMatrixSave) zeroGasMatrix(saved as unknown as Record<string, unknown>);
       if (opts.changedGasAfterSave) {
         const first = Object.values((saved as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {})[0] as GasLine | undefined;
         if (first) {
@@ -561,4 +576,52 @@ test("comm: mock save — штатный save со стояком, радиат�
   assert.equal(saved.verified, true);
   assert.equal(Object.values(server.model.items ?? {}).length, 2);
   assert.equal(Object.keys(server.model.pipes_gas ?? {}).length, 1);
+});
+
+// ревью 59 №1: сверка рёбер matrix (топологии) на обеих границах save
+
+test("comm: mock save — normalizer обнулил matrix → NORMALIZATION_DROPPED, модель не пишется", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel() };
+  const { deps } = mockDeps(server, { droppedGasMatrixNorm: true });
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("comm_add", (m) => {
+    addGasLine(m, { start: { x: 20000, y: 15000 }, end: { x: 21500, y: 15500 } });
+    return true;
+  });
+  await assert.rejects(
+    () => ws.save(),
+    (e: unknown) => {
+      assert.ok(e instanceof McpError && e.code === "NORMALIZATION_DROPPED", e instanceof McpError ? e.code : String(e));
+      const details = (e as McpError).details as { gas_line_mismatches?: string[] };
+      assert.ok((details.gas_line_mismatches ?? []).some((s) => s.includes("ребро 0–1 потеряно")), JSON.stringify(details));
+      return true;
+    },
+  );
+  assert.equal(Object.keys(server.model.pipes_gas ?? {}).length, 0, "серверная модель не изменилась");
+});
+
+test("comm: mock save — save обнулил matrix → SITE_ERROR, verified не выставляется", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel() };
+  const { deps } = mockDeps(server, { droppedGasMatrixSave: true });
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("comm_add", (m) => {
+    addGasLine(m, { start: { x: 20000, y: 15000 }, end: { x: 21500, y: 15500 } });
+    return true;
+  });
+  await assert.rejects(
+    () => ws.save(),
+    (e: unknown) => {
+      assert.ok(e instanceof McpError && e.code === "SITE_ERROR", e instanceof McpError ? e.code : String(e));
+      const details = (e as McpError).details as { gas_line_mismatches?: string[] };
+      const mism = details.gas_line_mismatches ?? [];
+      assert.ok(mism.some((s) => s.includes("ребро 0–1 потеряно")), mism.join("; "));
+      return true;
+    },
+  );
+  // рабочая копия не считается сохранённой (verified не дошёл)
+  const gasLocal = Object.values((ws.model as { pipes_gas?: Record<string, GasLine> }).pipes_gas ?? {})[0] as GasLine | undefined;
+  assert.ok(gasLocal, "локальная линия на месте");
+  assert.ok(gasLocal!.matrix.some((row) => row.some((e) => e !== null)), "локальные рёбра не затёрты");
 });
