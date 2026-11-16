@@ -113,6 +113,28 @@ export type CompactGasLine = {
   length_m: number;
 };
 
+export type CompactFloorHole = {
+  id: string;
+  site_id: string;
+  /** Центр, мм. */
+  x_mm: number;
+  y_mm: number;
+  /** Габарит по X, мм. */
+  width_mm: number;
+  /** Габарит по Y, мм. */
+  depth_mm: number;
+  /** Площадь, м². */
+  area_m2: number;
+};
+
+export type CompactBorder = {
+  id: string;
+  site_id: string;
+  /** Концы отрезка, мм. */
+  from: [number, number];
+  to: [number, number];
+};
+
 export type CompactModel = {
   walls: CompactWall[];
   rooms: CompactRoom[];
@@ -120,6 +142,9 @@ export type CompactModel = {
   pillars: CompactPillar[];
   rigels: CompactRigel[];
   gas_lines: CompactGasLine[];
+  terrace_borders: CompactBorder[];
+  territory_borders: CompactBorder[];
+  level_holes: CompactFloorHole[];
   total_height_mm: number;
 };
 
@@ -271,6 +296,37 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
   });
 
   const totalHeight = typeof model.total_height === "number" ? model.total_height : 270;
+
+  type BorderLike = { id: string; p1: { x: number; y: number }; p2: { x: number; y: number } };
+  const compactBorders = (src: Record<string, unknown> | undefined): CompactBorder[] =>
+    Object.values(src ?? {}).map((b, i) => {
+      const b0 = b as BorderLike;
+      return {
+        id: `${keyLabel}${i + 1}`,
+        site_id: b0.id,
+        from: [round0(cmToMm(b0.p1.x)), round0(cmToMm(b0.p1.y))],
+        to: [round0(cmToMm(b0.p2.x)), round0(cmToMm(b0.p2.y))],
+      };
+    });
+  let keyLabel = "TB";
+  const terraceBorders = compactBorders(model.terrace_borders);
+  keyLabel = "XB";
+  const territoryBorders = compactBorders(model.territory_borders);
+
+  const levelHoles: CompactFloorHole[] = Object.values(model.level_holes ?? {}).map((hole, i) => {
+    const xs = hole.polygon.map((p) => p.x);
+    const ys = hole.polygon.map((p) => p.y);
+    return {
+      id: `FH${i + 1}`,
+      site_id: hole.id,
+      x_mm: round0(cmToMm(hole.pc.x)),
+      y_mm: round0(cmToMm(hole.pc.y)),
+      width_mm: round0(cmToMm(Math.max(...xs) - Math.min(...xs))),
+      depth_mm: round0(cmToMm(Math.max(...ys) - Math.min(...ys))),
+      area_m2: hole.area ?? 0,
+    };
+  });
+
   return {
     walls,
     rooms: compactRooms,
@@ -278,6 +334,9 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     pillars,
     rigels,
     gas_lines: gasLines,
+    terrace_borders: terraceBorders,
+    territory_borders: territoryBorders,
+    level_holes: levelHoles,
     total_height_mm: round0(cmToMm(totalHeight)),
   };
 }
