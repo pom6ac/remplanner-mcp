@@ -82,9 +82,46 @@ export type AddItemParams = {
   catalogEntry?: ToolEntry;
 };
 
+/**
+ * Позиции меню «Лестницы» вне группы каталога `stairs` (этап 55, ревью №2): сам список
+ * меню выводится из группы `stairs` каталога (см. itemPlanFromEntry), а эти два пункта
+ * редактор показывает в том же меню «Лестницы» при других группах каталога —
+ * «Тренажер-лестница» `stair_machine` (furniture) и «Светильник для подсветки пола»
+ * `stair_spot` (lights, эталон ui-ref-stair-stair_spot: план {light:10, a:1}).
+ */
+export const STAIR_MENU_EXTRA = new Set(["stair_machine", "stair_spot"]);
+
+/**
+ * План предмета из записи каталога (этап 55, ревью №2): список пунктов меню «Лестницы»
+ * берётся из каталога, а не вручную — видимость на исходном плане (a:1) получает любая
+ * позиция группы `stairs` (все 21 пункт меню, включая 4 с планом {furniture:6}:
+ * ladder_2march_console-fan, ladder_fan_2march, ladder_3march_fan, floor_hatch) и два
+ * пункта меню вне группы (STAIR_MENU_EXTRA). Ключ листа каталога init отображается в
+ * модельный a (лист «Исходный план»; эталон ui-ref-stair-upper_march: план {a:1});
+ * у лестниц уже с a:1 дубля нет. Мебель вне меню не затронута (эталон ui-ref-sofa:
+ * {furniture:6} без a).
+ */
+export function itemPlanFromEntry(entry: ToolEntry | undefined): Record<string, number> {
+  const plan: Record<string, number> = {};
+  for (const [k, v] of Object.entries(entry?.plan ?? {})) plan[k === "init" ? "a" : k] = v;
+  if (entry && (entry.group === "stairs" || STAIR_MENU_EXTRA.has(entry.name)) && plan["a"] === undefined) plan["a"] = 1;
+  return plan;
+}
+
+/**
+ * dimensions.display у пунктов меню «Лестницы» (этап 55, ревью №3) — подтверждено
+ * эталонами ui-ref-stair-*: у пяти видов лестниц редактор пишет display:false
+ * (ladder_march, ladder_2march, spiral_staircase, upper_march, porch), у stair_spot —
+ * display:true (как у мебели, эталон ui-ref-sofa). Для остальных пунктов меню эталонов
+ * нет — пишется display:true (поведение мебели), это не заявляется как факт о них.
+ */
+const STAIR_DIMENSIONS_HIDDEN = new Set([
+  "ladder_march", "ladder_2march", "spiral_staircase", "upper_march", "porch",
+]);
+
 function itemPlan(entry: ToolEntry | undefined): Record<string, number> {
-  if (entry && Object.keys(entry.plan).length > 0) return { ...entry.plan };
-  return { furniture: 1 };
+  const mapped = itemPlanFromEntry(entry);
+  return Object.keys(mapped).length > 0 ? mapped : { furniture: 1 };
 }
 
 /** item_add: центр / у стены (с касанием внутренней грани при gap=0) / в углу помещения.
@@ -92,6 +129,15 @@ function itemPlan(entry: ToolEntry | undefined): Record<string, number> {
 export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon[]): ItemProps {
   model.items ??= {};
   const entry = params.catalogEntry;
+  // этап 55, ревью №4: у позиций с anchor:"wall" (porch, stair_spot — эталоны ui-ref-*)
+  // редактор свободную постановку не выполняет: одиночный клик вдали от стены предмет
+  // не создаёт. Свободная установка (center/in_room) отвергается как в редакторе;
+  // разрешена только against_wall.
+  if (entry?.anchor === "wall" && !("againstWall" in params.position)) {
+    throw new McpError("INVALID_ARGUMENT", `предмет «${entry.name}» ставится только у стены (anchor: wall — так же в редакторе), используйте against_wall`, {
+      details: { kind: "wall_anchor_required", item: entry.name },
+    });
+  }
   const widthCm = mmToCm(params.widthMm ?? (entry ? entry.width * 10 : 100));
   const depthCm = mmToCm(params.depthMm ?? (entry ? entry.height * 10 : 100));
   const selfHeightCm = mmToCm(params.heightMm ?? (entry ? entry.self_height * 10 : 0));
@@ -165,15 +211,18 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
     width: r2(widthCm),
     height: r2(depthCm),
     self_height: r2(selfHeightCm),
-    plan: entry && Object.keys(entry.plan).length > 0 ? { ...entry.plan } : { furniture: 1 },
+    plan: itemPlan(entry),
     id_room: found.roomId ?? null,
     id_wall: idWall,
     layer: null,
     comment: { id: "" },
     demount: 0,
-    dimensions: { display: true },
+    // этап 55, ревью №3: display — как в эталонах UI (у пяти видов лестниц false)
+    dimensions: { display: !STAIR_DIMENSIONS_HIDDEN.has(params.name) },
     rotated: 0,
-    over_floor: params.elevationMm !== undefined ? mmToCm(params.elevationMm) : null,
+    // этап 55, ревью №3: подъём над полом — в форме редактора {value, display}
+    // (эталон ui-ref-stair-stair_spot: {value:20, display:true}), а не числом
+    over_floor: params.elevationMm !== undefined ? { value: r2(mmToCm(params.elevationMm)), display: true } : null,
   };
   model.items[id] = props;
   return props;
@@ -208,7 +257,13 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   if (params.widthMm !== undefined) props.width = r2(mmToCm(params.widthMm));
   if (params.depthMm !== undefined) props.height = r2(mmToCm(params.depthMm));
   if (params.heightMm !== undefined) props.self_height = r2(mmToCm(params.heightMm));
-  if (params.elevationMm !== undefined) props.over_floor = r2(mmToCm(params.elevationMm));
+  if (params.elevationMm !== undefined) {
+    // этап 55, ревью №3: форма редактора {value, display}; display сохраняется прежний,
+    // если предмет уже несёт объектную форму (у stair_spot эталон даёт display:true)
+    const prev = props.over_floor;
+    const display = prev !== null && typeof prev === "object" ? prev.display : true;
+    props.over_floor = { value: r2(mmToCm(params.elevationMm)), display };
+  }
   if (params.comment !== undefined) props.comment = { id: params.comment };
   return props;
 }

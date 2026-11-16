@@ -470,10 +470,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     // ---------- Каталог и предметы (§7.4) ----------
     catalog_search: tool(
       "Поиск по каталогу мебели/сантехники remplanner (русский или английский запрос; ё=е, регистр не важен). " +
-        "Возвращает name (точное имя для item_add), title, размеры в мм, resizable. Примеры запросов: «диван», «унитаз», «кровать».",
+        "Возвращает name (точное имя для item_add), title, размеры в мм, resizable. Примеры запросов: «диван», «унитаз», «кровать», «лестница». " +
+        "Лестницы — группа stairs (21 позиция меню «Лестницы»: ladder_march, spiral_staircase, …) — это предметы каталога, ставятся item_add, а не отдельная сущность.",
       {
         query: z.string().min(1),
-        group: z.string().optional().describe("furniture, santeh_furniture, lights, sockets, …"),
+        group: z.string().optional().describe("furniture, santeh_furniture, lights, stairs, sockets, …"),
         sheet: z.string().optional().describe("лист: furniture, santeh, …"),
         limit: mmInt.optional().describe("сколько позиций (по умолчанию 20)"),
       },
@@ -510,7 +511,13 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     item_add: tool(
       "Поставить предмет из каталога (name — точное имя из catalog_search). Позиция: center (координаты в мм, точка внутри комнаты) " +
         "ИЛИ against_wall (у стены, вплотную к внутренней грани при gap_mm=0) ИЛИ in_room (угол комнаты R<n>). " +
-        "Точка вне помещений → OUTSIDE_ROOM. Размеры берутся из каталога; width_mm/depth_mm/height_mm переопределяют (если resizable).",
+        "Точка вне помещений → OUTSIDE_ROOM. Размеры берутся из каталога; width_mm/depth_mm/height_mm переопределяют (если resizable). " +
+        "Лестницы (меню «Лестницы»: ladder_march, ladder_console, ladder_2march, ladder_2march-fan, ladder_2march_console-fan, " +
+        "ladder_2march_console, ladder_trapeze, rounded_staircase, ladder_march_double, ladder_fan_2march, ladder_3march, ladder_3march_fan, " +
+        "spiral_staircase, upper_march, ladder_circle, porch, attic_staircase, step_ladder, escalator, elevator, floor_hatch) — " +
+        "предметы каталога, а не отдельная сущность; марши/ступени/ограждение в модель не пишутся (отрисовка вида). " +
+        "Как в UI, план предмета получает видимость на исходном плане (a:1). У stair_spot над полом 20 см — передайте elevation_mm=200. " +
+        "porch и stair_spot в редакторе ставятся только у стены — используйте against_wall.",
       {
         name: z.string().min(1).describe("точное имя позиции каталога"),
         position,

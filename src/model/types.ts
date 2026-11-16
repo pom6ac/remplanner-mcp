@@ -84,7 +84,9 @@ export type ItemProps = {
   width: number;
   height: number;
   self_height?: number;
-  over_floor?: number | null;
+  /** Подъём над полом, см — форма редактора {value, display} (эталон ui-ref-stair-stair_spot);
+   *  числовая форма из старых моделей читается, новые предметы пишут объект. */
+  over_floor?: number | { value: number; display: boolean } | null;
   plan: Record<string, number>;
   id_room?: string | null;
   id_wall?: string | null;

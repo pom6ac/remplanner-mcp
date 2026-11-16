@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Добавлено
+
+- **Раздел «Лестницы» редактора: покрыты все 21 пунктов меню** (эталоны сняты из UI —
+  `tests/fixtures/ui-ref-stair-*.json`): лестницы — **предметы каталога** (группа `stairs`),
+  а не отдельная сущность — ставятся существующими `catalog_search` + `item_add`
+  (`ladder_march`, `ladder_console`, `ladder_2march`, `ladder_2march-fan`,
+  `ladder_2march_console-fan`, `ladder_2march_console`, `ladder_trapeze`, `rounded_staircase`,
+  `ladder_march_double`, `ladder_fan_2march`, `ladder_3march`, `ladder_3march_fan`,
+  `spiral_staircase`, `upper_march`, `ladder_circle`, `porch`, `attic_staircase`, `step_ladder`,
+  `escalator`, `elevator`, `floor_hatch`; «Тренажер-лестница», «Светильник для подсветки пола»,
+  «Стремянка», «Стеллаж-лесенка», «Душевой трап» — те же предметы в других группах).
+  Марши, ступени, высота подъёма и ограждение в модель не пишутся (отрисовка вида); панель
+  свойств — «Изменить размер» (`width`/`height`). Как в UI, `item_add` для пунктов меню
+  «Лестницы» добавляет видимость на исходном плане (`plan: {…, a:1}`), а ключ каталога
+  `init` отображается в модельный `a` (`upper_march`, `escalator`, `elevator`). У `stair_spot`
+  над полом 20 см (`elevation_mm=200`); `porch`/`stair_spot` в редакторе ставятся только у
+  стены (`against_wall`).
+
+### Исправлено (ревью PR #6 «Лестницы»)
+
+- **Верификация save по GET сверяет предметы** (унаследованный дефект main): раньше
+  потеря предмета при сохранении давала `verified:true` — теперь после save сверяются
+  идентичности и тип/значимая геометрия предметов (`name`, `pc`, `width`, `height`,
+  угол modulo 360, допуск 0,1 см — как у колонн/ригелей), расхождение — `SITE_ERROR`
+  вместо молчаливого «успеха».
+- **План `a:1` у всех 21 пунктов меню «Лестницы»**: список выводится из группы каталога
+  `stairs` (`itemPlanFromEntry`), а не из ручного набора; раньше 4 пункта с планом
+  `{furniture:6}` (`ladder_2march_console-fan`, `ladder_fan_2march`, `ladder_3march_fan`,
+  `floor_hatch`) вставали без видимости на исходном плане.
+- **`over_floor` в форме редактора `{value, display}`** (эталон ui-ref-stair-stair_spot),
+  а не числом; `dimensions.display` — как в эталонах UI (`display:false` у пяти видов
+  лестниц, `true` у `stair_spot` и мебели).
+- **`anchor:"wall"` (`porch`, `stair_spot`)**: свободная установка (центр/угол комнаты)
+  отвергается `INVALID_ARGUMENT` — как в редакторе, где клик вдали от стены предмет
+  не создаёт; ставить через `against_wall`.
+- **Предикат отрисовки `itemsRenderedInSvg`** сопоставляет ровно токен `item_x_<id>`:
+  чужой предмет с тем же суффиксом (`item_x_notsofa1` при ожидании `sofa1`) больше не
+  считается видимым.
+- **`Workspace.apply` атомарен**: мутация выполняется на клоне модели, каноническая
+  копия заменяется только при успехе — исключение внутри инструмента больше не может
+  оставить модель частично изменённой.
+
 ### Исправлено (ревью PR #5 «Потолочный ригель»)
 
 - `rigel_add`/`rigel_update`/`rigel_delete` входят в общую атомарную финализацию зависимостей:

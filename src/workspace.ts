@@ -186,6 +186,40 @@ function pillarVerificationMismatches(expected: Record<string, PillarSig>, got: 
 /** Значимая геометрия ригеля для сверки после сохранения (этап 47). */
 type RigelSig = { p1?: Point; p2?: Point; depth?: number; height?: number; ceiling_type?: string };
 
+/** Значимая геометрия/тип предмета для сверки после сохранения (этап 55, ревью №1). */
+type ItemSig = { name?: string; pc?: { x: number; y: number }; width?: number; height?: number; angle?: number };
+
+/**
+ * Расхождение предметов между нормализованной моделью и сервером после save (этап 55,
+ * ревью №1): идентичности и тип/значимая геометрия (name, pc, width, height, angle;
+ * допуск 0,1 см / 0,1°, угол — циклическая разность modulo 360). Возвращает список
+ * человекочитаемых расхождений; пустой список — предметы сохранились.
+ */
+function itemVerificationMismatches(expected: Record<string, ItemSig>, got: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
+    a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
+  const angleDiff = (a: number, b: number): number => {
+    const d = Math.abs(a - b) % 360;
+    return Math.min(d, 360 - d);
+  };
+  for (const [id, it] of Object.entries(expected)) {
+    const g = got[id] as ItemSig | undefined;
+    if (!g) {
+      out.push(`${id}: предмет исчез после сохранения`);
+      continue;
+    }
+    if ((g.name ?? "") !== (it.name ?? "")) out.push(`${id}: тип изменился (на сервере «${g.name ?? ""}»; ожидалось «${it.name ?? ""}»)`);
+    if (!near(g.pc?.x, it.pc?.x, 0.1) || !near(g.pc?.y, it.pc?.y, 0.1)) {
+      out.push(`${id}: центр сместился (на сервере ${g.pc?.x},${g.pc?.y}; ожидалось ${it.pc?.x},${it.pc?.y})`);
+    }
+    if (!near(g.width, it.width, 0.1)) out.push(`${id}: ширина изменилась (на сервере ${g.width}; ожидалось ${it.width})`);
+    if (!near(g.height, it.height, 0.1)) out.push(`${id}: глубина изменилась (на сервере ${g.height}; ожидалось ${it.height})`);
+    if (angleDiff(g.angle ?? 0, it.angle ?? 0) > 0.1) out.push(`${id}: угол изменился (на сервере ${g.angle ?? 0}; ожидалось ${it.angle ?? 0})`);
+  }
+  return out;
+}
+
 /**
  * Расхождение ригелей между нормализованной моделью и сервером после save (этап 47):
  * идентичности и значимая геометрия (концы оси, толщина, высота, тип отделки;
@@ -422,9 +456,15 @@ export class Workspace {
   /**
    * Мутация рабочей копии: fn меняет модель, после — снимок истории и dirty.
    * На сервер не сохраняет: сохранение — только project_save.
+   * Этап 55, ревью №6: атомарность общим механизмом — fn получает клон модели и при
+   * исключении каноническая копия не меняется (замена только при успехе). Инструменты,
+   * которые сами проверяют аргументы до записи, от этого не зависят, но частично
+   * изменившую модель при ошибке внутри fn apply откатывает всегда.
    */
   apply<T>(label: string, fn: (model: Model) => T): T {
-    const result = fn(this.model);
+    const clone = structuredClone(this.modelInternal!);
+    const result = fn(clone);
+    this.modelInternal = clone;
     this.project!.dirty = true;
     this.pushSnapshot(label);
     return result;
@@ -589,6 +629,9 @@ export class Workspace {
     // редактор при нормализации пересчитывает polygon/l/r, сверять надо то, что реально
     // записано, а не устаревшую рабочую копию
     const expectedRigels = structuredClone((norm.model as { rigels?: Record<string, RigelSig> }).rigels ?? {});
+    // этап 55, ревью №1: ожидаемые предметы для верификации после save — из
+    // нормализованной модели (того, что ушло на save)
+    const expectedItems = structuredClone((norm.model as { items?: Record<string, ItemSig> }).items ?? {});
     const localRigelIds = new Set(Object.keys(this.modelInternal!.rigels ?? {}));
     const gotRigelIds = new Set(Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}));
     const lostOpenings = missingIds(localOpeningIds, gotOpeningIds);
@@ -647,8 +690,12 @@ export class Workspace {
       const pillarMismatch = pillarVerificationMismatches(expectedPillars, pillarsAfter);
       const rigelsAfter = (after.model["rigels"] as Record<string, unknown> | undefined) ?? {};
       const rigelMismatch = rigelVerificationMismatches(expectedRigels, rigelsAfter);
+      // этап 55, ревью №1: предметы после save сверяются по id и типу/геометрии,
+      // а не только счётчиком при нормализации
+      const itemsAfter = (after.model["items"] as Record<string, unknown> | undefined) ?? {};
+      const itemMismatch = itemVerificationMismatches(expectedItems, itemsAfter);
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -659,7 +706,8 @@ export class Workspace {
             expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length,
             coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>) * 10),
             axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,
-            pillar_mismatches: pillarMismatch, rigel_mismatches: rigelMismatch, rooms_expected: normRooms, rooms_on_server: roomsAfter,
+            pillar_mismatches: pillarMismatch, rigel_mismatches: rigelMismatch, item_mismatches: itemMismatch,
+            rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });
       }
