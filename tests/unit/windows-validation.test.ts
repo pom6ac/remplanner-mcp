@@ -227,14 +227,83 @@ test("ревью 30 N3: старый блок без частей — centerMm, 
     assert.equal(old.door_height, 220);
     assert.equal(old.window_height, 150);
     // height у нормализованного блока отвергается
+    const beforeErrors = structuredClone(model);
     invalid(() => updateOpening(model, { wallId: top.id, holeId: old.id, heightMm: 2000 }), /нет общей высоты/);
     // right отвергается (раньше молча игнорировался)
     invalid(() => updateOpening(model, { wallId: top.id, holeId: old.id, doorPosition: "right" }), /right не поддерживается/);
     // смена типа на обычное окно отвергается
     invalid(() => updateOpening(model, { wallId: top.id, holeId: old.id, type: "window" }), /смена типа не поддерживается/);
     assert.equal(old.type, "windoor");
-    assert.deepEqual(model, structuredClone(model));
+    // атомарность отказов: модель равна снимку ДО вызовов (а не самой себе)
+    assert.deepEqual(model, beforeErrors);
   }
+});
+
+// Точный объект, который создавал addOpening прежней версии MCP (d107f87):
+// addOpening({type:"window_balcony", centerMm:2000}) на стене 4000×3000, толщина 200 —
+// снят запуском `git show d107f87:src/model/openings.ts` (ревью 32, N3): общий height
+// 225 при floor_height 80, частей нет.
+function legacyD107f87(id: string, type: string, height = 225): Hole {
+  return {
+    id, plan: "a", type, group: "windows",
+    pc: { x: 190, y: -10 }, width: 180, height, depth: 10, at: 110, floor_height: 80,
+    p1: { x: 100, y: -10 }, p2: { x: 280, y: -10 },
+  };
+}
+
+test("ревью 32 N3: legacy-блок d107f87 с общим height — высота мигрирует в части, height удаляется", () => {
+  for (const name of ["window_balcony", "windoor"] as const) {
+    // первым вызовом — только положение: height уходит в части, объект проходит инварианты
+    const model = emptyModel();
+    const { top } = rect(model);
+    const old = legacyD107f87(`lg1-${name}`, name);
+    top.holes[old.id] = old;
+    updateOpening(model, { wallId: top.id, holeId: old.id, centerMm: 2100 });
+    assert.equal(old.type, "windoor", `${name}: legacy-имя нормализуется при update`);
+    assert.equal(old.height, undefined, `${name}: общий height удалён`);
+    assert.equal(old.door_height, 225, `${name}: door_height = старый height`);
+    assert.equal(old.window_height, 150, `${name}: window_height = дефолт каталога (не больше старого height)`);
+    assert.equal(old.window_width, 100);
+    assert.equal(old.door_width, 80);
+    assert.equal(old.floor_height, 80, "floor_height не меняется");
+    // первым вызовом — короб с наличниками: миграция та же
+    const model2 = emptyModel();
+    const { top: top2 } = rect(model2);
+    const old2 = legacyD107f87(`lg2-${name}`, name);
+    top2.holes[old2.id] = old2;
+    updateOpening(model2, { wallId: top2.id, holeId: old2.id, casing: false });
+    assert.equal(old2.height, undefined);
+    assert.equal(old2.door_height, 225);
+    assert.equal(old2.window_height, 150);
+    assert.equal(old2.casing, 0);
+    // первым вызовом — door_height_mm: явное значение сильнее миграции
+    const model3 = emptyModel();
+    const { top: top3 } = rect(model3);
+    const old3 = legacyD107f87(`lg3-${name}`, name);
+    top3.holes[old3.id] = old3;
+    updateOpening(model3, { wallId: top3.id, holeId: old3.id, casing: false, doorHeightMm: 2200 });
+    assert.equal(old3.height, undefined);
+    assert.equal(old3.door_height, 220, "явная door_height_mm сильнее миграции");
+    assert.equal(old3.window_height, 150);
+  }
+  // нестандартная старая высота 2000 (старый addOpening с heightMm:2000)
+  const model = emptyModel();
+  const { top } = rect(model);
+  const old = legacyD107f87("lg-ns", "window_balcony", 200);
+  top.holes[old.id] = old;
+  updateOpening(model, { wallId: top.id, holeId: old.id, centerMm: 2100 });
+  assert.equal(old.height, undefined);
+  assert.equal(old.door_height, 200);
+  assert.equal(old.window_height, 150);
+  // совсем низкая старая высота: window_height зажимается до неё
+  const model2 = emptyModel();
+  const { top: top2 } = rect(model2);
+  const low = legacyD107f87("lg-low", "window_balcony", 120);
+  top2.holes[low.id] = low;
+  updateOpening(model2, { wallId: top2.id, holeId: low.id, centerMm: 2100 });
+  assert.equal(low.height, undefined);
+  assert.equal(low.door_height, 120);
+  assert.equal(low.window_height, 120, "window_height не больше старого height");
 });
 
 test("R2: неизвестный тип в модели не пропускается мимо валидатора", () => {

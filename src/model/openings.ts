@@ -739,6 +739,24 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   checkPlacement(wall, at, width, hole.id); // до мутации: при ошибке модель не меняется
 
   if (windoor) applyWindoorPartsFrom(candidate, windoor);
+  // Миграция legacy-высоты (ревью 32, N3): блок, созданный прежней версией MCP (d107f87),
+  // хранит общую высоту в поле height (например 225 при floor_height 80) и не имеет частей.
+  // Новое представление высот в поле height не хранит, поэтому до финальной проверки
+  // инвариантов общий height мигрирует в высоты частей и удаляется на кандидате:
+  // - door_height = прежний общий height (дверь определяла габарит старого блока);
+  // - window_height = дефолт каталога (150 см), но не больше прежнего height;
+  // - существующие высоты частей не затираются; явно переданные window_height_mm/
+  //   door_height_mm сильнее миграции.
+  if (effKind.windoor && candidate.height !== undefined) {
+    const legacyH = candidate.height;
+    if (hole.door_height === undefined && params.doorHeightMm === undefined) {
+      candidate.door_height = legacyH;
+    }
+    if (hole.window_height === undefined && params.windowHeightMm === undefined) {
+      candidate.window_height = Math.min(windoor!.wh, legacyH);
+    }
+    delete candidate.height;
+  }
   if (heightCm !== undefined) candidate.height = heightCm;
   if (sillFloor !== undefined) {
     if (sillFloor > 0) candidate.floor_height = sillFloor;
