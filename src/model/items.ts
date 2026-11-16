@@ -142,17 +142,38 @@ const COMM_DIMENSIONS_HIDDEN = new Set([
 const COMM_OVER_FLOOR_DISPLAY_FALSE = new Set(["radiator_old", "conditioner_cage"]);
 
 /**
- * Линейные трубы (этапы 57, 78): «Газовый трубопровод» gas_line редактор ставит в
- * отдельную коллекцию model.pipes_gas, а трубы водоснабжения/канализации
- * water_pipe/water_hot_pipe/drainage_pipe (лист «Водоснабжение») — в model.pipes;
- * оба вида — графы узлов, через item_add неприменимы.
+ * Линейные сущности (этапы 57, 78, 84): «Газовый трубопровод» gas_line редактор ставит в
+ * отдельную коллекцию model.pipes_gas, трубы водоснабжения/канализации
+ * water_pipe/water_hot_pipe/drainage_pipe (лист «Водоснабжение») — в model.pipes, а
+ * световые линии листа «Освещение» — led_strip в model.led_strips,
+ * recessed_strip/surface_stripe/pendent_strip в model.stripes_light, line_light в
+ * model.line_strips (этап 84); все — графы узлов, через item_add неприменимы.
  */
-export const LINE_TOOLS = new Set(["gas_line", "water_pipe", "water_hot_pipe", "drainage_pipe"]);
+export const LINE_TOOLS = new Set([
+  "gas_line", "water_pipe", "water_hot_pipe", "drainage_pipe",
+  "led_strip", "recessed_strip", "surface_stripe", "pendent_strip", "line_light",
+]);
 
 /** Подсказка для LINE_TOOLS: каким инструментом ставится линия. */
 export function lineToolHint(name: string): string {
-  return name === "gas_line" ? "gas_line_add" : "pipe_add";
+  if (name === "gas_line") return "gas_line_add";
+  if (name === "led_strip") return "led_strip_add";
+  if (name === "line_light") return "line_light_add";
+  if (name === "recessed_strip" || name === "surface_stripe" || name === "pendent_strip") return "stripe_add";
+  return "pipe_add";
 }
+
+/**
+ * Трековые споты на шине (этап 84): track_spot/track_pendent_spot/track_panel_spot
+ * ставятся НА трековую шину (двусторонняя связь: props.strip_light_id у предмета и
+ * spots[<id предмета>] = {name, line_id, d} у шины), track_line_spot — линейный спот
+ * на шине (strip.line_spots). Связь со шиной в этапе 84 не пишется — предмет без
+ * привязки к шине редактором не поддержан, item_add отклоняет с подсказкой
+ * (см. отчёт 84, «вынесено в следующий PR»).
+ */
+export const TRACK_SPOT_TOOLS = new Set([
+  "track_spot", "track_pendent_spot", "track_panel_spot", "track_line_spot",
+]);
 
 function itemPlan(entry: ToolEntry | undefined): Record<string, number> {
   const mapped = itemPlanFromEntry(entry);
@@ -173,10 +194,18 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
       details: { kind: "wall_anchor_required", item: entry.name },
     });
   }
-  // этап 78: трубы водоснабжения/канализации и газовая линия — отдельные сущности-графы
+  // этап 78: трубы водоснабжения/канализации и газовая линия — отдельные сущности-графы;
+  // этап 84: световые линии листа «Освещение» — тоже
   if (entry && LINE_TOOLS.has(entry.name)) {
-    throw new McpError("INVALID_ARGUMENT", `«${entry.name}» — линия (труба), ставится инструментом ${lineToolHint(entry.name)}, а не item_add: редактор пишет её в отдельную коллекцию графа, а не в items`, {
+    throw new McpError("INVALID_ARGUMENT", `«${entry.name}» — линия (световая линия/труба), ставится инструментом ${lineToolHint(entry.name)}, а не item_add: редактор пишет её в отдельную коллекцию графа, а не в items`, {
       details: { kind: "line_tool_required", item: entry.name },
+    });
+  }
+  // этап 84: трековые споты ставятся НА трековую шину (связь spots/strip_light_id) —
+  // предмет без шины редактором не поддержан, подключение к шине — следующий этап
+  if (entry && TRACK_SPOT_TOOLS.has(entry.name)) {
+    throw new McpError("INVALID_ARGUMENT", `«${entry.name}» ставится на трековую шину (recessed_strip/surface_stripe/pendent_strip, инструменты stripe_add): подключение спота к шине редактором не поддержано — поставьте шину, спот добавьте в редакторе`, {
+      details: { kind: "track_spot_requires_strip", item: entry.name },
     });
   }
   const widthCm = mmToCm(params.widthMm ?? (entry ? entry.width * 10 : 100));
@@ -266,11 +295,16 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
     // display — по эталонам UI (у radiator_old/conditioner_cage false, у прочих true).
     // Этап 78: у точек воды (waterspots) умолчание — из каталога (over_floor.value,
     // эталон ui-ref-plumb-waterspot: {value:50, display:false}), display:false.
+    // Этап 84: у настенных светильников листа «Освещение» (bra и т.п.) умолчание —
+    // из каталога целиком с его display (эталон ui-ref-light-bra: {value:140, display:true});
+    // у потолочных (lightspot и др.) over_floor в модели нет (null).
     over_floor: params.elevationMm !== undefined
       ? { value: r2(mmToCm(params.elevationMm)), display: !COMM_OVER_FLOOR_DISPLAY_FALSE.has(params.name) && entry?.group !== "waterspots" }
       : entry?.group === "waterspots" && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
         ? { value: r2((entry.over_floor as { value: number }).value), display: false }
-        : null,
+        : entry?.group === "lights" && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
+          ? { value: r2((entry.over_floor as { value: number }).value), display: (entry.over_floor as { display?: boolean }).display !== false }
+          : null,
   };
   model.items[id] = props;
   return props;

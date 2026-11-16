@@ -10,6 +10,8 @@ import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_T
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
 import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../model/rigels.ts";
 import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind } from "../model/pipes.ts";
+import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, LIGHT_COLLECTION_BY_KIND, type LightKind } from "../model/lighting.ts";
+import type { LedStrip, StripLight, LineStrip } from "../model/types.ts";
 import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
 import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
@@ -137,6 +139,20 @@ function resolvePipe(model: Model, ref: string): import("../model/types.ts").Pip
     if (pipe) return pipe;
   }
   return throwNotFound(`труба ${ref} не найдена (id сайта или метка TP<n> из model_get)`);
+}
+
+/** Световая линия по site-id или метке LS/SL/LL1…_n из model_get (этап 84). */
+function resolveLightLine(model: Model, kind: LightKind, ref: string): LedStrip | StripLight | LineStrip {
+  const label = kind === "led" ? "LS" : kind === "line" ? "LL" : "SL";
+  const lines = model[LIGHT_COLLECTION_BY_KIND[kind]] ?? {};
+  if (lines[ref]) return lines[ref]!;
+  const m = new RegExp(`^${label}(\\d+)$`).exec(ref);
+  if (m) {
+    const list = Object.values(lines);
+    const line = list[Number(m[1]) - 1];
+    if (line) return line;
+  }
+  return throwNotFound(`световая линия ${ref} не найдена (id сайта или метка ${label}<n> из model_get)`);
 }
 
 const wallRef = z.string().min(1).describe("id стены сайта или метка W<n> из model_get");
@@ -548,6 +564,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "Точки воды — группа waterspots (лист «Водоснабжение»): комбинированные выводы waterspot_cold_hot, waterspot_drainage_cold, " +
         "waterspot_drainage_hot, waterspot_drainage_cold_hot — предметы каталога (item_add, высота вывода по умолчанию 500 мм от пола); " +
         "одиночные waterspot_cold/hot/drainage и коллектор waterspot_collector — PRO; подключение труб к выводам — pipe_add. " +
+        "Освещение — группа lights (лист «Освещение», 49 позиций: люстры chandelier*, светильники lightspot*, бра bra*, настенные wall_*, " +
+        "лампы led_lamp и др.) — предметы каталога, ставятся item_add; потолочные — свободно (центр комнаты — in_room center), " +
+        "настенные (bra, led_lamp, wall_spot, …) — только against_wall. Исключения-линии: led_strip (led_strip_add), " +
+        "recessed_strip/surface_stripe/pendent_strip (stripe_add), line_light (line_light_add); трековые споты " +
+        "track_spot/track_pendent_spot/track_panel_spot/track_line_spot ставятся на шину (MCP пока не поддерживает). " +
         "Меню «Терраса и участок» (исходный план): террасная мебель — предметы каталога; контуры террасы/участка, " +
         "ограждение и опорный столб — отдельные сущности (terrace_add, terrace_fence_add, terrace_column_add, territory_add); " +
         "«Террасная доска» — покрытие листа «Полы» (не предмет).",
@@ -606,7 +627,16 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "waterspot_drainage_hot, waterspot_drainage_cold_hot) — предметы каталога; у точек воды высота вывода по умолчанию 500 мм " +
         "(elevation_mm переопределяет); одиночные waterspot_cold/hot/drainage и коллектор waterspot_collector — PRO-функция. " +
         "Линии-графы — НЕ предметы: газовая линия gas_line → gas_line_add, трубы водоснабжения " +
-        "water_pipe/water_hot_pipe/drainage_pipe → pipe_add. " +
+        "water_pipe/water_hot_pipe/drainage_pipe → pipe_add, световые линии листа «Освещение» led_strip → led_strip_add, " +
+        "recessed_strip/surface_stripe/pendent_strip → stripe_add, line_light → line_light_add. " +
+        "Освещение (лист «Освещение», группа lights — 44 предмета из 49): люстры chandelier, hanging_chandelier, потолочные " +
+        "светильники lightspot, lightspot_surface, подвесные hanging_light*, рейлинговые track_single/double/triple, " +
+        "светильник Армстронг armstrong_light, бра bra, bra_shades, лампы led_lamp, light_stick, настенные wall_spot, wall_lamp, " +
+        "подсветка для картин painting_lighting и др. — предметы каталога (item_add, размеры/высота из каталога). " +
+        "Потолочные ставятся свободно (in_room center — «люстра по центру комнаты»), настенные (bra, led_lamp, wall_spot, " +
+        "wall_lamp, painting_lighting, light_stick) — только against_wall, высота по умолчанию 140 см из каталога (elevation_mm переопределяет). " +
+        "Трековые споты track_spot/track_pendent_spot/track_panel_spot/track_line_spot ставятся НА трековую шину — " +
+        "MCP пока не поддерживает подключение к шине. " +
         "Меню «Терраса и участок»: диваны terrace-серии (sofa_pottery_barn_malibu_wicker, sofa_coup_detat_campanha, " +
         "armchair_solana_papasan) — предметы каталога (item_add, план furniture); сами терраса/ограждение/столб — " +
         "отдельные сущности (terrace_add, terrace_fence_add, terrace_column_add), «Террасная доска» terrace_board — " +
@@ -980,6 +1010,169 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
     ),
 
+    // ---------- Освещение: световые линии (лист «Освещение», этап 84) ----------
+    led_strip_add: tool(
+      "Провести светодиодную ленту (лист «Освещение» → «Светодиодная подсветка», PRO): ломаная по точкам path " +
+        "(мм, не менее 2; коллекция led_strips — отдельная сущность, не item_add). Соседние точки пути соединяются ребром. " +
+        "Длина в модели — в метрах, пересчитывается автоматически. Точки можно двигать led_strip_update. " +
+        "После добавления вызывайте model_validate и project_save.",
+      {
+        path: z.array(mmPoint).min(2).max(MAX_LIGHT_PATH_NODES).describe("точки ленты по порядку, мм; не более 32"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const line = ws.apply("led_strip_add", (m) => addLightLine(m, { kind: "led", path: a["path"] as MmPoint[] }));
+        return ok(compactEntity(ws.model, (c) => c.led_strips.find((g) => g.site_id === line.id) ?? null));
+      },
+    ),
+
+    led_strip_update: tool(
+      "Изменить светодиодную ленту: перенести узлы графа. positions — список {vertex, x_mm, y_mm}; vertex — индекс " +
+        "вершины (0-based, как в model_get led_strips[].vertexes). Длина пересчитывается по рёбрам.",
+      {
+        led_strip_id: z.string().min(1).describe("метка LS<n> из model_get или id сайта"),
+        positions: z.array(z.object({
+          vertex: mmInt.describe("индекс узла (0-based)"),
+          x_mm: mmInt,
+          y_mm: mmInt,
+        })).min(1).max(MAX_LIGHT_PATH_NODES),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const line = ws.apply("led_strip_update", (m) => updateLightLine(m, {
+          kind: "led",
+          lineId: resolveLightLine(m, "led", a["led_strip_id"] as string).id,
+          positions: (a["positions"] as { vertex: number; x_mm: number; y_mm: number }[]).map((p) => ({
+            vertex: p.vertex, x: p.x_mm, y: p.y_mm,
+          })),
+        }));
+        return ok(compactEntity(ws.model, (c) => c.led_strips.find((g) => g.site_id === line.id) ?? null));
+      },
+    ),
+
+    led_strip_delete: tool(
+      "Удалить светодиодную ленту (метка LS<n> из model_get).",
+      { led_strip_id: z.string().min(1).describe("метка LS<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("led_strip_delete", (m) => {
+          deleteLightLine(m, "led", resolveLightLine(m, "led", a["led_strip_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["led_strip_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    stripe_add: tool(
+      "Провести трековую шину (лист «Освещение», PRO): kind=recessed (встроенная, recessed_strip), kind=surface " +
+        "(накладная, surface_stripе), kind=pendent (подвесная, pendent_strip — опускание подвеса 20 см по умолчанию). " +
+        "path — ломаная по точкам (мм, не менее 2; коллекция stripes_light). Трековые споты (track_spot и др.) " +
+        "на шину MCP пока не ставит. После добавления вызывайте model_validate и project_save.",
+      {
+        kind: z.enum(["recessed", "surface", "pendent"]).describe("вид шины: recessed — встроенная, surface — накладная, pendent — подвесная"),
+        path: z.array(mmPoint).min(2).max(MAX_LIGHT_PATH_NODES).describe("точки шины по порядку, мм; не более 32"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const line = ws.apply("stripe_add", (m) => addLightLine(m, { kind: a["kind"] as LightKind, path: a["path"] as MmPoint[] }));
+        return ok(compactEntity(ws.model, (c) => c.stripes_light.find((g) => g.site_id === line.id) ?? null));
+      },
+    ),
+
+    stripe_update: tool(
+      "Изменить трековую шину: перенести узлы графа. positions — список {vertex, x_mm, y_mm}; vertex — индекс вершины " +
+        "(0-based, как в model_get stripes_light[].vertexes). Длина пересчитывается по рёбрам.",
+      {
+        stripe_id: z.string().min(1).describe("метка SL<n> из model_get или id сайта"),
+        positions: z.array(z.object({
+          vertex: mmInt.describe("индекс узла (0-based)"),
+          x_mm: mmInt,
+          y_mm: mmInt,
+        })).min(1).max(MAX_LIGHT_PATH_NODES),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const line = ws.apply("stripe_update", (m) => {
+          const found = resolveLightLine(m, "recessed", a["stripe_id"] as string);
+          const kind = found.type === "pendent_strip" ? "pendent" : found.type === "surface_stripe" ? "surface" : "recessed";
+          return updateLightLine(m, {
+            kind,
+            lineId: found.id,
+            positions: (a["positions"] as { vertex: number; x_mm: number; y_mm: number }[]).map((p) => ({
+              vertex: p.vertex, x: p.x_mm, y: p.y_mm,
+            })),
+          });
+        });
+        return ok(compactEntity(ws.model, (c) => c.stripes_light.find((g) => g.site_id === line.id) ?? null));
+      },
+    ),
+
+    stripe_delete: tool(
+      "Удалить трековую шину (метка SL<n> из model_get).",
+      { stripe_id: z.string().min(1).describe("метка SL<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("stripe_delete", (m) => {
+          const found = resolveLightLine(m, "recessed", a["stripe_id"] as string);
+          const kind = found.type === "pendent_strip" ? "pendent" : found.type === "surface_stripe" ? "surface" : "recessed";
+          deleteLightLine(m, kind, found.id);
+          return true;
+        });
+        return ok({ deleted: a["stripe_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    line_light_add: tool(
+      "Провести линейное освещение (лист «Освещение» → «Линейное освещение», PRO): ломаная по точкам path " +
+        "(мм, не менее 2; коллекция line_strips — отдельная сущность, не item_add). Соседние точки пути соединяются ребром. " +
+        "Длина в модели — в метрах, пересчитывается автоматически. После добавления вызывайте model_validate и project_save.",
+      {
+        path: z.array(mmPoint).min(2).max(MAX_LIGHT_PATH_NODES).describe("точки линии по порядку, мм; не более 32"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const line = ws.apply("line_light_add", (m) => addLightLine(m, { kind: "line", path: a["path"] as MmPoint[] }));
+        return ok(compactEntity(ws.model, (c) => c.line_strips.find((g) => g.site_id === line.id) ?? null));
+      },
+    ),
+
+    line_light_update: tool(
+      "Изменить линию линейного освещения: перенести узлы графа. positions — список {vertex, x_mm, y_mm}; vertex — " +
+        "индекс вершины (0-based, как в model_get line_strips[].vertexes). Длина пересчитывается по рёбрам.",
+      {
+        line_light_id: z.string().min(1).describe("метка LL<n> из model_get или id сайта"),
+        positions: z.array(z.object({
+          vertex: mmInt.describe("индекс узла (0-based)"),
+          x_mm: mmInt,
+          y_mm: mmInt,
+        })).min(1).max(MAX_LIGHT_PATH_NODES),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const line = ws.apply("line_light_update", (m) => updateLightLine(m, {
+          kind: "line",
+          lineId: resolveLightLine(m, "line", a["line_light_id"] as string).id,
+          positions: (a["positions"] as { vertex: number; x_mm: number; y_mm: number }[]).map((p) => ({
+            vertex: p.vertex, x: p.x_mm, y: p.y_mm,
+          })),
+        }));
+        return ok(compactEntity(ws.model, (c) => c.line_strips.find((g) => g.site_id === line.id) ?? null));
+      },
+    ),
+
+    line_light_delete: tool(
+      "Удалить линию линейного освещения (метка LL<n> из model_get).",
+      { line_light_id: z.string().min(1).describe("метка LL<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("line_light_delete", (m) => {
+          deleteLightLine(m, "line", resolveLightLine(m, "line", a["line_light_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["line_light_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
     // ---------- Проем в полу (пункт меню «Проем в полу», этап 64) ----------
     floor_hole_add: tool(
       "Добавить проём в полу (пункт меню «Проем в пола»): прямоугольник по двум противоположным углам " +
@@ -1289,9 +1482,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     model_get: tool(
       "Текущая модель плана в компактном виде: стены W1… (осевые концы, длины по осям и внутренним граням, толщины, проёмы с отступами), " +
         "комнаты R1… (площади м², периметры), предметы I1…, колонны P1… (пункт меню «Несущая колонна»), ригели B1… (пункт меню «Потолочный ригель»), " +
-        "газовые линии G1… (пункт меню «Коммуникации» → «Газовый трубопровод»), границы террас TB1… и участка XB1… (пункт меню «Терраса и участок»), " +
-        "проёмы в полу FH1… (пункт меню «Проем в полу»). " +
-        "Обычно < 5 КБ. id сайта — в поле site_id; метки W/R/I/P/B/G/TB/XB/FH можно использовать в других инструментах.",
+        "газовые линии G1… (пункт меню «Коммуникации» → «Газовый трубопровод»), трубы TP1… (лист «Водоснабжение»), " +
+        "границы террас TB1… и участка XB1… (пункт меню «Терраса и участок»), проёмы в полу FH1… (пункт меню «Проем в полу»), " +
+        "световые линии LS1… (светодиодные ленты), SL1… (трековые шины), LL1… (линейное освещение — лист «Освещение»). " +
+        "Обычно < 5 КБ. id сайта — в поле site_id; метки W/R/I/P/B/G/TP/TB/XB/FH/LS/SL/LL можно использовать в других инструментах.",
       { detail: z.enum(["compact", "full"]).optional() },
       async (a) => {
         const ws = wsOf();
