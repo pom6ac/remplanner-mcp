@@ -32,7 +32,8 @@ export type Hole = {
   group: "doors" | "windows" | (string & {});
   pc: Point;
   width: number;
-  height: number;
+  /** У балконного блока (windoor) height в модели отсутствует. */
+  height?: number;
   depth: number;
   /** Края проёма на оси стены (обязательны при restore). */
   p1?: Point;

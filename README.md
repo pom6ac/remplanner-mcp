@@ -111,7 +111,7 @@ tool_timeout_sec = 120
 ```
 project_create            # анонимный проект (или project_open для проекта аккаунта)
 room_add_rect             # комната 4000×3000
-opening_add               # дверь, окно
+opening_add               # двери и все 7 типов окон (включая балконный блок и французские)
 catalog_search + item_add # мебель из каталога
 model_validate            # проверка геометрии перед сохранением
 render_plan               # PNG плана

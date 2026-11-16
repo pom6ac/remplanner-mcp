@@ -1,0 +1,77 @@
+{
+ "_source": "Эталон из UI редактора remplanner (headless Chromium): пункт меню «Балконная дверь» поставлен кликом на стену проекта-копии; модель снята project.copy(\"server\") без сохранения, scripts/probes/25-windows-ui-refs.ts, 2026-11-16, проект аккаунта обезличен (id → 0), global_version 757",
+ "menu_title": "Балконная дверь",
+ "catalog_key": "window_door",
+ "model_type": "window_door",
+ "defaults_model_cm": {
+  "plan": "a",
+  "type": "window_door",
+  "group": "windows",
+  "width": 80,
+  "height": 225,
+  "depth": 6,
+  "floor_height": 10,
+  "slopes": 20,
+  "opening": "r-l",
+  "id": "0",
+  "filling": 1,
+  "impost_offset": 75,
+  "parent": "0",
+  "parent_depth": 30,
+  "position": "c",
+  "offset": 0,
+  "slope_angle": 0,
+  "casing": 1,
+  "casements": 1,
+  "sill": {
+   "thinkness": 4,
+   "overhang": 0,
+   "overmeasure": 0,
+   "side": "l"
+  },
+  "f0offset": 0,
+  "_wall": "0"
+ },
+ "props_panel": [
+  {
+   "id": "cm-window-door",
+   "html": "<div class=\"contextmenu v2\" id=\"cm-window-door\" style=\"display: block; top: 625px; left: 1151px;\">\n            <div class=\"contextmenu_item\">\n             Ширина двери:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" action=\"width\" type=\"text\" maxlength=\"5\" value=\"\" placeholder=\"80\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item input\">\n              Высота двери:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" action=\"height\" type=\"text\" maxlength=\"5\" value=\"\" placeholder=\"225\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item input\">\n                Высота от пола:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" data-input=\"floor-height\" type=\"text\" maxlength=\"5\" value=\"\" placeholder=\"10\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item input\">\n            Высота импоста:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" action=\"impost-floor-offset\" type=\"text\" maxlength=\"5\" value=\"\" placeholder=\"75\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item textinput\" id=\"cm-window-door--filling\">\n                <span>Конфигурация:</span>\n                <div class=\"contextmenu_item_input\">\n                    <select name=\"\">\n                        <option value=\"1\">Стекло сверху с импостом</option>\n                        <option value=\"2\">Стекло везде с импостом</option>\n                        <option value=\"3\">Сэндвич-панель с импостом</option>\n                        <option value=\"4\">Стекло цельное</option>\n                        <option value=\"5\">Сэндвич-панель цельная</option>\n                    </select>\n                </div>\n            </div>\n            <div class=\"contextmenu_item icons\">\n                <em>Действия:</em>\n                <div class=\"contextmenu_item_icon turn\" action=\"rotate\">\n                    <span style=\"margin-left:-35px;\">Повернуть</span>\n                </div>\n                <div class=\"contextmenu_item_icon move\" data-button=\"move\">\n                    <span style=\"margin-left:-42px;\">Переместить</span>\n                </div>\n                <div class=\"contextmenu_item_icon copy\" action=\"copy\">\n                    <span style=\"margin-left: -39px\">Создать копию</span>\n                </div>\n                <div class=\"contextmenu_item_icon delete\" action=\"delete\">\n                    <span style=\"margin-left:-29px;\">Удалить</span>\n                </div>\n            </div>\n        </div>"
+  }
+ ],
+ "field_map_ui_to_model": [
+  {
+   "field": "width",
+   "set": "140",
+   "model": {
+    "width": 120
+   }
+  },
+  {
+   "field": "height",
+   "set": "160",
+   "model": {
+    "width": 120,
+    "height": 160
+   }
+  },
+  {
+   "field": "floor-height",
+   "set": "90",
+   "model": {
+    "width": 120,
+    "height": 160,
+    "floor_height": 90
+   }
+  },
+  {
+   "field": "impost-floor-offset",
+   "set": "140",
+   "model": {
+    "width": 120,
+    "height": 160,
+    "floor_height": 90,
+    "impost_offset": 130
+   }
+  }
+ ]
+}
