@@ -1,4 +1,4 @@
-import type { Model, Wall, GasLine } from "./types.ts";
+import type { Model, Wall, GasLine, Pipe } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
 import type { RoomPolygon } from "./items.ts";
 import { roomPolygons } from "./items.ts";
@@ -115,6 +115,23 @@ export type CompactGasLine = {
   length_m: number;
 };
 
+/** Труба водоснабжения/канализации (этап 78). */
+export type CompactPipe = {
+  id: string;
+  site_id: string;
+  /** Вид: water_pipe | water_hot_pipe | drainage_pipe. */
+  type: string;
+  /** Концы цепочки вершин, мм. */
+  from: [number, number];
+  to: [number, number];
+  /** Число вершин графа. */
+  vertexes: number;
+  /** Длина трубы, мм (все длины API — в мм, design §7.2; ревью 79 №6). */
+  length_mm: number;
+  /** id предметов-вершин (выводы воды, стояки, ввод), мм-узлы не перечисляются. */
+  connected: string[];
+};
+
 export type CompactFloorHole = {
   id: string;
   site_id: string;
@@ -144,6 +161,7 @@ export type CompactModel = {
   pillars: CompactPillar[];
   rigels: CompactRigel[];
   gas_lines: CompactGasLine[];
+  pipes: CompactPipe[];
   terrace_borders: CompactBorder[];
   territory_borders: CompactBorder[];
   level_holes: CompactFloorHole[];
@@ -298,6 +316,22 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     };
   });
 
+  const pipes: CompactPipe[] = Object.values(model.pipes ?? {}).map((pipe: Pipe, i) => {
+    const first = pipe.vertexes[0]?.point;
+    const last = pipe.vertexes[pipe.vertexes.length - 1]?.point;
+    return {
+      id: `TP${i + 1}`,
+      site_id: pipe.id,
+      type: pipe.type,
+      from: [round0(cmToMm(first?.x ?? 0)), round0(cmToMm(first?.y ?? 0))],
+      to: [round0(cmToMm(last?.x ?? 0)), round0(cmToMm(last?.y ?? 0))],
+      vertexes: pipe.vertexes.length,
+      // все длины API — в мм (design §7.2, ревью 79 №6); метры редактора остаются внутри адаптации
+      length_mm: Math.round((pipe.length ?? 0) * 1000),
+      connected: pipe.vertexes.filter((v) => v.type !== "node").map((v) => v.id),
+    };
+  });
+
   const totalHeight = typeof model.total_height === "number" ? model.total_height : 270;
 
   type BorderLike = { id: string; p1: { x: number; y: number }; p2: { x: number; y: number } };
@@ -337,6 +371,7 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     pillars,
     rigels,
     gas_lines: gasLines,
+    pipes,
     terrace_borders: terraceBorders,
     territory_borders: territoryBorders,
     level_holes: levelHoles,

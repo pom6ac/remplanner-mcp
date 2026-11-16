@@ -10,6 +10,8 @@ import type { Model, Point } from "./model/types.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
 import { prepareForRestore, findUnattachedEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
+import { dist, closestPoint, pointInPolygon, segmentsCross, type Polygon as GeoPolygon } from "./model/geometry.ts";
+import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey } from "./model/pipes.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { borderMismatches } from "./model/terraces.ts";
 import { levelHoleMismatches } from "./model/floorhole.ts";
@@ -93,7 +95,7 @@ export type SaveOutcome = {
   verified: boolean;
   rounds: number;
   /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено. */
-  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; terrace_borders: number; territory_borders: number; level_holes: number };
+  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number };
   /** Предупреждения (удаления объектов сервера). */
   warnings: string[];
 };
@@ -105,8 +107,8 @@ export const MAX_HISTORY = 50;
 /** Результат мутации стен: полезное значение + предупреждения (офлайн-режим). */
 export type WallMutation<T> = { result: T; warnings: string[] };
 
-/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии, границы террас/участка, проёмы пола. */
-export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; terrace_borders: number; territory_borders: number; level_holes: number } {
+/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии, трубы воды, границы террас/участка, проёмы пола. */
+export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number } {
   const m = model as Model;
   const walls = m.walls ?? {};
   return {
@@ -116,6 +118,7 @@ export function modelCounts(model: Model | Record<string, unknown>): { walls: nu
     pillars: Object.keys(m.pillars ?? {}).length,
     rigels: Object.keys(m.rigels ?? {}).length,
     gas_lines: Object.keys(m.pipes_gas ?? {}).length,
+    pipes: Object.keys(m.pipes ?? {}).length,
     terrace_borders: Object.keys(m.terrace_borders ?? {}).length,
     territory_borders: Object.keys(m.territory_borders ?? {}).length,
     level_holes: Object.keys(m.level_holes ?? {}).length,
@@ -144,6 +147,7 @@ export function modelIsContentEmpty(model: Model): boolean {
   const nonEmpty = (v: unknown): boolean => v !== null && v !== undefined && typeof v === "object" && Object.keys(v as object).length > 0;
   if (nonEmpty(model.pillars) || nonEmpty(model.rigels) || nonEmpty(model.rulers) || nonEmpty(model.comments)) return false;
   if (nonEmpty(model.pipes_gas)) return false;
+  if (nonEmpty(model.pipes)) return false;
   if (nonEmpty(model.terrace_borders) || nonEmpty(model.territory_borders) || nonEmpty(model.level_holes)) return false;
   if (nonEmpty(model.rooms2) || nonEmpty(model.rooms1)) return false;
   return true;
@@ -399,10 +403,14 @@ function gasEdge(line: GasLineSig, i: number, j: number): boolean {
 }
 
 /**
- * Согласованное сопоставление вершин двух графов (ревью 61 №6): сначала по
- * стабильному id (id — identity, редактор может переупорядочивать vertexes),
- * иначе жадно по типу и координатам с допуском GAS_VERTEX_TOL_CM. Возвращает
- * map[i] = индекс вершины в got или null, если согласованного сопоставления нет.
+ * Согласованное сопоставление вершин двух графов (ревью 61 №6; ревью 79 №4/№5):
+ * сначала однозначные совпадения по стабильному id — они сохраняются даже при
+ * переименовании других узлов (раньше один rename сбрасывал все id-совпадения);
+ * вершины-предметы (type ≠ node) сопоставляются ТОЛЬКО по id — геометрическая
+ * замена identity предмета запрещена (ревью 79 №5b); оставшиеся свободные узлы
+ * (rename нормализацией) — жадно по типу и координатам с допуском
+ * GAS_VERTEX_TOL_CM. Возвращает map[i] = индекс вершины в got или null, если
+ * согласованного сопоставления нет.
  */
 function gasVertexMatch(expected: GasVertexSig[], got: GasVertexSig[]): number[] | null {
   if (expected.length !== got.length) return null;
@@ -412,20 +420,21 @@ function gasVertexMatch(expected: GasVertexSig[], got: GasVertexSig[]): number[]
   got.forEach((v, i) => {
     if (typeof v.id === "string" && !gotById.has(v.id)) gotById.set(v.id, i);
   });
-  let allById = true;
-  expected.forEach((v, i) => {
-    const j = typeof v.id === "string" ? gotById.get(v.id) : undefined;
-    if (j === undefined || used[j]!) {
-      allById = false;
-      return;
-    }
-    map[i] = j!;
-    used[j] = true;
-  });
-  if (allById) return map;
-  used.fill(false);
-  map.fill(-1);
+  const needGeom: number[] = [];
   for (let i = 0; i < expected.length; i++) {
+    const v = expected[i]!;
+    const j = typeof v.id === "string" ? gotById.get(v.id) : undefined;
+    if (j !== undefined && !used[j]!) {
+      map[i] = j!;
+      used[j] = true;
+      continue;
+    }
+    // вершина-предмет без id-совпадения — identity потеряна (ревью 79 №5b)
+    if ((v.type ?? "node") !== "node") return null;
+    needGeom.push(i);
+  }
+  // свободные узлы (id переименован нормализацией) — по геометрии (ревью 79 №4)
+  for (const i of needGeom) {
     let best = -1;
     let bestD = Infinity;
     for (let j = 0; j < got.length; j++) {
@@ -450,21 +459,64 @@ function gasVertexMatch(expected: GasVertexSig[], got: GasVertexSig[]): number[]
 }
 
 /**
- * Расхождение газовых линий между двумя наборами — ПОЛНАЯ семантическая сверка
- * (ревью 61 №1): идентичности, вершины с согласованным сопоставлением (допуск
- * 0,1 см), рёбра matrix целиком в обе стороны (длины с допуском 0,02 м),
- * пустота диагонали (петля не проходит, ревью 62 №7), items,
- * plan и все прочие поля ожидаемой стороны; длина линии (допуск 0,02 м).
+ * Расхождение линий-графов (газовые линии, трубы водоснабжения) между двумя наборами —
+ * ПОЛНАЯ семантическая сверка (ревью 61 №1; ревью 79 №3–№5): идентичности с обеих
+ * сторон (лишняя линия на другой стороне — расхождение, №5c), вершины с согласованным
+ * сопоставлением (допуск 0,1 см; переименование только свободных узлов, identity
+ * вершин-предметов — только по id), рёбра matrix целиком в обе стороны (длины с
+ * допуском 0,02 м), пустота диагонали (петля не проходит, ревью 62 №7), items, plan
+ * и все прочие поля ожидаемой стороны; длина линии (допуск 0,02 м).
+ * entityLabel — имя сущности в сообщениях («газовая линия», «труба»).
+ * lenientItemVertices — у сущностей с вершинами-предметами (трубы) точку вершины
+ * сверяем мягко: редактор пересчитывает точку подключения к габариту предмета
+ * (connector geometry, бандл app.3.0 Piping.get_point), поэтому локальная точка
+ * (центр предмета) отличается от нормализованной. Длины рёбер и линии при этом не
+ * отключаются (ревью 79 №3): при переданном itemGeom длины сверяются с ДОПУСТИМЫМ
+ * диапазоном — расстоянием между габаритами предметов (любая точка подключения
+ * внутри габарита) и узлами; без itemGeom — строго.
+ * itemGeom — геометрия предметов-вершин (id → pc/width/height/angle, см) ожидаемой
+ * стороны, для расчёта допустимых диапазонов длин.
  * Возвращает список человекочитаемых расхождений; пустой список — совпадают.
  */
-function gasLineGraphMismatches(expected: Record<string, GasLineSig>, got: Record<string, unknown>): string[] {
+function gasLineGraphMismatches(
+  expected: Record<string, GasLineSig>,
+  got: Record<string, unknown>,
+  entityLabel = "газовая линия",
+  lenientItemVertices = false,
+  itemGeom?: Record<string, { pc?: Point; width?: number; height?: number; angle?: number }>,
+): string[] {
   const out: string[] = [];
   const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
     a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
+  /** Регион допустимых точек подключения вершины: габарит предмета (с углом) или сама точка узла. */
+  const regionOf = (v: GasVertexSig): Point[] => {
+    const pt = v.point;
+    if (!itemGeom || (v.type ?? "node") === "node") return pt ? [{ x: pt.x, y: pt.y }] : [];
+    const g = typeof v.id === "string" ? itemGeom[v.id] : undefined;
+    if (!g || g.pc === undefined || g.width === undefined || g.height === undefined) return pt ? [{ x: pt.x, y: pt.y }] : [];
+    const w2 = g.width / 2;
+    const h2 = g.height / 2;
+    const a = ((g.angle ?? 0) * Math.PI) / 180;
+    const cos = Math.cos(a);
+    const sin = Math.sin(a);
+    return ([[-w2, -h2], [w2, -h2], [w2, h2], [-w2, h2]] as [number, number][]).map(([dx, dy]) => ({
+      x: g.pc!.x + dx * cos - dy * sin,
+      y: g.pc!.y + dx * sin + dy * cos,
+    }));
+  };
+  /** Допустимый диапазон длины ребра: min/max расстояния между регионами концов
+   *  (ревью 81 3-R: минимум по всему габариту — точка подключения может лежать на
+   *  середине грани или внутри перекрывающегося габарита, а не у угла). */
+  const edgeLengthRange = (a: GasVertexSig, b: GasVertexSig): [number, number] | null => {
+    const ra = regionOf(a);
+    const rb = regionOf(b);
+    if (ra.length === 0 || rb.length === 0) return null;
+    return [regionMinDistance(ra, rb), regionMaxDistance(ra, rb)];
+  };
   for (const [id, g0] of Object.entries(expected)) {
     const g = got[id] as GasLineSig | undefined;
     if (!g) {
-      out.push(`${id}: газовая линия исчезла после сохранения`);
+      out.push(`${id}: ${entityLabel} исчезла после сохранения`);
       continue;
     }
     const expV = g0.vertexes ?? [];
@@ -478,7 +530,8 @@ function gasLineGraphMismatches(expected: Record<string, GasLineSig>, got: Recor
       const e = expV[i]!;
       const s = gotV[map[i]!]!;
       if ((e.type ?? "") !== (s.type ?? "")) out.push(`${id}: тип узла ${i} изменился (на сервере «${s.type ?? ""}»; ожидалось «${e.type ?? ""}»)`);
-      if (!near(s.point?.x, e.point?.x, GAS_VERTEX_TOL_CM) || !near(s.point?.y, e.point?.y, GAS_VERTEX_TOL_CM)) {
+      const loosePoint = lenientItemVertices && (e.type ?? "node") !== "node";
+      if (!loosePoint && (!near(s.point?.x, e.point?.x, GAS_VERTEX_TOL_CM) || !near(s.point?.y, e.point?.y, GAS_VERTEX_TOL_CM))) {
         out.push(`${id}: узел ${i} сместился (на сервере ${s.point?.x},${s.point?.y}; ожидалось ${e.point?.x},${e.point?.y})`);
       }
       for (const [k, v] of Object.entries(e)) {
@@ -511,6 +564,8 @@ function gasLineGraphMismatches(expected: Record<string, GasLineSig>, got: Recor
         } else if (e0 !== null && e !== null) {
           const l0 = (e0 as { length?: number }).length;
           const l = (e as { length?: number }).length;
+          // matrix length — константа-заглушка {length:1} формата редактора (реальная
+          // длина только в line.length), сверяется как раньше — строго
           if (!near(l, l0, GAS_LENGTH_TOL_M)) out.push(`${id}: длина ребра ${i}–${j} изменилась (на сервере ${l}; ожидалось ${l0})`);
         }
       }
@@ -535,12 +590,184 @@ function gasLineGraphMismatches(expected: Record<string, GasLineSig>, got: Recor
     if (unclaimed.size > 0) out.push(`${id}: лишние узлы в items (${[...unclaimed].sort().join(", ")})`);
     // план, тип, длина и все прочие поля объекта линии (ревью 61 №1: включая plan)
     if ((g.type ?? "") !== (g0.type ?? "")) out.push(`${id}: тип изменился (на сервере «${g.type ?? ""}»; ожидалось «${g0.type ?? ""}»)`);
-    if (!near(g.length, g0.length, GAS_LENGTH_TOL_M)) out.push(`${id}: длина изменилась (на сервере ${g.length}; ожидалось ${g0.length})`);
+    // ревью 79 №3: длина линии при мягкой сверке — допустимый диапазон точек подключения
+    const lenRange = lenientItemVertices
+      ? (() => {
+          let dminSum = 0;
+          let dmaxSum = 0;
+          let ranged = false;
+          // ревью 79 №3: при мягкой сверке вершин-предметов допустимый диапазон
+          // длин по габаритам предметов считается только для line.length —
+          // сумма min/max расстояний между регионами точек подключения рёбер
+          for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+              if ((g0.matrix?.[i]?.[j] ?? null) === null) continue;
+              const r = edgeLengthRange(expV[i]!, expV[j]!);
+              if (!r) return null;
+              dminSum += r[0];
+              dmaxSum += r[1];
+              ranged = true;
+            }
+          }
+          return ranged ? [dminSum, dmaxSum] as const : null;
+        })()
+      : null;
+    if (lenRange) {
+      // регион в см, длина линии — в метрах
+      const dminM = lenRange[0] / 100;
+      const dmaxM = lenRange[1] / 100;
+      if (g.length === undefined || g.length < dminM - GAS_LENGTH_TOL_M || g.length > dmaxM + GAS_LENGTH_TOL_M) {
+        out.push(`${id}: длина изменилась вне допустимого диапазона точек подключения (на сервере ${g.length}; допустимо ${dminM.toFixed(2)}–${dmaxM.toFixed(2)})`);
+      }
+    } else if (!near(g.length, g0.length, GAS_LENGTH_TOL_M)) out.push(`${id}: длина изменилась (на сервере ${g.length}; ожидалось ${g0.length})`);
     for (const [k, v] of Object.entries(g0)) {
       if (k === "vertexes" || k === "matrix" || k === "items" || k === "type" || k === "length") continue;
       const sVal = (g as Record<string, unknown>)[k];
       if (!deepEqualTol(v, sVal, GAS_LENGTH_TOL_M)) {
         out.push(`${id}: поле ${k} изменилось (на сервере ${JSON.stringify(sVal ?? null)}; ожидалось ${JSON.stringify(v)})`);
+      }
+    }
+  }
+  // ревью 79 №5c: сверка множества в обе стороны — лишняя линия на другой стороне
+  // (не удалена/добавлена редактором) — расхождение
+  const extra = Object.keys(got).filter((id) => !(id in expected)).sort();
+  for (const id of extra) out.push(`${id}: лишняя ${entityLabel} на сервере (не заявлена рабочей копией)`);
+  return out;
+}
+
+/**
+ * Минимальное расстояние между замкнутыми выпуклыми регионами (ревью 81 3-R):
+ * 0 при пересечении или вложении, иначе — минимум расстояний точка–отрезок по
+ * всем рёбрам обеих сторон. Точка — вырожденный регион из одной вершины.
+ */
+function regionMinDistance(a: GeoPolygon, b: GeoPolygon): number {
+  for (let i = 0; i < a.length; i++) {
+    const e1 = { p1: a[i]!, p2: a[(i + 1) % a.length]! };
+    for (let j = 0; j < b.length; j++) {
+      if (segmentsCross(e1, { p1: b[j]!, p2: b[(j + 1) % b.length]! })) return 0;
+    }
+  }
+  for (const p of a) if (pointInPolygon(b, p)) return 0;
+  for (const p of b) if (pointInPolygon(a, p)) return 0;
+  let best = Infinity;
+  for (const p of a) {
+    for (let j = 0; j < b.length; j++) best = Math.min(best, dist(p, closestPoint({ p1: b[j]!, p2: b[(j + 1) % b.length]! }, p).point));
+  }
+  for (const p of b) {
+    for (let i = 0; i < a.length; i++) best = Math.min(best, dist(p, closestPoint({ p1: a[i]!, p2: a[(i + 1) % a.length]! }, p).point));
+  }
+  return best;
+}
+
+/** Максимальное расстояние между регионами (для выпуклых — достигается на вершинах). */
+function regionMaxDistance(a: GeoPolygon, b: GeoPolygon): number {
+  let best = 0;
+  for (const p of a) for (const q of b) best = Math.max(best, dist(p, q));
+  return best;
+}
+
+/** Предмет с обратными ссылками на трубы (props.pipes). */
+type PipeLinkItem = { name?: string; pipes?: Record<string, unknown> };
+
+/**
+ * Сверка подключений труба↔предмет в обе стороны (ревью 79 №5, ревью 81 5-R):
+ * у каждой вершины-предмета трубы props.pipes[`${type}_id`] должен указывать на неё,
+ * и каждая обратная ссылка предмета — на существующую трубу того же вида, чьи
+ * вершины содержат этот предмет. Фактические ссылки сервера (gotItems) сверяются
+ * с ожидаемыми (expectedItems) ПОЛНОСТЬЮ: нет лишних, нет пропущенных, вид трубы
+ * совпадает с ключом, scalar у обычных выводов / массив у multi (ревью 81 5-R —
+ * раньше второе направление смотрело expectedItems и пропускало лишние и висячие
+ * ссылки). Общий слой газовой/водяной сверки не трогает (у газа обратных ссылок
+ * нет) — вызывается только для model.pipes.
+ */
+function pipeConnectionMismatches(
+  expectedPipes: Record<string, GasLineSig>,
+  expectedItems: Record<string, PipeLinkItem>,
+  gotPipes: Record<string, GasLineSig>,
+  gotItems: Record<string, PipeLinkItem>,
+): string[] {
+  const out: string[] = [];
+  const pipeKeys = new Set(Object.values(PIPE_TYPE_BY_KIND).map(pipeLinkKey));
+  /** Вид трубы по ключу ссылки (water_pipe_id → water_pipe); null — ключ не труба. */
+  const pipeTypeOfKey = (key: string): string | null => {
+    for (const type of Object.values(PIPE_TYPE_BY_KIND)) {
+      if (key === pipeLinkKey(type)) return type;
+    }
+    return null;
+  };
+  /** Ссылки предмета на трубы: ключ → множество id (только ключи труб, только строки). */
+  const linksOf = (item: PipeLinkItem | undefined): Map<string, Set<string>> => {
+    const out = new Map<string, Set<string>>();
+    for (const [key, ref] of Object.entries(item?.pipes ?? {})) {
+      if (!pipeKeys.has(key)) continue;
+      const ids = (Array.isArray(ref) ? ref : [ref]).filter((x): x is string => typeof x === "string" && x !== "");
+      out.set(key, new Set(ids));
+    }
+    return out;
+  };
+  // направление 1: труба → props.pipes предмета (ревью 79 №5a)
+  for (const [id, p] of Object.entries(expectedPipes)) {
+    const key = pipeLinkKey(p.type ?? "");
+    if (!pipeKeys.has(key)) continue;
+    for (const v of p.vertexes ?? []) {
+      const vid = v.id;
+      if ((v.type ?? "node") === "node" || typeof vid !== "string") continue;
+      const item = gotItems[vid];
+      if (!item) {
+        out.push(`${id}: предмет ${vid} исчез после сохранения`);
+        continue;
+      }
+      const cur = item.pipes?.[key];
+      const ok = cur === id || (Array.isArray(cur) && cur.includes(id));
+      if (!ok) {
+        out.push(`${id}: предмет ${vid} потерял обратную ссылку ${key} (на сервере ${JSON.stringify(cur ?? null)}; ожидалось «${id}»)`);
+      }
+    }
+  }
+  // направление 2 (ревью 81 5-R): ВСЕ фактические ссылки gotItems — валидность
+  // против gotPipes (существование, вид, членство) и полнота против expectedItems
+  for (const [itemId, item] of Object.entries(gotItems)) {
+    const gotLinks = linksOf(item);
+    const expLinks = linksOf(expectedItems[itemId]);
+    const keys = new Set([...gotLinks.keys(), ...expLinks.keys()]);
+    for (const key of keys) {
+      const gotIds = gotLinks.get(key) ?? new Set();
+      const expIds = expLinks.get(key) ?? new Set();
+      for (const pid of gotIds) {
+        if (!expIds.has(pid)) {
+          out.push(`${itemId}: лишняя обратная ссылка ${key} → ${pid} (в рабочей копии этой ссылки нет)`);
+          continue;
+        }
+        const gp = gotPipes[pid];
+        if (!gp) {
+          out.push(`${itemId}: обратная ссылка ${key} указывает на отсутствующую трубу ${pid}`);
+          continue;
+        }
+        const wantType = pipeTypeOfKey(key);
+        if (wantType !== null && (gp.type ?? "") !== wantType) {
+          out.push(`${itemId}: обратная ссылка ${key} указывает на трубу ${pid} другого вида (на сервере «${gp.type ?? ""}»; по ключу — «${wantType}»)`);
+        }
+        if (!(gp.vertexes ?? []).some((v) => v.id === itemId)) {
+          out.push(`${itemId}: труба ${pid} на сервере не содержит предмет в вершинах (ссылка ${key})`);
+        }
+      }
+      for (const pid of expIds) {
+        if (!gotIds.has(pid)) out.push(`${itemId}: обратная ссылка ${key} → ${pid} потеряна на сервере`);
+      }
+    }
+  }
+  // направление 3: вид ссылки — scalar у обычного вывода, массив у multi
+  // (ревью 81 5-R: допустимость scalar/array)
+  for (const [itemId, item] of Object.entries(gotItems)) {
+    const name = (item as { name?: string }).name;
+    for (const [key, ref] of Object.entries(item.pipes ?? {})) {
+      if (!pipeKeys.has(key) || ref === undefined || ref === null || ref === "") continue;
+      const isMulti = typeof name === "string" && PIPE_MULTI_SPOTS.has(name);
+      if (isMulti && !Array.isArray(ref)) {
+        out.push(`${itemId}: у multi-предмета «${name}» ссылка ${key} должна быть массивом труб (на сервере скаляр)`);
+      }
+      if (!isMulti && Array.isArray(ref)) {
+        out.push(`${itemId}: у обычного вывода «${name ?? "?"}» ссылка ${key} должна быть скаляром (на сервере массив)`);
       }
     }
   }
@@ -818,6 +1045,31 @@ export class Workspace {
           details: { lost_gas_lines: lostGasNorm, gas_line_mismatches: gasGraphNorm },
         });
       }
+      // этап 78: трубы водоснабжения после нормализации не теряются (сверка семантики
+      // графа; точки вершин-предметов — мягко: редактор пересчитывает подключение)
+      const wsPipeIds = new Set(Object.keys(this.modelInternal!.pipes ?? {}));
+      const normPipes = (norm.model as { pipes?: Record<string, unknown> }).pipes ?? {};
+      const normPipeIds = new Set(Object.keys(normPipes));
+      const lostPipesNorm = missingIds(wsPipeIds, normPipeIds);
+      const pipesGraphNorm = gasLineGraphMismatches(
+        structuredClone(this.modelInternal!.pipes ?? {}) as Record<string, GasLineSig>,
+        normPipes,
+        "труба",
+        true,
+        structuredClone(this.modelInternal!.items ?? {}) as Record<string, { pc?: Point; width?: number; height?: number; angle?: number }>,
+      );
+      // ревью 79 №5: подключения труба↔предмет сверяются в обе стороны и при нормализации
+      const pipeConnNorm = pipeConnectionMismatches(
+        structuredClone(this.modelInternal!.pipes ?? {}) as Record<string, GasLineSig>,
+        this.modelInternal!.items as Record<string, PipeLinkItem>,
+        normPipes as Record<string, GasLineSig>,
+        (norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {},
+      );
+      if (lostPipesNorm.length > 0 || pipesGraphNorm.length > 0 || pipeConnNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил трубы водоснабжения — мутация отменена`, {
+          details: { lost_pipes: lostPipesNorm, pipe_mismatches: pipesGraphNorm, pipe_connection_mismatches: pipeConnNorm },
+        });
+      }
       // этап 64: границы террас/участка и проёмы в полу после нормализации не теряются
       const lostBorders = checkBordersAfterNormalize(this.modelInternal!, norm.model as Model);
       if (lostBorders.length > 0) {
@@ -948,6 +1200,7 @@ export class Workspace {
       pillars: missingIds(new Set(Object.keys(serverModel.pillars ?? {})), new Set(Object.keys(this.modelInternal!.pillars ?? {}))),
       rigels: missingIds(new Set(Object.keys(serverModel.rigels ?? {})), new Set(Object.keys(this.modelInternal!.rigels ?? {}))),
       gas_lines: missingIds(new Set(Object.keys(serverModel.pipes_gas ?? {})), new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}))),
+      pipes: missingIds(new Set(Object.keys(serverModel.pipes ?? {})), new Set(Object.keys(this.modelInternal!.pipes ?? {}))),
       terrace_borders: missingIds(new Set(Object.keys(serverModel.terrace_borders ?? {})), new Set(Object.keys(this.modelInternal!.terrace_borders ?? {}))),
       territory_borders: missingIds(new Set(Object.keys(serverModel.territory_borders ?? {})), new Set(Object.keys(this.modelInternal!.territory_borders ?? {}))),
       level_holes: missingIds(new Set(Object.keys(serverModel.level_holes ?? {})), new Set(Object.keys(this.modelInternal!.level_holes ?? {}))),
@@ -959,6 +1212,7 @@ export class Workspace {
       pillars: deletedIds.pillars.length,
       rigels: deletedIds.rigels.length,
       gas_lines: deletedIds.gas_lines.length,
+      pipes: deletedIds.pipes.length,
       terrace_borders: deletedIds.terrace_borders.length,
       territory_borders: deletedIds.territory_borders.length,
       level_holes: deletedIds.level_holes.length,
@@ -972,6 +1226,7 @@ export class Workspace {
     if (willDelete.pillars > 0) warnings.push(`будут удалены колонны (${willDelete.pillars}), которых нет в модели: ${idList(deletedIds.pillars)}`);
     if (willDelete.rigels > 0) warnings.push(`будут удалены ригели (${willDelete.rigels}), которых нет в модели: ${idList(deletedIds.rigels)}`);
     if (willDelete.gas_lines > 0) warnings.push(`будут удалены газовые линии (${willDelete.gas_lines}), которых нет в модели: ${idList(deletedIds.gas_lines)}`);
+    if (willDelete.pipes > 0) warnings.push(`будут удалены трубы водоснабжения (${willDelete.pipes}), которых нет в модели: ${idList(deletedIds.pipes)}`);
     if (willDelete.terrace_borders > 0) warnings.push(`будут удалены границы террас (${willDelete.terrace_borders}), которых нет в модели: ${idList(deletedIds.terrace_borders)}`);
     if (willDelete.territory_borders > 0) warnings.push(`будут удалены границы участка (${willDelete.territory_borders}), которых нет в модели: ${idList(deletedIds.territory_borders)}`);
     if (willDelete.level_holes > 0) warnings.push(`будут удалены проёмы в полу (${willDelete.level_holes}), которых нет в модели: ${idList(deletedIds.level_holes)}`);
@@ -1038,6 +1293,11 @@ export class Workspace {
     const expectedGasLines = structuredClone((norm.model as { pipes_gas?: Record<string, GasLineSig> }).pipes_gas ?? {});
     const localGasIds = new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}));
     const gotGasIds = new Set(Object.keys((norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {}));
+    // этап 78: трубы водоснабжения — ожидаемые из нормализованной модели (точки
+    // вершин-предметов редактор пересчитывает — сверка локальной копии мягкая)
+    const expectedPipes = structuredClone((norm.model as { pipes?: Record<string, GasLineSig> }).pipes ?? {});
+    const localPipeIds = new Set(Object.keys(this.modelInternal!.pipes ?? {}));
+    const gotPipeIds = new Set(Object.keys((norm.model as { pipes?: Record<string, unknown> }).pipes ?? {}));
     // этап 64: ожидаемые границы террас/участка и проёмы в полу — из нормализованной модели
     const expectedBorders = {
       terrace_borders: structuredClone((norm.model as { terrace_borders?: Record<string, unknown> }).terrace_borders ?? {}),
@@ -1049,12 +1309,27 @@ export class Workspace {
     const lostPillars = missingIds(localPillarIds, gotPillarIds);
     const lostRigels = missingIds(localRigelIds, gotRigelIds);
     const lostGasLines = missingIds(localGasIds, gotGasIds);
+    const lostPipes = missingIds(localPipeIds, gotPipeIds);
     // ревью 59 №1: до save сверяется семантический граф локальной и нормализованной
     // моделей (узлы, тип, рёбра matrix, длина) — normalizer, обнуливший рёбра,
     // не проходит как «verified»
     const gasGraphNorm = gasLineGraphMismatches(
       structuredClone(this.modelInternal!.pipes_gas ?? {}) as Record<string, GasLineSig>,
       (norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {},
+    );
+    const pipesGraphNorm = gasLineGraphMismatches(
+      structuredClone(this.modelInternal!.pipes ?? {}) as Record<string, GasLineSig>,
+      (norm.model as { pipes?: Record<string, unknown> }).pipes ?? {},
+      "труба",
+      true,
+      structuredClone(this.modelInternal!.items ?? {}) as Record<string, { pc?: Point; width?: number; height?: number; angle?: number }>,
+    );
+    // ревью 79 №5: подключения труба↔предмет сверяются в обе стороны до записи
+    const pipesConnNorm = pipeConnectionMismatches(
+      structuredClone(this.modelInternal!.pipes ?? {}) as Record<string, GasLineSig>,
+      this.modelInternal!.items as Record<string, PipeLinkItem>,
+      (norm.model as { pipes?: Record<string, GasLineSig> }).pipes ?? {},
+      (norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {},
     );
     // этап 64: потери границ и проёмов пола при нормализации
     const bordersNorm = checkBordersAfterNormalize(this.modelInternal!, norm.model as Model);
@@ -1076,8 +1351,8 @@ export class Workspace {
     }
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
-      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 ||
-      gasGraphNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0 || propsNorm.length > 0
+      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 || lostPipes.length > 0 ||
+      gasGraphNorm.length > 0 || pipesGraphNorm.length > 0 || pipesConnNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0 || propsNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -1094,6 +1369,9 @@ export class Workspace {
           lost_rigels: lostRigels,
           lost_gas_lines: lostGasLines,
           gas_line_mismatches: gasGraphNorm,
+          lost_pipes: lostPipes,
+          pipe_mismatches: pipesGraphNorm,
+          pipe_connection_mismatches: pipesConnNorm,
           border_mismatches: bordersNorm,
           level_hole_mismatches: holesNorm,
           wall_role_mismatches: rolesNorm,
@@ -1134,6 +1412,18 @@ export class Workspace {
       // и длине (ревью 59 №1 — топология входит в сверку)
       const gasAfter = (after.model["pipes_gas"] as Record<string, unknown> | undefined) ?? {};
       const gasMismatch = gasLineGraphMismatches(expectedGasLines, gasAfter);
+      // этап 78: трубы водоснабжения после save — по нормализованной семантике графа;
+      // ревью 79 №3/№5: точки вершин-предметов и длина — строго (ожидание уже
+      // нормализованное), множество труб в обе стороны, identity вершин-предметов по id
+      const pipesAfter = (after.model["pipes"] as Record<string, unknown> | undefined) ?? {};
+      const pipeMismatch = gasLineGraphMismatches(expectedPipes, pipesAfter, "труба");
+      // ревью 79 №5a: обратные ссылки props.pipes и прямые ссылки предметов — обе стороны
+      const pipeConnAfter = pipeConnectionMismatches(
+        expectedPipes,
+        expectedItems as Record<string, PipeLinkItem>,
+        pipesAfter as Record<string, GasLineSig>,
+        (itemsAfter as Record<string, PipeLinkItem>) ?? {},
+      );
       // этап 64: границы террас/участка и проёмы в полу после save — по нормализованной семантике
       const bordersAfter = {
         terrace_borders: (after.model["terrace_borders"] as Record<string, unknown> | undefined) ?? {},
@@ -1155,7 +1445,7 @@ export class Workspace {
         wallsAfterTyped as unknown as Record<string, BalconyWallProps>,
       );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -1168,6 +1458,8 @@ export class Workspace {
             axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,
             pillar_mismatches: pillarMismatch, rigel_mismatches: rigelMismatch, item_mismatches: itemMismatch,
             gas_line_mismatches: gasMismatch,
+            pipe_mismatches: pipeMismatch,
+            pipe_connection_mismatches: pipeConnAfter,
             border_mismatches: borderMismatch,
             level_hole_mismatches: holeMismatch,
             wall_role_mismatches: wallRoleMismatch,
@@ -1199,7 +1491,7 @@ export class Workspace {
     prepareForRestore(prepared);
     const norm = await editor.normalize(prepared as unknown as Record<string, unknown>);
     if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
-    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items, pillars: norm.after.pillars ?? Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}).length, rigels: norm.after.rigels ?? Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}).length };
+    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items, pillars: norm.after.pillars ?? Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}).length, rigels: norm.after.rigels ?? Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}).length, pipes: Object.keys((norm.model as { pipes?: Record<string, unknown> }).pipes ?? {}).length };
     // стены — по каноническому набору осевых отрезков (ревью v0.1.1-r2 R2-3):
     // слияние/разрез коллинеарных стен — допустимая нормализация, сдвиг и лишние
     // стены — расхождение; проёмы и предметы — по счётчикам
@@ -1212,6 +1504,7 @@ export class Workspace {
     if (seen.openings !== expected.openings) mismatch.push(`openings: в модели ${expected.openings}, в редакторе ${seen.openings}`);
     if (seen.items !== expected.items) mismatch.push(`items: в модели ${expected.items}, в редакторе ${seen.items}`);
     if (seen.pillars !== expected.pillars) mismatch.push(`pillars: в модели ${expected.pillars}, в редакторе ${seen.pillars}`);
+    if (seen.pipes !== expected.pipes) mismatch.push(`pipes: в модели ${expected.pipes}, в редакторе ${seen.pipes}`);
     if (seen.rigels !== expected.rigels) mismatch.push(`rigels: в модели ${expected.rigels}, в редакторе ${seen.rigels}`);
     if (mismatch.length > 0) {
       throw new McpError("RENDER_OUT_OF_SYNC", `редактор показывает не текущую модель (${mismatch.join(", ")}) — картинка не отдаётся`, {

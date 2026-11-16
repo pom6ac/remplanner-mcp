@@ -8,6 +8,7 @@ import {
 import type { MmPoint } from "./walls.ts";
 import type { ToolEntry } from "../catalog.ts";
 import { McpError } from "../errors.ts";
+import { pipesReferencingItem, refreshPipeForItem } from "./pipes.ts";
 
 // ---------- комнаты (канонические полигоны считает редактор: rooms2) ----------
 
@@ -141,10 +142,17 @@ const COMM_DIMENSIONS_HIDDEN = new Set([
 const COMM_OVER_FLOOR_DISPLAY_FALSE = new Set(["radiator_old", "conditioner_cage"]);
 
 /**
- * Линейные трубы (этап 57): «Газовый трубопровод» gas_line редактор ставит в отдельную
- * коллекцию model.pipes_gas (граф узлов), а не в items — через item_add он неприменим.
+ * Линейные трубы (этапы 57, 78): «Газовый трубопровод» gas_line редактор ставит в
+ * отдельную коллекцию model.pipes_gas, а трубы водоснабжения/канализации
+ * water_pipe/water_hot_pipe/drainage_pipe (лист «Водоснабжение») — в model.pipes;
+ * оба вида — графы узлов, через item_add неприменимы.
  */
-export const LINE_TOOLS = new Set(["gas_line"]);
+export const LINE_TOOLS = new Set(["gas_line", "water_pipe", "water_hot_pipe", "drainage_pipe"]);
+
+/** Подсказка для LINE_TOOLS: каким инструментом ставится линия. */
+export function lineToolHint(name: string): string {
+  return name === "gas_line" ? "gas_line_add" : "pipe_add";
+}
 
 function itemPlan(entry: ToolEntry | undefined): Record<string, number> {
   const mapped = itemPlanFromEntry(entry);
@@ -165,9 +173,9 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
       details: { kind: "wall_anchor_required", item: entry.name },
     });
   }
-  // этап 57: газовая линия — отдельная сущность (model.pipes_gas), не предмет
+  // этап 78: трубы водоснабжения/канализации и газовая линия — отдельные сущности-графы
   if (entry && LINE_TOOLS.has(entry.name)) {
-    throw new McpError("INVALID_ARGUMENT", `«${entry.name}» — линия (труба), ставится инструментом gas_line_add, а не item_add: редактор пишет её в отдельную коллекцию pipes_gas`, {
+    throw new McpError("INVALID_ARGUMENT", `«${entry.name}» — линия (труба), ставится инструментом ${lineToolHint(entry.name)}, а не item_add: редактор пишет её в отдельную коллекцию графа, а не в items`, {
       details: { kind: "line_tool_required", item: entry.name },
     });
   }
@@ -255,10 +263,14 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
     dimensions: { display: !STAIR_DIMENSIONS_HIDDEN.has(params.name) && !COMM_DIMENSIONS_HIDDEN.has(params.name) },
     rotated: 0,
     // этап 55, ревью №3 / этап 57: подъём над полом — в форме редактора {value, display};
-    // display — по эталонам UI (у radiator_old/conditioner_cage false, у прочих true)
+    // display — по эталонам UI (у radiator_old/conditioner_cage false, у прочих true).
+    // Этап 78: у точек воды (waterspots) умолчание — из каталога (over_floor.value,
+    // эталон ui-ref-plumb-waterspot: {value:50, display:false}), display:false.
     over_floor: params.elevationMm !== undefined
-      ? { value: r2(mmToCm(params.elevationMm)), display: !COMM_OVER_FLOOR_DISPLAY_FALSE.has(params.name) }
-      : null,
+      ? { value: r2(mmToCm(params.elevationMm)), display: !COMM_OVER_FLOOR_DISPLAY_FALSE.has(params.name) && entry?.group !== "waterspots" }
+      : entry?.group === "waterspots" && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
+        ? { value: r2((entry.over_floor as { value: number }).value), display: false }
+        : null,
   };
   model.items[id] = props;
   return props;
@@ -288,6 +300,9 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
     }
     props.pc = { x: r2(pc.x), y: r2(pc.y) };
     props.id_room = found.roomId ?? props.id_room;
+    // этап 78: транзитивный пересчёт затронутых привязок — вершины труб, ссылающиеся
+    // на этот предмет, следуют за его центром, длины пересчитываются по рёбрам
+    refreshPipeForItem(model, params.itemId, props.pc);
   }
   if (params.angleDeg !== undefined) props.angle = Math.round(params.angleDeg);
   if (params.widthMm !== undefined) props.width = r2(mmToCm(params.widthMm));
@@ -304,9 +319,17 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   return props;
 }
 
-/** item_delete. */
+/** item_delete: предмет, подключённый к трубе, удаляется только после pipe_delete. */
 export function deleteItem(model: Model, itemId: string): void {
   if (!model.items[itemId]) throw new McpError("NOT_FOUND", `предмет ${itemId} не найден`);
+  const linked = pipesReferencingItem(model, itemId);
+  if (linked.length > 0) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `предмет ${itemId} подключён к трубе (${linked.map((p) => p.id).join(", ")}) — сначала удалите трубу pipe_delete, затем предмет`,
+      { details: { kind: "pipe_referenced", pipes: linked.map((p) => p.id) } },
+    );
+  }
   delete model.items[itemId];
 }
 

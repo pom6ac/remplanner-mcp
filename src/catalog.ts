@@ -23,6 +23,12 @@ export type ToolEntry = {
   anchor?: string;
   is_magnetized?: boolean;
   can_be_outside?: boolean;
+  /**
+   * Подъём над полом из каталога (этап 78): число — см до центра; объект редактора
+   * {value, display, value_2?} (value_2 — высота канализации у комбинированных точек);
+   * false — поля нет. У точек воды (waterspots) задаёт умолчание высоты вывода.
+   */
+  over_floor?: number | { value: number; display?: boolean; value_2?: number } | false;
 };
 
 export type ToolsBundle = Record<string, Record<string, unknown>>;
@@ -47,6 +53,13 @@ export function toToolEntry(name: string, raw: Record<string, unknown>): ToolEnt
     anchor: typeof raw["anchor"] === "string" ? raw["anchor"] : undefined,
     is_magnetized: raw["is_magnetized"] === true,
     can_be_outside: raw["can_be_outside"] === true,
+    over_floor: typeof raw["over_floor"] === "number"
+      ? raw["over_floor"]
+      : raw["over_floor"] && typeof raw["over_floor"] === "object"
+        ? (raw["over_floor"] as { value: number; display?: boolean; value_2?: number })
+        : raw["over_floor"] === false
+          ? false
+          : undefined,
   };
 }
 
