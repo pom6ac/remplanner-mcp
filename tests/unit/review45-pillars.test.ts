@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type { FixtureEnvelope } from "../../src/model/types.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
-import { deleteWall } from "../../src/model/walls.ts";
+import { deleteWall, moveWall, addRoomRect } from "../../src/model/walls.ts";
 import { McpError } from "../../src/errors.ts";
 import { validateModel } from "../../src/model/validate.ts";
 import { addPillar, pillarCorners, pillarEdges } from "../../src/model/pillars.ts";
@@ -187,4 +187,37 @@ test("№6 некратный сдвиг угла +50° по-прежнему SI
     assert.ok((details?.pillar_mismatches ?? []).some((x) => x.includes("угол")), JSON.stringify(details));
     return true;
   });
+});
+
+// ---------- №7: пересчёт только затронутых примыканий ----------
+
+test("№7 перенос несвязанной стены: свободная колонна (эталон ui-ref-pillar-free) побайтово неизменна", () => {
+  const env = JSON.parse(readFileSync(join(ROOT, "tests/fixtures/anon-rect-4000x3000.json"), "utf8")) as FixtureEnvelope;
+  const m = { ...structuredClone(env.model), walls: {} } as unknown as Model;
+  const walls = addRoomRect(m, { origin: { x: 0, y: 0 }, widthMm: 4000, depthMm: 3000, thicknessMm: 200 });
+  m.total_height = 310; // эталон снят в проекте с потолком 310
+  const ref = JSON.parse(readFileSync(join(ROOT, "tests/fixtures/ui-ref-pillar-free.json"), "utf8")) as { model_object: { pc: { x: number; y: number } } };
+  const et = ref.model_object;
+  const ROOM_FREE = [{
+    roomId: null,
+    polygon: [{ x: 550, y: 430 }, { x: 610, y: 430 }, { x: 610, y: 490 }, { x: 550, y: 490 }],
+    areaCm2: 3600,
+    axisAreaCm2: null,
+  }];
+  const pillar = addPillar(m, { center: { x: et.pc.x * 10, y: et.pc.y * 10 } }, ROOM_FREE);
+  assert.deepEqual(pillar.eds, {}, "свободная колонна без примыканий");
+  const before = JSON.stringify(pillar);
+  // несвязанная стена прямоугольника сдвигается на 10 мм — контакт колонны не меняется
+  moveWall(m, { wallId: walls[0]!.id, offsetMm: 10 });
+  assert.equal(JSON.stringify(pillar), before, "колонна побайтово неизменна");
+});
+
+test("№7 примыкание исчезло — колонна пересчитана как прежде (регрессия №1)", () => {
+  const m = pillarModel();
+  const p = attachPillar(m);
+  assert.ok((p.eds as Record<string, unknown>)["b"]);
+  moveWall(m, { wallId: "w", offsetMm: -200 });
+  assert.deepEqual(p.eds, {});
+  assert.deepEqual((p.edges ?? []).map((e) => e.side), ["t", "r", "b", "l"]);
+  assert.equal(p.inRoom, 1);
 });

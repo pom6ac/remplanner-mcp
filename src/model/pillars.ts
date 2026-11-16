@@ -487,20 +487,40 @@ export function deletePillar(model: Model, pillarId: string): void {
 }
 
 /**
+ * Контакт колонны со стенами (для сравнения до/после стеновой операции):
+ * inRoom плюс набор примыканий side→(wall.id, balc). Позиции eds.p1/p2 — углы
+ * самой колонны, при стеновой операции они не меняются, в сигнатуру не входят.
+ */
+function pillarContactSig(pillar: Pillar): string {
+  const sig = Object.entries(pillar.eds ?? {})
+    .map(([side, e]) => {
+      const w = (e as { wall?: { id?: string; balc?: unknown } }).wall;
+      return `${side}:${w?.id ?? ""}:${w?.balc ? 1 : 0}`;
+    })
+    .sort()
+    .join("|");
+  return `${pillar.inRoom}:${sig}`;
+}
+
+/**
  * Финализация стеновых мутаций для колонн (ревью 43 №1): после moveWall/updateWall/
- * splitWall/deleteWall/add* пересчитать eds/edges/inRoom ВСЕХ колонн по текущим
- * стенам (примыкания к удалённой стене исчезают, свободные грани возвращаются,
- * привязка после split переходит к нужной части) и проверить коллизии с телами
- * стен — перенос стены в колонну даёт GEOMETRY_CONFLICT. Вызывается внутри atomic()
- * стен: ошибка откатывает и стены, и колонны к исходному виду.
+ * splitWall/deleteWall/add* пересчитать eds/edges/inRoom колонн, у которых контакт
+ * со стенами изменился (примыкания к удалённой стене исчезают, свободные грани
+ * возвращаются, привязка после split переходит к нужной части) и проверить коллизии
+ * с телами стен — перенос стены в колонну даёт GEOMETRY_CONFLICT. У колонн с
+ * неизменным контактом edges не переписываются: редакторские усечения граней
+ * сохраняются байт в байт (ревью 44 №7). Вызывается внутри atomic() стен: ошибка
+ * откатывает и стены, и колонны к исходному виду.
  */
 export function refreshPillarsAfterWallChange(model: Model): void {
   const pillars = model.pillars;
   if (!pillars || Object.keys(pillars).length === 0) return;
   for (const pillar of Object.values(pillars)) {
-    const corners = storedCorners(pillar);
-    pillar.edges = pillarEdges(corners);
-    finalizeCandidate(pillar, model);
+    const candidate = structuredClone(pillar);
+    candidate.edges = pillarEdges(storedCorners(candidate));
+    finalizeCandidate(candidate, model);
+    if (pillarContactSig(candidate) === pillarContactSig(pillar)) continue;
+    assignPillar(pillar, candidate);
   }
   for (const pillar of Object.values(pillars)) {
     const poly = pillarPolygon(pillar);
