@@ -284,6 +284,38 @@ test("85 №2: update шины без спотов и led/line-линий не �
   assert.deepEqual(stripe.vertexes[0]!.point, { x: 100, y: 100 });
 });
 
+test("85 №3: stripe_delete шины со связанными спотами — INVALID_ARGUMENT без висячих ссылок (сверка спот↔шина в обе стороны)", () => {
+  const model = baseModel();
+  const stripe = addLightLine(model, { kind: "pendent", path: [{ x: 500, y: 500 }, { x: 1500, y: 500 }] }) as StripLight;
+  // 1) двусторонняя связь: spots[spot] и item.strip_light_id — удаление оставило бы висячую ссылку
+  model.items ??= {};
+  model.items["spot1"] = { name: "track_spot", pc: { x: 100, y: 50 }, width: 10, height: 10, angle: 0, strip_light_id: stripe.id, props: {} } as never;
+  stripe.spots["spot1"] = { name: "track_spot", line_id: 0, d: 0.5 } as never;
+  assert.throws(
+    () => deleteLightLine(model, "pendent", stripe.id),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+    "двусторонняя связь: удаление отвергается",
+  );
+  assert.ok(model.stripes_light?.[stripe.id], "шина на месте");
+  assert.ok(model.items["spot1"], "спот на месте");
+  // 2) односторонняя ссылка: предмет указывает на шину, spots пуст
+  const stripe2 = addLightLine(model, { kind: "surface", path: [{ x: 500, y: 1500 }, { x: 1500, y: 1500 }] }) as StripLight;
+  model.items["spot2"] = { name: "track_spot", pc: { x: 150, y: 150 }, width: 10, height: 10, angle: 0, strip_light_id: stripe2.id, props: {} } as never;
+  assert.throws(
+    () => deleteLightLine(model, "surface", stripe2.id),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+    "обратная ссылка предмета: удаление отвергается",
+  );
+  // 3) line_spots непустые — тоже отказ
+  const stripe3 = addLightLine(model, { kind: "recessed", path: [{ x: 2000, y: 500 }, { x: 3000, y: 500 }] }) as StripLight;
+  stripe3.line_spots = [{ line_id: 0, d_s: 0.2, d_e: 0.5, p1: { x: 70, y: 50 }, p2: { x: 100, y: 50 } }] as never;
+  assert.throws(() => deleteLightLine(model, "recessed", stripe3.id), (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT");
+  // чистая шина и led/line удаляются как раньше
+  const clean = addLightLine(model, { kind: "pendent", path: [{ x: 500, y: 2000 }, { x: 1500, y: 2000 }] }) as StripLight;
+  deleteLightLine(model, "pendent", clean.id);
+  assert.equal(model.stripes_light?.[clean.id], undefined);
+});
+
 test("84: delete — линия уходит, NOT_FOUND; разные коллекции независимы", () => {
   const model = baseModel();
   const led = addLightLine(model, { kind: "led", path: [{ x: 500, y: 500 }, { x: 1500, y: 500 }] });

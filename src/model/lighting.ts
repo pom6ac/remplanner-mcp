@@ -221,12 +221,33 @@ export function updateLightLine(
   return line;
 }
 
+/**
+ * Световые споты, связанные с шиной (ревью 85 №3): прямая сторона — ключи spots,
+ * обратная — предметы с strip_light_id = id шины. Удаление шины со спотами
+ * оставило бы висячую ссылку в items (или молча лишило спот шины) — каскад
+ * не реализован, пока связи отложены, операция атомарно отвергается.
+ */
+function linkedSpotIds(model: Model, lineId: string): string[] {
+  const items = model.items ?? {};
+  const out = Object.keys(items).filter((iid) => (items[iid] as { strip_light_id?: unknown } | undefined)?.strip_light_id === lineId);
+  return out;
+}
+
 /** <light>_delete. */
 export function deleteLightLine(model: Model, kind: LightKind, lineId: string): void {
   const key = LIGHT_COLLECTION_BY_KIND[kind];
   const coll = model[key];
   if (!coll?.[lineId]) {
     throw new McpError("NOT_FOUND", `световая линия ${lineId} не найдена в ${key}`);
+  }
+  if (key === "stripes_light") {
+    const backRefs = linkedSpotIds(model, lineId);
+    if (hasLightSpots(coll[lineId]) || backRefs.length > 0) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `шина ${lineId} содержит световые споты (spots/line_spots${backRefs.length > 0 ? `, обратные ссылки предметов: ${backRefs.join(", ")}` : ""}) — удаление оставило бы висячую ссылку; MCP пока не поддерживает управление спотами на шине: удалите споты в редакторе или используйте project_clear`,
+      );
+    }
   }
   delete coll[lineId];
 }
