@@ -1058,7 +1058,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       {
         balcony_wall_id: z.string().min(1).describe("id балконного ограждения из model_get"),
         length_mm: mmInt.optional().describe("новая длина, мм"),
-        anchor: z.enum(["start", "end"]).optional().describe("какой конец остаётся на месте (по умолчанию end)"),
+        anchor: z.enum(["start", "end"]).optional().describe("какой конец переносится, другой остаётся на месте (по умолчанию end — начало на месте; семантика wall_update)"),
         thickness_mm: mmInt.optional(),
         start: mmPoint.optional().describe("новое начало оси, мм"),
         end: mmPoint.optional().describe("новый конец оси, мм"),

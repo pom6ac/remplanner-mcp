@@ -1,6 +1,6 @@
 import type { Model, Wall, Point } from "./types.ts";
 import { mmToCm } from "./units.ts";
-import { addWall, updateWall, deleteWall, type MmPoint, type UpdateWallParams } from "./walls.ts";
+import { addWall, updateWall, deleteWall, atomic, type MmPoint, type UpdateWallParams } from "./walls.ts";
 import { lineIntersection, type Segment } from "./geometry.ts";
 import { McpError } from "../errors.ts";
 
@@ -46,10 +46,10 @@ export type AddBalconyParams = {
 
 export type UpdateBalconyParams = {
   wallId: string;
-  /** Новая длина, мм; anchor — какой конец остаётся на месте. */
+  /** Новая длина, мм; anchor — конец, который переносится (другой остаётся на месте, как в wall_update). */
   lengthMm?: number;
   anchor?: "start" | "end";
-  /** Новая толщина, мм. */
+  /** Новая толщина, мм (лимиты defs.wall 40..1000 действуют и при update). */
   thicknessMm?: number;
   /** Перенос конца, мм. */
   start?: MmPoint;
@@ -83,7 +83,8 @@ function segmentsCrossMid(a: Segment, b: Segment): boolean {
  * balcony_add: ломаная балконных ограждений (мм), роль "balcony", план "a".
  * Сегменты строятся правилами стен (§12.3): концы прижимаются к узлам и граням
  * существующих стен, X-пересечения и коллинеарные наложения отклоняются.
- * Атомарность: при отказе любого сегмента стены не создаются.
+ * Атомарность: при отказе любого сегмента стены не создаются (общий механизм
+ * atomic — откатываются walls, pillars и rigels, ревью 73 №3).
  */
 export function addBalcony(model: Model, params: AddBalconyParams): Wall[] {
   const pts = params.points;
@@ -133,10 +134,10 @@ export function addBalcony(model: Model, params: AddBalconyParams): Wall[] {
       }
     }
   }
-  // атомарность пакета: addWall атомарен по одному сегменту, откатываем всё сразу
-  const backup = structuredClone(model.walls);
-  const created: Wall[] = [];
-  try {
+  // атомарность пакета — общий механизм walls.atomic: откат всех затрагиваемых
+  // коллекций (walls, pillars, rigels) побайтно, включая отсутствие ключей
+  return atomic(model, () => {
+    const created: Wall[] = [];
     for (let i = 0; i < segCount; i++) {
       const a = pts[i]!;
       const b = pts[(i + 1) % pts.length]!;
@@ -150,11 +151,8 @@ export function addBalcony(model: Model, params: AddBalconyParams): Wall[] {
         role: "balcony",
       }));
     }
-  } catch (e) {
-    model.walls = backup;
-    throw e;
-  }
-  return created;
+    return created;
+  });
 }
 
 /** Балконная стена по id; иначе NOT_FOUND (в ответе — что стена не ограждение). */
@@ -166,7 +164,11 @@ export function balconyWall(model: Model, wallId: string): Wall {
   return wall;
 }
 
-/** balcony_update: правка ограждения (длина с якорем, толщина, перенос конца) — правила стен §12.3. */
+/**
+ * balcony_update: правка ограждения (длина с якорем, толщина, перенос конца) — правила
+ * стен §12.3. Лимиты defs.wall (толщина 40..1000 мм, длина ≥ 200 мм) действуют и при
+ * update — итоговое значение проверяется до принятия мутации (ревью 73 №4).
+ */
 export function updateBalcony(model: Model, params: UpdateBalconyParams): Wall {
   const wall = balconyWall(model, params.wallId);
   const p: UpdateWallParams = { wallId: wall.id };
@@ -174,7 +176,18 @@ export function updateBalcony(model: Model, params: UpdateBalconyParams): Wall {
   if (params.thicknessMm !== undefined) p.thicknessMm = params.thicknessMm;
   if (params.start !== undefined) p.start = params.start;
   if (params.end !== undefined) p.end = params.end;
-  return updateWall(model, p);
+  return atomic(model, () => {
+    const res = updateWall(model, p);
+    // итоговые значения — как при add (ревью 73 №4); нарушение откатывает мутацию
+    if (res.depth < BALCONY_DEFS.depthMinCm || res.depth > BALCONY_DEFS.depthMaxCm) {
+      throw new McpError("INVALID_ARGUMENT", `итоговая толщина ${Math.round(res.depth * 10)} мм вне лимитов (${BALCONY_DEFS.depthMinCm * 10}..${BALCONY_DEFS.depthMaxCm * 10} мм по defs.wall редактора)`);
+    }
+    const len = Math.hypot(res.p2.x - res.p1.x, res.p2.y - res.p1.y);
+    if (len < BALCONY_DEFS.minLengthCm) {
+      throw new McpError("INVALID_ARGUMENT", `итоговая длина ограждения ${Math.round(len * 10)} мм короче ${BALCONY_DEFS.minLengthCm * 10} мм (min_length по defs.wall редактора)`);
+    }
+    return res;
+  });
 }
 
 /** balcony_delete: удаляет ограждение (проёмов на нём быть не может). */

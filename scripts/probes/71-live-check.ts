@@ -87,6 +87,12 @@ async function main() {
   }, null, 1));
   console.log("backup ok; counters:", JSON.stringify({ walls: Object.keys(before.walls ?? {}).length }));
 
+  // 1b. базовая линия validate — ДО первого изменения модели (ревью 73 №5):
+  //     иначе «новые проблемы» после добавления балкона не отличить от исходных
+  const vBase = await call(client, "model_validate", {});
+  const baseCodes = new Set((vBase.problems ?? []).map((p: any) => `${p.code}:${p.details?.wall_id ?? p.details?.hole_id ?? ""}`));
+  console.log("validate (baseline до изменений): проблем", (vBase.problems ?? []).length);
+
   // 2. наружная стена без проёмов: plan a, role wall, свободный участок ≥180 см;
   //    наружу — от центра комнат; балкон 160×150;_candidates перебираются, отказ
   //    balcony_add атомарен (модель не меняется), нормализация ловит коллизии
@@ -147,9 +153,8 @@ async function main() {
   console.log("balcony_add ok:", balc.length, "стен:", balc.map((w: any) => `${w.id} (${w.p1.x},${w.p1.y})-(${w.p2.x},${w.p2.y}) depth ${w.depth} height ${w.height}`).join("; "));
 
   // 3. validate → save; в проекте заранее есть WALL_DANGLING (свободные узлы исходных
-  // стен) — сверяем с базовой линией до добавления: новых проблем быть не должно
-  const vBase = await call(client, "model_validate", {});
-  const baseCodes = new Set((vBase.problems ?? []).map((p: any) => `${p.code}:${p.details?.wall_id ?? p.details?.hole_id ?? ""}`));
+  //    стен) — сверяем с базовой линией, снятой до изменений (ревью 73 №5):
+  //    новых проблем быть не должно
   const v = await call(client, "model_validate", {});
   const fresh = (v.problems ?? []).filter((p: any) => !baseCodes.has(`${p.code}:${p.details?.wall_id ?? p.details?.hole_id ?? ""}`));
   console.log("validate: базовых проблем", (vBase.problems ?? []).length, ", новых", fresh.length);

@@ -10,6 +10,7 @@ import type { Model, Wall } from "../../src/model/types.ts";
 import { addRoomRect } from "../../src/model/walls.ts";
 import { addBalcony, updateBalcony, deleteBalcony, balconyWall, BALCONY_DEFS } from "../../src/model/balcony.ts";
 import { addOpening, updateOpening, deleteOpening } from "../../src/model/openings.ts";
+import { addRigel } from "../../src/model/rigels.ts";
 import { validateModel } from "../../src/model/validate.ts";
 import { compactModel } from "../../src/model/compact.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
@@ -151,6 +152,17 @@ test("balcony_add: отказ второго сегмента отменяет �
   assert.equal(JSON.stringify(model), afterFirst);
 });
 
+test("balcony_add: отказ пакета с ригелем откатывает rigels (ревью 73 №3)", () => {
+  const model = emptyModel();
+  addRigel(model, { start: { x: 0, y: 50 }, end: { x: 0, y: 2000 } });
+  const before = JSON.stringify(model);
+  // второй сегмент коллинеарен первому (наложение сам на себя) — INVALID_GEOMETRY
+  assert.throws(() => addBalcony(model, {
+    points: [{ x: -2000, y: 0 }, { x: 2000, y: 0 }, { x: -2000, y: 0 }],
+  }), (e: unknown) => e instanceof McpError);
+  assert.equal(JSON.stringify(model), before, "модель после отката не равна снимку до вызова");
+});
+
 test("balcony_add: наложение на существующую стену (коллинеарное) — INVALID_GEOMETRY", () => {
   const { model } = roomModel();
   const before = JSON.stringify(model);
@@ -179,6 +191,31 @@ test("balcony_update: цепочка length/anchor и thickness; identity сох
   // перенос конца
   const u3 = updateBalcony(model, { wallId: id, end: { x: 2000, y: 2500 } });
   assert.ok(near(u3.p2.x, 200) && near(u3.p2.y, 250));
+});
+
+test("balcony_update: anchor — переносимый конец (семантика wall_update, ревью 73 №6)", () => {
+  const { model } = roomModel();
+  const [w] = addBalcony(model, { points: [{ x: 0, y: 0 }, { x: 4000, y: 0 }] });
+  const u = updateBalcony(model, { wallId: w!.id, lengthMm: 2000, anchor: "start" });
+  // начало переносится, конец остаётся на месте — как в wall_update
+  assert.ok(near(u.p1.x, 200), `p1.x=${u.p1.x}`);
+  assert.ok(near(u.p2.x, 400), `p2.x=${u.p2.x}`);
+});
+
+test("balcony_update: лимиты defs действуют и при update (ревью 73 №4)", () => {
+  const { model } = roomModel();
+  const [w] = addBalcony(model, { points: [{ x: 1000, y: 0 }, { x: 1000, y: 2000 }] });
+  const id = w!.id;
+  const before = JSON.stringify(model);
+  // толщина ниже/выше depthMin/depthMax
+  assert.throws(() => updateBalcony(model, { wallId: id, thicknessMm: 1 }), (e: unknown) =>
+    e instanceof McpError && e.code === "INVALID_ARGUMENT");
+  assert.throws(() => updateBalcony(model, { wallId: id, thicknessMm: 1001 }), (e: unknown) =>
+    e instanceof McpError && e.code === "INVALID_ARGUMENT");
+  // короче min_length
+  assert.throws(() => updateBalcony(model, { wallId: id, lengthMm: 100 }), (e: unknown) =>
+    e instanceof McpError && e.code === "INVALID_ARGUMENT");
+  assert.equal(JSON.stringify(model), before, "модель после отказов не изменилась");
 });
 
 test("balcony_update/delete: не-балконная стена — NOT_FOUND; несуществующая — NOT_FOUND", () => {
@@ -219,21 +256,14 @@ test("opening_add на балконном ограждении — INVALID_ARGUM
   assert.equal(JSON.stringify(model), before);
 });
 
-test("opening_update/delete: чужой проём на балконном ограждении не правится; удаление возможно", () => {
-  const { model } = roomModel();
-  const created = addBalcony(model, { points: uBalcony() });
-  const wall = balconyWall(model, created[0]!.id);
-  // чужая/повреждённая модель: вручную кладём проём на ограждение
-  wall.holes["h1"] = {
-    id: "h1", plan: "a", type: "door", group: "doors",
-    pc: { x: 150, y: 400 }, width: 80, height: 200, depth: 4,
-    p1: { x: 110, y: 400 }, p2: { x: 190, y: 400 },
-  } as never;
-  assert.throws(() => updateOpening(model, { wallId: wall.id, holeId: "h1", widthMm: 900 }), (e: unknown) =>
-    e instanceof McpError && e.code === "INVALID_ARGUMENT");
-  // удаление разрешено: так модель чистится
-  deleteOpening(model, wall.id, "h1");
-  assert.equal(Object.keys(wall.holes).length, 0);
+test("opening_update: уже стоящий проём на ограждении правится (регрессия ревью 73 №1)", () => {
+  const { model, bottom } = roomModel();
+  const hole = addOpening(model, { wallId: bottom.id, type: "window", centerMm: 2000, widthMm: 1000, heightMm: 1200 });
+  // существующий проект: стена стала ограждением, проём остался — правка высоты
+  // обязана работать (новые проёмы на ограждения по-прежнему запрещены)
+  bottom.role = "balcony";
+  const updated = updateOpening(model, { wallId: bottom.id, holeId: hole.id, heightMm: 1300 });
+  assert.equal(updated.height, 130);
 });
 
 test("validate: проём на балконном ограждении — OPENING_ON_BALCONY", () => {
@@ -349,4 +379,89 @@ test("save: ограждение стало обычной стеной на с�
     assert.ok((details?.wall_role_mismatches ?? []).length > 0, JSON.stringify(details));
     return true;
   });
+});
+
+// ревью 73 №2: роль и ось — не вся семантика ограждения; height/depth/material
+// сверяются после save так же, как роль
+
+test("save: подмена height ограждения на сервере — SITE_ERROR (ревью 73 №2)", async () => {
+  const model = roomModel().model;
+  addBalcony(model, { points: uBalcony() });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const walls = s.model.walls as Record<string, { role?: string; height?: number }>;
+    for (const w of Object.values(walls)) {
+      if (w.role === "balcony") w.height = 123;
+    }
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    const details = (e as { details?: { wall_property_mismatches?: string[] } }).details;
+    assert.ok((details?.wall_property_mismatches ?? []).some((x) => x.includes("height")), JSON.stringify(details));
+    return true;
+  });
+});
+
+test("save: подмена depth ограждения на сервере — SITE_ERROR (ревью 73 №2)", async () => {
+  const model = roomModel().model;
+  addBalcony(model, { points: uBalcony() });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const walls = s.model.walls as Record<string, { role?: string; depth?: number }>;
+    for (const w of Object.values(walls)) {
+      if (w.role === "balcony") w.depth = 123;
+    }
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    const details = (e as { details?: { wall_property_mismatches?: string[] } }).details;
+    assert.ok((details?.wall_property_mismatches ?? []).some((x) => x.includes("depth")), JSON.stringify(details));
+    return true;
+  });
+});
+
+test("save: подмена material ограждения на сервере — SITE_ERROR (ревью 73 №2)", async () => {
+  const model = roomModel().model;
+  addBalcony(model, { points: uBalcony() });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const walls = s.model.walls as Record<string, { role?: string; material?: string }>;
+    for (const w of Object.values(walls)) {
+      if (w.role === "balcony") w.material = "changed";
+    }
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    const details = (e as { details?: { wall_property_mismatches?: string[] } }).details;
+    assert.ok((details?.wall_property_mismatches ?? []).some((x) => x.includes("material")), JSON.stringify(details));
+    return true;
+  });
+});
+
+test("save: нормализатор сменил height ограждения — NORMALIZATION_DROPPED до записи (ревью 73 №2)", async () => {
+  const model = roomModel().model;
+  addBalcony(model, { points: uBalcony() });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  let saves = 0;
+  const ws = saveMock(server, () => { saves++; }, (m) => {
+    const walls = m.walls as Record<string, { role?: string; height?: number }>;
+    for (const w of Object.values(walls)) {
+      if (w.role === "balcony") w.height = 123;
+    }
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "NORMALIZATION_DROPPED");
+    const details = (e as { details?: { wall_property_mismatches?: string[] } }).details;
+    assert.ok((details?.wall_property_mismatches ?? []).some((x) => x.includes("height")), JSON.stringify(details));
+    return true;
+  });
+  assert.equal(saves, 0, "до записи дело не дошло");
 });

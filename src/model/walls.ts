@@ -125,8 +125,10 @@ function geomError(code: "INVALID_GEOMETRY" | "UNSUPPORTED_JUNCTION", message: s
  * model.walls и model.pillars восстанавливаются побайтно. После успешной мутации —
  * финализация колонн (ревью 43 №1): пересчёт eds/edges/inRoom и проверка коллизий
  * в той же атомарной операции; конфликт откатывает и стены, и колонны.
+ * Общий механизм атомарности — используется и пакетными операциями вне модуля
+ * (addBalcony, ревью 73 №3): откатываются walls, pillars и rigels.
  */
-function atomic<T>(model: Model, fn: () => T): T {
+export function atomic<T>(model: Model, fn: () => T): T {
   const backupWalls = structuredClone(model.walls);
   const backupPillars = structuredClone(model.pillars ?? {});
   const backupRigels = structuredClone(model.rigels ?? {});

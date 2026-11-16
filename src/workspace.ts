@@ -275,6 +275,37 @@ function wallRoleMismatches(
   return out;
 }
 
+/**
+ * Свойства балконных ограждений после нормализации/save (ревью 73 №2): роль и ось —
+ * не вся семантика ограждения; height, depth и material сверяются у стен role
+ * "balcony" с совпадающим id. Допустимый split/merge не ломает сверку: части наследуют
+ * свойства исходной стены; исчезновение/переименование стены ловит wallRoleMismatches
+ * и осевая сверка. Возвращает человекочитаемые расхождения; пустой список — совпало.
+ */
+function balconyWallPropertyMismatches(
+  expected: Record<string, { role?: string; height?: number; depth?: number; material?: string }>,
+  got: Record<string, { role?: string; height?: number; depth?: number; material?: string }>,
+): string[] {
+  const out: string[] = [];
+  const near = (a: number | undefined, b: number | undefined): boolean =>
+    a !== undefined && b !== undefined && Math.abs(a - b) <= 0.1;
+  for (const [id, e] of Object.entries(expected)) {
+    if (e.role !== "balcony") continue;
+    const g = got[id];
+    if (!g) continue;
+    if (!near(g.height, e.height)) {
+      out.push(`${id}: height изменилась (на сервере ${g.height}; ожидалось ${e.height})`);
+    }
+    if (!near(g.depth, e.depth)) {
+      out.push(`${id}: depth изменилась (на сервере ${g.depth}; ожидалось ${e.depth})`);
+    }
+    if ((g.material ?? "") !== (e.material ?? "")) {
+      out.push(`${id}: material изменился (на сервере «${g.material ?? ""}»; ожидалось «${e.material ?? ""}»)`);
+    }
+  }
+  return out;
+}
+
 /** Значимая геометрия ригеля для сверки после сохранения (этап 47). */
 type RigelSig = { p1?: Point; p2?: Point; depth?: number; height?: number; ceiling_type?: string };
 
@@ -992,6 +1023,11 @@ export class Workspace {
     // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
     const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
     const rolesNorm = wallRoleMismatches(this.modelInternal!.walls as unknown as Record<string, { role?: string; p1: Point; p2: Point }>, expectedWalls);
+    // ревью 73 №2: свойства ограждений (height/depth/material) не должны меняться при нормализации
+    const propsNorm = balconyWallPropertyMismatches(
+      this.modelInternal!.walls as unknown as Record<string, { role?: string; height?: number; depth?: number; material?: string }>,
+      expectedWalls as unknown as Record<string, { role?: string; height?: number; depth?: number; material?: string }>,
+    );
     const gotSegments = wallAxisSegments(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
@@ -1002,7 +1038,7 @@ export class Workspace {
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
       lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 ||
-      gasGraphNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0
+      gasGraphNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0 || propsNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -1012,6 +1048,7 @@ export class Workspace {
           coverage_after_mm: Math.round(gotCoverage * 10),
           axis_segments_before: expected.segments.length,
           axis_segments_after: gotSegments.length,
+          wall_property_mismatches: propsNorm,
           lost_openings: lostOpenings,
           lost_items: lostItems,
           lost_pillars: lostPillars,
@@ -1072,8 +1109,14 @@ export class Workspace {
       // ревью 66 №3: роли стен после save — ограждение, ставшее обычной стеной, не «verified»
       const wallsAfterTyped = wallsAfter as Record<string, { role?: string; p1: Point; p2: Point }>;
       const wallRoleMismatch = wallRoleMismatches(expectedWalls, wallsAfterTyped);
+      // ревью 73 №2: свойства ограждений после save — height/depth/material сверяются,
+      // подмена любого из них на сервере не «verified»
+      const wallPropMismatch = balconyWallPropertyMismatches(
+        expectedWalls as unknown as Record<string, { role?: string; height?: number; depth?: number; material?: string }>,
+        wallsAfterTyped as unknown as Record<string, { role?: string; height?: number; depth?: number; material?: string }>,
+      );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -1089,6 +1132,7 @@ export class Workspace {
             border_mismatches: borderMismatch,
             level_hole_mismatches: holeMismatch,
             wall_role_mismatches: wallRoleMismatch,
+            wall_property_mismatches: wallPropMismatch,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });

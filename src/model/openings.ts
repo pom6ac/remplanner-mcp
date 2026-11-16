@@ -789,20 +789,17 @@ function assignHole(target: Hole, candidate: Hole): void {
  * Смена типа не поддерживается (ревью 30, N1/N2/N4: каждая версия конверсии рождала
  * новые регрессии): type, отличный от текущего (после нормализации legacy-алиаса
  * window_balcony → windoor), — INVALID_ARGUMENT с подсказкой удалить проём и добавить
- * новый; передача текущего type — no-op.
+ * новый; передача текущего type — no-op. Новые проёмы на балконных ограждениях
+ * запрещены (addOpening), уже стоящий проём ограждения правится (ревью 73 №1).
  */
 export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   const wall = model.walls[params.wallId];
   if (!wall) throw new McpError("NOT_FOUND", `стена ${params.wallId} не найдена`);
   const hole = wall.holes[params.holeId];
   if (!hole) throw new McpError("NOT_FOUND", `проём ${params.holeId} не найден`);
-  // на балконных ограждениях проёмов быть не может (hole__dont_install_over_balcony):
-  // чужая/повреждённая модель правкой проёма не исправляется — только удалением
-  if (wall.role === "balcony") {
-    throw new McpError("INVALID_ARGUMENT", `стена ${wall.id} — балконное ограждение, проём на нём недопустим (правило редактора hole__dont_install_over_balcony); удалите проём (opening_delete)`, {
-      details: { kind: "opening_on_balcony", wall_id: wall.id, hole_id: params.holeId },
-    });
-  }
+  // правило hole__dont_install_over_balcony запрещает только НОВЫЕ проёмы на
+  // ограждениях (ban в addOpening ниже); уже стоящий проём существующего проекта
+  // правится как прежде (регрессия ревью 73 №1), удаление тоже разрешено
   // смена типа — до любой мутации (№3); legacy window_balcony нормализуется к windoor
   // и в сравнении, и в сообщении об ошибке (ревью 28, R2)
   const holeType = normalizeHoleType(hole.type);
