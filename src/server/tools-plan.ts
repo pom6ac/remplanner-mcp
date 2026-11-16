@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SCENARIO_HINT, mmInt, mm, mmPoint } from "./context.ts";
+import { SCENARIO_HINT, mmInt, mmIntSigned, mm, mmPoint } from "./context.ts";
 import type { ServerContext } from "./context.ts";
 import { ok, tool, type ToolDefLike } from "./toolkit.ts";
 import {
@@ -1033,8 +1033,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         led_strip_id: z.string().min(1).describe("метка LS<n> из model_get или id сайта"),
         positions: z.array(z.object({
           vertex: mmInt.describe("индекс узла (0-based)"),
-          x_mm: mmInt,
-          y_mm: mmInt,
+          x_mm: mmIntSigned,
+          y_mm: mmIntSigned,
         })).min(1).max(MAX_LIGHT_PATH_NODES),
       },
       async (a) => {
@@ -1086,8 +1086,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         stripe_id: z.string().min(1).describe("метка SL<n> из model_get или id сайта"),
         positions: z.array(z.object({
           vertex: mmInt.describe("индекс узла (0-based)"),
-          x_mm: mmInt,
-          y_mm: mmInt,
+          x_mm: mmIntSigned,
+          y_mm: mmIntSigned,
         })).min(1).max(MAX_LIGHT_PATH_NODES),
       },
       async (a) => {
@@ -1143,8 +1143,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         line_light_id: z.string().min(1).describe("метка LL<n> из model_get или id сайта"),
         positions: z.array(z.object({
           vertex: mmInt.describe("индекс узла (0-based)"),
-          x_mm: mmInt,
-          y_mm: mmInt,
+          x_mm: mmIntSigned,
+          y_mm: mmIntSigned,
         })).min(1).max(MAX_LIGHT_PATH_NODES),
       },
       async (a) => {

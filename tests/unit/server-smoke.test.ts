@@ -155,6 +155,28 @@ test("smoke: схемы отвергают отрицательные разме
   await client.close();
 });
 
+test("smoke: световые линии — update принимает отрицательные координаты (85 №1: план может уходить в минус, как в add)", async () => {
+  const client = await start();
+  for (const [addTool, updTool, idKey] of [
+    ["led_strip_add", "led_strip_update", "led_strip_id"],
+    ["stripe_add", "stripe_update", "stripe_id"],
+    ["line_light_add", "line_light_update", "line_light_id"],
+  ] as const) {
+    const add = await client.callTool({ name: addTool, arguments: { kind: "recessed", path: [{ x: -1000, y: -1000 }, { x: 0, y: -1000 }] } });
+    assert.ok(!add.isError, `${addTool}: ${text(add)}`);
+    const added = JSON.parse(text(add)) as { entity: { site_id: string } | null };
+    assert.ok(added.entity, `${addTool}: сущность создана`);
+    const upd = await client.callTool({
+      name: updTool,
+      arguments: { [idKey]: added.entity!.site_id, positions: [{ vertex: 0, x_mm: -500, y_mm: -2000 }] },
+    });
+    assert.ok(!upd.isError, `${updTool}: отрицательные координаты допустимы: ${text(upd)}`);
+    const compact = JSON.parse(text(upd)) as { entity: { from: number[] } | null };
+    assert.deepEqual(compact.entity!.from, [-500, -2000], `${updTool}: узел перенесён в минус`);
+  }
+  await client.close();
+});
+
 test("smoke: item_add в центр комнаты, items_list, item_delete", async () => {
   const client = await start();
   const { tools } = await client.listTools();
