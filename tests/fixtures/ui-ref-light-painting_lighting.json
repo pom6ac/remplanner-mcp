@@ -1,0 +1,71 @@
+{
+ "_source": "клик по UI анонимного проекта (headless Chromium, ID проекта/плана обезличены), проба 84-light-fixtures, model project.copy(\"server\"), без сохранения; id предмета и id_wall/id_wall_old обезличены (\"0\"); wall_line удалён; координаты — реальные точки листа (не идентифицируют)",
+ "menu_title": "painting_lighting",
+ "tool_id": "plannertool_painting_lighting",
+ "catalog_defaults_cm": {
+  "id": 1199,
+  "width": 40,
+  "height": 15,
+  "self_height": 7,
+  "plan": {
+   "light": 10
+  },
+  "anchor": "wall",
+  "over_floor": {
+   "value": 220,
+   "display": true
+  }
+ },
+ "model_object": {
+  "name": "painting_lighting",
+  "pc": {
+   "x": 230,
+   "y": -282.5
+  },
+  "angle": 180,
+  "projection": {
+   "x": 230,
+   "y": -290
+  },
+  "id_room": "_5v6ct",
+  "width": 40,
+  "height": 15,
+  "plan": {
+   "light": 10
+  },
+  "id": "0",
+  "item_id": 1199,
+  "over_floor": {
+   "value": 220,
+   "display": true
+  },
+  "self_height": 7,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 230,
+   "y": -282.5
+  },
+  "center3d": {
+   "x": 230,
+   "y": -282.5
+  },
+  "id_room_zone": "_ynbvp",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r"
+ }
+}
