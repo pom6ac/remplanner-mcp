@@ -219,6 +219,11 @@ function itemProjection(p: Record<string, unknown>) {
   };
 }
 
+/** Ревью 60 №4 (ограничения покрытия, не выдавать за выполненное): «обе стороны» здесь —
+ *  сверка проекций model-слоя с эталоном, а НЕ round-trip редактора (restore/draw в живом
+ *  UI) и НЕ проверка привязок (магнит к стенам/узлам, панель свойств). Проверка привязок и
+ *  editor round-trip для коммуникаций — отложенная работа, требуется живая проба в
+ *  анонимном проекте (как проба 57); mock-тесты ниже покрывают только save-верификацию. */
 for (const key of REFS) {
   test(`comm: эталон ${key} — item_add воспроизводит семантическую проекцию эталона (обе стороны)`, () => {
     const ref = loadRef(key);
@@ -473,6 +478,17 @@ function mockDeps(
     droppedGasMatrixNorm?: boolean;
     /** ревью 59 №1: save обнуляет рёбра matrix у газовых линий (сервер). */
     droppedGasMatrixSave?: boolean;
+    /** ревью 60 №1: normalizer теряет plan у газовых линий. */
+    droppedGasPlanNorm?: boolean;
+    /** ревью 60 №1: save теряет plan у газовых линий (сервер). */
+    droppedGasPlanSave?: boolean;
+    /** ревью 60 №1: save подменяет значение items узла газовой линии. */
+    corruptGasItemsSave?: boolean;
+    /** ревью 60 №1: save портит обратное ребро matrix[1][0] при сохранённом [0][1]. */
+    corruptLowerEdgeSave?: boolean;
+    /** ревью 60 №6: нормализация переупорядочивает vertexes с перестановкой
+     *  строк/столбцов matrix — семантически эквивалентный граф. */
+    reorderGasNorm?: boolean;
   } = {},
 ) {
   let lastNormalized: Record<string, unknown> | null = null;
@@ -480,6 +496,9 @@ function mockDeps(
     for (const g of Object.values((m as { pipes_gas?: Record<string, GasLine> }).pipes_gas ?? {})) {
       g.matrix = g.matrix.map((row) => row.map(() => null));
     }
+  };
+  const eachGas = (m: Record<string, unknown>, fn: (g: GasLine) => void): void => {
+    for (const g of Object.values((m as { pipes_gas?: Record<string, GasLine> }).pipes_gas ?? {})) fn(g);
   };
   const editor: EditorLike = {
     objectId: "123", planId: "1",
@@ -492,6 +511,13 @@ function mockDeps(
       (out as { items: Record<string, unknown> }).items = structuredClone(kept);
       if (opts.droppedAll) (out as { pipes_gas?: Record<string, unknown> }).pipes_gas = {};
       if (opts.droppedGasMatrixNorm) zeroGasMatrix(out);
+      if (opts.droppedGasPlanNorm) eachGas(out, (g) => delete (g as unknown as Record<string, unknown>).plan);
+      if (opts.reorderGasNorm) {
+        eachGas(out, (g) => {
+          g.vertexes = [...g.vertexes].reverse();
+          g.matrix = g.matrix.slice().reverse().map((row) => row.slice().reverse());
+        });
+      }
       return {
         model: out,
         rooms: [],
@@ -506,6 +532,14 @@ function mockDeps(
       // что реально оказалось на сервере (по GET), расходятся
       if (opts.lostGasAfterSave) (saved as { pipes_gas?: Record<string, unknown> }).pipes_gas = {};
       if (opts.droppedGasMatrixSave) zeroGasMatrix(saved as unknown as Record<string, unknown>);
+      if (opts.droppedGasPlanSave) eachGas(saved as unknown as Record<string, unknown>, (g) => delete (g as unknown as Record<string, unknown>).plan);
+      if (opts.corruptGasItemsSave) eachGas(saved as unknown as Record<string, unknown>, (g) => {
+        g.items = { ...g.items, [g.vertexes[0]!.id]: "nonexistent-item" };
+      });
+      if (opts.corruptLowerEdgeSave) eachGas(saved as unknown as Record<string, unknown>, (g) => {
+        g.matrix = g.matrix.map((row) => row.slice());
+        g.matrix[1]![0] = null;
+      });
       if (opts.changedGasAfterSave) {
         const first = Object.values((saved as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {})[0] as GasLine | undefined;
         if (first) {
@@ -689,4 +723,151 @@ test("comm: mock save — save обнулил matrix → SITE_ERROR, verified н
   const gasLocal = Object.values((ws.model as { pipes_gas?: Record<string, GasLine> }).pipes_gas ?? {})[0] as GasLine | undefined;
   assert.ok(gasLocal, "локальная линия на месте");
   assert.ok(gasLocal!.matrix.some((row) => row.some((e) => e !== null)), "локальные рёбра не затёрты");
+});
+
+// ревью 60 №1: ПОЛНАЯ сверка газовой линии после save (все поля, включая plan,
+// items-значения и обе стороны matrix), положительный контроль на исходном UI-графе
+
+test("comm: mock save — исходная линия из UI-эталона сохраняется verified=true (положительный контроль)", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel() };
+  const { deps } = mockDeps(server);
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  const refLine = structuredClone(loadRef("gas_line").model_object) as unknown as GasLine;
+  ws.apply("comm_add", (m) => {
+    m.pipes_gas = { [refLine.id]: refLine };
+    return true;
+  });
+  const saved: SaveOutcome = await ws.save();
+  assert.equal(saved.verified, true);
+  assert.equal(Object.keys(server.model.pipes_gas ?? {}).length, 1);
+  assert.equal((Object.values(server.model.pipes_gas ?? {})[0] as GasLine).plan, "a");
+  assert.equal((Object.values(server.model.pipes_gas ?? {})[0] as GasLine).length, 1.58);
+});
+
+test("comm: mock save — normalizer потерял plan → NORMALIZATION_DROPPED, модель не пишется", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel() };
+  const { deps } = mockDeps(server, { droppedGasPlanNorm: true });
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("comm_add", (m) => {
+    addGasLine(m, { start: { x: 20000, y: 15000 }, end: { x: 21500, y: 15500 } });
+    return true;
+  });
+  await assert.rejects(
+    () => ws.save(),
+    (e: unknown) => {
+      assert.ok(e instanceof McpError && e.code === "NORMALIZATION_DROPPED", e instanceof McpError ? e.code : String(e));
+      assert.ok(((e as McpError).details as { gas_line_mismatches?: string[] }).gas_line_mismatches?.some((s) => s.includes("поле plan изменилось")));
+      return true;
+    },
+  );
+  assert.equal(Object.keys(server.model.pipes_gas ?? {}).length, 0, "серверная модель не изменилась");
+});
+
+test("comm: mock save — save потерял plan → SITE_ERROR (поле plan изменилось)", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel() };
+  const { deps } = mockDeps(server, { droppedGasPlanSave: true });
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("comm_add", (m) => {
+    addGasLine(m, { start: { x: 20000, y: 15000 }, end: { x: 21500, y: 15500 } });
+    return true;
+  });
+  await assert.rejects(
+    () => ws.save(),
+    (e: unknown) => {
+      assert.ok(e instanceof McpError && e.code === "SITE_ERROR", e instanceof McpError ? e.code : String(e));
+      assert.ok(((e as McpError).details as { gas_line_mismatches?: string[] }).gas_line_mismatches?.some((s) => s.includes("поле plan изменилось")));
+      return true;
+    },
+  );
+  assert.equal((Object.values((ws.model as { pipes_gas?: Record<string, GasLine> }).pipes_gas ?? {})[0] as GasLine).plan, "a", "план в рабочей копии не затёрт (verified не дошёл)");
+});
+
+test("comm: mock save — save подменил значение items узла → SITE_ERROR", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel() };
+  const { deps } = mockDeps(server, { corruptGasItemsSave: true });
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("comm_add", (m) => {
+    addGasLine(m, { start: { x: 20000, y: 15000 }, end: { x: 21500, y: 15500 } });
+    return true;
+  });
+  await assert.rejects(
+    () => ws.save(),
+    (e: unknown) => {
+      assert.ok(e instanceof McpError && e.code === "SITE_ERROR", e instanceof McpError ? e.code : String(e));
+      const mism = ((e as McpError).details as { gas_line_mismatches?: string[] }).gas_line_mismatches ?? [];
+      assert.ok(mism.some((s) => s.includes("значение items узла") && s.includes("nonexistent-item")), mism.join("; "));
+      return true;
+    },
+  );
+});
+
+test("comm: mock save — save испортил обратное ребро matrix[1][0] при живом [0][1] → SITE_ERROR", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel() };
+  const { deps } = mockDeps(server, { corruptLowerEdgeSave: true });
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("comm_add", (m) => {
+    addGasLine(m, { start: { x: 20000, y: 15000 }, end: { x: 21500, y: 15500 } });
+    return true;
+  });
+  await assert.rejects(
+    () => ws.save(),
+    (e: unknown) => {
+      assert.ok(e instanceof McpError && e.code === "SITE_ERROR", e instanceof McpError ? e.code : String(e));
+      const mism = ((e as McpError).details as { gas_line_mismatches?: string[] }).gas_line_mismatches ?? [];
+      assert.ok(mism.some((s) => s.includes("ребро 1–0 потеряно")), mism.join("; "));
+      assert.ok(!mism.some((s) => s.includes("ребро 0–1 потеряно")), "прямое ребро не тронуто");
+      return true;
+    },
+  );
+});
+
+test("comm: mock save — переупорядочивание узлов с перестановкой matrix проходит как эквивалентный граф (ревью 60 №6)", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel() };
+  const { deps } = mockDeps(server, { reorderGasNorm: true });
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("comm_add", (m) => {
+    addGasLine(m, { start: { x: 20000, y: 15000 }, end: { x: 21500, y: 15500 } });
+    return true;
+  });
+  const saved: SaveOutcome = await ws.save();
+  assert.equal(saved.verified, true, "семантически эквивалентный граф не блокируется");
+  assert.equal(Object.keys(server.model.pipes_gas ?? {}).length, 1);
+  const gas = Object.values(server.model.pipes_gas ?? {})[0] as GasLine;
+  assert.equal(gas.matrix[0]![1] !== null, gas.matrix[1]![0] !== null, "рёбра согласованы после перестановки");
+  assert.equal(gas.type, "gas_line");
+  assert.equal(gas.length, 1.58);
+});
+
+test("comm: mock save — ветвлённый граф A-B+A-C из эталонного формата: штатный save verified=true", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel() };
+  const { deps } = mockDeps(server);
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("comm_add", (m) => {
+    const line: GasLine = {
+      id: "_branch",
+      matrix: [[null, { length: 1 }, { length: 1 }], [{ length: 1 }, null, null], [{ length: 1 }, null, null]],
+      vertexes: [
+        { id: "_a", point: { x: 0, y: 0 }, type: "node" },
+        { id: "_b", point: { x: 100, y: 0 }, type: "node" },
+        { id: "_c", point: { x: 0, y: 100 }, type: "node" },
+      ],
+      items: { _a: "node", _b: "node", _c: "node" },
+      type: "gas_line",
+      plan: "a",
+      length: 2,
+    };
+    m.pipes_gas = { [line.id]: line };
+    return true;
+  });
+  const saved: SaveOutcome = await ws.save();
+  assert.equal(saved.verified, true, "все 6 направленных рёбер сверены, симметрия целая");
+  const gas = Object.values(server.model.pipes_gas ?? {})[0] as GasLine;
+  assert.equal(gas.matrix.flat().filter((e) => e !== null).length, 4);
 });

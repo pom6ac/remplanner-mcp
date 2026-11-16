@@ -192,29 +192,109 @@ type RigelSig = { p1?: Point; p2?: Point; depth?: number; height?: number; ceili
 type ItemSig = { name?: string; pc?: { x: number; y: number }; width?: number; height?: number; angle?: number };
 
 /**
- * Значимая семантика газовой линии для сверки (этап 57, ревью 59 №1): узлы, тип,
- * рёбра матрицы (топология) и скалярная длина. Рёбра сверяются по индексам узлов
- * (узлы уже сверяются позиционно), допуск — только на округления координат/длины.
+ * Значимая семантика газовой линии для сверки (этап 57, ревью 59 №1, ревью 61 №1 —
+ * ПОЛНАЯ сверка, а не по выбранным полям). Сравнивается семантическая проекция
+ * всего объекта линии: plan и остальные скалярные поля (набор полей задаёт
+ * ожидаемая сторона — лишние поля сервера не потеря данных), вершины — с
+ * согласованным сопоставлением (по стабильному id; при переупорядочивании —
+ * по типу и координатам, ревью 61 №6), matrix целиком в обе стороны (направленные
+ * рёбра, т.е. и симметрия формата) и соответствие items узлам.
  */
+type GasVertexSig = { id?: string; point?: Point; type?: string } & Record<string, unknown>;
+
 type GasLineSig = {
-  vertexes?: { point?: Point }[];
+  vertexes?: GasVertexSig[];
   length?: number;
   type?: string;
+  plan?: unknown;
   matrix?: (null | { length?: number })[][];
   items?: Record<string, unknown>;
-};
+} & Record<string, unknown>;
 
-/** Есть ли ребро между узлами i и j в матрице смежности (некорректные индексы — нет). */
+/** Допуск сверки координат вершин, см (округление редактора до сотых см). */
+const GAS_VERTEX_TOL_CM = 0.1;
+/** Допуск сверки длин (рёбра matrix, длина линии) — метры, округление до 2 знаков. */
+const GAS_LENGTH_TOL_M = 0.02;
+
+/** Глубокое равенство с допуском на числа (набор полей задаёт ожидаемая сторона). */
+function deepEqualTol(expected: unknown, got: unknown, tol: number): boolean {
+  if (typeof expected === "number" && typeof got === "number") return Math.abs(expected - got) <= tol;
+  if (expected === null || expected === undefined || got === null || got === undefined) return expected === got;
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(got) || expected.length !== got.length) return false;
+    return expected.every((v, i) => deepEqualTol(v, got[i], tol));
+  }
+  if (typeof expected === "object") {
+    if (typeof got !== "object") return false;
+    return Object.entries(expected as Record<string, unknown>).every(
+      ([k, v]) => k in (got as object) && deepEqualTol(v, (got as Record<string, unknown>)[k], tol),
+    );
+  }
+  return expected === got;
+}
+
+/** Есть ли направленное ребро i→j в матрице смежности (некорректные индексы — нет). */
 function gasEdge(line: GasLineSig, i: number, j: number): boolean {
   return Boolean((line.matrix?.[i]?.[j] ?? null) !== null);
 }
 
 /**
- * Расхождение газовых линий между двумя наборами (ревью 59 №1): идентичности, тип,
- * узлы (допуск 0,1 см), рёбра matrix (топология) и длина (допуск 2 см — редактор
- * пересчитывает длину сам при restore, округление до 2 знаков), соответствие
- * items узлам. Возвращает список человекочитаемых расхождений; пустой список —
- * графы совпадают.
+ * Согласованное сопоставление вершин двух графов (ревью 61 №6): сначала по
+ * стабильному id (id — identity, редактор может переупорядочивать vertexes),
+ * иначе жадно по типу и координатам с допуском GAS_VERTEX_TOL_CM. Возвращает
+ * map[i] = индекс вершины в got или null, если согласованного сопоставления нет.
+ */
+function gasVertexMatch(expected: GasVertexSig[], got: GasVertexSig[]): number[] | null {
+  if (expected.length !== got.length) return null;
+  const used = new Array<boolean>(got.length).fill(false);
+  const map = new Array<number>(expected.length).fill(-1);
+  const gotById = new Map<string, number>();
+  got.forEach((v, i) => {
+    if (typeof v.id === "string" && !gotById.has(v.id)) gotById.set(v.id, i);
+  });
+  let allById = true;
+  expected.forEach((v, i) => {
+    const j = typeof v.id === "string" ? gotById.get(v.id) : undefined;
+    if (j === undefined || used[j]!) {
+      allById = false;
+      return;
+    }
+    map[i] = j!;
+    used[j] = true;
+  });
+  if (allById) return map;
+  used.fill(false);
+  map.fill(-1);
+  for (let i = 0; i < expected.length; i++) {
+    let best = -1;
+    let bestD = Infinity;
+    for (let j = 0; j < got.length; j++) {
+      if (used[j]) continue;
+      if ((expected[i]!.type ?? "") !== (got[j]!.type ?? "")) continue;
+      const ex = expected[i]!.point?.x;
+      const ey = expected[i]!.point?.y;
+      const gx = got[j]!.point?.x;
+      const gy = got[j]!.point?.y;
+      if (ex === undefined || ey === undefined || gx === undefined || gy === undefined) continue;
+      const d = Math.max(Math.abs(ex - gx), Math.abs(ey - gy));
+      if (d <= GAS_VERTEX_TOL_CM && d < bestD) {
+        bestD = d;
+        best = j;
+      }
+    }
+    if (best < 0) return null;
+    map[i] = best;
+    used[best] = true;
+  }
+  return map;
+}
+
+/**
+ * Расхождение газовых линий между двумя наборами — ПОЛНАЯ семантическая сверка
+ * (ревью 61 №1): идентичности, вершины с согласованным сопоставлением (допуск
+ * 0,1 см), рёбра matrix целиком в обе стороны (длины с допуском 0,02 м), items,
+ * plan и все прочие поля ожидаемой стороны; длина линии (допуск 0,02 м).
+ * Возвращает список человекочитаемых расхождений; пустой список — совпадают.
  */
 function gasLineGraphMismatches(expected: Record<string, GasLineSig>, got: Record<string, unknown>): string[] {
   const out: string[] = [];
@@ -226,34 +306,73 @@ function gasLineGraphMismatches(expected: Record<string, GasLineSig>, got: Recor
       out.push(`${id}: газовая линия исчезла после сохранения`);
       continue;
     }
-    if ((g.type ?? "") !== (g0.type ?? "")) out.push(`${id}: тип изменился (на сервере «${g.type ?? ""}»; ожидалось «${g0.type ?? ""}»)`);
-    const gotV = g.vertexes ?? [];
     const expV = g0.vertexes ?? [];
-    if (gotV.length !== expV.length) {
-      out.push(`${id}: число узлов изменилось (на сервере ${gotV.length}; ожидалось ${expV.length})`);
+    const gotV = g.vertexes ?? [];
+    const map = expV.length === gotV.length ? gasVertexMatch(expV, gotV) : null;
+    if (!map) {
+      out.push(`${id}: узлы не сопоставлены (на сервере ${gotV.length}; ожидалось ${expV.length})`);
       continue;
     }
     for (let i = 0; i < expV.length; i++) {
-      if (!near(gotV[i]?.point?.x, expV[i]?.point?.x, 0.1) || !near(gotV[i]?.point?.y, expV[i]?.point?.y, 0.1)) {
-        out.push(`${id}: узел ${i} сместился (на сервере ${gotV[i]?.point?.x},${gotV[i]?.point?.y}; ожидалось ${expV[i]?.point?.x},${expV[i]?.point?.y})`);
+      const e = expV[i]!;
+      const s = gotV[map[i]!]!;
+      if ((e.type ?? "") !== (s.type ?? "")) out.push(`${id}: тип узла ${i} изменился (на сервере «${s.type ?? ""}»; ожидалось «${e.type ?? ""}»)`);
+      if (!near(s.point?.x, e.point?.x, GAS_VERTEX_TOL_CM) || !near(s.point?.y, e.point?.y, GAS_VERTEX_TOL_CM)) {
+        out.push(`${id}: узел ${i} сместился (на сервере ${s.point?.x},${s.point?.y}; ожидалось ${e.point?.x},${e.point?.y})`);
       }
-    }
-    // топология: рёбра matrix сверяются по индексам узлов (узлы сверены позиционно выше)
-    const n = expV.length;
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        if (gasEdge(g0, i, j) !== gasEdge(g, i, j)) {
-          out.push(`${id}: ребро ${i}–${j} ${gasEdge(g0, i, j) ? "потеряно" : "добавлено"} на сервере (топология matrix изменилась)`);
+      for (const [k, v] of Object.entries(e)) {
+        if (k === "id" || k === "point" || k === "type") continue;
+        const sVal = (s as Record<string, unknown>)[k];
+        if (!deepEqualTol(v, sVal, GAS_VERTEX_TOL_CM)) {
+          out.push(`${id}: узел ${i}, поле ${k} изменилось (на сервере ${JSON.stringify(sVal ?? null)}; ожидалось ${JSON.stringify(v)})`);
         }
       }
     }
-    // соответствие items узлам: каждый узел должен остаться в items
-    const gotItems = g.items ?? {};
-    for (const v of expV) {
-      const vid = (v as { id?: string }).id;
-      if (vid && !(vid in gotItems)) out.push(`${id}: узел ${vid} пропал из items`);
+    // matrix целиком: направленные рёбра под согласованным сопоставлением —
+    // обе стороны формата (порча обратного ребра не проходит, ревью 61 №1)
+    const n = expV.length;
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        if (i === j) continue;
+        const e0 = g0.matrix?.[i]?.[j] ?? null;
+        const e = g.matrix?.[map[i]!]?.[map[j]!] ?? null;
+        if ((e0 !== null) !== (e !== null)) {
+          out.push(`${id}: ребро ${i}–${j} ${e0 !== null ? "потеряно" : "добавлено"} на сервере (matrix изменилась)`);
+        } else if (e0 !== null && e !== null) {
+          const l0 = (e0 as { length?: number }).length;
+          const l = (e as { length?: number }).length;
+          if (!near(l, l0, GAS_LENGTH_TOL_M)) out.push(`${id}: длина ребра ${i}–${j} изменилась (на сервере ${l}; ожидалось ${l0})`);
+        }
+      }
     }
-    if (!near(g.length, g0.length, 0.02)) out.push(`${id}: длина изменилась (на сервере ${g.length}; ожидалось ${g0.length})`);
+    // соответствие items узлам — под тем же согласованным сопоставлением
+    const gotItems = g.items ?? {};
+    const expItems = g0.items ?? {};
+    const unclaimed = new Set(Object.keys(gotItems));
+    for (let i = 0; i < expV.length; i++) {
+      const expId = expV[i]!.id;
+      const gotId = gotV[map[i]!]!.id;
+      if (expId === undefined) continue;
+      if (gotId === undefined || !(gotId in gotItems)) {
+        out.push(`${id}: узел ${expId} пропал из items`);
+        continue;
+      }
+      unclaimed.delete(gotId);
+      if (!deepEqualTol(expItems[expId], gotItems[gotId], GAS_VERTEX_TOL_CM)) {
+        out.push(`${id}: значение items узла ${expId} изменилось (на сервере ${JSON.stringify(gotItems[gotId] ?? null)}; ожидалось ${JSON.stringify(expItems[expId])})`);
+      }
+    }
+    if (unclaimed.size > 0) out.push(`${id}: лишние узлы в items (${[...unclaimed].sort().join(", ")})`);
+    // план, тип, длина и все прочие поля объекта линии (ревью 61 №1: включая plan)
+    if ((g.type ?? "") !== (g0.type ?? "")) out.push(`${id}: тип изменился (на сервере «${g.type ?? ""}»; ожидалось «${g0.type ?? ""}»)`);
+    if (!near(g.length, g0.length, GAS_LENGTH_TOL_M)) out.push(`${id}: длина изменилась (на сервере ${g.length}; ожидалось ${g0.length})`);
+    for (const [k, v] of Object.entries(g0)) {
+      if (k === "vertexes" || k === "matrix" || k === "items" || k === "type" || k === "length") continue;
+      const sVal = (g as Record<string, unknown>)[k];
+      if (!deepEqualTol(v, sVal, GAS_LENGTH_TOL_M)) {
+        out.push(`${id}: поле ${k} изменилось (на сервере ${JSON.stringify(sVal ?? null)}; ожидалось ${JSON.stringify(v)})`);
+      }
+    }
   }
   return out;
 }
