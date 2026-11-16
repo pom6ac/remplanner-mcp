@@ -267,14 +267,20 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     // ---------- Проёмы (§7.3) ----------
     opening_add: tool(
-      "Добавить проём на стену: дверь (door, door_double, doorway, door_coupe…), окно (window, windowway, window_balcony…). " +
+      "Добавить проём на стену. Двери: door (дверь 80×200), door_double (двустворчатая 120), doorway (проём без двери), " +
+        "door_coupe, door_penal, door_roto, door_book, door_bellows, door_glass, door_garage, door_system_*. " +
+        "Окна (пункты меню «Окна»): windowway (Проем без окна 120×150), window (Стандартное окно 120×150, подоконник 85), " +
+        "window_balcony (Балконный блок 180: окно+дверь, параметры window_*_mm/door_*_mm/door_position), " +
+        "window_door (Балконная дверь 80×225), french_window (Французское окно распашное 120×250), " +
+        "french_window_coupe (Французское окно раздвижное 120×250), french_window_double (Французское окно 4-створчатое 180×250). " +
         "Положение: offset_mm + from (смещение края проёма от угла комнаты; from=end — от противоположного конца) " +
-        "или center_mm (центр от начала оси стены). width/height в мм; для окон sill_height_mm — высота подоконника. " +
+        "или center_mm (центр от начала оси стены). Размеры в мм; окна: sill_height_mm (подоконник), casements (створки), " +
+        "slope_angle_deg (угол рассвета), sill_thickness_mm/sill_overhang_mm/sill_overmeasure_mm (подоконник). " +
         "Проём должен целиком помещаться на стене и не пересекать другие проёмы и примыкания стен (GEOMETRY_CONFLICT).",
       {
         wall_id: wallRef,
         type: z.string().refine((t) => t in OPENING_KINDS, { message: "неизвестный тип проёма" })
-          .describe(`door, door_double, doorway, window, windowway, … (всего ${Object.keys(OPENING_KINDS).length} типов)`),
+          .describe(`door, door_double, doorway, window, windowway, window_balcony, window_door, french_window, french_window_coupe, french_window_double, … (всего ${Object.keys(OPENING_KINDS).length} типов)`),
         offset_mm: mmInt.optional(),
         from: z.enum(["start", "end"]).optional(),
         center_mm: mmInt.optional(),
@@ -282,6 +288,17 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         height_mm: mmInt.optional(),
         sill_height_mm: mmInt.optional().describe("окна: высота подоконника над полом"),
         swing: swing.optional().describe("двери: петля и сторона открывания"),
+        casements: z.number().int().min(0).max(6).optional().describe("окна: число створок"),
+        slope_angle_deg: z.number().min(0).max(45).optional().describe("окна: угол рассвета (откосов), градусы"),
+        sill_thickness_mm: mmInt.optional().describe("окна: толщина подоконника"),
+        sill_overhang_mm: mmInt.optional().describe("окна: вылет подоконника"),
+        sill_overmeasure_mm: mmInt.optional().describe("окна: выпуски подоконника вбок"),
+        window_width_mm: mmInt.optional().describe("балконный блок: ширина окна (итог = окно + дверь)"),
+        window_height_mm: mmInt.optional().describe("балконный блок: высота окна"),
+        door_width_mm: mmInt.optional().describe("балконный блок: ширина двери (итог = окно + дверь)"),
+        door_height_mm: mmInt.optional().describe("балконный блок: высота двери"),
+        door_position: z.enum(["left", "right"]).optional().describe("балконный блок: сторона двери"),
+        impost_height_mm: mmInt.optional().describe("балконная дверь: высота импоста от пола"),
       },
       async (a) => {
         const ws = wsOf();
@@ -295,6 +312,17 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           heightMm: a["height_mm"] as number | undefined,
           sillHeightMm: a["sill_height_mm"] as number | undefined,
           swing: a["swing"] as { hinge: "start" | "end"; into: "left" | "right" } | undefined,
+          casements: a["casements"] as number | undefined,
+          slopeAngleDeg: a["slope_angle_deg"] as number | undefined,
+          sillThicknessMm: a["sill_thickness_mm"] as number | undefined,
+          sillOverhangMm: a["sill_overhang_mm"] as number | undefined,
+          sillOvermeasureMm: a["sill_overmeasure_mm"] as number | undefined,
+          windowWidthMm: a["window_width_mm"] as number | undefined,
+          windowHeightMm: a["window_height_mm"] as number | undefined,
+          doorWidthMm: a["door_width_mm"] as number | undefined,
+          doorHeightMm: a["door_height_mm"] as number | undefined,
+          doorPosition: a["door_position"] as "left" | "right" | undefined,
+          impostHeightMm: a["impost_height_mm"] as number | undefined,
         }));
         return ok(compactEntity(ws.model, (c) =>
           c.walls.flatMap((w) => w.openings).find((o) => o.id === hole.id) ?? { id: hole.id, type: hole.type }));
@@ -302,7 +330,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     opening_update: tool(
-      "Изменить проём: размеры, положение (offset_mm/from или center_mm), подоконник, сторону открывания. " +
+      "Изменить проём: размеры, положение (offset_mm/from или center_mm), подоконник, сторону открывания, створки, " +
+        "угол рассвета; у балконного блока — window_*_mm/door_*_mm/door_position, у балконной двери impost_height_mm. " +
         "Поля не указанные — не меняются. opening_id — id проёма (site_id) из model_get.",
       {
         opening_id: z.string().min(1).describe("id проёма из model_get (поле id у openings)"),
@@ -315,6 +344,17 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         height_mm: mmInt.optional(),
         sill_height_mm: mmInt.optional(),
         swing: swing.optional(),
+        casements: z.number().int().min(0).max(6).optional().describe("окна: число створок"),
+        slope_angle_deg: z.number().min(0).max(45).optional().describe("окна: угол рассвета, градусы"),
+        sill_thickness_mm: mmInt.optional(),
+        sill_overhang_mm: mmInt.optional(),
+        sill_overmeasure_mm: mmInt.optional(),
+        window_width_mm: mmInt.optional().describe("балконный блок: ширина окна (итог = окно + дверь)"),
+        window_height_mm: mmInt.optional(),
+        door_width_mm: mmInt.optional().describe("балконный блок: ширина двери (итог = окно + дверь)"),
+        door_height_mm: mmInt.optional(),
+        door_position: z.enum(["left", "right"]).optional(),
+        impost_height_mm: mmInt.optional().describe("балконная дверь: высота импоста от пола"),
       },
       async (a) => {
         const ws = wsOf();
@@ -337,6 +377,17 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             heightMm: a["height_mm"] as number | undefined,
             sillHeightMm: a["sill_height_mm"] as number | undefined,
             swing: a["swing"] as { hinge: "start" | "end"; into: "left" | "right" } | undefined,
+            casements: a["casements"] as number | undefined,
+            slopeAngleDeg: a["slope_angle_deg"] as number | undefined,
+            sillThicknessMm: a["sill_thickness_mm"] as number | undefined,
+            sillOverhangMm: a["sill_overhang_mm"] as number | undefined,
+            sillOvermeasureMm: a["sill_overmeasure_mm"] as number | undefined,
+            windowWidthMm: a["window_width_mm"] as number | undefined,
+            windowHeightMm: a["window_height_mm"] as number | undefined,
+            doorWidthMm: a["door_width_mm"] as number | undefined,
+            doorHeightMm: a["door_height_mm"] as number | undefined,
+            doorPosition: a["door_position"] as "left" | "right" | undefined,
+            impostHeightMm: a["impost_height_mm"] as number | undefined,
           });
         });
         return ok(compactEntity(ws.model, (c) =>

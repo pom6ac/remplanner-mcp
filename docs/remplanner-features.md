@@ -86,10 +86,48 @@
 - Каталог **[код]** (`global_tools`, группа `doors`): `doorway` (проём без двери), `door` (80×200),
   `door_double` (120), `door_coupe`, `door_coupe_double`, `door_penal(_double)`, `door_roto(_double)`,
   `door_book(_double)`, `door_bellows`, `door_glass`, `door_garage` (300×225), `door_system_x2/x3/x4`,
-  `door_system_penal_x2/x3/x4`. Группа `windows`: `windowway` (проём без окна), `window` (120×150),
-  `window_balcony` (балконный блок 180), `window_door` (балконная дверь 80×225), `french_window`,
-  `french_window_coupe`, `french_window_double`.
+  `door_system_penal_x2/x3/x4`. Группа `windows`: см. таблицу ниже.
 - Также есть вентиляционные отверстия (`ventHole`) **[код]**.
+
+### 5.1. Окна: меню → модель **[проверено в UI, 2026-11-16]**
+
+Все 7 пунктов меню «Окна» поставлены кликами в проекте-копии, модель снята `project.copy("server")`
+без сохранения (эталоны `tests/fixtures/ui-ref-window-<тип>.json`, пробы `scripts/probes/25-windows-ui*.ts`).
+Размеры в таблице — модельные (см), поле `hole.depth` — глубина профиля, **не** толщина стены.
+
+| Пункт меню | ключ/type | Ш×В, см | от пола | depth | Прочее в модели |
+|---|---|---|---|---|---|
+| Проем без окна | `windowway` | 120×150 | 85 | 6 | `opening:"r"`, `casements:1`, `slopes:20` |
+| Стандартное окно | `window` | 120×150 | 85 | 6 | `opening:"r-l"`, `casements:1`, `slopes:20` |
+| Балконный блок | `windoor` | 180 (окно 100 + дверь 80) | 10 | 6 | `window_width/window_height/door_width/door_height`, `door_position:"l"`, без `height`, `opening:"r-l"` — **один объект**, окно и дверь — части одного hole |
+| Балконная дверь | `window_door` | 80×225 | 10 | 6 | `opening:"r-l"`, `slopes:20`, `impost_offset:75` (импост от пола 85 − подоконник 10), `filling:1` |
+| Французское окно распашное | `french_window` | 120×250 | 0 | 6 | `opening:"r"`, `casements:0` |
+| Французское окно раздвижное | `french_window_coupe` | 120×250 | 0 | 14 | `opening:"r-l"`, `casements:0` |
+| Французское окно 4-створчатое | `french_window_double` | 180×250 | 0 | 14 | `opening:"r"`, `casements:0` |
+
+У всех окон есть: `casing:1` (короб с наличниками), `slope_angle:0`, `sill:{thinkness:4, overhang:0, overmeasure:0, side}` —
+`side` («l»/«r») редактор вычисляет по стороне помещения. У балконного блока `sill.side` по умолчанию «r».
+
+Панель свойств (правый клик по окну, меню `cm-window` / `cm-windoor` / `cm-window-door`) → поля модели:
+
+| Поле UI | Поле модели (см) |
+|---|---|
+| Ширина окна / Ширина двери | `width` (у windoor: `window_width` + `door_width`, `width` = сумма) |
+| Высота окна / Высота двери | `height` (у windoor: `window_height`, `door_height`) |
+| Высота от пола | `floor_height` |
+| Число створок | `casements` (у французских окон не меняется, остаётся 0) |
+| Угол рассвета | `slope_angle` (градусы) |
+| Толщина подоконника | `sill.thinkness` (так в модели редактора) |
+| Вылет подоконника | `sill.overhang` |
+| Выпуски подоконника | `sill.overmeasure` |
+| Высота импоста (балконная дверь) | `impost_offset` = значение − `floor_height` |
+| Дверь слева/справа (балконный блок) | `door_position` = «l»/«r» |
+| Арочный проем (переключатель `arc`) | в модели не подтверждён (см. отчёт этапа 25) |
+| Повернуть | переключает `opening` («r» ↔ «l») |
+
+«Глаз» у пунктов французских окон — превью инструмента (`tools_item_about` с картинкой при наведении);
+на модель не влияет. Отдельного свойства «откосы/отлив/материал» в панели окон нет: откосы — `slopes`
+и `slope_angle`, подоконник — `sill`, отлив и цвет в модель не пишутся.
 
 ## 6. Мебель, сантехника и прочие объекты каталога
 

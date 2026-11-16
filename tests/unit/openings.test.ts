@@ -60,7 +60,14 @@ test("addOpening: окно с подоконником 800 мм", () => {
   assert.deepEqual(hole.p2, { x: 250, y: -10 });
   assert.equal(hole.floor_height, 80);
   assert.equal(hole.height, 150);
-  assert.equal(hole.depth, 10);
+  // эталон UI (ui-ref-window-window.json): глубина окна 6 см, не толщина стены
+  assert.equal(hole.depth, 6);
+  assert.equal(hole.casements, 1);
+  assert.equal(hole.slopes, 20);
+  assert.equal(hole.slope_angle, 0);
+  assert.equal(hole.casing, 1);
+  assert.equal(hole.opening, "r-l");
+  assert.deepEqual(hole.sill, { thinkness: 4, overhang: 0, overmeasure: 0, side: "l" });
 });
 
 test("addOpening: from end — отступ от внутреннего угла конца стены", () => {

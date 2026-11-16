@@ -28,6 +28,24 @@ export type CompactOpening = {
   width_mm: number;
   height_mm: number;
   sill_mm: number;
+  /** Число створок (окна). */
+  casements?: number;
+  /** Угол рассвета, градусы (окна). */
+  slope_angle_deg?: number;
+  /** Сторона открывания из модели (окна: "r", "l", "r-l", "l-r"). */
+  opening?: string;
+  /** Арочный проём. */
+  arched?: boolean;
+  /** Подоконник (окна). */
+  sill?: { thickness_mm: number; overhang_mm: number; overmeasure_mm: number } | null;
+  /** Балконный блок (windoor): части окна и двери. */
+  window_width_mm?: number;
+  window_height_mm?: number;
+  door_width_mm?: number;
+  door_height_mm?: number;
+  door_position?: "l" | "r";
+  /** Балконная дверь: импост, мм от пола. */
+  impost_offset_mm?: number;
 };
 
 export type CompactRoom = {
@@ -90,15 +108,36 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     const label = `W${i + 1}`;
     siteToLabel.set(wall.id, label);
     const lenInner = wallInnerLengthMm(wall, model.walls);
-    const openings: CompactOpening[] = Object.values(wall.holes ?? {}).map((hole) => ({
-      id: hole.id,
-      wall: label,
-      type: hole.type,
-      offset_mm: round0(holeOffsetFromStart(wall, hole)),
-      width_mm: round0(cmToMm(hole.width)),
-      height_mm: round0(cmToMm(hole.height)),
-      sill_mm: hole.floor_height !== undefined ? round0(cmToMm(hole.floor_height)) : 0,
-    }));
+    const openings: CompactOpening[] = Object.values(wall.holes ?? {}).map((hole) => {
+      const c: CompactOpening = {
+        id: hole.id,
+        wall: label,
+        type: hole.type,
+        offset_mm: round0(holeOffsetFromStart(wall, hole)),
+        width_mm: round0(cmToMm(hole.width)),
+        height_mm: hole.height !== undefined ? round0(cmToMm(hole.height)) : 0,
+        sill_mm: hole.floor_height !== undefined ? round0(cmToMm(hole.floor_height)) : 0,
+      };
+      const sill = hole.sill as { thinkness?: number; overhang?: number; overmeasure?: number } | undefined;
+      if (sill && typeof sill === "object") {
+        c.sill = {
+          thickness_mm: round0(cmToMm(sill.thinkness ?? 0)),
+          overhang_mm: round0(cmToMm(sill.overhang ?? 0)),
+          overmeasure_mm: round0(cmToMm(sill.overmeasure ?? 0)),
+        };
+      }
+      if (hole.casements !== undefined) c.casements = hole.casements;
+      if (hole.slope_angle !== undefined) c.slope_angle_deg = hole.slope_angle as number;
+      if (hole.opening !== undefined) c.opening = hole.opening;
+      if (hole.arched !== undefined && hole.arched !== 0) c.arched = true;
+      if (hole.window_width !== undefined) c.window_width_mm = round0(cmToMm(hole.window_width as number));
+      if (hole.window_height !== undefined) c.window_height_mm = round0(cmToMm(hole.window_height as number));
+      if (hole.door_width !== undefined) c.door_width_mm = round0(cmToMm(hole.door_width as number));
+      if (hole.door_height !== undefined) c.door_height_mm = round0(cmToMm(hole.door_height as number));
+      if (hole.door_position !== undefined) c.door_position = hole.door_position as "l" | "r";
+      if (hole.impost_offset !== undefined) c.impost_offset_mm = round0(cmToMm(hole.impost_offset as number));
+      return c;
+    });
     return {
       id: label,
       site_id: wall.id,

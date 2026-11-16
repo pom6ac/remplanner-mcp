@@ -8,9 +8,10 @@ import { McpError } from "../errors.ts";
 
 /**
  * Таблица «ключ каталога → hole.type / group / дефолты».
- * Проверено кликами по UI (T1): door → single, window → window.
- * Для остальных типов маппинг в model.type — по имени бандла (door_double → double и т.п.),
- * помечено как «не проверено живым кругом» — уточнить при работе с проёмами этих типов.
+ * Двери: door → single проверено кликами по UI (T1), остальные — по имени бандла.
+ * Окна (все 7 пунктов меню «Окна»): проверены кликами по UI, эталоны
+ * tests/fixtures/ui-ref-window-<тип>.json (этап 25, 2026-11-16): model.type, ширина,
+ * высота, глубина (hole.depth — не толщина стены!), подоконник, дефолтное opening.
  */
 export type OpeningKind = {
   type: string;
@@ -20,6 +21,18 @@ export type OpeningKind = {
   depthCm: number;
   /** Высота от пола до низа проёма, см (подоконник окна / ноль у двери). */
   sillCm: number;
+  /** Только окна: дефолтное поле opening модели (сторона петель, как в UI). */
+  defaultOpening?: string;
+  /** Только окна: поле slopes модели (вылет откоса), если UI его создаёт. */
+  slopesCm?: number;
+  /** Только окна: дефолтное число створок (casements). */
+  defaultCasements?: number;
+  /** Балконный блок (type windoor): модель хранит окно и дверь отдельными полями, height нет. */
+  windoor?: boolean;
+  /** Дефолтная сторона подоконника (sill.side) — как в эталоне UI. */
+  sillSide?: "l" | "r";
+  /** Балконная дверь: дефолтный импост (impost_offset = высота импоста от пола − подоконник). */
+  impostOffsetCm?: number;
 };
 
 export const OPENING_KINDS: Record<string, OpeningKind> = {
@@ -44,14 +57,50 @@ export const OPENING_KINDS: Record<string, OpeningKind> = {
   door_system_penal_x2: { type: "door_system_penal_x2", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
   door_system_penal_x3: { type: "door_system_penal_x3", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
   door_system_penal_x4: { type: "door_system_penal_x4", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  // окна (group windows)
-  windowway: { type: "windowway", group: "windows", widthMm: 1200, heightMm: 1500, depthCm: 10, sillCm: 80 },
-  window: { type: "window", group: "windows", widthMm: 1200, heightMm: 1500, depthCm: 10, sillCm: 80 },
-  window_balcony: { type: "window_balcony", group: "windows", widthMm: 1800, heightMm: 2250, depthCm: 10, sillCm: 80 },
-  window_door: { type: "window_door", group: "windows", widthMm: 800, heightMm: 2250, depthCm: 10, sillCm: 0 },
-  french_window: { type: "french_window", group: "windows", widthMm: 1200, heightMm: 2250, depthCm: 10, sillCm: 0 },
-  french_window_coupe: { type: "french_window_coupe", group: "windows", widthMm: 1200, heightMm: 2250, depthCm: 10, sillCm: 0 },
-  french_window_double: { type: "french_window_double", group: "windows", widthMm: 1800, heightMm: 2250, depthCm: 10, sillCm: 0 },
+  // окна (group windows) — эталоны ui-ref-window-*.json, проверено в UI
+  windowway: { type: "windowway", group: "windows", widthMm: 1200, heightMm: 1500, depthCm: 6, sillCm: 85,
+    defaultOpening: "r", slopesCm: 20, defaultCasements: 1, sillSide: "l" },
+  window: { type: "window", group: "windows", widthMm: 1200, heightMm: 1500, depthCm: 6, sillCm: 85,
+    defaultOpening: "r-l", slopesCm: 20, defaultCasements: 1, sillSide: "l" },
+  window_balcony: { type: "windoor", group: "windows", widthMm: 1800, heightMm: 2250, depthCm: 6, sillCm: 10,
+    defaultOpening: "r-l", defaultCasements: 1, windoor: true, sillSide: "r" },
+  window_door: { type: "window_door", group: "windows", widthMm: 800, heightMm: 2250, depthCm: 6, sillCm: 10,
+    defaultOpening: "r-l", slopesCm: 20, defaultCasements: 1, sillSide: "l", impostOffsetCm: 75 },
+  french_window: { type: "french_window", group: "windows", widthMm: 1200, heightMm: 2500, depthCm: 6, sillCm: 0,
+    defaultOpening: "r", defaultCasements: 0, sillSide: "l" },
+  french_window_coupe: { type: "french_window_coupe", group: "windows", widthMm: 1200, heightMm: 2500, depthCm: 14, sillCm: 0,
+    defaultOpening: "r-l", defaultCasements: 0, sillSide: "l" },
+  french_window_double: { type: "french_window_double", group: "windows", widthMm: 1800, heightMm: 2500, depthCm: 14, sillCm: 0,
+    defaultOpening: "r", defaultCasements: 0, sillSide: "l" },
+};
+
+/** Параметры подоконника (модель, см): thinkness — так в модели редактора (опечатка сохранена). */
+export type HoleSill = { thinkness: number; overhang: number; overmeasure: number; side: "l" | "r" };
+
+/** Параметры окон из панели свойств UI (этап 25); всё в мм, угол в градусах. */
+export type WindowParams = {
+  /** Число створок (casements); у французских окон в модели не меняется (0). */
+  casements?: number;
+  /** Угол рассвета, градусы (hole.slope_angle). */
+  slopeAngleDeg?: number;
+  /** Толщина подоконника (sill.thinkness). */
+  sillThicknessMm?: number;
+  /** Вылет подоконника (sill.overhang). */
+  sillOverhangMm?: number;
+  /** Выпуски подоконника вбок (sill.overmeasure). */
+  sillOvermeasureMm?: number;
+  /** Балконный блок (windoor): ширина окна. */
+  windowWidthMm?: number;
+  /** Балконный блок: высота окна. */
+  windowHeightMm?: number;
+  /** Балконный блок: ширина двери. */
+  doorWidthMm?: number;
+  /** Балконный блок: высота двери. */
+  doorHeightMm?: number;
+  /** Балконный блок: сторона двери. */
+  doorPosition?: "left" | "right";
+  /** Балконная дверь: высота импоста от пола (impost_offset = значение − подоконник). */
+  impostHeightMm?: number;
 };
 
 /**
@@ -65,7 +114,7 @@ export function openingFromSwing(swing?: { hinge: "start" | "end"; into: "left" 
   return `${swing.hinge === "end" ? "r" : "l"}-${leaf}`;
 }
 
-export type AddOpeningParams = {
+export type AddOpeningParams = WindowParams & {
   wallId: string;
   /** Ключ каталога (door, window, …). */
   type: string;
@@ -82,6 +131,7 @@ export type AddOpeningParams = {
   swing?: { hinge: "start" | "end"; into: "left" | "right" };
   arched?: boolean;
   casing?: boolean;
+  /** Устаревшее имя casements (число створок). */
   leaves?: number;
 };
 
@@ -185,6 +235,59 @@ function checkPlacement(wall: Wall, at: number, width: number, ignoreHoleId?: st
   }
 }
 
+/** Разбор параметров балконного блока (windoor): ширины окна и двери, итог = сумма. */
+function windoorParts(kind: OpeningKind, p: AddOpeningParams): { ww: number; wh: number; dw: number; dh: number; widthCm: number } {
+  const wh = mmToCm(p.windowHeightMm ?? 1500);
+  const dh = mmToCm(p.doorHeightMm ?? 2250);
+  const wwGiven = p.windowWidthMm !== undefined ? mmToCm(p.windowWidthMm) : null;
+  const dwGiven = p.doorWidthMm !== undefined ? mmToCm(p.doorWidthMm) : null;
+  let ww: number, dw: number;
+  if (wwGiven === null && dwGiven === null) {
+    const total = mmToCm(p.widthMm ?? kind.widthMm);
+    dw = 80; // дефолт двери блока (эталон UI)
+    ww = total - dw;
+  } else if (dwGiven === null) {
+    ww = wwGiven!;
+    dw = mmToCm(p.widthMm ?? kind.widthMm) - ww;
+  } else if (wwGiven === null) {
+    dw = dwGiven;
+    ww = mmToCm(p.widthMm ?? kind.widthMm) - dw;
+  } else {
+    ww = wwGiven;
+    dw = dwGiven;
+  }
+  return { ww, wh, dw, dh, widthCm: ww + dw };
+}
+
+/** Поля окна из панели свойств: sill, slope_angle, casements, slopes, windoor-части. */
+function applyWindowFields(hole: Hole, kind: OpeningKind, p: AddOpeningParams, widthCm: number): void {
+  if (kind.windoor) {
+    const { ww, wh, dw, dh } = windoorParts(kind, p);
+    hole.window_width = ww;
+    hole.window_height = wh;
+    hole.door_width = dw;
+    hole.door_height = dh;
+    hole.door_position = (p.doorPosition ?? "left") === "right" ? "r" : "l";
+  }
+  if (kind.slopesCm !== undefined) hole.slopes = kind.slopesCm;
+  hole.slope_angle = p.slopeAngleDeg ?? 0;
+  const cas = p.casements ?? p.leaves ?? kind.defaultCasements;
+  if (cas !== undefined) hole.casements = cas;
+  const sill: HoleSill = {
+    thinkness: mmToCm(p.sillThicknessMm ?? 40),
+    overhang: mmToCm(p.sillOverhangMm ?? 0),
+    overmeasure: mmToCm(p.sillOvermeasureMm ?? 0),
+    side: kind.sillSide ?? "l",
+  };
+  hole.sill = sill;
+  if (kind.impostOffsetCm !== undefined) {
+    const floor = hole.floor_height ?? 0;
+    hole.impost_offset = p.impostHeightMm !== undefined ? mmToCm(p.impostHeightMm) - floor : kind.impostOffsetCm;
+  }
+  // короб с наличниками: у окон UI включён по умолчанию
+  hole.casing = p.casing === false ? 0 : 1;
+}
+
 /** addOpening: ставит проём на стену (мм), проверяет коллизии. */
 export function addOpening(model: Model, params: AddOpeningParams): Hole {
   const wall = model.walls[params.wallId];
@@ -197,23 +300,25 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
       hint: `доступны: ${Object.keys(OPENING_KINDS).join(", ")}`,
     });
   }
-  const width = mmToCm(params.widthMm ?? kind.widthMm);
+  const widthCm = kind.windoor
+    ? windoorParts(kind, params).widthCm
+    : mmToCm(params.widthMm ?? kind.widthMm);
   const len = axisLength(wall);
   let at: number;
   if (params.centerMm !== undefined) {
-    at = mmToCm(params.centerMm) - width / 2;
+    at = mmToCm(params.centerMm) - widthCm / 2;
   } else if (params.offsetMm !== undefined) {
     const fromEnd = (params.from ?? "start") === "end";
     const offsetFrom = params.offsetFrom ?? "inner";
     // tEdge — координата угла внутренней грани вдоль оси (№9 ревью)
     const tEdge = offsetFrom === "inner" ? innerEdgeOffsetCm(model, wall, fromEnd ? "end" : "start") : fromEnd ? len : 0;
-    at = fromEnd ? tEdge - mmToCm(params.offsetMm) - width : tEdge + mmToCm(params.offsetMm);
+    at = fromEnd ? tEdge - mmToCm(params.offsetMm) - widthCm : tEdge + mmToCm(params.offsetMm);
   } else {
     at = mmToCm(0);
   }
-  checkPlacement(wall, at, width);
+  checkPlacement(wall, at, widthCm);
 
-  const pc = pointAtLength(wallAxis(wall), at + width / 2);
+  const pc = pointAtLength(wallAxis(wall), at + widthCm / 2);
   const holeId = newId(10);
   const hole: Hole = {
     id: holeId,
@@ -221,18 +326,22 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
     type: kind.type,
     group: kind.group,
     pc: { x: r2(pc.x), y: r2(pc.y) },
-    width: r2(width),
+    width: r2(widthCm),
     height: mmToCm(params.heightMm ?? kind.heightMm),
     depth: kind.depthCm,
     at: r2(at),
   };
   const sill = mmToCm(params.sillHeightMm ?? kind.sillCm * 10);
   if (sill > 0) hole.floor_height = sill;
-  const opening = openingFromSwing(params.swing);
+  else if (kind.group === "windows") hole.floor_height = 0; // эталон UI: у окон floor_height присутствует всегда
+  // у балконного блока поле height в модели отсутствует (эталон ui-ref-window-window_balcony)
+  if (kind.windoor) delete hole.height;
+  const opening = openingFromSwing(params.swing) ?? (kind.group === "windows" ? kind.defaultOpening : undefined);
   if (opening) hole.opening = opening;
   if (params.arched) hole["arched"] = 1;
-  if (params.casing !== undefined) hole.casing = params.casing ? 1 : 0;
-  if (params.leaves !== undefined) hole.casements = params.leaves;
+  if (kind.group === "windows") applyWindowFields(hole, kind, params, widthCm);
+  else if (params.casing !== undefined) hole.casing = params.casing ? 1 : 0;
+  if (kind.group !== "windows" && params.leaves !== undefined) hole.casements = params.leaves;
 
   wall.holes[holeId] = hole;
   setHolePoints(wall, hole);
@@ -270,6 +379,30 @@ export type UpdateOpeningParams = Partial<Omit<AddOpeningParams, "wallId" | "typ
   type?: string;
 };
 
+/** Меняет поле sill проёма по переданным частям (мм), сохраняя остальное. */
+function applySill(hole: Hole, p: WindowParams): void {
+  const prev = (hole.sill ?? {}) as Partial<HoleSill>;
+  hole.sill = {
+    thinkness: p.sillThicknessMm !== undefined ? mmToCm(p.sillThicknessMm) : prev.thinkness ?? 4,
+    overhang: p.sillOverhangMm !== undefined ? mmToCm(p.sillOverhangMm) : prev.overhang ?? 0,
+    overmeasure: p.sillOvermeasureMm !== undefined ? mmToCm(p.sillOvermeasureMm) : prev.overmeasure ?? 0,
+    side: prev.side ?? "l",
+  };
+}
+
+/** Меняет части балконного блока; итоговая ширина — сумма окна и двери. */
+function applyWindoorParts(hole: Hole, p: WindowParams): number | null {
+  const ww = p.windowWidthMm !== undefined ? mmToCm(p.windowWidthMm) : (hole.window_width as number | undefined);
+  const dw = p.doorWidthMm !== undefined ? mmToCm(p.doorWidthMm) : (hole.door_width as number | undefined);
+  if (ww === undefined && dw === undefined) return null;
+  if (ww !== undefined) hole.window_width = ww;
+  if (dw !== undefined) hole.door_width = dw;
+  if (p.windowHeightMm !== undefined) hole.window_height = mmToCm(p.windowHeightMm);
+  if (p.doorHeightMm !== undefined) hole.door_height = mmToCm(p.doorHeightMm);
+  if (p.doorPosition !== undefined) hole.door_position = p.doorPosition === "right" ? "r" : "l";
+  return (hole.window_width as number) + (hole.door_width as number);
+}
+
 /** opening_update: меняет размеры/положение проёма с повторной проверкой коллизий. */
 export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   const wall = model.walls[params.wallId];
@@ -280,6 +413,9 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
     const kind = OPENING_KINDS[params.type]!;
     hole.type = kind.type;
     hole.group = kind.group;
+    if (kind.group === "windows" && kind.defaultOpening !== undefined && hole.opening === undefined) {
+      hole.opening = kind.defaultOpening;
+    }
   }
   if (params.heightMm !== undefined) hole.height = mmToCm(params.heightMm);
   if (params.sillHeightMm !== undefined) {
@@ -293,9 +429,21 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   }
   if (params.arched !== undefined) hole["arched"] = params.arched ? 1 : 0;
   if (params.casing !== undefined) hole.casing = params.casing ? 1 : 0;
-  if (params.leaves !== undefined) hole.casements = params.leaves;
+  if (params.casements !== undefined || params.leaves !== undefined) {
+    const cas = params.casements ?? params.leaves;
+    if (cas !== undefined) hole.casements = cas;
+  }
+  if (params.slopeAngleDeg !== undefined) hole.slope_angle = params.slopeAngleDeg;
+  if (params.sillThicknessMm !== undefined || params.sillOverhangMm !== undefined || params.sillOvermeasureMm !== undefined) {
+    applySill(hole, params);
+  }
+  if (params.impostHeightMm !== undefined) {
+    const floor = (hole.floor_height as number | undefined) ?? 0;
+    hole.impost_offset = mmToCm(params.impostHeightMm) - floor;
+  }
+  const windoorWidth = applyWindoorParts(hole, params);
 
-  const width = params.widthMm !== undefined ? mmToCm(params.widthMm) : hole.width;
+  const width = windoorWidth ?? (params.widthMm !== undefined ? mmToCm(params.widthMm) : hole.width);
   const len = axisLength(wall);
   let at: number;
   if (params.centerMm !== undefined) {
