@@ -10,6 +10,11 @@ import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_T
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
 import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../model/rigels.ts";
 import { addGasLine, updateGasLine, deleteGasLine } from "../model/pipes.ts";
+import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
+import {
+  addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
+} from "../model/terraces.ts";
+import type { TerraceBorder } from "../model/types.ts";
 import { addItem, updateItem, deleteItem, itemsList, roomPolygons, type RoomPolygon } from "../model/items.ts";
 import { compactModel, wallLengthMm } from "../model/compact.ts";
 import { validateModel } from "../model/validate.ts";
@@ -69,6 +74,32 @@ function resolveItem(model: Model, ref: string): ItemProps {
     if (item) return item;
   }
   return throwNotFound(`предмет ${ref} не найден (id сайта или метка I<n> из model_get)`);
+}
+
+/** Граница террасы/участка по site-id или метке TB<n>/XB<n> из model_get. */
+function resolveBorder(model: Model, key: "terrace_borders" | "territory_borders", label: string, ref: string): TerraceBorder {
+  const borders = (model[key] ?? {}) as Record<string, TerraceBorder>;
+  if (borders[ref]) return borders[ref]!;
+  const m = new RegExp(`^${label}(\\d+)$`).exec(ref);
+  if (m) {
+    const list = Object.values(borders);
+    const border = list[Number(m[1]) - 1];
+    if (border) return border;
+  }
+  return throwNotFound(`граница ${ref} не найдена (id сайта или метка ${label}<n> из model_get)`);
+}
+
+/** Проём в полу по site-id или метке FH1…FH_n из model_get. */
+function resolveFloorHole(model: Model, ref: string): { id: string } {
+  const holes = model.level_holes ?? {};
+  if (holes[ref]) return holes[ref]!;
+  const m = /^FH(\d+)$/.exec(ref);
+  if (m) {
+    const list = Object.values(holes);
+    const hole = list[Number(m[1]) - 1];
+    if (hole) return hole;
+  }
+  return throwNotFound(`проём в полу ${ref} не найден (id сайта или метка FH<n> из model_get)`);
 }
 
 /** Газовая линия по site-id или метке G1…G_n. */
@@ -488,7 +519,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "Лестницы — группа stairs (21 позиция меню «Лестницы»: ladder_march, spiral_staircase, …) — это предметы каталога, ставятся item_add, а не отдельная сущность. " +
         "«Коммуникации» (меню на исходном плане) — тоже предметы каталога: стояки water, water_column_hot, water_column_cold, drainage_column, " +
         "вентиляция air, отопление radiator_old, heat_pipe, газ gas_pipe, gas_boiler, gas_meter, пожарный датчик fire_detector и др.; " +
-        "исключение — газовая линия gas_line: отдельная сущность, ставится gas_line_add.",
+        "исключение — газовая линия gas_line: отдельная сущность, ставится gas_line_add. " +
+        "Меню «Терраса и участок» (исходный план): террасная мебель — предметы каталога; контуры террасы/участка, " +
+        "ограждение и опорный столб — отдельные сущности (terrace_add, terrace_fence_add, terrace_column_add, territory_add); " +
+        "«Террасная доска» — покрытие листа «Полы» (не предмет).",
       {
         query: z.string().min(1),
         group: z.string().optional().describe("furniture, santeh_furniture, lights, stairs, sockets, …"),
@@ -539,7 +573,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "вентиляционный короб air, радиатор radiator_old, стояк отопления heat_pipe, газовый стояк gas_pipe, колонка gas_boiler, счётчик gas_meter, " +
         "пожарный датчик fire_detector — предметы каталога (ставятся item_add, размеры из каталога). " +
         "У ceiling_water (ввод водоснабжения) и conditioner_cage (корзина кондиционера) постановка только у стены — against_wall. " +
-        "Газовая линия gas_line — НЕ предмет: инструмент gas_line_add.",
+        "Газовая линия gas_line — НЕ предмет: инструмент gas_line_add. " +
+        "Меню «Терраса и участок»: диваны terrace-серии (sofa_pottery_barn_malibu_wicker, sofa_coup_detat_campanha, " +
+        "armchair_solana_papasan) — предметы каталога (item_add, план furniture); сами терраса/ограждение/столб — " +
+        "отдельные сущности (terrace_add, terrace_fence_add, terrace_column_add), «Террасная доска» terrace_board — " +
+        "покрытие листа «Полы» (MCP пока не покрывает).",
       {
         name: z.string().min(1).describe("точное имя позиции каталога"),
         position,
@@ -840,12 +878,234 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
     ),
 
+    // ---------- Проем в полу (пункт меню «Проем в полу», этап 64) ----------
+    floor_hole_add: tool(
+      "Добавить проём в полу (пункт меню «Проем в пола»): прямоугольник по двум противоположным углам " +
+        "(мм) внутри одной комнаты — перетаскиванию прямоугольника в редакторе соответствует пара углов. " +
+        "Проём должен целиком лежать внутри одной комнаты и не пересекать другие проёмы в полу " +
+        "(GEOMETRY_CONFLICT). Лимитов размеров в панели редактора нет — только ненулевой размер. " +
+        "После добавления вызывайте model_validate и project_save.",
+      {
+        corner1: mmPoint.describe("первый угол прямоугольника, мм"),
+        corner2: mmPoint.describe("противоположный угол прямоугольника, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const hole = ws.apply("floor_hole_add", (m) => addFloorHole(m, {
+          corner1: a["corner1"] as MmPoint,
+          corner2: a["corner2"] as MmPoint,
+        }, ws.rooms()));
+        return ok(compactEntity(ws.model, (c) => c.level_holes.find((h) => h.site_id === hole.id) ?? null));
+      },
+    ),
+
+    floor_hole_update: tool(
+      "Изменить проём в полу: новые углы прямоугольника (corner1/corner2, мм; переданные — " +
+        "заменяются, непереданные остаются). Правила те же: внутри одной комнаты, без пересечения " +
+        "других проёмов. floor_hole_id — id проёма (site_id) или метка FH<n> из model_get.",
+      {
+        floor_hole_id: z.string().min(1).describe("метка FH<n> из model_get или id сайта"),
+        corner1: mmPoint.optional().describe("новый первый угол, мм"),
+        corner2: mmPoint.optional().describe("новый противоположный угол, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const hole = ws.apply("floor_hole_update", (m) => updateFloorHole(m, {
+          holeId: resolveFloorHole(m, a["floor_hole_id"] as string).id,
+          corner1: a["corner1"] as MmPoint | undefined,
+          corner2: a["corner2"] as MmPoint | undefined,
+        }, ws.rooms()));
+        return ok(compactEntity(ws.model, (c) => c.level_holes.find((h) => h.site_id === hole.id) ?? null));
+      },
+    ),
+
+    floor_hole_delete: tool(
+      "Удалить проём в полу (метка FH<n> из model_get).",
+      { floor_hole_id: z.string().min(1).describe("метка FH<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("floor_hole_delete", (m) => {
+          deleteFloorHole(m, resolveFloorHole(m, a["floor_hole_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["floor_hole_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Терраса и участок (пункты меню «Терраса и участок», этап 64) ----------
+    terrace_add: tool(
+      "Нарисовать террасу (пункт меню «Терраса и участок» → «Нарисовать террасу»): замкнутый контур " +
+        "из отрезков-границ, points — вершины (мм, минимум 3). Контур не должен самопересекаться; " +
+        "сторона, лежащая на ограждении террасы, отклоняется — проведите там terrace_fence_add " +
+        "(редактор удаляет такие границы). Площадь террасы редактор считает сам. " +
+        "После добавления вызывайте model_validate и project_save.",
+      { points: z.array(mmPoint).min(3).max(64).describe("вершины замкнутого контура, мм") },
+      async (a) => {
+        const ws = wsOf();
+        const borders = ws.apply("terrace_add", (m) => addBorderRing(m, "terrace_borders", "терраса", { points: a["points"] as MmPoint[] }));
+        return ok({ created: borders.length, borders: borders.map((b) => ({ id: b.id, p1: b.p1, p2: b.p2 })), hint: SCENARIO_HINT });
+      },
+    ),
+
+    terrace_border_update: tool(
+      "Перенести узел/границу террасы: новые концы отрезка (start/end, мм). Общий узел соседних " +
+        "границ двигается вместе (как перенос узла в UI). terrace_border_id — метка TB<n> из model_get или id сайта.",
+      {
+        terrace_border_id: z.string().min(1).describe("метка TB<n> из model_get или id сайта"),
+        start: mmPoint.optional().describe("новое начало отрезка, мм"),
+        end: mmPoint.optional().describe("новый конец отрезка, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const border = ws.apply("terrace_border_update", (m) => updateBorder(m, "terrace_borders", "терраса", {
+          borderId: resolveBorder(m, "terrace_borders", "TB", a["terrace_border_id"] as string).id,
+          start: a["start"] as MmPoint | undefined,
+          end: a["end"] as MmPoint | undefined,
+        }));
+        return ok({ border: { id: border.id, p1: border.p1, p2: border.p2 }, hint: SCENARIO_HINT });
+      },
+    ),
+
+    terrace_border_delete: tool(
+      "Удалить границу террасы (метка TB<n> из model_get). Контур может стать незамкнутым — " +
+        "как при удалении границы в UI.",
+      { terrace_border_id: z.string().min(1).describe("метка TB<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("terrace_border_delete", (m) => {
+          deleteBorder(m, "terrace_borders", resolveBorder(m, "terrace_borders", "TB", a["terrace_border_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["terrace_border_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    terrace_fence_add: tool(
+      "Поставить ограждение террасы (пункт меню «Терраса и участок» → «Ограждение террасы»): отрезок " +
+        "от start до end (мм). Как в UI, ставится при существующей террасе — сначала terrace_add. " +
+        "Толщина по умолчанию 50 мм (defs редактора), лимит 10..1000 мм. Ограждение заменяет границу " +
+        "террасы: границу под ограждением редактор убирает сам. Изменение/удаление — wall_update/wall_delete.",
+      {
+        start: mmPoint.describe("начало ограждения, мм"),
+        end: mmPoint.describe("конец ограждения, мм"),
+        thickness_mm: mmInt.optional().describe("толщина, мм (по умолчанию 50)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const fence = ws.apply("terrace_fence_add", (m) => addTerraceFence(m, {
+          start: a["start"] as MmPoint,
+          end: a["end"] as MmPoint,
+          thicknessMm: a["thickness_mm"] as number | undefined,
+        }));
+        return ok({ id: fence.id, from: [Math.round(fence.p1.x * 10), Math.round(fence.p1.y * 10)], to: [Math.round(fence.p2.x * 10), Math.round(fence.p2.y * 10)], thickness_mm: Math.round(fence.depth * 10), hint: SCENARIO_HINT });
+      },
+    ),
+
+    terrace_column_add: tool(
+      "Поставить опорный столб террасы (пункт меню «Терраса и участок» → «Опорный столб террасы»): " +
+        "квадрат 200×200 мм по центру (мм). Как в UI, ставится на террасе — центр внутри контура " +
+        "террасы или на его границе. Габариты 100..20000 × 100..6000 мм (лимиты панели). " +
+        "После добавления вызывайте model_validate и project_save.",
+      {
+        center: mmPoint.describe("центр столба, мм"),
+        width_mm: mmInt.optional().describe("габарит по X (по умолчанию 200)"),
+        height_mm: mmInt.optional().describe("габарит по Y (по умолчанию 200)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const column = ws.apply("terrace_column_add", (m) => addTerraceColumn(m, {
+          center: a["center"] as MmPoint,
+          widthMm: a["width_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.pillars.find((p) => p.site_id === column.id) ?? null));
+      },
+    ),
+
+    terrace_column_update: tool(
+      "Изменить столб террасы: перенести (center, мм) или изменить габариты (width_mm/height_mm). " +
+        "Столб должен остаться в контуре террасы. terrace_column_id — метка P<n> из model_get или id сайта.",
+      {
+        terrace_column_id: z.string().min(1).describe("метка P<n> из model_get или id сайта"),
+        center: mmPoint.optional().describe("новый центр, мм"),
+        width_mm: mmInt.optional(),
+        height_mm: mmInt.optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const column = ws.apply("terrace_column_update", (m) => updateTerraceColumn(m, resolvePillar(m, a["terrace_column_id"] as string).id, {
+          center: a["center"] as MmPoint | undefined,
+          widthMm: a["width_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.pillars.find((p) => p.site_id === column.id) ?? null));
+      },
+    ),
+
+    terrace_column_delete: tool(
+      "Удалить столб террасы (метка P<n> из model_get).",
+      { terrace_column_id: z.string().min(1).describe("метка P<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("terrace_column_delete", (m) => {
+          deleteTerraceColumn(m, resolvePillar(m, a["terrace_column_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["terrace_column_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    territory_add: tool(
+      "Нарисовать участок (пункт меню «Терраса и участок» → «Нарисовать участок»): замкнутый контур " +
+        "из отрезков-границ (мм, минимум 3 вершины) — зона двора вокруг дома. Правила те же, что у " +
+        "террасы: без самопересечений. После добавления вызывайте model_validate и project_save.",
+      { points: z.array(mmPoint).min(3).max(64).describe("вершины замкнутого контура, мм") },
+      async (a) => {
+        const ws = wsOf();
+        const borders = ws.apply("territory_add", (m) => addBorderRing(m, "territory_borders", "участок", { points: a["points"] as MmPoint[] }));
+        return ok({ created: borders.map((b) => ({ id: b.id, p1: b.p1, p2: b.p2 })), hint: SCENARIO_HINT });
+      },
+    ),
+
+    territory_border_update: tool(
+      "Перенести узел/границу участка (start/end, мм); общие узлы соседних границ двигаются вместе. " +
+        "territory_border_id — метка XB<n> из model_get или id сайта.",
+      {
+        territory_border_id: z.string().min(1).describe("метка XB<n> из model_get или id сайта"),
+        start: mmPoint.optional().describe("новое начало отрезка, мм"),
+        end: mmPoint.optional().describe("новый конец отрезка, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const border = ws.apply("territory_border_update", (m) => updateBorder(m, "territory_borders", "участок", {
+          borderId: resolveBorder(m, "territory_borders", "XB", a["territory_border_id"] as string).id,
+          start: a["start"] as MmPoint | undefined,
+          end: a["end"] as MmPoint | undefined,
+        }));
+        return ok({ border: { id: border.id, p1: border.p1, p2: border.p2 }, hint: SCENARIO_HINT });
+      },
+    ),
+
+    territory_border_delete: tool(
+      "Удалить границу участка (метка XB<n> из model_get).",
+      { territory_border_id: z.string().min(1).describe("метка XB<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("territory_border_delete", (m) => {
+          deleteBorder(m, "territory_borders", resolveBorder(m, "territory_borders", "XB", a["territory_border_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["territory_border_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
     // ---------- Чтение и проверка (§7.6) ----------
     model_get: tool(
       "Текущая модель плана в компактном виде: стены W1… (осевые концы, длины по осям и внутренним граням, толщины, проёмы с отступами), " +
         "комнаты R1… (площади м², периметры), предметы I1…, колонны P1… (пункт меню «Несущая колонна»), ригели B1… (пункт меню «Потолочный ригель»), " +
-        "газовые линии G1… (пункт меню «Коммуникации» → «Газовый трубопровод»). " +
-        "Обычно < 5 КБ. id сайта — в поле site_id; метки W/R/I/P/B/G можно использовать в других инструментах.",
+        "газовые линии G1… (пункт меню «Коммуникации» → «Газовый трубопровод»), границы террас TB1… и участка XB1… (пункт меню «Терраса и участок»), " +
+        "проёмы в полу FH1… (пункт меню «Проем в полу»). " +
+        "Обычно < 5 КБ. id сайта — в поле site_id; метки W/R/I/P/B/G/TB/XB/FH можно использовать в других инструментах.",
       { detail: z.enum(["compact", "full"]).optional() },
       async (a) => {
         const ws = wsOf();
