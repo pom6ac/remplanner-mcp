@@ -82,9 +82,28 @@ export type AddItemParams = {
   catalogEntry?: ToolEntry;
 };
 
+/** Ключи пунктов меню «Лестницы» листа «Исходный план» (эталоны tests/fixtures/ui-ref-stair-*.json,
+ *  проба 53-stairs-ui): редактор ставит их кликом по панели листа init, поэтому в плане предмета
+ *  появляется видимость на исходном плане (a:1) рядом с «домашним» листом каталога. */
+export const STAIR_MENU_TOOLS = new Set([
+  "ladder_march", "ladder_console", "ladder_2march", "ladder_2march-fan", "ladder_2march_console",
+  "ladder_trapeze", "rounded_staircase", "ladder_march_double", "ladder_3march", "spiral_staircase",
+  "upper_march", "ladder_circle", "porch", "attic_staircase", "step_ladder", "stair_machine", "stair_spot",
+]);
+
+/** План предмета из записи каталога: ключ листа каталога init отображается в модельный ключ a
+ *  (лист «Исходный план»; эталон ui-ref-stair-upper_march: план {a:1}); у пунктов меню «Лестницы»
+ *  добавляется a:1 (эталоны ui-ref-stair-ladder_march и др.: {furniture:6, a:1}). */
+export function itemPlanFromEntry(entry: ToolEntry | undefined): Record<string, number> {
+  const plan: Record<string, number> = {};
+  for (const [k, v] of Object.entries(entry?.plan ?? {})) plan[k === "init" ? "a" : k] = v;
+  if (entry && STAIR_MENU_TOOLS.has(entry.name) && plan["a"] === undefined) plan["a"] = 1;
+  return plan;
+}
+
 function itemPlan(entry: ToolEntry | undefined): Record<string, number> {
-  if (entry && Object.keys(entry.plan).length > 0) return { ...entry.plan };
-  return { furniture: 1 };
+  const mapped = itemPlanFromEntry(entry);
+  return Object.keys(mapped).length > 0 ? mapped : { furniture: 1 };
 }
 
 /** item_add: центр / у стены (с касанием внутренней грани при gap=0) / в углу помещения.
@@ -165,7 +184,7 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
     width: r2(widthCm),
     height: r2(depthCm),
     self_height: r2(selfHeightCm),
-    plan: entry && Object.keys(entry.plan).length > 0 ? { ...entry.plan } : { furniture: 1 },
+    plan: itemPlan(entry),
     id_room: found.roomId ?? null,
     id_wall: idWall,
     layer: null,

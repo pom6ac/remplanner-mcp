@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Добавлено
+
+- **Раздел «Лестницы» редактора: покрыты все 21 пунктов меню** (эталоны сняты из UI —
+  `tests/fixtures/ui-ref-stair-*.json`): лестницы — **предметы каталога** (группа `stairs`),
+  а не отдельная сущность — ставятся существующими `catalog_search` + `item_add`
+  (`ladder_march`, `ladder_console`, `ladder_2march`, `ladder_2march-fan`,
+  `ladder_2march_console-fan`, `ladder_2march_console`, `ladder_trapeze`, `rounded_staircase`,
+  `ladder_march_double`, `ladder_fan_2march`, `ladder_3march`, `ladder_3march_fan`,
+  `spiral_staircase`, `upper_march`, `ladder_circle`, `porch`, `attic_staircase`, `step_ladder`,
+  `escalator`, `elevator`, `floor_hatch`; «Тренажер-лестница», «Светильник для подсветки пола»,
+  «Стремянка», «Стеллаж-лесенка», «Душевой трап» — те же предметы в других группах).
+  Марши, ступени, высота подъёма и ограждение в модель не пишутся (отрисовка вида); панель
+  свойств — «Изменить размер» (`width`/`height`). Как в UI, `item_add` для пунктов меню
+  «Лестницы» добавляет видимость на исходном плане (`plan: {…, a:1}`), а ключ каталога
+  `init` отображается в модельный `a` (`upper_march`, `escalator`, `elevator`). У `stair_spot`
+  над полом 20 см (`elevation_mm=200`); `porch`/`stair_spot` в редакторе ставятся только у
+  стены (`against_wall`).
+
 ### Исправлено (ревью PR #5 «Потолочный ригель»)
 
 - `rigel_add`/`rigel_update`/`rigel_delete` входят в общую атомарную финализацию зависимостей:
