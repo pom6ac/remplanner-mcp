@@ -398,8 +398,14 @@ function windoorParts(kind: OpeningKind, p: Partial<AddOpeningParams>, current?:
       ww = total - dw;
     }
   } else if (current) {
-    // update без ширин: части не трогаем, итог — прежняя ширина
-    return { wh, dh, widthCm: current.width };
+    if (hasPrev) {
+      // update без ширин: части не трогаем, итог — прежняя ширина
+      return { wh, dh, widthCm: current.width };
+    }
+    // у старого объекта без частей (ревью 30, N3) части нормализуются из дефолтов
+    // каталога при любом update: дверь 80 см по эталону UI, окно — остаток ширины
+    dw = 80;
+    ww = r2(current.width - dw);
   } else {
     dw = 80; // дефолт двери блока (эталон UI)
     ww = mmToCm(p.widthMm ?? kind.widthMm) - dw;
@@ -600,10 +606,13 @@ export type UpdateOpeningParams = Partial<Omit<AddOpeningParams, "wallId" | "typ
   type?: string;
 };
 
-/** Меняет поле sill проёма по переданным частям (мм), сохраняя остальное. */
+/** Меняет поле sill проёма по переданным частям (мм), сохраняя остальное.
+ *  Прежний объект расширяется через spread (ревью 30, N5): неизвестные вложенные
+ *  поля (не из четырёх известных ключей) не теряются. */
 function applySill(hole: Hole, p: WindowParams): void {
   const prev = (hole.sill ?? {}) as Partial<HoleSill>;
   hole.sill = {
+    ...prev,
     thinkness: p.sillThicknessMm !== undefined ? mmToCm(p.sillThicknessMm) : prev.thinkness ?? 4,
     overhang: p.sillOverhangMm !== undefined ? mmToCm(p.sillOverhangMm) : prev.overhang ?? 0,
     overmeasure: p.sillOvermeasureMm !== undefined ? mmToCm(p.sillOvermeasureMm) : prev.overmeasure ?? 0,
@@ -611,24 +620,20 @@ function applySill(hole: Hole, p: WindowParams): void {
   };
 }
 
-/** Присваивает разобранные части балконного блока (вызывается после checkPlacement). */
-function applyWindoorPartsFrom(hole: Hole, parts: { ww?: number; wh: number; dw?: number; dh: number }, p: WindowParams): void {
+/** Присваивает разобранные части балконного блока (вызывается после checkPlacement).
+ *  Части пишутся всегда: у старого объекта без частей они нормализуются из дефолтов
+ *  каталога (ревью 30, N3) — windoorParts при отсутствии прежних частей даёт
+ *  дефолтные ширины и высоты (окно 150, дверь 225 по эталону UI). */
+function applyWindoorPartsFrom(hole: Hole, parts: { ww?: number; wh: number; dw?: number; dh: number }): void {
   if (parts.ww !== undefined) hole.window_width = parts.ww;
   if (parts.dw !== undefined) hole.door_width = parts.dw;
-  // у старого объекта без частей высоты не выдумываем, если их не запросили
-  if (p.windowHeightMm !== undefined || hole.window_height !== undefined) hole.window_height = parts.wh;
-  if (p.doorHeightMm !== undefined || hole.door_height !== undefined) hole.door_height = parts.dh;
-  if (p.doorPosition !== undefined) hole.door_position = "l"; // right отвергнут валидатором (№4)
-}
-
-/** Проём меняет ширину/части через windoor-параметры или общую ширину. */
-function touchesWindoor(p: Partial<AddOpeningParams>): boolean {
-  return p.widthMm !== undefined || p.windowWidthMm !== undefined || p.doorWidthMm !== undefined
-    || p.windowHeightMm !== undefined || p.doorHeightMm !== undefined || p.doorPosition !== undefined;
+  hole.window_height = parts.wh;
+  hole.door_height = parts.dh;
+  hole.door_position = "l"; // right отвергнут валидатором (№4); у старого объекта нормализуется из дефолта
 }
 
 /** Сопоставление type модели → вид каталога (для валидации update без явного type). */
-const KIND_BY_HOLE_TYPE: Record<string, OpeningKind> = {};
+export const KIND_BY_HOLE_TYPE: Record<string, OpeningKind> = {};
 for (const k of Object.values(OPENING_KINDS)) KIND_BY_HOLE_TYPE[k.type] = k;
 
 /**
@@ -654,66 +659,35 @@ function assignHole(target: Hole, candidate: Hole): void {
 }
 
 /**
- * Смена типа между не-балконными типами (ревью 28, выбор поведения задокументирован
- * в отчёте 29): конверсия РАЗРЕШЕНА — поля, неприменимые новому типу, сбрасываются,
- * применимые выставляются в дефолты нового типа (casements, filling, slopes, импост,
- * сторона подоконника, opening). Переходы на/с балконного блока по-прежнему отвергаются.
+ * opening_update: меняет размеры/положение проёма с повторной проверкой коллизий.
+ * Смена типа не поддерживается (ревью 30, N1/N2/N4: каждая версия конверсии рождала
+ * новые регрессии): type, отличный от текущего (после нормализации legacy-алиаса
+ * window_balcony → windoor), — INVALID_ARGUMENT с подсказкой удалить проём и добавить
+ * новый; передача текущего type — no-op.
  */
-function applyKindConversion(hole: Hole, kind: OpeningKind): void {
-  if (kind.group === "windows") {
-    hole.slope_angle = 0;
-    if (kind.defaultCasements !== undefined) hole.casements = kind.defaultCasements;
-    else delete hole.casements;
-    if (kind.defaultFilling !== undefined) hole.filling = kind.defaultFilling;
-    else delete hole.filling;
-    if (kind.slopesCm !== undefined) hole.slopes = kind.slopesCm;
-    else delete hole.slopes;
-    if (kind.impostOffsetCm !== undefined) hole.impost_offset = kind.impostOffsetCm;
-    else delete hole.impost_offset;
-    const sill = hole.sill as HoleSill | undefined;
-    if (sill === undefined) {
-      // дефолтный подоконник вида (как в addOpening: толщина 4 см, вылет 0)
-      hole.sill = { thinkness: 4, overhang: 0, overmeasure: 0, side: kind.sillSide ?? "l" };
-    } else if (kind.sillSide !== undefined) {
-      sill.side = kind.sillSide;
-    }
-    if (kind.defaultOpening !== undefined && hole.opening === undefined) hole.opening = kind.defaultOpening;
-    if (hole.floor_height === undefined) hole.floor_height = mmToCm(kind.sillCm * 10); // эталон UI: у окон floor_height есть всегда
-  } else {
-    // двери: оконные поля (подоконник, створки, угол, импост, заполнение) не применимы
-    delete hole.sill;
-    delete hole.slope_angle;
-    delete hole.slopes;
-    delete hole.casements;
-    delete hole.filling;
-    delete hole.impost_offset;
-    delete hole.floor_height;
-  }
-}
-
-/** opening_update: меняет размеры/положение проёма с повторной проверкой коллизий. */
 export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   const wall = model.walls[params.wallId];
   if (!wall) throw new McpError("NOT_FOUND", `стена ${params.wallId} не найдена`);
   const hole = wall.holes[params.holeId];
   if (!hole) throw new McpError("NOT_FOUND", `проём ${params.holeId} не найден`);
-  // смена типа — до любой мутации (№3): конверсия между windoor и остальными типами не тривиальна;
-  // legacy window_balcony нормализуется к windoor и там, и тут (ревью 28, R2)
+  // смена типа — до любой мутации (№3); legacy window_balcony нормализуется к windoor
+  // и в сравнении, и в сообщении об ошибке (ревью 28, R2)
   const holeType = normalizeHoleType(hole.type);
-  let kind: OpeningKind | undefined;
   if (params.type !== undefined) {
-    kind = OPENING_KINDS[params.type];
+    // вид ищется и по ключу каталога, и по type модели (windoor/single/…): передача
+    // текущего типа объекта — no-op, включая legacy-алиас window_balcony
+    const kind = OPENING_KINDS[params.type] ?? KIND_BY_HOLE_TYPE[normalizeHoleType(params.type)];
     if (!kind) {
       throw new McpError("INVALID_ARGUMENT", `неизвестный тип проёма: ${params.type}`, {
         hint: `доступны: ${Object.keys(OPENING_KINDS).join(", ")}`,
       });
     }
-    if (kind.type !== holeType && (holeType === "windoor" || kind.type === "windoor")) {
+    if (kind.type !== holeType) {
       throw new McpError("INVALID_ARGUMENT",
-        `смена типа «${hole.type}» на «${kind.type}» не поддерживается: удалите проём и добавьте заново (opening_delete + opening_add)`);
+        `смена типа не поддерживается: удалите проём (opening_delete) и добавьте новый (opening_add) с нужным типом`);
     }
   }
-  const effKind = kind ?? KIND_BY_HOLE_TYPE[holeType];
+  const effKind = KIND_BY_HOLE_TYPE[holeType];
   if (!effKind) {
     // неизвестный тип в модели не пропускается мимо валидатора (ревью 28, R2)
     throw new McpError("INVALID_ARGUMENT", `неизвестный тип проёма в модели: ${hole.type}`, {
@@ -730,13 +704,11 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
     candidate.type = effKind.type; // нормализация legacy-имени типа
     candidate.group = effKind.group;
   }
-  const typeChanged = kind !== undefined && kind.type !== holeType;
-  if (typeChanged) applyKindConversion(candidate, kind!);
 
-  // разбор частей — до мутации; присваивание только кандидату
-  const windoor = effKind.windoor && touchesWindoor(params)
-    ? windoorParts(effKind, params, hole)
-    : null;
+  // разбор частей — до мутации; присваивание только кандидату. У windoor части
+  // разбираются при любом update: у старого объекта без частей они нормализуются
+  // из дефолтов каталога (ревью 30, N3) до итоговых инвариантов
+  const windoor = effKind.windoor ? windoorParts(effKind, params, hole) : null;
 
   const heightCm = params.heightMm !== undefined ? mmToCm(params.heightMm) : undefined;
   let sillFloor: number | undefined;
@@ -766,12 +738,7 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   }
   checkPlacement(wall, at, width, hole.id); // до мутации: при ошибке модель не меняется
 
-  if (windoor) applyWindoorPartsFrom(candidate, windoor, params);
-  if (kind) {
-    if (kind.group === "windows" && kind.defaultOpening !== undefined && candidate.opening === undefined) {
-      candidate.opening = kind.defaultOpening;
-    }
-  }
+  if (windoor) applyWindoorPartsFrom(candidate, windoor);
   if (heightCm !== undefined) candidate.height = heightCm;
   if (sillFloor !== undefined) {
     if (sillFloor > 0) candidate.floor_height = sillFloor;

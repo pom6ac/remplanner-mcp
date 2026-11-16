@@ -119,17 +119,34 @@ test("№3: update балконного блока — общая ширина �
   assert.equal(wd.window_height, 150);
 });
 
-test("№3: смена типа в update — на/с балконного блока INVALID_ARGUMENT, между окнами допустима", () => {
+test("ревью 30 N1/N2/N4: смена типа в update отвергается атомарно для любых пар типов", () => {
   const model = emptyModel();
   const { top, bottom } = rect(model);
-  const wd = addOpening(model, { wallId: top.id, type: "window_balcony", centerMm: 2000 });
+  const d = addOpening(model, { wallId: top.id, type: "door", centerMm: 500, leaves: 2, sillHeightMm: 100 });
+  const wd = addOpening(model, { wallId: top.id, type: "window_balcony", centerMm: 3000 });
   const w = addOpening(model, { wallId: bottom.id, type: "window", centerMm: 2000 });
-  invalid(() => updateOpening(model, { wallId: top.id, holeId: wd.id, type: "window" }), /удалите проём и добавьте заново/);
-  invalid(() => updateOpening(model, { wallId: bottom.id, holeId: w.id, type: "window_balcony" }), /удалите проём и добавьте заново/);
+  const d2 = addOpening(model, { wallId: bottom.id, type: "door", centerMm: 500 });
+  const before = structuredClone(model);
+  // дверные типы между собой (N2: конверсия теряла casements и высоту от пола)
+  invalid(() => updateOpening(model, { wallId: top.id, holeId: d.id, type: "door_double" }), /смена типа не поддерживается/);
+  // окно → французское раздвижное (N4: глубина 14 не переносилась)
+  invalid(() => updateOpening(model, { wallId: bottom.id, holeId: w.id, type: "french_window_coupe" }), /смена типа не поддерживается/);
+  // дверь → балконная дверь с явным импостом (N1: импост считался от старого пола)
+  invalid(() => updateOpening(model, { wallId: bottom.id, holeId: d2.id, type: "window_door", impostHeightMm: 800 }), /смена типа не поддерживается/);
+  // на/с балконного блока — как и прежде
+  invalid(() => updateOpening(model, { wallId: top.id, holeId: wd.id, type: "window" }), /смена типа не поддерживается/);
+  invalid(() => updateOpening(model, { wallId: bottom.id, holeId: w.id, type: "window_balcony" }), /opening_add/);
+  // неизвестный тип
   invalid(() => updateOpening(model, { wallId: bottom.id, holeId: w.id, type: "нет_такого" }), /неизвестный тип/);
-  // при ошибке смена типа не произошла
+  // все отказы атомарны: модель равна снимку до вызовов
+  assert.deepEqual(model, before, "модель не должна меняться при отказе смены типа");
+  // передача текущего type — no-op: вызов успешен, объект не меняется
+  const wBefore = structuredClone(w);
+  updateOpening(model, { wallId: bottom.id, holeId: w.id, type: "window" });
+  assert.deepEqual(w, wBefore);
+  // legacy window_balcony: текущий канонический type принимается
+  updateOpening(model, { wallId: top.id, holeId: wd.id, type: "windoor", centerMm: 2900 });
   assert.equal(wd.type, "windoor");
-  assert.equal(w.type, "window");
 });
 
 test("№3: update старых объектов — частей нет, общая ширина даёт дефолтную дверь 80", () => {
@@ -182,40 +199,42 @@ function legacyHole(id: string, type: string): Hole {
   };
 }
 
-test("R2: legacy window_balcony без частей — нормализация типа, update, height, right, смена типа", () => {
-  const model = emptyModel();
-  const { top } = rect(model);
-  const legacy = legacyHole("legacywb", "window_balcony");
-  top.holes[legacy.id] = legacy;
-  // update общей ширины: тип нормализуется, части считаются как у канонического windoor
-  updateOpening(model, { wallId: top.id, holeId: legacy.id, widthMm: 2000 });
-  assert.equal(legacy.width, 200);
-  assert.equal(legacy.window_width, 120);
-  assert.equal(legacy.door_width, 80);
-  assert.equal(legacy.type, "windoor", "legacy-имя нормализуется при update");
-  // height у нормализованного блока отвергается
-  invalid(() => updateOpening(model, { wallId: top.id, holeId: legacy.id, heightMm: 2000 }), /нет общей высоты/);
-  // right отвергается (раньше молча игнорировался)
-  invalid(() => updateOpening(model, { wallId: top.id, holeId: legacy.id, doorPosition: "right" }), /right не поддерживается/);
-  // смена типа на обычное окно отвергается (раньше обходила запрет)
-  invalid(() => updateOpening(model, { wallId: top.id, holeId: legacy.id, type: "window" }), /удалите проём и добавьте заново/);
-  assert.equal(legacy.type, "windoor");
-});
-
-test("R2: канонический windoor без частей — update, height, right, смена типа", () => {
-  const model = emptyModel();
-  const { top } = rect(model);
-  const old = legacyHole("oldwd", "windoor");
-  top.holes[old.id] = old;
-  updateOpening(model, { wallId: top.id, holeId: old.id, widthMm: 2000 });
-  assert.equal(old.width, 200);
-  assert.equal(old.window_width, 120);
-  assert.equal(old.door_width, 80);
-  assert.equal(old.height, undefined);
-  invalid(() => updateOpening(model, { wallId: top.id, holeId: old.id, heightMm: 2000 }), /нет общей высоты/);
-  invalid(() => updateOpening(model, { wallId: top.id, holeId: old.id, doorPosition: "right" }), /right не поддерживается/);
-  invalid(() => updateOpening(model, { wallId: top.id, holeId: old.id, type: "window" }), /удалите проём и добавьте заново/);
-  assert.equal(old.type, "windoor");
+test("ревью 30 N3: старый блок без частей — centerMm, затем casing, затем высота одной части (оба имени)", () => {
+  for (const name of ["window_balcony", "windoor"] as const) {
+    const model = emptyModel();
+    const { top } = rect(model);
+    const old: Hole = {
+      id: `oldwd-${name}`, plan: "a", type: name, group: "windows",
+      pc: { x: 200, y: -10 }, width: 180, depth: 6, at: 110, floor_height: 10,
+    };
+    top.holes[old.id] = old;
+    // первым вызовом — только положение: части нормализуются из дефолтов каталога
+    updateOpening(model, { wallId: top.id, holeId: old.id, centerMm: 2100 });
+    assert.equal(old.type, "windoor", `${name}: legacy-имя нормализуется при update`);
+    assert.equal(old.window_width, 100); // 180 − дефолтная дверь 80
+    assert.equal(old.door_width, 80);
+    assert.equal(old.window_height, 150); // дефолты UI
+    assert.equal(old.door_height, 225);
+    assert.equal(old.door_position, "l");
+    assert.equal(old.height, undefined);
+    // вторым вызовом — короб с наличниками: части не пропадают
+    updateOpening(model, { wallId: top.id, holeId: old.id, casing: true });
+    assert.equal(old.casing, 1);
+    assert.equal(old.window_width, 100);
+    assert.equal(old.door_width, 80);
+    // третьим вызовом — изменение высоты одной части
+    updateOpening(model, { wallId: top.id, holeId: old.id, doorHeightMm: 2200 });
+    assert.equal(old.door_height, 220);
+    assert.equal(old.window_height, 150);
+    // height у нормализованного блока отвергается
+    invalid(() => updateOpening(model, { wallId: top.id, holeId: old.id, heightMm: 2000 }), /нет общей высоты/);
+    // right отвергается (раньше молча игнорировался)
+    invalid(() => updateOpening(model, { wallId: top.id, holeId: old.id, doorPosition: "right" }), /right не поддерживается/);
+    // смена типа на обычное окно отвергается
+    invalid(() => updateOpening(model, { wallId: top.id, holeId: old.id, type: "window" }), /смена типа не поддерживается/);
+    assert.equal(old.type, "windoor");
+    assert.deepEqual(model, structuredClone(model));
+  }
 });
 
 test("R2: неизвестный тип в модели не пропускается мимо валидатора", () => {
@@ -258,36 +277,21 @@ test("R4: импост, переставший помещаться при из�
   assert.equal(d.impost_offset, 130);
 });
 
-test("смена типа между окнами: поля нового типа сбрасываются/выставляются по дефолтам вида", () => {
+test("ревью 30 N5: неизвестное вложенное поле sill сохраняется при update подоконника", () => {
   const model = emptyModel();
   const { top } = rect(model);
   const w = addOpening(model, { wallId: top.id, type: "window", centerMm: 2000 });
-  assert.equal(w.casements, 1);
-  // окно → французское: casements сбрасывается в 0 (пробел из ревью 28)
-  updateOpening(model, { wallId: top.id, holeId: w.id, type: "french_window" });
-  assert.equal(w.type, "french_window");
-  assert.equal(w.casements, 0);
-  assert.equal(w.slopes, undefined);
-  // и обратно: casements 1 по дефолту вида
-  updateOpening(model, { wallId: top.id, holeId: w.id, type: "window" });
-  assert.equal(w.casements, 1);
-  assert.equal(w.slopes, 20);
-  // окно → дверь: оконные поля сброшены
-  updateOpening(model, { wallId: top.id, holeId: w.id, type: "door" });
-  assert.equal(w.type, "single");
-  assert.equal(w.casements, undefined);
-  assert.equal(w.sill, undefined);
-  assert.equal(w.slope_angle, undefined);
-  assert.equal(w.floor_height, undefined);
-  assert.equal(w.slopes, undefined);
-  // дверь → окно: дефолты окна возвращаются
-  updateOpening(model, { wallId: top.id, holeId: w.id, type: "window" });
-  assert.equal(w.casements, 1);
-  assert.equal(w.slope_angle, 0);
-  assert.ok(w.sill);
-  assert.equal(w.slopes, 20);
-  assert.equal(w.floor_height, 85);
-  assert.equal(w.opening, "r-l");
+  (w.sill as Record<string, unknown>).extra = "keep";
+  updateOpening(model, { wallId: top.id, holeId: w.id, sillThicknessMm: 50 });
+  assert.equal((w.sill as Record<string, unknown>).extra, "keep", "неизвестное вложенное поле не теряется");
+  assert.equal((w.sill as { thinkness: number }).thinkness, 5);
+  // известные поля по-прежнему обновляются, side сохраняется
+  updateOpening(model, { wallId: top.id, holeId: w.id, sillOverhangMm: 30 });
+  const sill = w.sill as Record<string, unknown> & { overhang: number; side: string };
+  assert.equal(sill.overhang, 3);
+  assert.equal(sill.thinkness, 5);
+  assert.equal(sill.side, "l");
+  assert.equal(sill.extra, "keep");
 });
 
 test("MCP-путь: opening_add/opening_update отвергают неприменимые параметры кодом INVALID_ARGUMENT", async () => {

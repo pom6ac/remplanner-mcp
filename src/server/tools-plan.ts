@@ -6,7 +6,7 @@ import {
   addWall, addPolyline, addRoomRect, addRoomPolygon, updateWall, moveWall, splitWall, deleteWall,
   type MmPoint,
 } from "../model/walls.ts";
-import { addOpening, updateOpening, deleteOpening, OPENING_KINDS } from "../model/openings.ts";
+import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
 import { addItem, updateItem, deleteItem, itemsList, roomPolygons, type RoomPolygon } from "../model/items.ts";
 import { compactModel, wallLengthMm } from "../model/compact.ts";
 import { validateModel } from "../model/validate.ts";
@@ -338,13 +338,14 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "угол рассвета; у балконного блока — window_*_mm/door_*_mm/door_position, у балконной двери impost_height_mm. " +
         "Параметры применяются строго по типу проёма: части балконного блока — только window_balcony, " +
         "impost_height_mm — только window_door, casements у французских окон не принимается, door_position — только left. " +
-        "Смена типа на балконный блок или с него не поддерживается — удалите проём и добавьте заново. " +
+        "Смена типа не поддерживается: переданный type, отличный от текущего, вернёт INVALID_ARGUMENT — " +
+        "удалите проём (opening_delete) и добавьте новый (opening_add) с нужным типом; передача текущего типа — no-op. " +
         "Поля не указанные — не меняются. opening_id — id проёма (site_id) из model_get.",
       {
         opening_id: z.string().min(1).describe("id проёма из model_get (поле id у openings)"),
         wall_id: wallRef.optional().describe("если известен; иначе находится автоматически"),
-        type: z.string().refine((t) => t in OPENING_KINDS).optional()
-          .describe("смена типа; между балконным блоком и остальными типами — INVALID_ARGUMENT"),
+        type: z.string().refine((t) => t in OPENING_KINDS || t in KIND_BY_HOLE_TYPE).optional()
+          .describe("передача текущего типа проёма допустима (no-op); смена типа не поддерживается — удалите проём (opening_delete) и добавьте новый (opening_add)"),
         offset_mm: mmInt.optional(),
         from: z.enum(["start", "end"]).optional(),
         center_mm: mmInt.optional(),
