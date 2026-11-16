@@ -148,8 +148,35 @@ function wallAxisCoveredBy(wall: { p1: Point; p2: Point } | undefined, localSegm
   );
 }
 
-function toModel(raw: Record<string, unknown>): Model {
-  const model = raw as Model;
+/** Значимая геометрия колонны для сверки после сохранения (ревью 43 №2). */
+type PillarSig = { pc?: { x: number; y: number }; width?: number; height?: number; angle?: number };
+
+/**
+ * Расхождение колонн между рабочей копией и сервером после save (ревью 43 №2):
+ * идентичности и значимая геометрия (pc, width, height, angle; допуск 0,1 см / 0,1°).
+ * Возвращает список человекочитаемых расхождений; пустой список — колонны сохранились.
+ */
+function pillarVerificationMismatches(expected: Record<string, PillarSig>, got: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
+    a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
+  for (const [id, p] of Object.entries(expected)) {
+    const g = got[id] as PillarSig | undefined;
+    if (!g) {
+      out.push(`${id}: колонна исчезла после сохранения`);
+      continue;
+    }
+    if (!near(g.pc?.x, p.pc?.x, 0.1) || !near(g.pc?.y, p.pc?.y, 0.1)) {
+      out.push(`${id}: центр сместился (на сервере ${g.pc?.x},${g.pc?.y}; ожидалось ${p.pc?.x},${p.pc?.y})`);
+    }
+    if (!near(g.width, p.width, 0.1)) out.push(`${id}: ширина изменилась (на сервере ${g.width}; ожидалось ${p.width})`);
+    if (!near(g.height, p.height, 0.1)) out.push(`${id}: глубина изменилась (на сервере ${g.height}; ожидалось ${p.height})`);
+    if (!near(g.angle ?? 0, p.angle ?? 0, 0.1)) out.push(`${id}: угол изменился (на сервере ${g.angle ?? 0}; ожидалось ${p.angle ?? 0})`);
+  }
+  return out;
+}
+
+function toModel(raw: Record<string, unknown>): Model {  const model = raw as Model;
   model.walls ??= {};
   model.items ??= {};
   model.pillars ??= {};
@@ -326,6 +353,15 @@ export class Workspace {
         });
       }
       if (norm.errors) this.lastErrors = norm.errors;
+      // ревью 43 №1: колонны после нормализации не теряются (сверка идентичностей)
+      const wsPillarIds = new Set(Object.keys(this.modelInternal!.pillars ?? {}));
+      const normPillarIds = new Set(Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}));
+      const lostPillarsNorm = missingIds(wsPillarIds, normPillarIds);
+      if (lostPillarsNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял колонны (${lostPillarsNorm.join(", ")}) — мутация отменена`, {
+          details: { lost_pillars: lostPillarsNorm },
+        });
+      }
       // нормализованная копия становится канонической
       this.modelInternal = toModel(structuredClone(norm.model as unknown as Record<string, unknown>));
       if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
@@ -484,6 +520,9 @@ export class Workspace {
     const localOpeningIds = openingIds(this.modelInternal!);
     const localItemIds = new Set(Object.keys(this.modelInternal!.items ?? {}));
     const localPillarIds = new Set(Object.keys(this.modelInternal!.pillars ?? {}));
+    // ревью 43 №2/№4: ожидаемые колонны и комнаты для верификации после save
+    const expectedPillars = structuredClone(this.modelInternal!.pillars ?? {}) as Record<string, PillarSig>;
+    const expectedRooms = Object.keys(this.modelInternal!.rooms2 ?? {}).length;
     const normWalls = (norm.model as { walls?: Record<string, { holes?: Record<string, { id?: string }> }> }).walls ?? {};
     const gotOpeningIds = new Set<string>();
     for (const [wid, w] of Object.entries(normWalls)) {
@@ -496,6 +535,11 @@ export class Workspace {
     const lostPillars = missingIds(localPillarIds, gotPillarIds);
     const gotSegments = wallAxisSegments(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
+    // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
+    const normRooms = Object.keys((norm.model as { rooms2?: Record<string, unknown> }).rooms2 ?? {}).length;
+    if (expectedRooms > 0 && normRooms === 0) {
+      warnings.push(`редактор убрал комнаты при нормализации (${expectedRooms} → 0) — имя и отделка комнат могут быть потеряны; проверьте rooms_list после сохранения`);
+    }
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
       lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0
@@ -530,18 +574,28 @@ export class Workspace {
       }
       // верификация по GET: контент, а не только save_id (save_id не монотонен).
       // Стены — по каноническому набору осевых отрезков (ревью v0.1.1-r2 R2-3):
-      // слияние при сохранении легитимно, сдвиг/лишняя стена — нет
+      // слияние при сохранении легитимно, сдвиг/лишняя стена — нет.
+      // Колонны — по id и значимой геометрии (ревью 43 №2), комнаты — по числу (№4).
       const after = await this.deps.loadModel(this.deps.session, p.objectId, p.planId);
       const wallsAfter = (after.model["walls"] as Record<string, unknown> | undefined) ?? {};
       const segmentsAfter = wallAxisSegments(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments)) {
+      const pillarsAfter = (after.model["pillars"] as Record<string, unknown> | undefined) ?? {};
+      const roomsAfter = Object.keys((after.model["rooms2"] as Record<string, unknown> | undefined) ?? {}).length;
+      const pillarMismatch = pillarVerificationMismatches(expectedPillars, pillarsAfter);
+      const roomsLost = expectedRooms > 0 && roomsAfter === 0;
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
       } else if (attempt === 1) {
         const coverageAfter = wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
         throw new McpError("SITE_ERROR", "после сохранения модель на сервере не совпала с рабочей копией", {
-          details: { expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length, coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(coverageAfter * 10), axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length },
+          details: {
+            expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length,
+            coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>) * 10),
+            axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,
+            pillar_mismatches: pillarMismatch, rooms_expected: expectedRooms, rooms_on_server: roomsAfter,
+          },
         });
       }
     }
