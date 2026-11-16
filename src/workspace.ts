@@ -10,7 +10,8 @@ import type { Model, Point } from "./model/types.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
 import { prepareForRestore, findUnattachedEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
-import { PIPE_TYPE_BY_KIND, pipeLinkKey } from "./model/pipes.ts";
+import { dist, closestPoint, pointInPolygon, segmentsCross, type Polygon as GeoPolygon } from "./model/geometry.ts";
+import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey } from "./model/pipes.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { borderMismatches } from "./model/terraces.ts";
 import { levelHoleMismatches } from "./model/floorhole.ts";
@@ -503,21 +504,14 @@ function gasLineGraphMismatches(
       y: g.pc!.y + dx * sin + dy * cos,
     }));
   };
-  /** Допустимый диапазон длины ребра: min/max расстояния между регионами концов. */
+  /** Допустимый диапазон длины ребра: min/max расстояния между регионами концов
+   *  (ревью 81 3-R: минимум по всему габариту — точка подключения может лежать на
+   *  середине грани или внутри перекрывающегося габарита, а не у угла). */
   const edgeLengthRange = (a: GasVertexSig, b: GasVertexSig): [number, number] | null => {
     const ra = regionOf(a);
     const rb = regionOf(b);
     if (ra.length === 0 || rb.length === 0) return null;
-    let dmin = Infinity;
-    let dmax = 0;
-    for (const p of ra) {
-      for (const q of rb) {
-        const d = Math.hypot(p.x - q.x, p.y - q.y);
-        dmin = Math.min(dmin, d);
-        dmax = Math.max(dmax, d);
-      }
-    }
-    return [dmin, dmax];
+    return [regionMinDistance(ra, rb), regionMaxDistance(ra, rb)];
   };
   for (const [id, g0] of Object.entries(expected)) {
     const g = got[id] as GasLineSig | undefined;
@@ -641,15 +635,50 @@ function gasLineGraphMismatches(
   return out;
 }
 
+/**
+ * Минимальное расстояние между замкнутыми выпуклыми регионами (ревью 81 3-R):
+ * 0 при пересечении или вложении, иначе — минимум расстояний точка–отрезок по
+ * всем рёбрам обеих сторон. Точка — вырожденный регион из одной вершины.
+ */
+function regionMinDistance(a: GeoPolygon, b: GeoPolygon): number {
+  for (let i = 0; i < a.length; i++) {
+    const e1 = { p1: a[i]!, p2: a[(i + 1) % a.length]! };
+    for (let j = 0; j < b.length; j++) {
+      if (segmentsCross(e1, { p1: b[j]!, p2: b[(j + 1) % b.length]! })) return 0;
+    }
+  }
+  for (const p of a) if (pointInPolygon(b, p)) return 0;
+  for (const p of b) if (pointInPolygon(a, p)) return 0;
+  let best = Infinity;
+  for (const p of a) {
+    for (let j = 0; j < b.length; j++) best = Math.min(best, dist(p, closestPoint({ p1: b[j]!, p2: b[(j + 1) % b.length]! }, p).point));
+  }
+  for (const p of b) {
+    for (let i = 0; i < a.length; i++) best = Math.min(best, dist(p, closestPoint({ p1: a[i]!, p2: a[(i + 1) % a.length]! }, p).point));
+  }
+  return best;
+}
+
+/** Максимальное расстояние между регионами (для выпуклых — достигается на вершинах). */
+function regionMaxDistance(a: GeoPolygon, b: GeoPolygon): number {
+  let best = 0;
+  for (const p of a) for (const q of b) best = Math.max(best, dist(p, q));
+  return best;
+}
+
 /** Предмет с обратными ссылками на трубы (props.pipes). */
 type PipeLinkItem = { name?: string; pipes?: Record<string, unknown> };
 
 /**
- * Сверка подключений труба↔предмет в обе стороны (ревью 79 №5): у каждой вершины-
- * предмета трубы props.pipes[`${type}_id`] должен указывать на неё (скаляр или
- * элемент массива у multi), и каждая обратная ссылка предмета — на существующую
- * трубу, чьи вершины содержат этот предмет. Общий слой газовой/водяной сверки
- * не трогает (у газа обратных ссылок нет) — вызывается только для model.pipes.
+ * Сверка подключений труба↔предмет в обе стороны (ревью 79 №5, ревью 81 5-R):
+ * у каждой вершины-предмета трубы props.pipes[`${type}_id`] должен указывать на неё,
+ * и каждая обратная ссылка предмета — на существующую трубу того же вида, чьи
+ * вершины содержат этот предмет. Фактические ссылки сервера (gotItems) сверяются
+ * с ожидаемыми (expectedItems) ПОЛНОСТЬЮ: нет лишних, нет пропущенных, вид трубы
+ * совпадает с ключом, scalar у обычных выводов / массив у multi (ревью 81 5-R —
+ * раньше второе направление смотрело expectedItems и пропускало лишние и висячие
+ * ссылки). Общий слой газовой/водяной сверки не трогает (у газа обратных ссылок
+ * нет) — вызывается только для model.pipes.
  */
 function pipeConnectionMismatches(
   expectedPipes: Record<string, GasLineSig>,
@@ -659,7 +688,24 @@ function pipeConnectionMismatches(
 ): string[] {
   const out: string[] = [];
   const pipeKeys = new Set(Object.values(PIPE_TYPE_BY_KIND).map(pipeLinkKey));
-  // обратное направление: труба → props.pipes предмета (ревью 79 №5a)
+  /** Вид трубы по ключу ссылки (water_pipe_id → water_pipe); null — ключ не труба. */
+  const pipeTypeOfKey = (key: string): string | null => {
+    for (const type of Object.values(PIPE_TYPE_BY_KIND)) {
+      if (key === pipeLinkKey(type)) return type;
+    }
+    return null;
+  };
+  /** Ссылки предмета на трубы: ключ → множество id (только ключи труб, только строки). */
+  const linksOf = (item: PipeLinkItem | undefined): Map<string, Set<string>> => {
+    const out = new Map<string, Set<string>>();
+    for (const [key, ref] of Object.entries(item?.pipes ?? {})) {
+      if (!pipeKeys.has(key)) continue;
+      const ids = (Array.isArray(ref) ? ref : [ref]).filter((x): x is string => typeof x === "string" && x !== "");
+      out.set(key, new Set(ids));
+    }
+    return out;
+  };
+  // направление 1: труба → props.pipes предмета (ревью 79 №5a)
   for (const [id, p] of Object.entries(expectedPipes)) {
     const key = pipeLinkKey(p.type ?? "");
     if (!pipeKeys.has(key)) continue;
@@ -678,21 +724,50 @@ function pipeConnectionMismatches(
       }
     }
   }
-  // прямое направление: props.pipes → труба существует и содержит предмет в вершинах
-  for (const [itemId, item] of Object.entries(expectedItems)) {
-    for (const [key, ref] of Object.entries(item.pipes ?? {})) {
-      if (!pipeKeys.has(key)) continue;
-      const ids = Array.isArray(ref) ? ref : [ref];
-      for (const pid of ids) {
-        if (typeof pid !== "string") continue;
+  // направление 2 (ревью 81 5-R): ВСЕ фактические ссылки gotItems — валидность
+  // против gotPipes (существование, вид, членство) и полнота против expectedItems
+  for (const [itemId, item] of Object.entries(gotItems)) {
+    const gotLinks = linksOf(item);
+    const expLinks = linksOf(expectedItems[itemId]);
+    const keys = new Set([...gotLinks.keys(), ...expLinks.keys()]);
+    for (const key of keys) {
+      const gotIds = gotLinks.get(key) ?? new Set();
+      const expIds = expLinks.get(key) ?? new Set();
+      for (const pid of gotIds) {
+        if (!expIds.has(pid)) {
+          out.push(`${itemId}: лишняя обратная ссылка ${key} → ${pid} (в рабочей копии этой ссылки нет)`);
+          continue;
+        }
         const gp = gotPipes[pid];
         if (!gp) {
           out.push(`${itemId}: обратная ссылка ${key} указывает на отсутствующую трубу ${pid}`);
           continue;
         }
+        const wantType = pipeTypeOfKey(key);
+        if (wantType !== null && (gp.type ?? "") !== wantType) {
+          out.push(`${itemId}: обратная ссылка ${key} указывает на трубу ${pid} другого вида (на сервере «${gp.type ?? ""}»; по ключу — «${wantType}»)`);
+        }
         if (!(gp.vertexes ?? []).some((v) => v.id === itemId)) {
           out.push(`${itemId}: труба ${pid} на сервере не содержит предмет в вершинах (ссылка ${key})`);
         }
+      }
+      for (const pid of expIds) {
+        if (!gotIds.has(pid)) out.push(`${itemId}: обратная ссылка ${key} → ${pid} потеряна на сервере`);
+      }
+    }
+  }
+  // направление 3: вид ссылки — scalar у обычного вывода, массив у multi
+  // (ревью 81 5-R: допустимость scalar/array)
+  for (const [itemId, item] of Object.entries(gotItems)) {
+    const name = (item as { name?: string }).name;
+    for (const [key, ref] of Object.entries(item.pipes ?? {})) {
+      if (!pipeKeys.has(key) || ref === undefined || ref === null || ref === "") continue;
+      const isMulti = typeof name === "string" && PIPE_MULTI_SPOTS.has(name);
+      if (isMulti && !Array.isArray(ref)) {
+        out.push(`${itemId}: у multi-предмета «${name}» ссылка ${key} должна быть массивом труб (на сервере скаляр)`);
+      }
+      if (!isMulti && Array.isArray(ref)) {
+        out.push(`${itemId}: у обычного вывода «${name ?? "?"}» ссылка ${key} должна быть скаляром (на сервере массив)`);
       }
     }
   }

@@ -566,6 +566,164 @@ test("ревью 79 №5 (общий слой): лишняя газовая ли
   });
 });
 
+// ---------- ревью 82 (3-R): короткая труба — штатный save проходит, порча длины ловится ----------
+
+/** Короткая труба: предмет + узел в 2 см от середины грани габарита (воспроизведение 3-R). */
+function shortPipeNodeScenario(angle = 0): { model: Model; pipe: Pipe } {
+  const model = baseModel();
+  const s = addWideSpot(model, 100, 100);
+  (s as ItemProps & { angle?: number }).angle = angle;
+  const pipe = addPipe(model, { kind: "water", path: [{ itemId: s.id }, { x: 1100, y: 1000 }] });
+  return { model, pipe };
+}
+
+// 3-R: допустимое подключение к середине грани (угол 0) — не ложная блокировка
+test("ревью 82 3-R: короткая труба, точка подключения на середине грани — save проходит (verified)", async () => {
+  const { model, pipe } = shortPipeNodeScenario(0);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (m) => {
+    // редактор пересчитал точку подключения к габариту (середина правой грани x=108)
+    // и длину линии (2 см)
+    const got = (m as { pipes?: Record<string, Pipe> }).pipes![pipe.id]!;
+    got.vertexes[0]!.point = { x: 108, y: 100 };
+    got.length = gasLineLengthM(got);
+  });
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+});
+
+// 3-R: то же с поворотом предмета (angle=90 — грань вдоль другой оси)
+test("ревью 82 3-R: короткое подключение к середине грани повёрнутого предмета — verified", async () => {
+  const { model, pipe } = shortPipeNodeScenario(90);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (m) => {
+    // у повёрнутого на 90° предмета правая грань x=104.5, середина (104.5, 100)
+    const got = (m as { pipes?: Record<string, Pipe> }).pipes![pipe.id]!;
+    got.vertexes[0]!.point = { x: 104.5, y: 100 };
+    got.length = gasLineLengthM(got);
+  });
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+});
+
+// 3-R: обе вершины — предметы, длина меньше размеров габаритов (регионы перекрываются)
+test("ревью 82 3-R: короткая труба предмет-предмет с перекрывающимися габаритами — verified", async () => {
+  const model = baseModel();
+  const a = addWideSpot(model, 100, 100);
+  const b = addWideSpot(model, 108, 100);
+  addPipe(model, { kind: "water", path: [{ itemId: a.id }, { itemId: b.id }] });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (m) => {
+    const got = (m as { pipes?: Record<string, Pipe> }).pipes![Object.keys((m as { pipes?: Record<string, Pipe> }).pipes ?? {})[0]!]!;
+    got.vertexes[0]!.point = { x: 108, y: 100 };
+    got.vertexes[1]!.point = { x: 100, y: 100 };
+    got.length = gasLineLengthM(got);
+  });
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+});
+
+// 3-R negative: допустимый диапазон не выродился в «любая длина» — испорченная длина ловится
+// (порча внесена при нормализации → NORMALIZATION_DROPPED до записи)
+test("ревью 82 3-R: испорченная длина короткой трубы — NORMALIZATION_DROPPED, записи нет", async () => {
+  const { model, pipe } = shortPipeNodeScenario(0);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  let saves = 0;
+  const ws = saveMock(server, () => { saves++; }, (m) => {
+    const got = (m as { pipes?: Record<string, Pipe> }).pipes![pipe.id]!;
+    got.vertexes[0]!.point = { x: 108, y: 100 };
+    got.length = gasLineLengthM(got) + 1; // порча: +1 м к короткой трубе
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => e instanceof McpError && e.code === "NORMALIZATION_DROPPED");
+  assert.equal(saves, 0, "до записи дело не дошло");
+});
+
+// ---------- ревью 82 (5-R): обратные ссылки props.pipes сверяются в обе стороны ----------
+
+// 5-R: лишняя висячая ссылка в props.pipes scalar-вывода — SITE_ERROR
+test("ревью 82 5-R: лишняя висячая ссылка в props.pipes — SITE_ERROR, не verified", async () => {
+  const { model } = pipeScenario();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const items = (s.model as { items?: Record<string, ItemProps & { pipes?: Record<string, unknown> }> }).items ?? {};
+    const first = Object.keys(items)[0]!;
+    items[first]!.pipes!.water_pipe_id = [String(items[first]!.pipes!.water_pipe_id), "missing"];
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    assert.ok(JSON.stringify((e as McpError).details).includes("pipe_connection_mismatches"), JSON.stringify((e as McpError).details));
+    return true;
+  });
+});
+
+// 5-R: ссылка не того вида трубы (water_hot_pipe_id на трубу water_pipe) — SITE_ERROR
+test("ревью 82 5-R: обратная ссылка чужого вида трубы — SITE_ERROR", async () => {
+  const { model } = pipeScenario();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const items = (s.model as { items?: Record<string, ItemProps & { pipes?: Record<string, unknown> }> }).items ?? {};
+    const first = Object.keys(items)[0]!;
+    items[first]!.pipes!.water_hot_pipe_id = items[first]!.pipes!.water_pipe_id;
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => e instanceof McpError && e.code === "SITE_ERROR");
+});
+
+// 5-R: ссылка у постороннего предмета (не вершины трубы) — SITE_ERROR
+test("ревью 82 5-R: обратная ссылка у постороннего предмета — SITE_ERROR", async () => {
+  const model = baseModel();
+  const a = addSpot(model, 100, 100, "waterspot_cold");
+  const b = addSpot(model, 300, 100, "waterspot_cold");
+  const outsider = addSpot(model, 350, 100, "waterspot_cold");
+  addPipe(model, { kind: "water", path: [{ itemId: a.id }, { x: 2000, y: 1000 }, { itemId: b.id }] });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const items = (s.model as { items?: Record<string, ItemProps & { pipes?: Record<string, unknown> }> }).items ?? {};
+    items[outsider.id]!.pipes = { water_pipe_id: Object.keys((s.model as { pipes?: Record<string, unknown> }).pipes ?? {})[0] };
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => e instanceof McpError && e.code === "SITE_ERROR");
+});
+
+// 5-R positive: multi-подключение коллектора (массив) доходит до сервера — verified
+test("ревью 82 5-R: multi-подключение (массив у коллектора) — штатный save verified", async () => {
+  const model = baseModel();
+  const col = addSpot(model, 100, 100, "waterspot_collector");
+  const p1 = addPipe(model, { kind: "water", path: [{ itemId: col.id }, { x: 2000, y: 1000 }] });
+  const p2 = addPipe(model, { kind: "hot", path: [{ itemId: col.id }, { x: 2000, y: 1200 }] });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {});
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+  assert.deepEqual((col as ItemProps & { pipes?: Record<string, unknown> }).pipes!.water_pipe_id, [p1.id]);
+  assert.deepEqual((col as ItemProps & { pipes?: Record<string, unknown> }).pipes!.water_hot_pipe_id, [p2.id]);
+});
+
+// №9 (ревью 81): тариф — открытый вопрос, описания инструментов честно называют трубы PRO-функцией
+test("ревью 82 №9: описания pipe_* называют трубы PRO-функцией редактора", async () => {
+  const { buildServer } = await import("../../src/server.ts");
+  const { ServerContext } = await import("../../src/server/context.ts");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const server = buildServer(new ServerContext());
+  const client = new Client({ name: "test", version: "0.0.0" });
+  const [ta, tb] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(tb), client.connect(ta)]);
+  const tools = await client.listTools();
+  await client.close();
+  for (const name of ["pipe_add", "pipe_update", "pipe_delete", "item_add"]) {
+    const t = tools.tools.find((x) => x.name === name);
+    assert.ok(t, `инструмент ${name} есть`);
+    assert.match(t.description ?? "", /PRO/i, `${name}: в описании упомянут PRO`);
+  }
+});
 // №7: верхняя граница пути до аллокации квадратичной матрицы
 test("ревью 79 №7: путь трубы длиннее лимита — INVALID_ARGUMENT до построения матрицы", () => {
   const model = baseModel();

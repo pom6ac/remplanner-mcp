@@ -604,7 +604,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "Сантехника (лист «Сантехника», группа santeh_furniture — ванны, унитазы, раковины, душевые, полотенцесушители, бойлеры) и " +
         "точки воды (лист «Водоснабжение», группа waterspots — комбинированные выводы waterspot_cold_hot, waterspot_drainage_cold, " +
         "waterspot_drainage_hot, waterspot_drainage_cold_hot) — предметы каталога; у точек воды высота вывода по умолчанию 500 мм " +
-        "(elevation_mm переопределяет). Линии-графы — НЕ предметы: газовая линия gas_line → gas_line_add, трубы водоснабжения " +
+        "(elevation_mm переопределяет); одиночные waterspot_cold/hot/drainage и коллектор waterspot_collector — PRO-функция. " +
+        "Линии-графы — НЕ предметы: газовая линия gas_line → gas_line_add, трубы водоснабжения " +
         "water_pipe/water_hot_pipe/drainage_pipe → pipe_add. " +
         "Меню «Терраса и участок»: диваны terrace-серии (sofa_pottery_barn_malibu_wicker, sofa_coup_detat_campanha, " +
         "armchair_solana_papasan) — предметы каталога (item_add, план furniture); сами терраса/ограждение/столб — " +
@@ -918,7 +919,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "waterspot_*, стояки water/water_column_hot/water_column_cold/drainage_column, ввод ceiling_water, коллектор " +
         "waterspot_collector — какие выводы к какой трубе подключаются, проверяется как в редакторе). " +
         "Соседние элементы пути соединяются ребром; у предметов ставится обратная ссылка pipes.<вид>_id. " +
-        "Длина в модели — в метрах, пересчитывается автоматически. После добавления вызывайте model_validate и project_save.",
+        "Длина в модели — в метрах, пересчитывается автоматически. Трубы водоснабжения/канализации — функция PRO-тарифа " +
+        "редактора (лист «Водоснабжение» в UI доступен только в PRO): на бесплатном тарифе трубы могут не сохраниться — " +
+        "поведение free не проверялось. После добавления вызывайте model_validate и project_save.",
       {
         kind: z.enum(["water", "hot", "drainage"]).describe("вид трубы: water — ХВС, hot — ГВС, drainage — канализация"),
         path: z.array(z.union([
@@ -940,7 +943,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     pipe_update: tool(
-      "Изменить трубу: перенести узлы графа. positions — список {vertex, x_mm, y_mm}; vertex — индекс вершины " +
+      "Изменить трубу (PRO-функция редактора, как и вся лист «Водоснабжение»): перенести узлы графа. positions — список {vertex, x_mm, y_mm}; vertex — индекс вершины " +
         "в графе трубы (0-based, как в model_get pipes[].vertexes); двигать можно только узлы (type node) — " +
         "вершины-предметы следуют за предметом (item_update). Длина пересчитывается по рёбрам.",
       {
@@ -964,7 +967,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     pipe_delete: tool(
-      "Удалить трубу (метка TP<n> из model_get). Обратные ссылки подключённых предметов снимаются; " +
+      "Удалить трубу (PRO-функция редактора, как и весь лист «Водоснабжение»; метка TP<n> из model_get). Обратные ссылки подключённых предметов снимаются; " +
         "сами предметы не удаляются.",
       { pipe_id: z.string().min(1).describe("метка TP<n> из model_get или id сайта") },
       async (a) => {
