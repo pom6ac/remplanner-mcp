@@ -393,7 +393,7 @@ function saveMock(server: SaveServer, afterSave: (s: SaveServer) => void, transf
 
 test("save: границы, проём и столб сохраняются штатно — verified=true, без ложных блокировок", async () => {
   const model = terraceModel();
-  addFloorHole(model, { corner1: { x: 1000, y: -2500 }, corner2: { x: 2000, y: -1500 } }, []);
+  addFloorHole(model, { corner1: { x: 1000, y: -2500 }, corner2: { x: 2000, y: -1500 } }, [ROOM_POLY]);
   const col = addTerraceColumn(model, { center: { x: 7000, y: 2000 } });
   void col;
   const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
@@ -406,7 +406,7 @@ test("save: границы, проём и столб сохраняются шт
 
 test("save: проём в полу исчез после save — SITE_ERROR", async () => {
   const model = terraceModel();
-  addFloorHole(model, { corner1: { x: 1000, y: -2500 }, corner2: { x: 2000, y: -1500 } }, []);
+  addFloorHole(model, { corner1: { x: 1000, y: -2500 }, corner2: { x: 2000, y: -1500 } }, [ROOM_POLY]);
   const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
   const ws = saveMock(server, (s) => {
     (s.model as { level_holes?: Record<string, unknown> }).level_holes = {};
@@ -423,7 +423,7 @@ test("save: проём в полу исчез после save — SITE_ERROR", a
 
 test("save: проём в полу испорчен (угол сдвинут) — SITE_ERROR, verified не выставляется", async () => {
   const model = terraceModel();
-  addFloorHole(model, { corner1: { x: 1000, y: -2500 }, corner2: { x: 2000, y: -1500 } }, []);
+  addFloorHole(model, { corner1: { x: 1000, y: -2500 }, corner2: { x: 2000, y: -1500 } }, [ROOM_POLY]);
   const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
   const ws = saveMock(server, (s) => {
     for (const h of Object.values((s.model as { level_holes?: Record<string, LevelHole> }).level_holes ?? {})) {
@@ -497,6 +497,118 @@ test("borderMismatches: угол mod 360 не применим, но допус�
   assert.deepEqual(borderMismatches(expected, got, "граница террасы"), []);
   const shifted = { b1: { id: "b1", p1: { x: 615, y: 110 }, p2: { x: 630, y: 130 } } };
   assert.ok(borderMismatches(expected, shifted, "граница террасы").length > 0);
+});
+
+// ---------- ревью 67: major-фиксы ----------
+
+test("rev67 M1: terrace_column_update без width/height сохраняет исходные габариты", () => {
+  const model = terraceModel();
+  const col = addTerraceColumn(model, { center: { x: 7000, y: 2000 }, widthMm: 500, heightMm: 600 });
+  const updated = updateTerraceColumn(model, col.id, { center: { x: 7500, y: 2500 } });
+  assert.equal(updated.id, col.id, "identity сохранён");
+  assert.ok(near(updated.width, 50) && near(updated.height, 60), `габариты ${updated.width}×${updated.height}, ожидалось 50×60`);
+  assert.ok(near(updated.pc.x, 750) && near(updated.pc.y, 250));
+});
+
+test("rev67 M1: width-only update сохраняет центр и высоту", () => {
+  const model = terraceModel();
+  const col = addTerraceColumn(model, { center: { x: 7000, y: 2000 }, widthMm: 500, heightMm: 600 });
+  const updated = updateTerraceColumn(model, col.id, { widthMm: 300 });
+  assert.ok(near(updated.pc.x, 700) && near(updated.pc.y, 200), `центр ${updated.pc.x},${updated.pc.y}`);
+  assert.ok(near(updated.width, 30) && near(updated.height, 60), `габариты ${updated.width}×${updated.height}`);
+});
+
+test("rev67 M1: пустой update не меняет геометрию", () => {
+  const model = terraceModel();
+  const col = addTerraceColumn(model, { center: { x: 7000, y: 2000 }, widthMm: 500, heightMm: 600 });
+  const before = JSON.stringify(model.pillars[col.id]);
+  const updated = updateTerraceColumn(model, col.id, {});
+  assert.equal(JSON.stringify(model.pillars[col.id]), before);
+  assert.equal(updated.id, col.id);
+});
+
+test("rev67 M1: update сохраняет дополнительные поля объекта из UI", () => {
+  const model = terraceModel();
+  const col = addTerraceColumn(model, { center: { x: 7000, y: 2000 }, widthMm: 500, heightMm: 600 });
+  (col as unknown as Record<string, unknown>)["custom_prop"] = 42;
+  (col as unknown as Record<string, unknown>)["eds"] = { t: { p1: { x: 0, y: 0 }, p2: { x: 1, y: 0 }, wall: { id: "w9", balc: 0 } } };
+  const updated = updateTerraceColumn(model, col.id, { center: { x: 7500, y: 2500 } });
+  assert.equal((updated as unknown as Record<string, unknown>)["custom_prop"], 42);
+  assert.deepEqual((updated as unknown as Record<string, unknown>)["eds"], { t: { p1: { x: 0, y: 0 }, p2: { x: 1, y: 0 }, wall: { id: "w9", balc: 0 } } });
+  assert.equal(updated.role, "terrace_column");
+});
+
+test("rev67 M4: перенос узла с самопересечением — INVALID_ARGUMENT, модель откатилась", () => {
+  const model = terraceModel();
+  const borders = Object.values(model.terrace_borders!);
+  const b1 = borders.find((b) => near(b.p1.x, 600) && near(b.p1.y, 100) && near(b.p2.x, 900) && near(b.p2.y, 100))!;
+  const before = JSON.stringify(model);
+  // узел (600,100) → (1200,240): замыкающая сторона b4 пересекает правую сторону кольца
+  assert.throws(() => updateBorder(model, "terrace_borders", "терраса", { borderId: b1.id, start: { x: 12000, y: 2400 } }), (e: unknown) =>
+    e instanceof McpError && e.code === "INVALID_ARGUMENT");
+  assert.equal(JSON.stringify(model), before, "модель откатилась");
+});
+
+test("rev67 M4: граница легла на ограждение после переноса — откат", () => {
+  const model = terraceModel();
+  // ограждение вдоль южной стороны кольца: грани y=97.5 и y=102.5
+  addTerraceFence(model, { start: { x: 6000, y: 1000 }, end: { x: 9000, y: 1000 } });
+  const borders = Object.values(model.terrace_borders!);
+  const b1 = borders.find((b) => near(b.p1.x, 600) && near(b.p1.y, 100) && near(b.p2.x, 900) && near(b.p2.y, 100))!;
+  const before = JSON.stringify(model);
+  // узел (600,100) → (600,950): середина b1 оказывается на грани ограждения
+  assert.throws(() => updateBorder(model, "terrace_borders", "терраса", { borderId: b1.id, start: { x: 6000, y: 9500 } }), (e: unknown) =>
+    e instanceof McpError && (e.code === "GEOMETRY_CONFLICT" || e.code === "INVALID_ARGUMENT"));
+  assert.equal(JSON.stringify(model), before, "модель откатилась");
+});
+
+test("rev67 M5: проём в вогнутой комнате проходит через вырез — отказ", () => {
+  const { model } = roomModel();
+  // вогнутая комната (см): вырез x 30..40, y 0..60
+  const concave = [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 60 }, { x: 40, y: 60 }, { x: 40, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+  const rooms: RoomPolygon[] = [{ roomId: "rc", polygon: concave, areaCm2: 0, axisAreaCm2: null }];
+  const before = JSON.stringify(model);
+  // углы (10,10) и (90,90) и центр (50,50) внутри, но прямоугольник пересекает вырез
+  assert.throws(() => addFloorHole(model, { corner1: { x: 100, y: 100 }, corner2: { x: 900, y: 900 } }, rooms), (e: unknown) =>
+    e instanceof McpError && (e.code === "GEOMETRY_CONFLICT" || e.code === "OUTSIDE_ROOM"));
+  assert.equal(JSON.stringify(model), before);
+});
+
+test("rev67 M5: без комнат проём не проверить — понятная ошибка", () => {
+  const { model } = roomModel();
+  const before = JSON.stringify(model);
+  assert.throws(() => addFloorHole(model, { corner1: { x: 1000, y: -1500 }, corner2: { x: 2000, y: -2500 } }, []), (e: unknown) =>
+    e instanceof McpError && e.code === "INVALID_ARGUMENT");
+  assert.equal(JSON.stringify(model), before);
+});
+
+test("rev67 minor6: столб во второй террасе из двух колец — принимается", () => {
+  const model = terraceModel();
+  addBorderRing(model, "terrace_borders", "терраса", {
+    points: [{ x: 15000, y: 1000 }, { x: 18000, y: 1000 }, { x: 18000, y: 3000 }, { x: 15000, y: 3000 }],
+  });
+  const col = addTerraceColumn(model, { center: { x: 16500, y: 2000 } });
+  assert.equal(col.role, "terrace_column");
+});
+
+test("rev67 minor7: валидатор не ругается на terrace_column внутри террасы, ловит вне её", () => {
+  const model = terraceModel();
+  addTerraceColumn(model, { center: { x: 7000, y: 2000 } });
+  const rooms = [{ roomId: "r1", polygon: ROOM_POLY.polygon, areaCm2: 0, axisAreaCm2: null }];
+  const problems = validateModel(model, rooms);
+  assert.ok(!problems.some((p) => p.code === "PILLAR_OUTSIDE_ROOM"), JSON.stringify(problems));
+  // столб вне террасы (внутри комнаты) — проблема
+  model.pillars["px"] = { ...structuredClone(Object.values(model.pillars)[0]!), id: "px", pc: { x: 200, y: -150 }, p1: { x: 190, y: -160 }, p2: { x: 210, y: -160 }, p3: { x: 210, y: -140 }, p4: { x: 190, y: -140 } };
+  const problems2 = validateModel(model, rooms);
+  assert.ok(problems2.some((p) => p.code === "PILLAR_OUTSIDE_ROOM" && JSON.stringify(p.details).includes("px")), JSON.stringify(problems2));
+});
+
+test("rev67 minor8: id_room проёма — комната по проверенному включению; update пересчитывает", () => {
+  const { model } = roomModel();
+  const hole = addFloorHole(model, { corner1: { x: 1000, y: -2500 }, corner2: { x: 2000, y: -1500 } }, [ROOM_POLY]);
+  assert.equal(hole.id_room, "r1");
+  const updated = updateFloorHole(model, { holeId: hole.id, corner1: { x: 1200, y: -2300 } }, [ROOM_POLY]);
+  assert.equal(updated.id_room, "r1");
 });
 
 // ---------- стеновая операция рядом с проёмом (пересчёт только затронутых) ----------

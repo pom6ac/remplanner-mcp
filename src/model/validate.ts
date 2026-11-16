@@ -7,6 +7,7 @@ import {
 } from "./geometry.ts";
 import { holeRange } from "./openings.ts";
 import { edgeOnWallFace, pillarPolygon, PILLAR_DEFS } from "./pillars.ts";
+import { borderRingPolygons, borderRingContact } from "./terraces.ts";
 import { prepareForRestore } from "./walls.ts";
 
 export type ValidationProblem = {
@@ -317,6 +318,8 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
   }
   if (knownRooms.length > 0) {
     for (const pillar of pillars) {
+      // ревью 66 №7: столб террасы валидируется по геометрии террас, а не по комнатам дома
+      if (pillar.role === "terrace_column") continue;
       if (knownRooms.some((room) => pointInPolygon(room.polygon, pillar.pc))) continue;
       // колонна вплотную к стене (грань на линии грани) — валидна вне полигонов комнат
       // (эталон ui-ref-pillar-wall: центр примыкающей колонны вне rooms2). Контакт —
@@ -341,6 +344,23 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
           details: { pillar_id: pillar.id, pc: pillar.pc },
         });
       }
+    }
+  }
+
+  // столбы террас (ревью 66 №7): центр — внутри замкнутого кольца террасы или на его
+  // границе (допуск прижатия 3 см, как в terrace_column_add); правил комнат дома — нет
+  const terraceRings = borderRingPolygons(model.terrace_borders ?? {});
+  for (const pillar of pillars) {
+    if (pillar.role !== "terrace_column") continue;
+    const inside = terraceRings.some((ring) => pointInPolygon(ring, pillar.pc) || borderRingContact(ring, pillar.pc, 3));
+    if (!inside) {
+      problems.push({
+        code: "PILLAR_OUTSIDE_ROOM",
+        message: terraceRings.length === 0
+          ? `столб террасы ${pillar.id} вне контура террасы — замкнутого кольца границ террасы нет`
+          : `столб террасы ${pillar.id} вне контура террасы — центр должен быть в кольце границ террасы`,
+        details: { pillar_id: pillar.id, pc: pillar.pc, kind: "terrace_column_outside_terrace" },
+      });
     }
   }
 

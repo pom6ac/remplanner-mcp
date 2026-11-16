@@ -5,6 +5,7 @@ import type { ServerContext } from "./context.ts";
 import { ok, tool, type ToolDefLike as ToolDef } from "./toolkit.ts";
 import { McpError } from "../errors.ts";
 import type { Model } from "../model/types.ts";
+import { clearEntityCollections, replaceEntityCollections } from "../model/collections.ts";
 
 // T18: инструменты сессии и проектов (design §7.1).
 
@@ -119,13 +120,9 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
         const model = (raw["model"] ?? raw) as Model;
         const ws = ctx.workspace();
         ws.apply("import_plan", (m) => {
-          m.walls = model.walls ?? {};
-          m.items = model.items ?? {};
-          m.pillars = model.pillars ?? {};
-          m.rulers = model.rulers ?? {};
-          m.comments = model.comments ?? {};
-          m.total_height = model.total_height ?? 270;
-          if (model.rooms2) m.rooms2 = model.rooms2;
+          // ревью 66 №2: замена по общему реестру коллекций — новые сущности
+          // (ригели, газ, границы, проёмы пола) не выпадают из импорта
+          replaceEntityCollections(m, model);
           return true;
         });
         return ok({ imported: args["path"], walls: Object.keys(ws.model.walls).length, hint: SCENARIO_HINT });
@@ -142,13 +139,8 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
         if (args["confirm"] !== true) throw new McpError("INVALID_ARGUMENT", "нужно confirm: true");
         const ws = ctx.workspace();
         ws.apply("clear", (m) => {
-          m.walls = {};
-          m.items = {};
-          m.pillars = {};
-          m.rulers = {};
-          m.comments = {};
-          delete m.rooms1;
-          delete m.rooms2;
+          // ревью 66 №2: очистка по общему реестру коллекций
+          clearEntityCollections(m);
           return true;
         });
         return ok({ cleared: true, hint: SCENARIO_HINT });

@@ -2,7 +2,7 @@ import type { Model, LevelHole, Point } from "./types.ts";
 import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
-import { pointInPolygon, polygonArea, overlapArea, type Polygon } from "./geometry.ts";
+import { pointInPolygon, polygonArea, overlapArea, lineIntersection, type Polygon, type Segment } from "./geometry.ts";
 import type { RoomPolygon } from "./items.ts";
 import { McpError } from "../errors.ts";
 
@@ -66,8 +66,31 @@ function buildCandidate(id: string, c1Cm: Point, c2Cm: Point, roomId: string | n
   };
 }
 
-/** Общие проверки кандидата: конечность, размер > 0, внутри комнаты, без пересечения других проёмов. */
-function assertHoleInvariants(candidate: LevelHole, model: Model, rooms: RoomPolygon[] | undefined): void {
+/**
+ * Собственное пересечение двух отрезков — не по касанию и не в общих концах
+ * (ревью 66 №5): пересечение рёбер проёма с границей комнаты значит выход за неё.
+ */
+function segmentsProperlyCross(a: Segment, b: Segment): boolean {
+  const p = lineIntersection(a, b);
+  if (!p) return false;
+  const onSeg = (s: Segment, q: Point): boolean => {
+    const cross = (s.p2.x - s.p1.x) * (q.y - s.p1.y) - (s.p2.y - s.p1.y) * (q.x - s.p1.x);
+    if (Math.abs(cross) > 1e-6) return false;
+    const dot = (q.x - s.p1.x) * (s.p2.x - s.p1.x) + (q.y - s.p1.y) * (s.p2.y - s.p1.y);
+    const len2 = (s.p2.x - s.p1.x) ** 2 + (s.p2.y - s.p1.y) ** 2;
+    return dot >= 1e-6 && dot <= len2 - 1e-6;
+  };
+  return onSeg(a, p) && onSeg(b, p);
+}
+
+/**
+ * Общие проверки кандидата: конечность, размер > 0, комната обязательна и проём
+ * целиком внутри неё (ревью 66 №5: не только центр и углы — каждое ребро проёма
+ * не пересекает границу комнаты, иначе вогнутая комната пропускает вырез),
+ * без пересечения других проёмов. Возвращает комнату, в которую помещён проём
+ * (ревью 66 №8: id_room по проверенному включению).
+ */
+function assertHoleInvariants(candidate: LevelHole, model: Model, rooms: RoomPolygon[] | undefined): RoomPolygon {
   const xs = candidate.polygon.map((p) => p.x);
   const ys = candidate.polygon.map((p) => p.y);
   const w = Math.max(...xs) - Math.min(...xs);
@@ -75,18 +98,34 @@ function assertHoleInvariants(candidate: LevelHole, model: Model, rooms: RoomPol
   if (w <= 0 || h <= 0) {
     throw new McpError("INVALID_ARGUMENT", "нулевой размер проёма — углы прямоугольника не должны совпадать");
   }
-  if (rooms && rooms.length > 0) {
-    const room = rooms.find((r) => pointInPolygon(r.polygon, candidate.pc));
-    if (!room) {
-      throw new McpError("OUTSIDE_ROOM", "точка вне помещений — проём в полу ставится внутри комнаты (как в UI)", {
-        details: { kind: "outside_room", point: candidate.pc },
+  if (!rooms || rooms.length === 0) {
+    throw new McpError("INVALID_ARGUMENT", "комнаты не определены — проём в полу нельзя проверить на принадлежность комнате; откройте проект с комнатами (project_open) или добавьте комнаты", {
+      details: { kind: "no_rooms", hole_id: candidate.id },
+    });
+  }
+  const room = rooms.find((r) => pointInPolygon(r.polygon, candidate.pc));
+  if (!room) {
+    throw new McpError("OUTSIDE_ROOM", "точка вне помещений — проём в полу ставится внутри комнаты (как в UI)", {
+      details: { kind: "outside_room", point: candidate.pc },
+    });
+  }
+  // все углы в одной комнате (прямоугольник не пересекает стены комнаты)
+  for (const p of candidate.polygon) {
+    if (!pointInPolygon(room.polygon, p)) {
+      throw new McpError("GEOMETRY_CONFLICT", "проём в полу пересекает стену — углы прямоугольника должны быть внутри одной комнаты", {
+        details: { kind: "floor_hole_over_wall", point: p },
       });
     }
-    // все углы в одной комнате (прямоугольник не пересекает стены комнаты)
-    for (const p of candidate.polygon) {
-      if (!pointInPolygon(room.polygon, p)) {
-        throw new McpError("GEOMETRY_CONFLICT", "проём в полу пересекает стену — углы прямоугольника должны быть внутри одной комнаты", {
-          details: { kind: "floor_hole_over_wall", point: p },
+  }
+  // каждое ребро проёма не пересекает границу комнаты (ревью 66 №5: вогнутая комната)
+  const rn = room.polygon.length;
+  for (let i = 0; i < 4; i++) {
+    const edge: Segment = { p1: candidate.polygon[i]!, p2: candidate.polygon[(i + 1) % 4]! };
+    for (let j = 0; j < rn; j++) {
+      const roomEdge: Segment = { p1: room.polygon[j]!, p2: room.polygon[(j + 1) % rn]! };
+      if (segmentsProperlyCross(edge, roomEdge)) {
+        throw new McpError("GEOMETRY_CONFLICT", "проём в полу пересекает стену — прямоугольник должен быть целиком внутри комнаты", {
+          details: { kind: "floor_hole_over_wall", edge: i + 1, room_id: room.roomId },
         });
       }
     }
@@ -100,6 +139,7 @@ function assertHoleInvariants(candidate: LevelHole, model: Model, rooms: RoomPol
       });
     }
   }
+  return room;
 }
 
 export type AddFloorHoleParams = {
@@ -118,7 +158,8 @@ export function addFloorHole(model: Model, params: AddFloorHoleParams, rooms?: R
   const c1 = { x: mmToCm(params.corner1.x), y: mmToCm(params.corner1.y) };
   const c2 = { x: mmToCm(params.corner2.x), y: mmToCm(params.corner2.y) };
   const candidate = buildCandidate(newId(5), c1, c2, null);
-  assertHoleInvariants(candidate, model, rooms);
+  const room = assertHoleInvariants(candidate, model, rooms);
+  candidate.id_room = room.roomId;
   model.level_holes ??= {};
   model.level_holes[candidate.id] = candidate;
   return candidate;
@@ -137,7 +178,9 @@ export function updateFloorHole(model: Model, params: UpdateFloorHoleParams, roo
   const c1 = params.corner1 ? { x: mmToCm(params.corner1.x), y: mmToCm(params.corner1.y) } : hole.polygon[0]!;
   const c2 = params.corner2 ? { x: mmToCm(params.corner2.x), y: mmToCm(params.corner2.y) } : hole.polygon[2]!;
   const candidate = buildCandidate(hole.id, c1, c2, hole.id_room ?? null);
-  assertHoleInvariants(candidate, model, rooms);
+  const room = assertHoleInvariants(candidate, model, rooms);
+  // ревью 66 №8: комната пересчитывается по проверенному включению (перенос в другую комнату)
+  candidate.id_room = room.roomId;
   model.level_holes![hole.id] = candidate;
   return candidate;
 }
@@ -149,15 +192,18 @@ export function deleteFloorHole(model: Model, holeId: string): void {
 }
 
 /**
- * Расхождение проёмов в полу между двумя наборами — семантическая сверка (этап 64):
- * идентичности, тип, polygon (допуск 0,1 см), pc, area (0,01 м²); длина (число
- * вершин). matrix/vertexes/items редактор сохраняет байт в байт (проба 64-norm2),
- * сверка polygon покрывает геометрию. Возвращает человекочитаемые расхождения.
+ * Расхождение проёмов в полу между двумя наборами — ПОЛНАЯ семантическая сверка
+ * (ревью 66 №3, этап 67): идентичности в обе стороны (лишний проём на сервере —
+ * удаление не состоялось), тип, plan, polygon (допуск 0,1 см), pc, area (0,01 м²),
+ * id_room, число вершин, matrix/vertexes/items под согласованным сопоставлением
+ * вершин (по стабильному id, иначе по координатам — как у газовых линий).
+ * Возвращает человекочитаемые расхождения.
  */
 export function levelHoleMismatches(expected: Record<string, LevelHole>, got: Record<string, unknown>): string[] {
   const out: string[] = [];
   const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
     a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
+  const tolCm = 0.1;
   for (const [id, h0] of Object.entries(expected)) {
     const h = got[id] as LevelHole | undefined;
     if (!h) {
@@ -165,6 +211,7 @@ export function levelHoleMismatches(expected: Record<string, LevelHole>, got: Re
       continue;
     }
     if ((h.type ?? "") !== (h0.type ?? "")) out.push(`${id}: тип изменился (на сервере «${h.type ?? ""}»; ожидалось «${h0.type ?? ""}»)`);
+    if (String(h.plan ?? "") !== String(h0.plan ?? "")) out.push(`${id}: план изменился (на сервере «${h.plan ?? ""}»; ожидалось «${h0.plan ?? ""}»)`);
     const poly0 = h0.polygon ?? [];
     const poly = (h.polygon ?? []) as Point[];
     if (poly.length !== poly0.length) {
@@ -182,8 +229,100 @@ export function levelHoleMismatches(expected: Record<string, LevelHole>, got: Re
     if (h0.area !== undefined && !near(h.area, h0.area, 0.011)) {
       out.push(`${id}: площадь изменилась (на сервере ${h.area}; ожидалось ${h0.area})`);
     }
+    // привязка к комнате (ревью 66 №3): редактор её не пересчитывает — расхождение это порча
+    if ((h.id_room ?? null) !== (h0.id_room ?? null)) {
+      out.push(`${id}: id_room изменился (на сервере «${h.id_room ?? ""}»; ожидалось «${h0.id_room ?? ""}»)`);
+    }
+    // граф: vertexes (сопоставление по id/координатам), matrix в обе стороны, items, length
+    const expV = h0.vertexes ?? [];
+    const gotV = h.vertexes ?? [];
+    const map = expV.length === gotV.length ? matchVertexes(expV, gotV) : null;
+    if (!map) {
+      out.push(`${id}: граф вершин не сопоставлен (на сервере ${gotV.length} вершин, matrix=${JSON.stringify(h.matrix ?? null)}, items=${Object.keys(h.items ?? {}).length}; ожидалось ${expV.length})`);
+    } else {
+      for (let i = 0; i < expV.length; i++) {
+        const e = expV[i]!;
+        const s = gotV[map[i]!]!;
+        if ((e.type ?? "") !== (s.type ?? "")) out.push(`${id}: тип вершины ${i} изменился (на сервере «${s.type ?? ""}»; ожидалось «${e.type ?? ""}»)`);
+        if (!near(s.point?.x, e.point?.x, tolCm) || !near(s.point?.y, e.point?.y, tolCm)) {
+          out.push(`${id}: вершина ${i} сместилась (на сервере ${s.point?.x},${s.point?.y}; ожидалось ${e.point?.x},${e.point?.y})`);
+        }
+      }
+      const n = expV.length;
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          const e0 = h0.matrix?.[i]?.[j] ?? null;
+          const e = h.matrix?.[map[i]!]?.[map[j]!] ?? null;
+          if ((e0 !== null) !== (e !== null)) {
+            out.push(`${id}: matrix ребро ${i}–${j} ${e0 !== null ? "потеряно" : "добавлено"} на сервере`);
+          }
+        }
+      }
+      const gotItems = h.items ?? {};
+      const expItems = h0.items ?? {};
+      const unclaimed = new Set(Object.keys(gotItems));
+      for (let i = 0; i < expV.length; i++) {
+        const expId = expV[i]!.id;
+        const gotId = gotV[map[i]!]!.id;
+        if (expId === undefined) continue;
+        if (gotId === undefined || !(gotId in gotItems)) {
+          out.push(`${id}: вершина ${expId} пропала из items`);
+          continue;
+        }
+        unclaimed.delete(gotId);
+        if (String(expItems[expId]) !== String(gotItems[gotId])) {
+          out.push(`${id}: значение items вершины ${expId} изменилось (на сервере «${String(gotItems[gotId])}»; ожидалось «${String(expItems[expId])}»)`);
+        }
+      }
+      if (unclaimed.size > 0) out.push(`${id}: лишние вершины в items (${[...unclaimed].sort().join(", ")})`);
+    }
+    if (h0.length !== undefined && h.length !== h0.length) {
+      out.push(`${id}: length изменился (на сервере ${h.length}; ожидалось ${h0.length})`);
+    }
+  }
+  // лишние проёмы на сервере (ревью 66 №3): удаление могло фактически не состояться
+  for (const id of Object.keys(got)) {
+    if (!(id in expected)) out.push(`${id}: лишний проём в полу на сервере (в модели его нет)`);
   }
   return out;
+}
+
+/** Сопоставление вершин графа по стабильному id, иначе по координатам (допуск 0,1 см). */
+function matchVertexes(expected: { id: string; point: Point; type: string }[], got: { id: string; point: Point; type: string }[]): number[] | null {
+  const used = new Array<boolean>(got.length).fill(false);
+  const map = new Array<number>(expected.length).fill(-1);
+  const gotById = new Map<string, number>();
+  got.forEach((v, i) => gotById.set(v.id, i));
+  let allById = true;
+  expected.forEach((v, i) => {
+    const j = gotById.get(v.id);
+    if (j === undefined || used[j]!) {
+      allById = false;
+      return;
+    }
+    map[i] = j!;
+    used[j] = true;
+  });
+  if (allById) return map;
+  used.fill(false);
+  map.fill(-1);
+  for (let i = 0; i < expected.length; i++) {
+    let best = -1;
+    let bestD = Infinity;
+    for (let j = 0; j < got.length; j++) {
+      if (used[j]) continue;
+      if ((expected[i]!.type ?? "") !== (got[j]!.type ?? "")) continue;
+      const d = Math.max(Math.abs(expected[i]!.point.x - got[j]!.point.x), Math.abs(expected[i]!.point.y - got[j]!.point.y));
+      if (d <= 0.1 && d < bestD) {
+        bestD = d;
+        best = j;
+      }
+    }
+    if (best < 0) return null;
+    map[i] = best;
+    used[best] = true;
+  }
+  return map;
 }
 
 /** Площадь полигона проёма в м² (для model_get/сверок). */

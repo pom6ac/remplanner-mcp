@@ -203,6 +203,36 @@ export function updateBorder(model: Model, key: BordersKey, kind: string, params
     }
   }
   if (n === 0) return border;
+  // ревью 66 №4: кольца после переноса проверяются на самопересечения до commit
+  // (INVALID_ARGUMENT по заданию 67), а для террасы повторяется проверка попадания
+  // середины границы на грань ограждения (редактор такие границы удаляет при restore)
+  for (const ring of borderRingPolygons(borders)) {
+    const rn = ring.length;
+    for (let i = 0; i < rn; i++) {
+      const s1: Segment = { p1: ring[i]!, p2: ring[(i + 1) % rn]! };
+      for (let j = i + 1; j < rn; j++) {
+        if (j === i || (i === 0 && j === rn - 1) || j === (i + 1) % rn) continue;
+        const s2: Segment = { p1: ring[j]!, p2: ring[(j + 1) % rn]! };
+        if (segIntersect(s1, s2)) {
+          model[key] = backup as Record<string, TerraceBorder>;
+          throw new McpError("INVALID_ARGUMENT", `${kind}: самопересечение контура после переноса (стороны ${i + 1} и ${j + 1}) — откат`, {
+            details: { kind: "border_self_intersection", border_id: params.borderId },
+          });
+        }
+      }
+    }
+  }
+  if (key === "terrace_borders") {
+    for (const b of Object.values(borders)) {
+      const fence = borderOnFence(model, b.p1, b.p2);
+      if (fence) {
+        model[key] = backup as Record<string, TerraceBorder>;
+        throw new McpError("GEOMETRY_CONFLICT", `${kind}: граница ${b.id} легла на ограждение ${fence} — редактор удаляет такие границы при восстановлении — откат`, {
+          details: { kind: "border_on_fence", border_id: b.id, fence_id: fence },
+        });
+      }
+    }
+  }
   return border;
 }
 
@@ -215,7 +245,15 @@ export function deleteBorder(model: Model, key: BordersKey, ref: string): void {
 
 /** Замкнутое кольцо границ → полигон (см); незамкнутое — null. */
 export function borderRingPolygon(borders: Record<string, TerraceBorder>): Polygon | null {
-  if (Object.keys(borders).length < 3) return null;
+  return borderRingPolygons(borders)[0] ?? null;
+}
+
+/**
+ * Все замкнутые кольца границ → полигоны (см) (ревью 66 №6): террас может быть
+ * несколько, проверять попадание надо в любую; открытые цепочки не возвращаются.
+ */
+export function borderRingPolygons(borders: Record<string, TerraceBorder>): Polygon[] {
+  if (Object.keys(borders).length < 3) return [];
   // собираем цепочки по совпадению концов (допуск 0,5 см)
   const remaining = new Set(Object.keys(borders));
   const chains: Point[][] = [];
@@ -243,15 +281,16 @@ export function borderRingPolygon(borders: Record<string, TerraceBorder>): Polyg
     }
     chains.push(chain);
   }
+  const rings: Polygon[] = [];
   for (const chain of chains) {
     const head = chain[0]!;
     const tail = chain[chain.length - 1]!;
     if (chain.length >= 4 && Math.abs(head.x - tail.x) <= 0.5 && Math.abs(head.y - tail.y) <= 0.5) {
       chain.pop();
-      return chain;
+      rings.push(chain);
     }
   }
-  return null;
+  return rings;
 }
 
 export type AddFenceParams = {
@@ -300,28 +339,56 @@ export type AddTerraceColumnParams = {
 export function addTerraceColumn(model: Model, params: AddTerraceColumnParams): Pillar {
   finite("width_mm", params.widthMm);
   finite("height_mm", params.heightMm);
-  const ring = borderRingPolygon(bordersOf(model, "terrace_borders"));
-  if (!ring) {
+  const width = mmToCm(params.widthMm ?? COLUMN_DEFS.widthCm * 10);
+  const height = mmToCm(params.heightMm ?? COLUMN_DEFS.heightCm * 10);
+  assertColumnSize("width_mm", params.widthMm, COLUMN_DEFS.widthMinCm * 10, COLUMN_DEFS.widthMaxCm * 10);
+  assertColumnSize("height_mm", params.heightMm, COLUMN_DEFS.heightMinCm * 10, COLUMN_DEFS.heightMaxCm * 10);
+  const pc = { x: mmToCm(params.center.x), y: mmToCm(params.center.y) };
+  assertColumnOnTerrace(model, pc);
+  const id = newId(10);
+  const pillar = buildTerraceColumn(id, pc, width, height, typeof model.total_height === "number" ? model.total_height : 270);
+  assertColumnNoOverlap(model, pillar);
+  model.pillars[pillar.id] = pillar;
+  return pillar;
+}
+
+/** Лимиты габарита (передан и вне лимитов — INVALID_ARGUMENT). */
+function assertColumnSize(name: string, valueMm: number | undefined, minMm: number, maxMm: number): void {
+  if (valueMm !== undefined && (valueMm < minMm || valueMm > maxMm)) {
+    throw new McpError("INVALID_ARGUMENT", `${name} вне лимитов (${minMm}..${maxMm} мм)`);
+  }
+}
+
+/** Центр столба — внутри любого замкнутого кольца террасы или на его границе (3 см). */
+function assertColumnOnTerrace(model: Model, pc: Point): void {
+  const rings = borderRingPolygons(bordersOf(model, "terrace_borders"));
+  if (rings.length === 0) {
     throw new McpError("INVALID_ARGUMENT", "в редакторе столб террасы ставится при существующей террасе — сначала нарисуйте замкнутую террасу (terrace_add)", {
       details: { kind: "terrace_required" },
     });
   }
-  const width = mmToCm(params.widthMm ?? COLUMN_DEFS.widthCm * 10);
-  const height = mmToCm(params.heightMm ?? COLUMN_DEFS.heightCm * 10);
-  if (params.widthMm !== undefined && (params.widthMm < COLUMN_DEFS.widthMinCm * 10 || params.widthMm > COLUMN_DEFS.widthMaxCm * 10)) {
-    throw new McpError("INVALID_ARGUMENT", `width_mm вне лимитов (${COLUMN_DEFS.widthMinCm * 10}..${COLUMN_DEFS.widthMaxCm * 10} мм)`);
-  }
-  if (params.heightMm !== undefined && (params.heightMm < COLUMN_DEFS.heightMinCm * 10 || params.heightMm > COLUMN_DEFS.heightMaxCm * 10)) {
-    throw new McpError("INVALID_ARGUMENT", `height_mm вне лимитов (${COLUMN_DEFS.heightMinCm * 10}..${COLUMN_DEFS.heightMaxCm * 10} мм)`);
-  }
-  const pc = { x: mmToCm(params.center.x), y: mmToCm(params.center.y) };
-  const inside = pointInPolygon(ring, pc) || borderRingContact(ring, pc, COLUMN_DEFS.snapTolCm);
+  const inside = rings.some((ring) => pointInPolygon(ring, pc) || borderRingContact(ring, pc, COLUMN_DEFS.snapTolCm));
   if (!inside) {
     throw new McpError("GEOMETRY_CONFLICT", "столб террасы ставится на террасе — центр вне контура террасы", {
       details: { kind: "outside_terrace", pc },
     });
   }
-  const id = newId(10);
+}
+
+/** Столб не пересекает другие колонны/столбы (касание — не пересечение). */
+function assertColumnNoOverlap(model: Model, pillar: Pillar): void {
+  for (const other of Object.values(model.pillars)) {
+    const otherPoly: Polygon = other.p1 && other.p4 ? [other.p1, other.p2, other.p3, other.p4] : [];
+    if (otherPoly.length === 4 && overlapArea([pillar.p1, pillar.p2, pillar.p3, pillar.p4], otherPoly) > 0.01) {
+      throw new McpError("GEOMETRY_CONFLICT", `столб пересекает другую колонну (${other.id})`, {
+        details: { kind: "pillar_over_pillar", other_id: other.id },
+      });
+    }
+  }
+}
+
+/** Геометрия столба (углы, грани) — общая для add и update. */
+function buildTerraceColumn(id: string, pc: Point, width: number, height: number, totalHeight: number): Pillar {
   const hw = width / 2;
   const hh = height / 2;
   const corners: [Point, Point, Point, Point] = [
@@ -330,14 +397,14 @@ export function addTerraceColumn(model: Model, params: AddTerraceColumnParams): 
     { x: r2(pc.x + hw), y: r2(pc.y + hh) },
     { x: r2(pc.x - hw), y: r2(pc.y + hh) },
   ];
-  const pillar: Pillar = {
+  return {
     id,
     inRoom: 0,
     plan: "a",
     role: "terrace_column",
     width,
     height,
-    total_height: typeof model.total_height === "number" ? model.total_height : 270,
+    total_height: totalHeight,
     angle: 0,
     f0offset: 0,
     pc: { x: r2(pc.x), y: r2(pc.y) },
@@ -354,21 +421,10 @@ export function addTerraceColumn(model: Model, params: AddTerraceColumnParams): 
     eds: {},
     show_dls: true,
   };
-  // пересечение с другими колоннами/столбами — не допускаем
-  for (const other of Object.values(model.pillars)) {
-    const otherPoly: Polygon = other.p1 && other.p4 ? [other.p1, other.p2, other.p3, other.p4] : [];
-    if (otherPoly.length === 4 && overlapArea([pillar.p1, pillar.p2, pillar.p3, pillar.p4], otherPoly) > 0.01) {
-      throw new McpError("GEOMETRY_CONFLICT", `столб пересекает другую колонну (${other.id})`, {
-        details: { kind: "pillar_over_pillar", other_id: other.id },
-      });
-    }
-  }
-  model.pillars[pillar.id] = pillar;
-  return pillar;
 }
 
 /** Контакт точки с контуром (расстояние до сторон ≤ tol). */
-function borderRingContact(ring: Polygon, pc: Point, tolCm: number): boolean {
+export function borderRingContact(ring: Polygon, pc: Point, tolCm: number): boolean {
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i]!;
     const b = ring[(i + 1) % ring.length]!;
@@ -381,21 +437,45 @@ function borderRingContact(ring: Polygon, pc: Point, tolCm: number): boolean {
   return false;
 }
 
-/** terrace_column_update: центр/габариты (мм); кандидат-копия, пересечение проверяется. */
+/**
+ * terrace_column_update: центр/габариты (мм). Ревью 66 №1: кандидат строится на
+ * основе исходного объекта — непереданные размеры и прочие свойства (поля UI)
+ * сохраняются; identity (id) не меняется. Проверки размещения (терраса, пересечения)
+ * — те же, что в add; при ошибке модель не меняется.
+ */
 export function updateTerraceColumn(model: Model, columnId: string, params: Partial<AddTerraceColumnParams>): Pillar {
   const column = model.pillars[columnId];
   if (!column || column.role !== "terrace_column") throw new McpError("NOT_FOUND", `столб террасы ${columnId} не найден`);
+  finite("center.x", params.center?.x);
+  finite("center.y", params.center?.y);
+  finite("width_mm", params.widthMm);
+  finite("height_mm", params.heightMm);
+  assertColumnSize("width_mm", params.widthMm, COLUMN_DEFS.widthMinCm * 10, COLUMN_DEFS.widthMaxCm * 10);
+  assertColumnSize("height_mm", params.heightMm, COLUMN_DEFS.heightMinCm * 10, COLUMN_DEFS.heightMaxCm * 10);
   const backup = structuredClone(model.pillars);
   try {
     delete model.pillars[columnId];
-    const updated = addTerraceColumn(model, {
-      center: params.center ?? { x: column.pc.x * 10, y: column.pc.y * 10 },
-      widthMm: params.widthMm,
-      heightMm: params.heightMm,
-    });
-    // сохраняем identity: кандидат с новым id заменяется на старый (новая запись удаляется)
-    delete model.pillars[updated.id];
-    updated.id = columnId;
+    const centerMm = params.center ?? { x: column.pc.x * 10, y: column.pc.y * 10 };
+    const pc = { x: mmToCm(centerMm.x), y: mmToCm(centerMm.y) };
+    assertColumnOnTerrace(model, pc);
+    const widthCm = params.widthMm !== undefined ? mmToCm(params.widthMm) : column.width;
+    const heightCm = params.heightMm !== undefined ? mmToCm(params.heightMm) : column.height;
+    // кандидат — клон исходного объекта: непереданные свойства (поля UI) сохраняются;
+    // заменяется только геометрия (углы/грани пересчитаны под новый центр и габариты)
+    const updated = structuredClone(column);
+    const geometry = buildTerraceColumn(columnId, pc, widthCm, heightCm, column.total_height ?? 270);
+    updated.pc = geometry.pc;
+    updated.p1 = geometry.p1;
+    updated.p2 = geometry.p2;
+    updated.p3 = geometry.p3;
+    updated.p4 = geometry.p4;
+    updated.width = geometry.width;
+    updated.height = geometry.height;
+    updated.edges = geometry.edges;
+    updated.inRoom = 0;
+    updated.f0offset = 0;
+    updated.total_height = geometry.total_height;
+    assertColumnNoOverlap(model, updated);
     model.pillars[columnId] = updated;
     return updated;
   } catch (e) {

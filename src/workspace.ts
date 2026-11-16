@@ -41,7 +41,9 @@ function checkBordersAfterNormalize(local: Model, norm: { terrace_borders?: Reco
   return [...missing, ...extra, ...mismatches.filter((m) => !missing.some((k) => m.startsWith(`${k.split(":")[0]!}:`)))];
 }
 
-/** Сверка проёмов в полу локальной модели с редактором (нормализация/save). */
+/** Сверка проёмов в полу локальной модели с редактором (нормализация/save).
+ *  levelHoleMismatches (этап 67) сверяет идентичности в обе стороны, включая
+ *  лишние проёмы на стороне редактора/сервера. */
 function checkLevelHolesAfterNormalize(local: Model, norm: Model): string[] {
   const wsIds = new Set(Object.keys(local.level_holes ?? {}));
   const normIds = new Set(Object.keys(norm.level_holes ?? {}));
@@ -49,7 +51,6 @@ function checkLevelHolesAfterNormalize(local: Model, norm: Model): string[] {
   const mismatches = levelHoleMismatches(structuredClone(local.level_holes ?? {}), norm.level_holes ?? {});
   return [
     ...lost.map((id) => `${id}: проём в полу потерян`),
-    ...missingIds(normIds, wsIds).map((id) => `${id}: проём в полу добавлен редактором`),
     ...mismatches.filter((m) => !lost.some((id) => m.startsWith(`${id}:`))),
   ];
 }
@@ -197,8 +198,10 @@ function wallAxisCoveredBy(wall: { p1: Point; p2: Point } | undefined, localSegm
   );
 }
 
-/** Значимая геометрия колонны для сверки после сохранения (ревью 43 №2). */
-type PillarSig = { pc?: { x: number; y: number }; width?: number; height?: number; angle?: number };
+/** Значимая геометрия колонны для сверки после сохранения (ревью 43 №2);
+ *  ревью 66 №3: role тоже значима — террасный столб, ставший обычной колонной,
+ *  не проходит как «verified». */
+type PillarSig = { pc?: { x: number; y: number }; width?: number; height?: number; angle?: number; role?: string };
 
 /**
  * Расхождение колонн между рабочей копией и сервером после save (ревью 43 №2):
@@ -227,6 +230,47 @@ function pillarVerificationMismatches(expected: Record<string, PillarSig>, got: 
     if (!near(g.width, p.width, 0.1)) out.push(`${id}: ширина изменилась (на сервере ${g.width}; ожидалось ${p.width})`);
     if (!near(g.height, p.height, 0.1)) out.push(`${id}: глубина изменилась (на сервере ${g.height}; ожидалось ${p.height})`);
     if (angleDiff(g.angle ?? 0, p.angle ?? 0) > 0.1) out.push(`${id}: угол изменился (на сервере ${g.angle ?? 0}; ожидалось ${p.angle ?? 0})`);
+    if ((g.role ?? "") !== (p.role ?? "")) out.push(`${id}: role изменилась (на сервере «${g.role ?? ""}»; ожидалось «${p.role ?? ""}»)`);
+  }
+  return out;
+}
+
+/**
+ * Роли стен после нормализации/save (ревью 66 №3): ограждение террасы, ставшее
+ * обычной стеной, геометрию не меняет — сверяется role у стен с совпадающей
+ * геометрией. Стена с тем же id — role обязана совпасть; у стены с новым id
+ * (переименование нормализацией) role сравнивается с геометрически совпадающей
+ * ожидаемой стеной.
+ */
+function wallRoleMismatches(
+  expected: Record<string, { role?: string; p1: Point; p2: Point }>,
+  got: Record<string, { role?: string; p1: Point; p2: Point }>,
+): string[] {
+  const out: string[] = [];
+  const segOf = (w: { p1: Point; p2: Point }): WallAxisSegment[] => wallAxisSegments({ w });
+  const covers = (a: { p1: Point; p2: Point }, b: { p1: Point; p2: Point }): boolean => {
+    const segsA = segOf(a);
+    const segsB = segOf(b);
+    return segsA.length > 0 && segsA.every((s) =>
+      segsB.some((t) =>
+        Math.abs(t.ux - s.ux) <= 1e-6 && Math.abs(t.uy - s.uy) <= 1e-6 &&
+        Math.abs(t.offset - s.offset) <= 0.1 && t.a <= s.a + 0.1 && t.b >= s.b - 0.1,
+      ),
+    );
+  };
+  for (const [id, g] of Object.entries(got)) {
+    const e = expected[id];
+    if (e) {
+      if ((g.role ?? "") !== (e.role ?? "")) {
+        out.push(`${id}: role изменилась (на сервере «${g.role ?? ""}»; ожидалось «${e.role ?? ""}»)`);
+      }
+      continue;
+    }
+    // переименование: ищем ожидаемую стену с той же геометрией оси
+    const renamed = Object.entries(expected).find(([, e]) => (e.role ?? "") !== (g.role ?? "") && (covers(g, e) || covers(e, g)));
+    if (renamed) {
+      out.push(`${id}: role изменилась (на сервере «${g.role ?? ""}»; ожидалось «${renamed[1].role ?? ""}» у ${renamed[0]})`);
+    }
   }
   return out;
 }
@@ -945,6 +989,9 @@ export class Workspace {
     // этап 64: потери границ и проёмов пола при нормализации
     const bordersNorm = checkBordersAfterNormalize(this.modelInternal!, norm.model as Model);
     const holesNorm = checkLevelHolesAfterNormalize(this.modelInternal!, norm.model as Model);
+    // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
+    const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
+    const rolesNorm = wallRoleMismatches(this.modelInternal!.walls as unknown as Record<string, { role?: string; p1: Point; p2: Point }>, expectedWalls);
     const gotSegments = wallAxisSegments(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
@@ -955,7 +1002,7 @@ export class Workspace {
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
       lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 ||
-      gasGraphNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0
+      gasGraphNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -973,6 +1020,7 @@ export class Workspace {
           gas_line_mismatches: gasGraphNorm,
           border_mismatches: bordersNorm,
           level_hole_mismatches: holesNorm,
+          wall_role_mismatches: rolesNorm,
         },
       });
     }
@@ -1021,8 +1069,11 @@ export class Workspace {
       );
       const holesAfter = (after.model["level_holes"] as Record<string, unknown> | undefined) ?? {};
       const holeMismatch = levelHoleMismatches(expectedLevelHoles as Record<string, import("./model/types.ts").LevelHole>, holesAfter);
+      // ревью 66 №3: роли стен после save — ограждение, ставшее обычной стеной, не «verified»
+      const wallsAfterTyped = wallsAfter as Record<string, { role?: string; p1: Point; p2: Point }>;
+      const wallRoleMismatch = wallRoleMismatches(expectedWalls, wallsAfterTyped);
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -1037,6 +1088,7 @@ export class Workspace {
             gas_line_mismatches: gasMismatch,
             border_mismatches: borderMismatch,
             level_hole_mismatches: holeMismatch,
+            wall_role_mismatches: wallRoleMismatch,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });
