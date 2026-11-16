@@ -50,7 +50,7 @@ export type SaveOutcome = {
   verified: boolean;
   rounds: number;
   /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено. */
-  will_delete: { walls: number; openings: number; items: number };
+  will_delete: { walls: number; openings: number; items: number; pillars: number };
   /** Предупреждения (удаления объектов сервера). */
   warnings: string[];
 };
@@ -62,14 +62,15 @@ export const MAX_HISTORY = 50;
 /** Результат мутации стен: полезное значение + предупреждения (офлайн-режим). */
 export type WallMutation<T> = { result: T; warnings: string[] };
 
-/** Счётчики объектов модели: стены, проёмы, предметы. */
-export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number } {
+/** Счётчики объектов модели: стены, проёмы, предметы, колонны. */
+export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number } {
   const m = model as Model;
   const walls = m.walls ?? {};
   return {
     walls: Object.keys(walls).length,
     openings: Object.values(walls).reduce((n, w) => n + Object.keys(w.holes ?? {}).length, 0),
     items: Object.keys(m.items ?? {}).length,
+    pillars: Object.keys(m.pillars ?? {}).length,
   };
 }
 
@@ -433,11 +434,13 @@ export class Workspace {
       renamedWalls,
       openings: missingIds(openingIds(serverModel), openingIds(this.modelInternal!)),
       items: missingIds(new Set(Object.keys(serverModel.items ?? {})), new Set(Object.keys(this.modelInternal!.items ?? {}))),
+      pillars: missingIds(new Set(Object.keys(serverModel.pillars ?? {})), new Set(Object.keys(this.modelInternal!.pillars ?? {}))),
     };
     const willDelete = {
       walls: deletedIds.walls.length,
       openings: deletedIds.openings.length,
       items: deletedIds.items.length,
+      pillars: deletedIds.pillars.length,
     };
     const warnings: string[] = [];
     const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
@@ -445,6 +448,7 @@ export class Workspace {
     if (deletedIds.renamedWalls.length > 0) warnings.push(`идентификаторы стен изменились (${deletedIds.renamedWalls.length}) — геометрия сохранена, это нормализация, а не потеря: ${idList(deletedIds.renamedWalls)}`);
     if (willDelete.openings > 0) warnings.push(`будут удалены проёмы (${willDelete.openings}), которых нет в модели: ${idList(deletedIds.openings)}`);
     if (willDelete.items > 0) warnings.push(`будут удалены предметы (${willDelete.items}), которых нет в модели: ${idList(deletedIds.items)}`);
+    if (willDelete.pillars > 0) warnings.push(`будут удалены колонны (${willDelete.pillars}), которых нет в модели: ${idList(deletedIds.pillars)}`);
     if (fresh.save_id !== saveIdBefore) {
       if (!this.editorInternal && !options.force) {
         throw new McpError(
@@ -479,19 +483,22 @@ export class Workspace {
     // потеря проёмов/предметов — по id в копии редактора (ревью v0.1.1 №4)
     const localOpeningIds = openingIds(this.modelInternal!);
     const localItemIds = new Set(Object.keys(this.modelInternal!.items ?? {}));
+    const localPillarIds = new Set(Object.keys(this.modelInternal!.pillars ?? {}));
     const normWalls = (norm.model as { walls?: Record<string, { holes?: Record<string, { id?: string }> }> }).walls ?? {};
     const gotOpeningIds = new Set<string>();
     for (const [wid, w] of Object.entries(normWalls)) {
       for (const [hid, h] of Object.entries(w.holes ?? {})) gotOpeningIds.add(h.id ?? `${wid}/${hid}`);
     }
     const gotItemIds = new Set(Object.keys((norm.model as { items?: Record<string, unknown> }).items ?? {}));
+    const gotPillarIds = new Set(Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}));
     const lostOpenings = missingIds(localOpeningIds, gotOpeningIds);
     const lostItems = missingIds(localItemIds, gotItemIds);
+    const lostPillars = missingIds(localPillarIds, gotPillarIds);
     const gotSegments = wallAxisSegments(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
-      lostOpenings.length > 0 || lostItems.length > 0
+      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -503,6 +510,7 @@ export class Workspace {
           axis_segments_after: gotSegments.length,
           lost_openings: lostOpenings,
           lost_items: lostItems,
+          lost_pillars: lostPillars,
         },
       });
     }
@@ -559,7 +567,7 @@ export class Workspace {
     prepareForRestore(prepared);
     const norm = await editor.normalize(prepared as unknown as Record<string, unknown>);
     if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
-    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items };
+    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items, pillars: norm.after.pillars ?? Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}).length };
     // стены — по каноническому набору осевых отрезков (ревью v0.1.1-r2 R2-3):
     // слияние/разрез коллинеарных стен — допустимая нормализация, сдвиг и лишние
     // стены — расхождение; проёмы и предметы — по счётчикам
@@ -571,6 +579,7 @@ export class Workspace {
     }
     if (seen.openings !== expected.openings) mismatch.push(`openings: в модели ${expected.openings}, в редакторе ${seen.openings}`);
     if (seen.items !== expected.items) mismatch.push(`items: в модели ${expected.items}, в редакторе ${seen.items}`);
+    if (seen.pillars !== expected.pillars) mismatch.push(`pillars: в модели ${expected.pillars}, в редакторе ${seen.pillars}`);
     if (mismatch.length > 0) {
       throw new McpError("RENDER_OUT_OF_SYNC", `редактор показывает не текущую модель (${mismatch.join(", ")}) — картинка не отдаётся`, {
         hint: "повторите render_plan; при повторении сверитесь с model_get и model_validate",
@@ -587,6 +596,7 @@ export class Workspace {
       walls: expected.walls,
       openings: expected.openings,
       items: expected.items,
+      pillars: expected.pillars,
       editor: seen,
     };
     return { ...res, revision };

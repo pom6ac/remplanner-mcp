@@ -7,6 +7,7 @@ import {
   type MmPoint,
 } from "../model/walls.ts";
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
+import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
 import { addItem, updateItem, deleteItem, itemsList, roomPolygons, type RoomPolygon } from "../model/items.ts";
 import { compactModel, wallLengthMm } from "../model/compact.ts";
 import { validateModel } from "../model/validate.ts";
@@ -29,6 +30,18 @@ function resolveWall(model: Model, ref: string): Wall {
 
 function throwNotFound(message: string): never {
   throw Object.assign(new Error(message), { code: "NOT_FOUND" });
+}
+
+/** Колонна по site-id или метке P1…P_n. */
+function resolvePillar(model: Model, ref: string): import("../model/types.ts").Pillar {
+  if (model.pillars[ref]) return model.pillars[ref]!;
+  const m = /^P(\d+)$/.exec(ref);
+  if (m) {
+    const pillars = Object.values(model.pillars);
+    const pillar = pillars[Number(m[1]) - 1];
+    if (pillar) return pillar;
+  }
+  return throwNotFound(`колонна ${ref} не найдена (id сайта или метка P<n> из model_get)`);
 }
 
 /** Предмет по site-id или метке I1…I_n. */
@@ -599,10 +612,73 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
     ),
 
+    // ---------- Колонны (пункт меню «Несущая колонна», этап 41) ----------
+    pillar_add: tool(
+      "Поставить несущую колонну (пункт меню «Несущая колонна»): прямоугольник 20×20 см по умолчанию, " +
+        "центр в мм. Колонна должна целиком лежать внутри комнаты и не пересекать стены и другие колонны " +
+        "(касание грани стены разрешено; если колонна в 30 мм от грани стены — прижимается к ней, как в UI). " +
+        "Габариты 100..20000 × 100..6000 мм (лимиты панели редактора). Колонна вырезает площадь из комнаты " +
+        "редактора (комната пересчитается при сохранении). После добавления вызывайте model_validate и project_save.",
+      {
+        center: mmPoint.describe("центр колонны, мм"),
+        width_mm: mmInt.optional().describe("габарит по X (по умолчанию 200)"),
+        height_mm: mmInt.optional().describe("габарит по Y (по умолчанию 200)"),
+        angle_deg: mm.optional().describe("поворот в градусах, по часовой стрелке (по умолчанию 0)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const pillar = ws.apply("pillar_add", (m) => addPillar(m, {
+          center: a["center"] as MmPoint,
+          widthMm: a["width_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+          angleDeg: a["angle_deg"] as number | undefined,
+        }, ws.rooms()));
+        return ok(compactEntity(ws.model, (c) => c.pillars.find((p) => p.site_id === pillar.id) ?? null));
+      },
+    ),
+
+    pillar_update: tool(
+      "Изменить несущую колонну: переместить (center, мм), изменить габариты (width_mm/height_mm) или поворот " +
+        "(angle_deg). Правила те же: внутри комнаты, без пересечения стен и колонн; мм→см только для явно " +
+        "переданных значений. pillar_id — id колонны (site_id) или метка P<n> из model_get.",
+      {
+        pillar_id: z.string().min(1).describe("метка P<n> из model_get или id сайта"),
+        center: mmPoint.optional().describe("новый центр, мм"),
+        width_mm: mmInt.optional(),
+        height_mm: mmInt.optional(),
+        angle_deg: mm.optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const pillar = ws.apply("pillar_update", (m) => updatePillar(m, {
+          pillarId: resolvePillar(m, a["pillar_id"] as string).id,
+          center: a["center"] as MmPoint | undefined,
+          widthMm: a["width_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+          angleDeg: a["angle_deg"] as number | undefined,
+        }, ws.rooms()));
+        return ok(compactEntity(ws.model, (c) => c.pillars.find((p) => p.site_id === pillar.id) ?? null));
+      },
+    ),
+
+    pillar_delete: tool(
+      "Удалить несущую колонну (метка P<n> из model_get).",
+      { pillar_id: z.string().min(1).describe("метка P<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("pillar_delete", (m) => {
+          deletePillar(m, resolvePillar(m, a["pillar_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["pillar_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
     // ---------- Чтение и проверка (§7.6) ----------
     model_get: tool(
       "Текущая модель плана в компактном виде: стены W1… (осевые концы, длины по осям и внутренним граням, толщины, проёмы с отступами), " +
-        "комнаты R1… (площади м², периметры), предметы I1… Обычно < 5 КБ. id сайта — в поле site_id; метки W/R/I можно использовать в других инструментах.",
+        "комнаты R1… (площади м², периметры), предметы I1…, колонны P1… (пункт меню «Несущая колонна»). " +
+        "Обычно < 5 КБ. id сайта — в поле site_id; метки W/R/I/P можно использовать в других инструментах.",
       { detail: z.enum(["compact", "full"]).optional() },
       async (a) => {
         const ws = wsOf();

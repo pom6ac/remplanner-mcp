@@ -24,6 +24,8 @@ const EXPECTED_TOOLS = [
   "opening_add", "opening_update", "opening_delete",
   // §7.4
   "catalog_search", "catalog_get", "item_add", "item_update", "item_delete", "items_list",
+  // §7.4b — колонны (пункт меню «Несущая колонна», этап 41)
+  "pillar_add", "pillar_update", "pillar_delete",
   // §7.6
   "model_get", "model_validate", "render_plan",
 ];

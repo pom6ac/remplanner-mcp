@@ -3,9 +3,10 @@ import { cmToMm, round0 } from "./units.ts";
 import { roomPolygons, type RoomPolygon } from "./items.ts";
 import {
   pointInPolygon, segmentsCross, dist, closestPoint, projectionLength, lineIntersection,
-  polygonArea, polygonSignedArea, type Segment, type Polygon,
+  polygonArea, polygonSignedArea, overlapArea, type Segment, type Polygon,
 } from "./geometry.ts";
 import { holeRange } from "./openings.ts";
+import { pillarPolygon } from "./pillars.ts";
 import { prepareForRestore } from "./walls.ts";
 
 export type ValidationProblem = {
@@ -18,6 +19,9 @@ export type ValidationProblem = {
     | "OPENINGS_OVERLAP"
     | "ITEM_OUTSIDE_ROOM"
     | "ITEM_INTERSECTS_WALL"
+    | "PILLAR_INTERSECTS_WALL"
+    | "PILLARS_OVERLAP"
+    | "PILLAR_OUTSIDE_ROOM"
     | "MISSING_WALL_FACES"
     | "MISSING_HOLE_POINTS";
   message: string;
@@ -276,6 +280,49 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
     }
   }
 
+  // колонны (этап 41): пересечение с телами стен и между собой, центр вне помещений —
+  // по правилам редактора (поставить на стену/на колонну/вне комнаты нельзя, касание можно)
+  const pillars = Object.values(model.pillars ?? {});
+  for (const pillar of pillars) {
+    const poly = pillarPolygon(pillar);
+    for (const wall of walls) {
+      if (!wall.l1 || !wall.l2 || !wall.r1 || !wall.r2) continue; // MISSING_WALL_FACES выше
+      const area = overlapArea(poly, [wall.l1, wall.l2, wall.r2, wall.r1]);
+      if (area > 0.01) {
+        problems.push({
+          code: "PILLAR_INTERSECTS_WALL",
+          message: `колонна ${pillar.id} пересекает стену ${wall.id} (${Math.round(area * 100) / 100} см²) — колонну нельзя ставить на стену`,
+          details: { pillar_id: pillar.id, wall_id: wall.id, overlap_cm2: Math.round(area * 100) / 100 },
+        });
+      }
+    }
+  }
+  for (let i = 0; i < pillars.length; i++) {
+    for (let j = i + 1; j < pillars.length; j++) {
+      const a = pillars[i]!;
+      const b = pillars[j]!;
+      const area = overlapArea(pillarPolygon(a), pillarPolygon(b));
+      if (area > 0.01) {
+        problems.push({
+          code: "PILLARS_OVERLAP",
+          message: `колонны ${a.id} и ${b.id} пересекаются`,
+          details: { pillar_a: a.id, pillar_b: b.id, overlap_cm2: Math.round(area * 100) / 100 },
+        });
+      }
+    }
+  }
+  if (knownRooms.length > 0) {
+    for (const pillar of pillars) {
+      if (!knownRooms.some((room) => pointInPolygon(room.polygon, pillar.pc))) {
+        problems.push({
+          code: "PILLAR_OUTSIDE_ROOM",
+          message: `колонна ${pillar.id} вне помещений — редактор ставит колонну только внутри комнаты`,
+          details: { pillar_id: pillar.id, pc: pillar.pc },
+        });
+      }
+    }
+  }
+
   return problems;
 }
 
@@ -318,32 +365,8 @@ function polyCenter(poly: Polygon): Point {
 }
 
 /**
- * Площадь пересечения двух полигонов, см² (Sutherland–Hodgman: subject режется
- * внутренностью clip; clip ожидается выпуклым — тело стены). Касание даёт ~0.
+ * Площадь пересечения двух полигонов — в geometry.ts (overlapArea), общая с pillars.ts.
  */
-function overlapArea(subject: Polygon, clip: Polygon): number {
-  let out = subject;
-  const sign = polygonSignedArea(clip) >= 0 ? 1 : -1;
-  for (let i = 0; i < clip.length && out.length > 0; i++) {
-    const a = clip[i]!;
-    const b = clip[(i + 1) % clip.length]!;
-    const side = (p: Point): number => sign * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x));
-    const input = out;
-    out = [];
-    for (let j = 0; j < input.length; j++) {
-      const cur = input[j]!;
-      const prev = input[(j + input.length - 1) % input.length]!;
-      const curIn = side(cur) >= -1e-9;
-      const prevIn = side(prev) >= -1e-9;
-      if (curIn !== prevIn) {
-        const isect = lineIntersection({ p1: prev, p2: cur }, { p1: a, p2: b });
-        if (isect) out.push(isect);
-      }
-      if (curIn) out.push(cur);
-    }
-  }
-  return polygonArea(out);
-}
 
 function isPoint(p: { x: number; y: number } | undefined): p is { x: number; y: number } {
   return p !== undefined && typeof p.x === "number" && typeof p.y === "number";
