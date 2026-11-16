@@ -217,6 +217,33 @@ export type GasLine = {
 };
 
 /**
+ * Труба водоснабжения/канализации (model.pipes, пункты листа «Водоснабжение» →
+ * «Труба ХВС/ГВС/Канализация», этап 78, 2026-11-17). Формат — тот же граф GraphLines,
+ * что у газовой линии: класс Pipe extends GraphLines (бандл app.3.0), serialize отдаёт
+ * {id, matrix, vertexes, items, type, length} — БЕЗ plan (в отличие от PipeGas, план
+ * «water» у Pipe только рантайм-поле конструктора). type — "water_pipe"|"water_hot_pipe"|
+ * "drainage_pipe"; вершины — либо узлы ({id, point, type:"node"}), либо предметы:
+ * выводы воды (waterspot_*), стояки (water, water_column_hot/cold, drainage_column) и
+ * ввод водоснабжения (ceiling_water); тип вершины в items — "waterspot"|"node"|
+ * "ceiling_water"|"multi" (multi — waterspot_collector и стояки water_column_*,
+ * у них props.pipes хранит массив id труб). Предмет хранит обратную ссылку
+ * props.pipes = {water_pipe_id|water_hot_pipe_id|drainage_pipe_id: id трубы|массив}.
+ * Длина — сумма длин по рёбрам matrix, м с 2 знаками (как у газовой линии).
+ */
+export type Pipe = {
+  id: string;
+  /** Матрица смежности: matrix[i][j] — {length:1} у связных узлов, null иначе. */
+  matrix: ({ length: number } | null)[][];
+  vertexes: GasLineVertex[];
+  /** Карта id вершины → тип ("node"|"waterspot"|"ceiling_water"|"multi"). */
+  items: Record<string, string>;
+  type: "water_pipe" | "water_hot_pipe" | "drainage_pipe" | (string & {});
+  /** Длина трубы, м (сумма сегментов, округление редактора до 2 знаков). */
+  length: number;
+  [key: string]: unknown;
+};
+
+/**
  * Граница террасы/участка (model.terrace_borders / model.territory_borders, пункты меню
  * «Терраса и участок» → «Нарисовать террасу»/«Нарисовать участок», этап 64, 2026-11-16):
  * эталоны tests/fixtures/ui-ref-terrace-border.json и ui-ref-terrace-territory.json.
@@ -270,6 +297,8 @@ export type Model = {
   rigels?: Record<string, Rigel>;
   /** Газовые линии (пункт меню «Коммуникации» → «Газовый трубопровод»); у старых моделей может отсутствовать. */
   pipes_gas?: Record<string, GasLine>;
+  /** Трубы водоснабжения/канализации (лист «Водоснабжение»); у старых моделей может отсутствовать. */
+  pipes?: Record<string, Pipe>;
   /** Границы террас (пункт меню «Терраса и участок» → «Нарисовать террасу»); может отсутствовать. */
   terrace_borders?: Record<string, TerraceBorder>;
   /** Границы участка (пункт меню «Терраса и участок» → «Нарисовать участок»); может отсутствовать. */

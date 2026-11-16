@@ -9,7 +9,7 @@ import {
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
 import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../model/rigels.ts";
-import { addGasLine, updateGasLine, deleteGasLine } from "../model/pipes.ts";
+import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind } from "../model/pipes.ts";
 import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
 import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
@@ -124,6 +124,19 @@ function resolveGasLine(model: Model, ref: string): import("../model/types.ts").
     if (line) return line;
   }
   return throwNotFound(`газовая линия ${ref} не найдена (id сайта или метка G<n> из model_get)`);
+}
+
+/** Труба водоснабжения по site-id или метке TP1…TP_n (этап 78). */
+function resolvePipe(model: Model, ref: string): import("../model/types.ts").Pipe {
+  const pipes = model.pipes ?? {};
+  if (pipes[ref]) return pipes[ref]!;
+  const m = /^TP(\d+)$/.exec(ref);
+  if (m) {
+    const list = Object.values(pipes);
+    const pipe = list[Number(m[1]) - 1];
+    if (pipe) return pipe;
+  }
+  return throwNotFound(`труба ${ref} не найдена (id сайта или метка TP<n> из model_get)`);
 }
 
 const wallRef = z.string().min(1).describe("id стены сайта или метка W<n> из model_get");
@@ -530,7 +543,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "Лестницы — группа stairs (21 позиция меню «Лестницы»: ladder_march, spiral_staircase, …) — это предметы каталога, ставятся item_add, а не отдельная сущность. " +
         "«Коммуникации» (меню на исходном плане) — тоже предметы каталога: стояки water, water_column_hot, water_column_cold, drainage_column, " +
         "вентиляция air, отопление radiator_old, heat_pipe, газ gas_pipe, gas_boiler, gas_meter, пожарный датчик fire_detector и др.; " +
-        "исключение — газовая линия gas_line: отдельная сущность, ставится gas_line_add. " +
+        "исключения — линии-графы: газовая линия gas_line (gas_line_add) и трубы водоснабжения water_pipe, water_hot_pipe, drainage_pipe (pipe_add). " +
+        "Сантехника — группа santeh_furniture (140 позиций листа «Сантехника»: ванны, унитазы, раковины, душевые, бойлеры — plan santeh, item_add). " +
+        "Точки воды — группа waterspots (лист «Водоснабжение»): комбинированные выводы waterspot_cold_hot, waterspot_drainage_cold, " +
+        "waterspot_drainage_hot, waterspot_drainage_cold_hot — предметы каталога (item_add, высота вывода по умолчанию 500 мм от пола); " +
+        "одиночные waterspot_cold/hot/drainage и коллектор waterspot_collector — PRO; подключение труб к выводам — pipe_add. " +
         "Меню «Терраса и участок» (исходный план): террасная мебель — предметы каталога; контуры террасы/участка, " +
         "ограждение и опорный столб — отдельные сущности (terrace_add, terrace_fence_add, terrace_column_add, territory_add); " +
         "«Террасная доска» — покрытие листа «Полы» (не предмет).",
@@ -584,7 +601,12 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "вентиляционный короб air, радиатор radiator_old, стояк отопления heat_pipe, газовый стояк gas_pipe, колонка gas_boiler, счётчик gas_meter, " +
         "пожарный датчик fire_detector — предметы каталога (ставятся item_add, размеры из каталога). " +
         "У ceiling_water (ввод водоснабжения) и conditioner_cage (корзина кондиционера) постановка только у стены — against_wall. " +
-        "Газовая линия gas_line — НЕ предмет: инструмент gas_line_add. " +
+        "Сантехника (лист «Сантехника», группа santeh_furniture — ванны, унитазы, раковины, душевые, полотенцесушители, бойлеры) и " +
+        "точки воды (лист «Водоснабжение», группа waterspots — комбинированные выводы waterspot_cold_hot, waterspot_drainage_cold, " +
+        "waterspot_drainage_hot, waterspot_drainage_cold_hot) — предметы каталога; у точек воды высота вывода по умолчанию 500 мм " +
+        "(elevation_mm переопределяет); одиночные waterspot_cold/hot/drainage и коллектор waterspot_collector — PRO-функция. " +
+        "Линии-графы — НЕ предметы: газовая линия gas_line → gas_line_add, трубы водоснабжения " +
+        "water_pipe/water_hot_pipe/drainage_pipe → pipe_add. " +
         "Меню «Терраса и участок»: диваны terrace-серии (sofa_pottery_barn_malibu_wicker, sofa_coup_detat_campanha, " +
         "armchair_solana_papasan) — предметы каталога (item_add, план furniture); сами терраса/ограждение/столб — " +
         "отдельные сущности (terrace_add, terrace_fence_add, terrace_column_add), «Террасная доска» terrace_board — " +
@@ -886,6 +908,75 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           return true;
         });
         return ok({ deleted: a["gas_line_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Трубы водоснабжения/канализации (лист «Водоснабжение», этап 78) ----------
+    pipe_add: tool(
+      "Провести трубу водоснабжения/канализации (лист «Водоснабжение» → «Труба ХВС/ГВС/Канализация»): " +
+        "kind=water (ХВС, water_pipe), kind=hot (ГВС, water_hot_pipe), kind=drainage (канализация, drainage_pipe). " +
+        "path — цепочка элементов по порядку: {x, y} (узел, мм) или {item_id} (подключение предмета: выводы воды " +
+        "waterspot_*, стояки water/water_column_hot/water_column_cold/drainage_column, ввод ceiling_water, коллектор " +
+        "waterspot_collector — какие выводы к какой трубе подключаются, проверяется как в редакторе). " +
+        "Соседние элементы пути соединяются ребром; у предметов ставится обратная ссылка pipes.<вид>_id. " +
+        "Длина в модели — в метрах, пересчитывается автоматически. Трубы водоснабжения/канализации — функция PRO-тарифа " +
+        "редактора (лист «Водоснабжение» в UI доступен только в PRO): на бесплатном тарифе трубы могут не сохраниться — " +
+        "поведение free не проверялось. После добавления вызывайте model_validate и project_save.",
+      {
+        kind: z.enum(["water", "hot", "drainage"]).describe("вид трубы: water — ХВС, hot — ГВС, drainage — канализация"),
+        path: z.array(z.union([
+          mmPoint.describe("узел трубы, мм"),
+          z.object({ item_id: z.string().min(1).describe("предмет-вершина (вывод воды, стояк, ввод) — метка I<n> или id сайта") }),
+        ])).min(2).max(MAX_PIPE_PATH_NODES).describe("путь трубы по порядку: узлы ({x, y}) и подключения предметов ({item_id}); не более 32 точек"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const pipe = ws.apply("pipe_add", (m) => addPipe(m, {
+          kind: a["kind"] as PipeKind,
+          path: (a["path"] as unknown[]).map((el) => {
+            const e = el as Record<string, unknown>;
+            return "item_id" in e ? { itemId: resolveItem(m, String(e["item_id"])).id } : { x: Number(e["x"]), y: Number(e["y"]) };
+          }),
+        }));
+        return ok(compactEntity(ws.model, (c) => c.pipes.find((p) => p.site_id === pipe.id) ?? null));
+      },
+    ),
+
+    pipe_update: tool(
+      "Изменить трубу (PRO-функция редактора, как и вся лист «Водоснабжение»): перенести узлы графа. positions — список {vertex, x_mm, y_mm}; vertex — индекс вершины " +
+        "в графе трубы (0-based, как в model_get pipes[].vertexes); двигать можно только узлы (type node) — " +
+        "вершины-предметы следуют за предметом (item_update). Длина пересчитывается по рёбрам.",
+      {
+        pipe_id: z.string().min(1).describe("метка TP<n> из model_get или id сайта"),
+        positions: z.array(z.object({
+          vertex: mmInt.describe("индекс вершины (0-based)"),
+          x_mm: mmInt,
+          y_mm: mmInt,
+        })).min(1).max(MAX_PIPE_PATH_NODES),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const pipe = ws.apply("pipe_update", (m) => updatePipe(m, {
+          pipeId: resolvePipe(m, a["pipe_id"] as string).id,
+          positions: (a["positions"] as { vertex: number; x_mm: number; y_mm: number }[]).map((p) => ({
+            vertex: p.vertex, x: p.x_mm, y: p.y_mm,
+          })),
+        }));
+        return ok(compactEntity(ws.model, (c) => c.pipes.find((p) => p.site_id === pipe.id) ?? null));
+      },
+    ),
+
+    pipe_delete: tool(
+      "Удалить трубу (PRO-функция редактора, как и весь лист «Водоснабжение»; метка TP<n> из model_get). Обратные ссылки подключённых предметов снимаются; " +
+        "сами предметы не удаляются.",
+      { pipe_id: z.string().min(1).describe("метка TP<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("pipe_delete", (m) => {
+          deletePipe(m, resolvePipe(m, a["pipe_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["pipe_id"], hint: SCENARIO_HINT });
       },
     ),
 

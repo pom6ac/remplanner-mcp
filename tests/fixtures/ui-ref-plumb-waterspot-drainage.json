@@ -1,0 +1,74 @@
+{
+ "_source": "клик в UI анонимного проекта (headless Chromium, база «коридор + 3 комнаты» синтетическая), проба 78-plumb-ui.ts, model project.copy(\"server\"), без сохранения; id предмета/комнаты/стен — случайные id сессии; координаты — точки синтетического листа; id проектов/планов и данные пользователя отсутствуют",
+ "menu_title": "Вывод ХВС+канализация+ГВС",
+ "tool_id": "plannertool_waterspot_drainage_cold_hot",
+ "catalog_defaults_cm": {
+  "id": 213,
+  "width": 21,
+  "height": 15,
+  "self_height": 0,
+  "plan": {
+   "waterplan": 27,
+   "water": 27
+  },
+  "anchor": "free",
+  "over_floor": {
+   "value": 50,
+   "display": false
+  }
+ },
+ "model_object": {
+  "name": "waterspot_drainage_cold_hot",
+  "pc": {
+   "x": 350,
+   "y": -287
+  },
+  "angle": 180,
+  "projection": {
+   "x": 350,
+   "y": -290
+  },
+  "id_room": "_vcf27",
+  "width": 21,
+  "height": 15,
+  "plan": {
+   "water": 27
+  },
+  "id": "_i47er",
+  "item_id": 213,
+  "waterspots_change_sequence": 1,
+  "over_floor": {
+   "value": 50,
+   "display": false,
+   "value_2": 40
+  },
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 350,
+   "y": -287
+  },
+  "center3d": {
+   "x": 350,
+   "y": -287
+  },
+  "id_room_zone": "_5gui5",
+  "id_wall": "_46d9s",
+  "id_wall_old": "_46d9s",
+  "wall_direction": "r"
+ }
+}

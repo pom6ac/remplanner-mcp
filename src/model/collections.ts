@@ -6,7 +6,7 @@ import type { Model } from "./types.ts";
 
 /**
  * Коллекции объектов планировки в модели (значение — Record<id, объект>).
- * walls/items/pillars/rulers/comments есть всегда; rigels/pipes_gas/terrace_borders/
+ * walls/items/pillars/rulers/comments есть всегда; rigels/pipes_gas/pipes/terrace_borders/
  * territory_borders/level_holes — у старых моделей могут отсутствовать.
  */
 export const MODEL_ENTITY_COLLECTIONS = [
@@ -15,6 +15,7 @@ export const MODEL_ENTITY_COLLECTIONS = [
   "pillars",
   "rigels",
   "pipes_gas",
+  "pipes",
   "terrace_borders",
   "territory_borders",
   "level_holes",

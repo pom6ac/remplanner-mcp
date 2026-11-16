@@ -541,6 +541,54 @@ design.md); лимиты `defs.wall` (толщина 4..100 см, длина ≥
 Эталон: `tests/fixtures/ui-ref-balcony.json` (анонимная проба протяжкой, id стен случайные,
 геометрия синтетическая).
 
+### 7.3. Сантехника и водоснабжение [код + пробы 78-plumb-ui/78-live-check, 2026-11-17]
+
+Раздел фазы 2 за пределами меню рисования: точки воды, трубы водоснабжения/канализации,
+подключение приборов к стоякам. Состав по осмотр UI и каталога (`global_tools`):
+
+- **Сантехнические приборы** — группа каталога `santeh_furniture`, **140 позиций** (ванны,
+  унитазы, раковины, душевые, полотенцесушители, бойлеры, стиральные/посудомоечные машины —
+  лист «Сантехника», `plan {santeh:N}`): обычные предметы `items`, ставятся `item_add`
+  (якорь `free`, магнит), высота подъёма из каталога (`over_floor {value, display:false}`).
+  У позиций с подключением каталог несёт `santeh_data`: ключ связанной точки воды
+  (`item_name`) и список труб (`pipes`) — например, консоль с раковиной →
+  `waterspot_drainage_cold_hot` + `water_pipe, water_hot_pipe, drainage_pipe`.
+- **Точки воды** — группа `waterspots`, 12 позиций. Комбинированные выводы **free**:
+  `waterspot_cold_hot` (16×9), `waterspot_drainage_cold` (21×15), `waterspot_drainage_hot`,
+  `waterspot_drainage_cold_hot` (21×15), `plan {water:27}`; одиночные `waterspot_cold/hot/
+  drainage` и коллектор `waterspot_collector` (48×10, **anchor: wall**) — **PRO**.
+  У комбинированных с канализацией `over_floor {value:50, display:false, value_2:40}` —
+  `value_2` — высота вывода канализации (меню `#cm-waterspot--drainage-over-floor`),
+  редактор дописывает `value_2` сам (проба 78-plumb-ui). У поставленной точки редактор
+  пишет `id_room`, `id_room_zone`, `id_wall`/`id_wall_old`, `wall_direction`, `projection`,
+  `waterspots_change_sequence`, `waterspots` — производные, пересчитываются при draw.
+  Эталоны: `tests/fixtures/ui-ref-plumb-waterspot.json`, `ui-ref-plumb-waterspot-drainage.json`.
+- **Трубы** — `water_pipe` (ХВС), `water_hot_pipe` (ГВС), `drainage_pipe` (канализация) —
+  **PRO-инструменты UI**, отдельные сущности `model.pipes` (класс `Pipe extends GraphLines`,
+  бандл app.3.0): граф `{id, matrix, vertexes, items, type, length}` — тот же формат, что у
+  газовой линии, но **без `plan`** (план «water» — рантайм-поле конструктора; сравни
+  `PipeGas.serialize`, который `plan` пишет). Длина — сумма по рёбрам matrix, м (2 знака).
+  Вершины — узлы (`type:"node"`) или предметы: выводы воды (`waterspot`), стояки
+  `water`/`water_column_hot`/`water_column_cold`/`drainage_column` и коллектор
+  (`multi` — у них обратная ссылка хранит массив id труб), ввод `ceiling_water`
+  (`ceiling_water`). Эталон: `tests/fixtures/ui-ref-plumb-pipe.json`.
+- **Подключения** (`Piping.source_items`, бандл app.3.0): `water_pipe` — выводы с холодной
+  водой (`waterspot_cold`, `waterspot_cold_hot`, `waterspot_drainage_cold`,
+  `waterspot_drainage_cold_hot`), коллектор, стояк `water`, ввод `ceiling_water`,
+  `water_column_cold`; `water_hot_pipe` — горячие аналоги + `water_column_hot`;
+  `drainage_pipe` — канализационные выводы, стояк `water`, `drainage_column`
+  (коллектор к канализации не подключается — проверено живой пробой). Обратные ссылки:
+  `props.pipes.{water_pipe_id|water_hot_pipe_id|drainage_pipe_id}`.
+- **Высоты выводов**: холодная/горячая вода — 50 см от пола (умолчание каталога), канализация —
+  40 см (`value_2`), коллектор — 150 см, anchor:wall.
+- **Смета труб** `smeta_water_pipes` — производная редактора, в модель не пишется.
+- **Построить автоматически** (водоснабжение) — мастер UI (`santeh_pipes`), PRO; результат —
+  обычные `pipes`/`items`; MCP его не воспроизводит.
+- Позиции каталога `warm_floor_pipe`, `conditioner_drainage`, `heat_pipe_hot/cold`,
+  `ventpipe_*` — трубы других разделов (тёплый пол, кондиционеры, отопление, вентиляция —
+  коллекции `pipes_warm_floor`, `pipes_conditioner`, `pipes_heat`, `pipes_ventilation`);
+  их коллекции в модели существуют, но этап 78 их не покрывает (следующий PR).
+
 ## 8. Импорт и экспорт
 
 | Формат | Направление | Тариф |
