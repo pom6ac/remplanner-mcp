@@ -177,3 +177,32 @@ export function segmentsCross(s1: Segment, s2: Segment): boolean {
 export function isClockwise(poly: Polygon): boolean {
   return polygonSignedArea(poly) > 0;
 }
+
+/**
+ * Площадь пересечения двух полигонов, см² (Sutherland–Hodgman: subject режется
+ * внутренностью clip; clip ожидается выпуклым — тело стены, прямоугольник колонны).
+ * Касание даёт ~0.
+ */
+export function overlapArea(subject: Polygon, clip: Polygon): number {
+  let out = subject;
+  const sign = polygonSignedArea(clip) >= 0 ? 1 : -1;
+  for (let i = 0; i < clip.length && out.length > 0; i++) {
+    const a = clip[i]!;
+    const b = clip[(i + 1) % clip.length]!;
+    const side = (p: Point): number => sign * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x));
+    const input = out;
+    out = [];
+    for (let j = 0; j < input.length; j++) {
+      const cur = input[j]!;
+      const prev = input[(j + input.length - 1) % input.length]!;
+      const curIn = side(cur) >= -1e-9;
+      const prevIn = side(prev) >= -1e-9;
+      if (curIn !== prevIn) {
+        const isect = lineIntersection({ p1: prev, p2: cur }, { p1: a, p2: b });
+        if (isect) out.push(isect);
+      }
+      if (curIn) out.push(cur);
+    }
+  }
+  return polygonArea(out);
+}
