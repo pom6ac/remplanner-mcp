@@ -97,6 +97,43 @@ test("rev67 M2: project_import_plan переносит новые коллекц
   await client.close();
 });
 
+// Этап 71: балкон — стены role «balcony» в обязательной коллекции walls, реестр
+// коллекций покрывает их через walls; clear/undo/import обязаны сохранять роль.
+test("этап 71: project_clear убирает балконные ограждения, undo и import возвращают роль balcony", async () => {
+  const { client } = await start();
+  await call(client, "balcony_add", {
+    points: [
+      { x: 4000, y: 700 },
+      { x: 5500, y: 700 },
+      { x: 5500, y: 2300 },
+      { x: 4000, y: 2300 },
+    ],
+  });
+  const roleOf = (m: Model): string[] =>
+    Object.values(m.walls ?? {}).filter((w) => (w as { role?: string }).role === "balcony").map((w) => (w as { id: string }).id);
+  const added = roleOf(fullModel(await call(client, "model_get", { detail: "full" })));
+  assert.equal(added.length, 3, JSON.stringify(added));
+
+  await call(client, "project_clear", { confirm: true });
+  const cleared = fullModel(await call(client, "model_get", { detail: "full" }));
+  assert.equal(Object.keys(cleared.walls ?? {}).length, 0);
+  assert.equal(roleOf(cleared).length, 0);
+
+  const undone = await call(client, "undo", {});
+  assert.equal((undone as { applied: number }).applied, 1);
+  const restored = fullModel(await call(client, "model_get", { detail: "full" }));
+  assert.deepEqual([...roleOf(restored)].sort(), [...added].sort());
+
+  const dir = mkdtempSync(join(tmpdir(), "rev71-"));
+  const planPath = join(dir, "balcony.plan");
+  await call(client, "project_export_plan", { path: planPath, scope: "full" });
+  await call(client, "project_clear", { confirm: true });
+  await call(client, "project_import_plan", { path: planPath, replace: true });
+  const back = roleOf(fullModel(await call(client, "model_get", { detail: "full" })));
+  assert.deepEqual([...back].sort(), [...added].sort());
+  await client.close();
+});
+
 test("rev67 M2: export→import roundtrip сохраняет проём в полу без потерь", async () => {
   const { client } = await start();
   await populate(client);

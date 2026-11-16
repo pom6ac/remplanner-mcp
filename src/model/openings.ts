@@ -550,6 +550,13 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
   if (!wall) {
     throw new McpError("NOT_FOUND", `стена ${params.wallId} не найдена`);
   }
+  // на балконные ограждения проёмы не ставятся (редактор: hole__dont_install_over_balcony)
+  if (wall.role === "balcony") {
+    throw new McpError("INVALID_ARGUMENT", `стена ${wall.id} — балконное ограждение, на нём нельзя ставить окна и двери (правило редактора hole__dont_install_over_balcony)`, {
+      hint: "для проёма в наружной стене используйте обычную стену; балконный блок (window_balcony) тоже ставится только на стену",
+      details: { kind: "opening_on_balcony", wall_id: wall.id },
+    });
+  }
   const kind = OPENING_KINDS[params.type];
   if (!kind) {
     throw new McpError("INVALID_ARGUMENT", `неизвестный тип проёма: ${params.type}`, {
@@ -782,13 +789,17 @@ function assignHole(target: Hole, candidate: Hole): void {
  * Смена типа не поддерживается (ревью 30, N1/N2/N4: каждая версия конверсии рождала
  * новые регрессии): type, отличный от текущего (после нормализации legacy-алиаса
  * window_balcony → windoor), — INVALID_ARGUMENT с подсказкой удалить проём и добавить
- * новый; передача текущего type — no-op.
+ * новый; передача текущего type — no-op. Новые проёмы на балконных ограждениях
+ * запрещены (addOpening), уже стоящий проём ограждения правится (ревью 73 №1).
  */
 export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   const wall = model.walls[params.wallId];
   if (!wall) throw new McpError("NOT_FOUND", `стена ${params.wallId} не найдена`);
   const hole = wall.holes[params.holeId];
   if (!hole) throw new McpError("NOT_FOUND", `проём ${params.holeId} не найден`);
+  // правило hole__dont_install_over_balcony запрещает только НОВЫЕ проёмы на
+  // ограждениях (ban в addOpening ниже); уже стоящий проём существующего проекта
+  // правится как прежде (регрессия ревью 73 №1), удаление тоже разрешено
   // смена типа — до любой мутации (№3); legacy window_balcony нормализуется к windoor
   // и в сравнении, и в сообщении об ошибке (ревью 28, R2)
   const holeType = normalizeHoleType(hole.type);

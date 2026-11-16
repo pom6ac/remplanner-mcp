@@ -119,6 +119,7 @@ gas_line_add              # газовая линия (пункт меню «К�
 floor_hole_add            # проем в полу (прямоугольник в комнате, level_holes)
 terrace_add               # терраса (замкнутое кольцо границ terrace_borders) + terrace_fence_add / terrace_column_add
 territory_add             # участок (замкнутое кольцо границ territory_borders)
+balcony_add               # балкон (зелёные ограждения role «balcony», U-примыкание к наружной стене)
 model_validate            # проверка геометрии перед сохранением
 render_plan               # PNG плана
 project_save              # сохранение с бэкапом и сверкой

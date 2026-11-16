@@ -17,6 +17,8 @@ export type CompactWall = {
   len_mm: number;
   len_inner_mm: number;
   thickness_mm: number;
+  /** Роль не-wall стен: balcony (ограждение балкона), terrace_fence (ограждение террасы). */
+  role?: string;
   openings: CompactOpening[];
 };
 
@@ -219,6 +221,7 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       len_mm: wallLengthMm(wall),
       len_inner_mm: lenInner,
       thickness_mm: round0(cmToMm(wall.depth)),
+      ...(wall.role && wall.role !== "wall" ? { role: wall.role } : {}),
       openings,
     };
   });

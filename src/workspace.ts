@@ -275,6 +275,76 @@ function wallRoleMismatches(
   return out;
 }
 
+/**
+ * Значимые свойства балконного ограждения для сверки (ревью 73 №2, 75 №2): ось нужна
+ * для геометрического сопоставления, остальные поля сверяются у каждой части.
+ */
+type BalconyWallProps = { role?: string; p1: Point; p2: Point; height?: number; depth?: number; material?: string };
+
+/**
+ * Свойства балконных ограждений после нормализации/save (ревью 73 №2, переоткрыто
+ * ревью 75 №2): сверка не по совпадению id, а по геометрическому покрытию оси —
+ * каждая ожидаемая ограда сопоставляется с частями на другой стороне, коллинеарными
+ * и перекрывающими её ось (rename, split, merge), и height/depth/material сверяются
+ * у каждой части. Частично испорченная новая часть после split и переименованная
+ * ограда с изменённым height не проходят молча. Округление редактора (до сотых см)
+ * не расхождение (допуск 0,1 см). Ограда, не покрытая ни одной оградой другой
+ * стороны, — расхождение. Возвращает человекочитаемые расхождения; пустой список —
+ * совпало.
+ */
+function balconyWallPropertyMismatches(
+  expected: Record<string, BalconyWallProps>,
+  got: Record<string, BalconyWallProps>,
+): string[] {
+  const out: string[] = [];
+  const near = (a: number | undefined, b: number | undefined): boolean =>
+    a !== undefined && b !== undefined && Math.abs(a - b) <= 0.1;
+  const segsOf = (w: { p1: Point; p2: Point }): WallAxisSegment[] => wallAxisSegments({ w });
+  /** Коллинеарное перекрытие осевых отрезков (направление может быть отражено). */
+  const overlaps = (s: WallAxisSegment, t: WallAxisSegment): boolean => {
+    const same = Math.abs(s.ux - t.ux) <= 1e-6 && Math.abs(s.uy - t.uy) <= 1e-6;
+    const opp = Math.abs(s.ux + t.ux) <= 1e-6 && Math.abs(s.uy + t.uy) <= 1e-6;
+    if (!same && !opp) return false;
+    const ta = same ? t.a : -t.b;
+    const tb = same ? t.b : -t.a;
+    const toff = same ? t.offset : -t.offset;
+    if (Math.abs(s.offset - toff) > 0.1) return false;
+    return Math.min(s.b, tb) - Math.max(s.a, ta) > 0.1;
+  };
+  const gotSegs = new Map<string, WallAxisSegment[]>();
+  for (const [gid, g] of Object.entries(got)) {
+    if (g.role !== "balcony") continue;
+    const segs = segsOf(g);
+    if (segs.length > 0) gotSegs.set(gid, segs);
+  }
+  for (const [id, e] of Object.entries(expected)) {
+    if (e.role !== "balcony") continue;
+    const eSegs = segsOf(e);
+    if (eSegs.length === 0) continue;
+    const parts = [...gotSegs.keys()].filter((gid) =>
+      gotSegs.get(gid)!.some((t) => eSegs.some((s) => overlaps(s, t))),
+    );
+    if (parts.length === 0) {
+      out.push(`${id}: ограждение не найдено на сервере (ось не покрыта ни одной оградой)`);
+      continue;
+    }
+    for (const gid of parts) {
+      const g = got[gid]!;
+      const where = gid === id ? id : `${id} → ${gid}`;
+      if (!near(g.height, e.height)) {
+        out.push(`${where}: height изменилась (на сервере ${g.height}; ожидалось ${e.height})`);
+      }
+      if (!near(g.depth, e.depth)) {
+        out.push(`${where}: depth изменилась (на сервере ${g.depth}; ожидалось ${e.depth})`);
+      }
+      if ((g.material ?? "") !== (e.material ?? "")) {
+        out.push(`${where}: material изменился (на сервере «${g.material ?? ""}»; ожидалось «${e.material ?? ""}»)`);
+      }
+    }
+  }
+  return out;
+}
+
 /** Значимая геометрия ригеля для сверки после сохранения (этап 47). */
 type RigelSig = { p1?: Point; p2?: Point; depth?: number; height?: number; ceiling_type?: string };
 
@@ -992,6 +1062,11 @@ export class Workspace {
     // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
     const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
     const rolesNorm = wallRoleMismatches(this.modelInternal!.walls as unknown as Record<string, { role?: string; p1: Point; p2: Point }>, expectedWalls);
+    // ревью 73 №2: свойства ограждений (height/depth/material) не должны меняться при нормализации
+    const propsNorm = balconyWallPropertyMismatches(
+      this.modelInternal!.walls as unknown as Record<string, BalconyWallProps>,
+      expectedWalls as unknown as Record<string, BalconyWallProps>,
+    );
     const gotSegments = wallAxisSegments(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
@@ -1002,7 +1077,7 @@ export class Workspace {
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
       lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 ||
-      gasGraphNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0
+      gasGraphNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0 || propsNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -1012,6 +1087,7 @@ export class Workspace {
           coverage_after_mm: Math.round(gotCoverage * 10),
           axis_segments_before: expected.segments.length,
           axis_segments_after: gotSegments.length,
+          wall_property_mismatches: propsNorm,
           lost_openings: lostOpenings,
           lost_items: lostItems,
           lost_pillars: lostPillars,
@@ -1072,8 +1148,14 @@ export class Workspace {
       // ревью 66 №3: роли стен после save — ограждение, ставшее обычной стеной, не «verified»
       const wallsAfterTyped = wallsAfter as Record<string, { role?: string; p1: Point; p2: Point }>;
       const wallRoleMismatch = wallRoleMismatches(expectedWalls, wallsAfterTyped);
+      // ревью 73 №2: свойства ограждений после save — height/depth/material сверяются,
+      // подмена любого из них на сервере не «verified»
+      const wallPropMismatch = balconyWallPropertyMismatches(
+        expectedWalls as unknown as Record<string, BalconyWallProps>,
+        wallsAfterTyped as unknown as Record<string, BalconyWallProps>,
+      );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -1089,6 +1171,7 @@ export class Workspace {
             border_mismatches: borderMismatch,
             level_hole_mismatches: holeMismatch,
             wall_role_mismatches: wallRoleMismatch,
+            wall_property_mismatches: wallPropMismatch,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });

@@ -35,6 +35,8 @@ const EXPECTED_TOOLS = [
   "terrace_add", "terrace_border_update", "terrace_border_delete",
   "terrace_fence_add", "terrace_column_add", "terrace_column_update", "terrace_column_delete",
   "territory_add", "territory_border_update", "territory_border_delete",
+  // §7.4f — балкон (пункт меню «Нарисовать балкон», этап 71)
+  "balcony_add", "balcony_update", "balcony_delete",
   // §7.6
   "model_get", "model_validate", "render_plan",
 ];
