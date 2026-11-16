@@ -313,10 +313,30 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
   }
   if (knownRooms.length > 0) {
     for (const pillar of pillars) {
-      if (!knownRooms.some((room) => pointInPolygon(room.polygon, pillar.pc))) {
+      if (knownRooms.some((room) => pointInPolygon(room.polygon, pillar.pc))) continue;
+      // колонна вплотную к стене (грань на линии грани) — валидна вне полигонов комнат
+      // (эталон ui-ref-pillar-wall: центр примыкающей колонны вне rooms2)
+      const corners = pillarPolygon(pillar);
+      let touching = false;
+      for (let k = 0; k < 4 && !touching; k++) {
+        const ea = corners[k]!;
+        const eb = corners[(k + 1) % 4]!;
+        const cx = (ea.x + eb.x) / 2;
+        const cy = (ea.y + eb.y) / 2;
+        for (const wall of walls) {
+          if (!wall.l1 || !wall.l2 || !wall.r1 || !wall.r2) continue;
+          for (const [fa, fb] of [[wall.l1, wall.l2], [wall.r1, wall.r2]] as [Point, Point][]) {
+            const fx = fb.x - fa.x, fy = fb.y - fa.y;
+            const flen = Math.hypot(fx, fy);
+            if (flen < 1e-9) continue;
+            if (Math.abs((cx - fa.x) * fy - (cy - fa.y) * fx) / flen < 0.9) touching = true;
+          }
+        }
+      }
+      if (!touching) {
         problems.push({
           code: "PILLAR_OUTSIDE_ROOM",
-          message: `колонна ${pillar.id} вне помещений — редактор ставит колонну только внутри комнаты`,
+          message: `колонна ${pillar.id} вне помещений — редактор ставит колонну внутри комнаты или вплотную к стене`,
           details: { pillar_id: pillar.id, pc: pillar.pc },
         });
       }

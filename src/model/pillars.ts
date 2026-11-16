@@ -310,10 +310,43 @@ export function assertPillarInvariants(
       });
     }
   }
-  if (rooms && rooms.length > 0 && !rooms.some((room) => pointInPolygon(room.polygon, candidate.pc))) {
-    throw new McpError("GEOMETRY_CONFLICT", "колонна вне помещений — редактор ставит колонну только внутри комнаты", {
-      details: { kind: "pillar_outside_room", pillar_id: candidate.id, pc: candidate.pc },
-    });
+  // «вне помещений»: редактор ставит колонну в комнате ИЛИ вплотную к стене (эталон
+  // ui-ref-pillar-wall: центр примыкающей колонны лежит вне полигонов rooms2, грань —
+  // на грани стены). Полностью вне контура (далеко от комнат и стен) — нельзя.
+  if (rooms && rooms.length > 0) {
+    const inside = rooms.some((room) => pointInPolygon(room.polygon, candidate.pc));
+    if (!inside && Object.keys(candidate.eds ?? {}).length === 0) {
+      // примыкание к стене по граням (как pillarInRoom, но точнее: грань на линии грани стены)
+      const corners = pillarCorners(candidate.pc, candidate.width, candidate.height, candidate.angle ?? 0);
+      const pairs: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 0]];
+      let touching = false;
+      for (const [i, j] of pairs) {
+        const ea = corners[i]!;
+        const eb = corners[j]!;
+        const cx = (ea.x + eb.x) / 2;
+        const cy = (ea.y + eb.y) / 2;
+        for (const wall of Object.values(model.walls)) {
+          let faces: { l1: Point; l2: Point; r1: Point; r2: Point };
+          try {
+            faces = wallFaces(wall, {});
+          } catch {
+            continue;
+          }
+          for (const [fa, fb] of [[faces.l1, faces.l2], [faces.r1, faces.r2]] as [Point, Point][]) {
+            const fx = fb.x - fa.x;
+            const fy = fb.y - fa.y;
+            const flen = Math.hypot(fx, fy);
+            if (flen < 1e-9) continue;
+            if (Math.abs((cx - fa.x) * fy - (cy - fa.y) * fx) / flen < 0.9) touching = true;
+          }
+        }
+      }
+      if (!touching) {
+        throw new McpError("GEOMETRY_CONFLICT", "колонна вне помещений — редактор ставит колонну внутри комнаты или вплотную к стене", {
+          details: { kind: "pillar_outside_room", pillar_id: candidate.id, pc: candidate.pc },
+        });
+      }
+    }
   }
 }
 
