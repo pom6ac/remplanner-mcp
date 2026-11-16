@@ -8,7 +8,7 @@ import {
 } from "../model/walls.ts";
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
-import { addRigel, updateRigel, deleteRigel } from "../model/rigels.ts";
+import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../model/rigels.ts";
 import { addItem, updateItem, deleteItem, itemsList, roomPolygons, type RoomPolygon } from "../model/items.ts";
 import { compactModel, wallLengthMm } from "../model/compact.ts";
 import { validateModel } from "../model/validate.ts";
@@ -702,7 +702,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         end: mmPoint.describe("конец оси ригеля, мм"),
         depth_mm: mmInt.optional().describe("толщина на плане, мм (по умолчанию 300)"),
         height_mm: mmInt.optional().describe("опускание от потолка, мм (по умолчанию 300)"),
-        ceiling_type: z.string().optional().describe("тип отделки потолка (по умолчанию пусто — ригель без отделки)"),
+        ceiling_type: z.enum([...RIGEL_CEILING_TYPES, ""]).optional()
+          .describe("тип отделки потолка: \"\" — без отделки или ключ инструмента листа потолка " +
+            "(stretch_ceiling, paint_ceiling, gypsum_ceiling и др. — группа ceiling_elements редактора); " +
+            "произвольные значения не принимаются"),
       },
       async (a) => {
         const ws = wsOf();
@@ -727,7 +730,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         end: mmPoint.optional().describe("новый конец оси, мм"),
         depth_mm: mmInt.optional(),
         height_mm: mmInt.optional(),
-        ceiling_type: z.string().optional(),
+        ceiling_type: z.enum([...RIGEL_CEILING_TYPES, ""]).optional(),
       },
       async (a) => {
         const ws = wsOf();
