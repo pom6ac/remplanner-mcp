@@ -154,12 +154,18 @@ type PillarSig = { pc?: { x: number; y: number }; width?: number; height?: numbe
 /**
  * Расхождение колонн между рабочей копией и сервером после save (ревью 43 №2):
  * идентичности и значимая геометрия (pc, width, height, angle; допуск 0,1 см / 0,1°).
- * Возвращает список человекочитаемых расхождений; пустой список — колонны сохранились.
+ * Угол — циклическая разность modulo 360 (ревью 44 №6): эквивалентная нормализация
+ * 360°→0° не расхождение. Возвращает список человекочитаемых расхождений; пустой
+ * список — колонны сохранились.
  */
 function pillarVerificationMismatches(expected: Record<string, PillarSig>, got: Record<string, unknown>): string[] {
   const out: string[] = [];
   const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
     a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
+  const angleDiff = (a: number, b: number): number => {
+    const d = Math.abs(a - b) % 360;
+    return Math.min(d, 360 - d);
+  };
   for (const [id, p] of Object.entries(expected)) {
     const g = got[id] as PillarSig | undefined;
     if (!g) {
@@ -171,7 +177,7 @@ function pillarVerificationMismatches(expected: Record<string, PillarSig>, got: 
     }
     if (!near(g.width, p.width, 0.1)) out.push(`${id}: ширина изменилась (на сервере ${g.width}; ожидалось ${p.width})`);
     if (!near(g.height, p.height, 0.1)) out.push(`${id}: глубина изменилась (на сервере ${g.height}; ожидалось ${p.height})`);
-    if (!near(g.angle ?? 0, p.angle ?? 0, 0.1)) out.push(`${id}: угол изменился (на сервере ${g.angle ?? 0}; ожидалось ${p.angle ?? 0})`);
+    if (angleDiff(g.angle ?? 0, p.angle ?? 0) > 0.1) out.push(`${id}: угол изменился (на сервере ${g.angle ?? 0}; ожидалось ${p.angle ?? 0})`);
   }
   return out;
 }

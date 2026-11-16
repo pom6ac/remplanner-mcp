@@ -11,6 +11,7 @@ import type { FixtureEnvelope } from "../../src/model/types.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
 import { deleteWall } from "../../src/model/walls.ts";
+import { McpError } from "../../src/errors.ts";
 import { validateModel } from "../../src/model/validate.ts";
 import { addPillar, pillarCorners, pillarEdges } from "../../src/model/pillars.ts";
 import type { Model, Pillar } from "../../src/model/types.ts";
@@ -113,4 +114,77 @@ test("№3 model_validate: примыкающая колонна по-прежн
   const m = pillarModel();
   attachPillar(m);
   assert.equal(validateModel(m, ROOMS).filter((x) => x.code.startsWith("PILLAR")).length, 0);
+});
+
+// ---------- №6: циклическое сравнение угла при верификации ----------
+
+type SaveServer = { saveId: string; model: Record<string, unknown> };
+
+/** Workspace с редактором «как есть» и сервером, меняющим модель сразу после save. */
+function saveMock(server: SaveServer, afterSave: (s: SaveServer) => void): Workspace {
+  let normalized: Record<string, unknown> | null = null;
+  const editor: EditorLike = {
+    objectId: "0", planId: "1",
+    async normalize(m) {
+      normalized = structuredClone(m as object) as Record<string, unknown>;
+      const walls = Object.keys(m.walls as Record<string, unknown>).length;
+      return { model: structuredClone(normalized as object) as Record<string, unknown>, rooms: [], before: { walls, holes: 0, items: 0 }, after: { walls, holes: 0, items: 0 } };
+    },
+    async save() {
+      server.model = structuredClone(normalized!);
+      afterSave(server);
+      return { ok: true, saveId: "s2", conflict: false };
+    },
+    async renderPng() { return Buffer.from(""); },
+    async compatInfo() { return COMPAT; },
+    async close() {},
+  };
+  const deps: WorkspaceDeps = {
+    session: { cookies: [] },
+    async loadModel(): Promise<LoadedModel> {
+      return { object_id: "0", plan_id: "1", save_id: server.saveId, units: "cm", data_empty: false, model: structuredClone(server.model) };
+    },
+    async openEditor() { return editor; },
+  };
+  return new Workspace(deps);
+}
+
+test("№6 угол 360° на сервере нормализован в 0° — эквивалент, verified=true с одной записи", async () => {
+  const server: SaveServer = { saveId: "s1", model: pillarModel() as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    for (const p of Object.values(s.model.pillars as Record<string, { angle?: number }>)) p.angle = 0;
+  });
+  await ws.open("0", "1");
+  ws.apply("pillar_add", (mm) => void addPillar(mm, { center: { x: 2000, y: 1500 }, angleDeg: 360 }, ROOMS));
+  const out = await ws.save();
+  assert.equal(out.verified, true);
+  assert.equal(out.rounds, 1);
+});
+
+test("№6 угол 0° на сервере нормализован в 360° — тоже эквивалент", async () => {
+  const server: SaveServer = { saveId: "s1", model: pillarModel() as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    for (const p of Object.values(s.model.pillars as Record<string, { angle?: number }>)) p.angle = 360;
+  });
+  await ws.open("0", "1");
+  ws.apply("pillar_add", (mm) => void addPillar(mm, { center: { x: 2000, y: 1500 } }, ROOMS));
+  const out = await ws.save();
+  assert.equal(out.verified, true);
+  assert.equal(out.rounds, 1);
+});
+
+test("№6 некратный сдвиг угла +50° по-прежнему SITE_ERROR (регрессия №2)", async () => {
+  const server: SaveServer = { saveId: "s1", model: pillarModel() as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    for (const p of Object.values(s.model.pillars as Record<string, { angle?: number }>)) p.angle = (p.angle ?? 0) + 50;
+  });
+  await ws.open("0", "1");
+  ws.apply("pillar_add", (mm) => void addPillar(mm, { center: { x: 2000, y: 1500 } }, ROOMS));
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    const details = (e as { details?: { pillar_mismatches?: string[] } }).details;
+    assert.ok((details?.pillar_mismatches ?? []).some((x) => x.includes("угол")), JSON.stringify(details));
+    return true;
+  });
 });
