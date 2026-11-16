@@ -520,9 +520,13 @@ export class Workspace {
     const localOpeningIds = openingIds(this.modelInternal!);
     const localItemIds = new Set(Object.keys(this.modelInternal!.items ?? {}));
     const localPillarIds = new Set(Object.keys(this.modelInternal!.pillars ?? {}));
-    // ревью 43 №2/№4: ожидаемые колонны и комнаты для верификации после save
+    // ревью 43 №2/№4: ожидаемые колонны и комнаты для верификации после save.
+    // ревью 45 №5: потеря комнат меряется относительно результата нормализации
+    // (того, что ушло на save), а не устаревших rooms2 рабочей копии: пользователь
+    // мог сам разомкнуть контур — тогда исчезновение комнаты при нормализации
+    // штатно. roomsBefore нужны только для предупреждения о нормализации.
     const expectedPillars = structuredClone(this.modelInternal!.pillars ?? {}) as Record<string, PillarSig>;
-    const expectedRooms = Object.keys(this.modelInternal!.rooms2 ?? {}).length;
+    const roomsBefore = Object.keys(this.modelInternal!.rooms2 ?? {}).length;
     const normWalls = (norm.model as { walls?: Record<string, { holes?: Record<string, { id?: string }> }> }).walls ?? {};
     const gotOpeningIds = new Set<string>();
     for (const [wid, w] of Object.entries(normWalls)) {
@@ -537,8 +541,8 @@ export class Workspace {
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
     const normRooms = Object.keys((norm.model as { rooms2?: Record<string, unknown> }).rooms2 ?? {}).length;
-    if (expectedRooms > 0 && normRooms === 0) {
-      warnings.push(`редактор убрал комнаты при нормализации (${expectedRooms} → 0) — имя и отделка комнат могут быть потеряны; проверьте rooms_list после сохранения`);
+    if (roomsBefore > 0 && normRooms === 0) {
+      warnings.push(`редактор убрал комнаты при нормализации (${roomsBefore} → 0) — имя и отделка комнат могут быть потеряны; проверьте rooms_list после сохранения`);
     }
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
@@ -582,7 +586,7 @@ export class Workspace {
       const pillarsAfter = (after.model["pillars"] as Record<string, unknown> | undefined) ?? {};
       const roomsAfter = Object.keys((after.model["rooms2"] as Record<string, unknown> | undefined) ?? {}).length;
       const pillarMismatch = pillarVerificationMismatches(expectedPillars, pillarsAfter);
-      const roomsLost = expectedRooms > 0 && roomsAfter === 0;
+      const roomsLost = normRooms > 0 && roomsAfter === 0;
       if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
@@ -594,7 +598,7 @@ export class Workspace {
             expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length,
             coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>) * 10),
             axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,
-            pillar_mismatches: pillarMismatch, rooms_expected: expectedRooms, rooms_on_server: roomsAfter,
+            pillar_mismatches: pillarMismatch, rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });
       }
