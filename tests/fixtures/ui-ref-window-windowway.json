@@ -1,0 +1,137 @@
+{
+ "_source": "Эталон из UI редактора remplanner (headless Chromium): пункт меню «Проем без окна» поставлен кликом на стену проекта-копии; модель снята project.copy(\"server\") без сохранения, scripts/probes/25-windows-ui-refs.ts, 2026-11-16, проект аккаунта обезличен (id → 0), global_version 757",
+ "menu_title": "Проем без окна",
+ "catalog_key": "windowway",
+ "model_type": "windowway",
+ "defaults_model_cm": {
+  "plan": "a",
+  "type": "windowway",
+  "group": "windows",
+  "width": 120,
+  "height": 150,
+  "depth": 6,
+  "floor_height": 85,
+  "slopes": 20,
+  "opening": "r",
+  "id": "0",
+  "parent": "0",
+  "parent_depth": 30,
+  "position": "c",
+  "offset": 0,
+  "slope_angle": 0,
+  "casing": 1,
+  "casements": 1,
+  "sill": {
+   "thinkness": 4,
+   "overhang": 0,
+   "overmeasure": 0,
+   "side": "l"
+  },
+  "f0offset": 0,
+  "_wall": "0"
+ },
+ "props_panel": [
+  {
+   "id": "cm-window",
+   "html": "<div class=\"contextmenu v2\" id=\"cm-window\" style=\"display: block; top: 625px; left: 1112.81px;\">\n            <div class=\"contextmenu_item\">\n                Ширина окна:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" action=\"width\" type=\"text\" maxlength=\"5\" value=\"\" placeholder=\"120\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item input cm-window--floor-height--wrap\" style=\"\">\n                Высота окна:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" action=\"height\" type=\"text\" maxlength=\"5\" value=\"\" placeholder=\"150\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item input cm-window--floor-height--wrap\" style=\"\">\n                Высота от пола:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" data-input=\"floor-height\" type=\"text\" maxlength=\"5\" value=\"\" placeholder=\"85\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n                        <div class=\"contextmenu_item input\" action=\"window_parts\" style=\"display: none;\">\n                Число створок:\n                <div class=\"contextmenu_item_input plus_minus\">\n                    <input class=\"numeric\" data-input=\"parts\" type=\"text\" maxlength=\"1\" value=\"\" placeholder=\"1\">\n                    <span>ОК</span>\n                    <div class=\"minus\" data-button=\"parts-minus\"></div>\n                    <div class=\"plus\" data-button=\"parts-plus\"></div>\n                </div>\n            </div>\n            <div class=\"contextmenu_item input\" data-input-container=\"angle\" style=\"display: none;\">\n                Угол рассвета:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" data-input=\"angle\" type=\"text\" maxlength=\"3\" value=\"\" placeholder=\"0\">\n                    <span>ОК</span><em>°</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item input\" data-input-container=\"sill-thinkness\">\n                Толщина подоконника:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" data-input=\"sill-thinkness\" type=\"text\" maxlength=\"4\" value=\"\" placeholder=\"4\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item input\" data-input-container=\"sill-overhang\">\n                Вылет подоконника:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" data-input=\"sill-overhang\" type=\"text\" maxlength=\"4\" value=\"\" placeholder=\"0\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item input\" data-input-container=\"sill-overmeasure\">\n                Выпуски подоконника:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" data-input=\"sill-overmeasure\" type=\"text\" maxlength=\"4\" value=\"\" placeholder=\"0\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item switch pointer\" data-switcher-container=\"arc\" style=\"\">\n                <div class=\"footer_bar_tool_switch\" data-switcher=\"arc\"><span></span></div>\n                Арочный проем\n            </div>\n            <div class=\"contextmenu_item icons\">\n                <em>Действия:</em>\n                <div class=\"contextmenu_item_icon turn\" data-button=\"rotate\">\n                    <span style=\"margin-left:-35px;\">Повернуть</span>\n                </div>\n                <div class=\"contextmenu_item_icon move\" data-button=\"move\">\n                    <span style=\"margin-left:-42px;\">Переместить</span>\n                </div>\n                <div class=\"contextmenu_item_icon copy\" action=\"copy\">\n                    <span style=\"margin-left: -39px\">Создать копию</span>\n                </div>\n                <div class=\"contextmenu_item_icon delete\" action=\"delete\">\n                    <span style=\"margin-left:-29px;\">Удалить</span>\n                </div>\n            </div>\n        </div>"
+  }
+ ],
+ "field_map_ui_to_model": [
+  {
+   "field": "width",
+   "set": "140",
+   "model": {
+    "width": 140
+   }
+  },
+  {
+   "field": "height",
+   "set": "160",
+   "model": {
+    "width": 140,
+    "height": 160
+   }
+  },
+  {
+   "field": "floor-height",
+   "set": "90",
+   "model": {
+    "width": 140,
+    "height": 160,
+    "floor_height": 90
+   }
+  },
+  {
+   "field": "parts",
+   "set": "2",
+   "model": {
+    "width": 140,
+    "height": 160,
+    "floor_height": 90,
+    "casements": 2
+   }
+  },
+  {
+   "field": "angle",
+   "set": "15",
+   "model": {
+    "width": 140,
+    "height": 160,
+    "floor_height": 90,
+    "slope_angle": 15,
+    "casements": 2
+   }
+  },
+  {
+   "field": "sill-thinkness",
+   "set": "6",
+   "model": {
+    "width": 140,
+    "height": 160,
+    "floor_height": 90,
+    "slope_angle": 15,
+    "casements": 2,
+    "sill": {
+     "thinkness": 6,
+     "overhang": 0,
+     "overmeasure": 0,
+     "side": "l"
+    }
+   }
+  },
+  {
+   "field": "sill-overhang",
+   "set": "6",
+   "model": {
+    "width": 140,
+    "height": 160,
+    "floor_height": 90,
+    "slope_angle": 15,
+    "casements": 2,
+    "sill": {
+     "thinkness": 6,
+     "overhang": 6,
+     "overmeasure": 0,
+     "side": "l"
+    }
+   }
+  },
+  {
+   "field": "sill-overmeasure",
+   "set": "6",
+   "model": {
+    "width": 140,
+    "height": 160,
+    "floor_height": 90,
+    "slope_angle": 15,
+    "casements": 2,
+    "sill": {
+     "thinkness": 6,
+     "overhang": 6,
+     "overmeasure": 6,
+     "side": "l"
+    }
+   }
+  }
+ ]
+}
