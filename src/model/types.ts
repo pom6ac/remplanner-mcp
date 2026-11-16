@@ -236,7 +236,8 @@ export type TerraceBorder = {
  * polygon — 4 угла (см, Y вниз), matrix — кольцо 4×4 в обе стороны ({length:1}),
  * vertexes — узлы type "node", items — карта id узла → "node", type "floor_hole",
  * plan "a", length — число вершин, area — площадь в м², pc — центр.
- * id_room редактор при restore не пересчитывает (проба 64-norm2) — пишем null.
+ * id_room редактор при restore не пересчитывает (проба 64-norm2) — пишем id комнаты
+ * по проверенному включению (ревью 66 №8).
  */
 export type LevelHole = {
   id: string;
