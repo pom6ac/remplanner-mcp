@@ -1,4 +1,4 @@
-import type { Model, Wall } from "./types.ts";
+import type { Model, Wall, GasLine } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
 import type { RoomPolygon } from "./items.ts";
 import { roomPolygons } from "./items.ts";
@@ -101,12 +101,25 @@ export type CompactRigel = {
   links: { end: "p1" | "p2"; ot: string; id: string }[];
 };
 
+export type CompactGasLine = {
+  id: string;
+  site_id: string;
+  /** Концы прямой линии, мм (у линии из двух узлов). */
+  from: [number, number];
+  to: [number, number];
+  /** Число узлов графа (у прямой — 2). */
+  vertexes: number;
+  /** Длина трубы, м (поле модели редактора). */
+  length_m: number;
+};
+
 export type CompactModel = {
   walls: CompactWall[];
   rooms: CompactRoom[];
   items: CompactItem[];
   pillars: CompactPillar[];
   rigels: CompactRigel[];
+  gas_lines: CompactGasLine[];
   total_height_mm: number;
 };
 
@@ -244,6 +257,19 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     };
   });
 
+  const gasLines: CompactGasLine[] = Object.values(model.pipes_gas ?? {}).map((line: GasLine, i) => {
+    const first = line.vertexes[0]?.point;
+    const last = line.vertexes[line.vertexes.length - 1]?.point;
+    return {
+      id: `G${i + 1}`,
+      site_id: line.id,
+      from: [round0(cmToMm(first?.x ?? 0)), round0(cmToMm(first?.y ?? 0))],
+      to: [round0(cmToMm(last?.x ?? 0)), round0(cmToMm(last?.y ?? 0))],
+      vertexes: line.vertexes.length,
+      length_m: line.length ?? 0,
+    };
+  });
+
   const totalHeight = typeof model.total_height === "number" ? model.total_height : 270;
   return {
     walls,
@@ -251,6 +277,7 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     items,
     pillars,
     rigels,
+    gas_lines: gasLines,
     total_height_mm: round0(cmToMm(totalHeight)),
   };
 }

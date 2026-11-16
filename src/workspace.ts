@@ -50,7 +50,7 @@ export type SaveOutcome = {
   verified: boolean;
   rounds: number;
   /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено. */
-  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number };
+  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number };
   /** Предупреждения (удаления объектов сервера). */
   warnings: string[];
 };
@@ -62,8 +62,8 @@ export const MAX_HISTORY = 50;
 /** Результат мутации стен: полезное значение + предупреждения (офлайн-режим). */
 export type WallMutation<T> = { result: T; warnings: string[] };
 
-/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели. */
-export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number } {
+/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии. */
+export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number } {
   const m = model as Model;
   const walls = m.walls ?? {};
   return {
@@ -72,6 +72,7 @@ export function modelCounts(model: Model | Record<string, unknown>): { walls: nu
     items: Object.keys(m.items ?? {}).length,
     pillars: Object.keys(m.pillars ?? {}).length,
     rigels: Object.keys(m.rigels ?? {}).length,
+    gas_lines: Object.keys(m.pipes_gas ?? {}).length,
   };
 }
 
@@ -96,6 +97,7 @@ export function modelIsContentEmpty(model: Model): boolean {
   if (c.walls > 0 || c.items > 0) return false;
   const nonEmpty = (v: unknown): boolean => v !== null && v !== undefined && typeof v === "object" && Object.keys(v as object).length > 0;
   if (nonEmpty(model.pillars) || nonEmpty(model.rigels) || nonEmpty(model.rulers) || nonEmpty(model.comments)) return false;
+  if (nonEmpty(model.pipes_gas)) return false;
   if (nonEmpty(model.rooms2) || nonEmpty(model.rooms1)) return false;
   return true;
 }
@@ -188,6 +190,41 @@ type RigelSig = { p1?: Point; p2?: Point; depth?: number; height?: number; ceili
 
 /** Значимая геометрия/тип предмета для сверки после сохранения (этап 55, ревью №1). */
 type ItemSig = { name?: string; pc?: { x: number; y: number }; width?: number; height?: number; angle?: number };
+
+/** Значимая геометрия газовой линии для сверки после сохранения (этап 57). */
+type GasLineSig = { vertexes?: { point?: Point }[]; length?: number; type?: string };
+
+/**
+ * Расхождение газовых линий между нормализованной моделью и сервером после save
+ * (этап 57): идентичности, тип, концы узлов (допуск 0,1 см) и длина (допуск 2 см —
+ * редактор пересчитывает длину сам при restore, округление до 2 знаков).
+ */
+function gasLineVerificationMismatches(expected: Record<string, GasLineSig>, got: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
+    a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
+  for (const [id, g0] of Object.entries(expected)) {
+    const g = got[id] as GasLineSig | undefined;
+    if (!g) {
+      out.push(`${id}: газовая линия исчезла после сохранения`);
+      continue;
+    }
+    if ((g.type ?? "") !== (g0.type ?? "")) out.push(`${id}: тип изменился (на сервере «${g.type ?? ""}»; ожидалось «${g0.type ?? ""}»)`);
+    const gotV = g.vertexes ?? [];
+    const expV = g0.vertexes ?? [];
+    if (gotV.length !== expV.length) {
+      out.push(`${id}: число узлов изменилось (на сервере ${gotV.length}; ожидалось ${expV.length})`);
+      continue;
+    }
+    for (let i = 0; i < expV.length; i++) {
+      if (!near(gotV[i]?.point?.x, expV[i]?.point?.x, 0.1) || !near(gotV[i]?.point?.y, expV[i]?.point?.y, 0.1)) {
+        out.push(`${id}: узел ${i} сместился (на сервере ${gotV[i]?.point?.x},${gotV[i]?.point?.y}; ожидалось ${expV[i]?.point?.x},${expV[i]?.point?.y})`);
+      }
+    }
+    if (!near(g.length, g0.length, 0.02)) out.push(`${id}: длина изменилась (на сервере ${g.length}; ожидалось ${g0.length})`);
+  }
+  return out;
+}
 
 /**
  * Расхождение предметов между нормализованной моделью и сервером после save (этап 55,
@@ -444,6 +481,15 @@ export class Workspace {
           details: { lost_rigels: lostRigelsNorm },
         });
       }
+      // этап 57: газовые линии после нормализации не теряются (сверка идентичностей)
+      const wsGasIds = new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}));
+      const normGasIds = new Set(Object.keys((norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {}));
+      const lostGasNorm = missingIds(wsGasIds, normGasIds);
+      if (lostGasNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял газовые линии (${lostGasNorm.join(", ")}) — мутация отменена`, {
+          details: { lost_gas_lines: lostGasNorm },
+        });
+      }
       // нормализованная копия становится канонической
       this.modelInternal = toModel(structuredClone(norm.model as unknown as Record<string, unknown>));
       if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
@@ -560,6 +606,7 @@ export class Workspace {
       items: missingIds(new Set(Object.keys(serverModel.items ?? {})), new Set(Object.keys(this.modelInternal!.items ?? {}))),
       pillars: missingIds(new Set(Object.keys(serverModel.pillars ?? {})), new Set(Object.keys(this.modelInternal!.pillars ?? {}))),
       rigels: missingIds(new Set(Object.keys(serverModel.rigels ?? {})), new Set(Object.keys(this.modelInternal!.rigels ?? {}))),
+      gas_lines: missingIds(new Set(Object.keys(serverModel.pipes_gas ?? {})), new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}))),
     };
     const willDelete = {
       walls: deletedIds.walls.length,
@@ -567,6 +614,7 @@ export class Workspace {
       items: deletedIds.items.length,
       pillars: deletedIds.pillars.length,
       rigels: deletedIds.rigels.length,
+      gas_lines: deletedIds.gas_lines.length,
     };
     const warnings: string[] = [];
     const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
@@ -576,6 +624,7 @@ export class Workspace {
     if (willDelete.items > 0) warnings.push(`будут удалены предметы (${willDelete.items}), которых нет в модели: ${idList(deletedIds.items)}`);
     if (willDelete.pillars > 0) warnings.push(`будут удалены колонны (${willDelete.pillars}), которых нет в модели: ${idList(deletedIds.pillars)}`);
     if (willDelete.rigels > 0) warnings.push(`будут удалены ригели (${willDelete.rigels}), которых нет в модели: ${idList(deletedIds.rigels)}`);
+    if (willDelete.gas_lines > 0) warnings.push(`будут удалены газовые линии (${willDelete.gas_lines}), которых нет в модели: ${idList(deletedIds.gas_lines)}`);
     if (fresh.save_id !== saveIdBefore) {
       if (!this.editorInternal && !options.force) {
         throw new McpError(
@@ -634,10 +683,16 @@ export class Workspace {
     const expectedItems = structuredClone((norm.model as { items?: Record<string, ItemSig> }).items ?? {});
     const localRigelIds = new Set(Object.keys(this.modelInternal!.rigels ?? {}));
     const gotRigelIds = new Set(Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}));
+    // этап 57: газовые линии — ожидаемые (из нормализованной модели, того, что ушло
+    // на save: редактор пересчитывает length) и потерянные при нормализации
+    const expectedGasLines = structuredClone((norm.model as { pipes_gas?: Record<string, GasLineSig> }).pipes_gas ?? {});
+    const localGasIds = new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}));
+    const gotGasIds = new Set(Object.keys((norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {}));
     const lostOpenings = missingIds(localOpeningIds, gotOpeningIds);
     const lostItems = missingIds(localItemIds, gotItemIds);
     const lostPillars = missingIds(localPillarIds, gotPillarIds);
     const lostRigels = missingIds(localRigelIds, gotRigelIds);
+    const lostGasLines = missingIds(localGasIds, gotGasIds);
     const gotSegments = wallAxisSegments(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
@@ -647,7 +702,7 @@ export class Workspace {
     }
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
-      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0
+      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -661,6 +716,7 @@ export class Workspace {
           lost_items: lostItems,
           lost_pillars: lostPillars,
           lost_rigels: lostRigels,
+          lost_gas_lines: lostGasLines,
         },
       });
     }
@@ -694,8 +750,11 @@ export class Workspace {
       // а не только счётчиком при нормализации
       const itemsAfter = (after.model["items"] as Record<string, unknown> | undefined) ?? {};
       const itemMismatch = itemVerificationMismatches(expectedItems, itemsAfter);
+      // этап 57: газовые линии после save сверяются по id, типу, узлам и длине
+      const gasAfter = (after.model["pipes_gas"] as Record<string, unknown> | undefined) ?? {};
+      const gasMismatch = gasLineVerificationMismatches(expectedGasLines, gasAfter);
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -707,6 +766,7 @@ export class Workspace {
             coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>) * 10),
             axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,
             pillar_mismatches: pillarMismatch, rigel_mismatches: rigelMismatch, item_mismatches: itemMismatch,
+            gas_line_mismatches: gasMismatch,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });

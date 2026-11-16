@@ -9,6 +9,7 @@ import {
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
 import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../model/rigels.ts";
+import { addGasLine, updateGasLine, deleteGasLine } from "../model/pipes.ts";
 import { addItem, updateItem, deleteItem, itemsList, roomPolygons, type RoomPolygon } from "../model/items.ts";
 import { compactModel, wallLengthMm } from "../model/compact.ts";
 import { validateModel } from "../model/validate.ts";
@@ -68,6 +69,19 @@ function resolveItem(model: Model, ref: string): ItemProps {
     if (item) return item;
   }
   return throwNotFound(`предмет ${ref} не найден (id сайта или метка I<n> из model_get)`);
+}
+
+/** Газовая линия по site-id или метке G1…G_n. */
+function resolveGasLine(model: Model, ref: string): import("../model/types.ts").GasLine {
+  const lines = model.pipes_gas ?? {};
+  if (lines[ref]) return lines[ref]!;
+  const m = /^G(\d+)$/.exec(ref);
+  if (m) {
+    const list = Object.values(lines);
+    const line = list[Number(m[1]) - 1];
+    if (line) return line;
+  }
+  return throwNotFound(`газовая линия ${ref} не найдена (id сайта или метка G<n> из model_get)`);
 }
 
 const wallRef = z.string().min(1).describe("id стены сайта или метка W<n> из model_get");
@@ -470,8 +484,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     // ---------- Каталог и предметы (§7.4) ----------
     catalog_search: tool(
       "Поиск по каталогу мебели/сантехники remplanner (русский или английский запрос; ё=е, регистр не важен). " +
-        "Возвращает name (точное имя для item_add), title, размеры в мм, resizable. Примеры запросов: «диван», «унитаз», «кровать», «лестница». " +
-        "Лестницы — группа stairs (21 позиция меню «Лестницы»: ladder_march, spiral_staircase, …) — это предметы каталога, ставятся item_add, а не отдельная сущность.",
+        "Возвращает name (точное имя для item_add), title, размеры в мм, resizable. Примеры запросов: «диван», «унитаз», «кровать», «лестница», «стояк». " +
+        "Лестницы — группа stairs (21 позиция меню «Лестницы»: ladder_march, spiral_staircase, …) — это предметы каталога, ставятся item_add, а не отдельная сущность. " +
+        "«Коммуникации» (меню на исходном плане) — тоже предметы каталога: стояки water, water_column_hot, water_column_cold, drainage_column, " +
+        "вентиляция air, отопление radiator_old, heat_pipe, газ gas_pipe, gas_boiler, gas_meter, пожарный датчик fire_detector и др.; " +
+        "исключение — газовая линия gas_line: отдельная сущность, ставится gas_line_add.",
       {
         query: z.string().min(1),
         group: z.string().optional().describe("furniture, santeh_furniture, lights, stairs, sockets, …"),
@@ -517,7 +534,12 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "spiral_staircase, upper_march, ladder_circle, porch, attic_staircase, step_ladder, escalator, elevator, floor_hatch) — " +
         "предметы каталога, а не отдельная сущность; марши/ступени/ограждение в модель не пишутся (отрисовка вида). " +
         "Как в UI, план предмета получает видимость на исходном плане (a:1). У stair_spot над полом 20 см — передайте elevation_mm=200. " +
-        "porch и stair_spot в редакторе ставятся только у стены — используйте against_wall.",
+        "porch и stair_spot в редакторе ставятся только у стены — используйте against_wall. " +
+        "Раздел «Коммуникации» (исходный план): стояки водоснабжения/канализации water, water_column_hot, water_column_cold, drainage_column, " +
+        "вентиляционный короб air, радиатор radiator_old, стояк отопления heat_pipe, газовый стояк gas_pipe, колонка gas_boiler, счётчик gas_meter, " +
+        "пожарный датчик fire_detector — предметы каталога (ставятся item_add, размеры из каталога). " +
+        "У ceiling_water (ввод водоснабжения) и conditioner_cage (корзина кондиционера) постановка только у стены — against_wall. " +
+        "Газовая линия gas_line — НЕ предмет: инструмент gas_line_add.",
       {
         name: z.string().min(1).describe("точное имя позиции каталога"),
         position,
@@ -766,11 +788,64 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
     ),
 
+    // ---------- Газовая линия (пункт меню «Коммуникации», §7.4, этап 57) ----------
+    gas_line_add: tool(
+      "Поставить газовую линию (пункт меню «Коммуникации» → «Газовый трубопровод»): труба-отрезок " +
+        "от точки start до точки end (мм, коллекция pipes_gas — отдельная сущность, не item_add). " +
+        "Длина в модели — в метрах, пересчитывается автоматически. Лимитов нет (кроме конечных " +
+        "координат). После добавления вызывайте model_validate и project_save.",
+      {
+        start: mmPoint.describe("начало газовой линии, мм"),
+        end: mmPoint.describe("конец газовой линии, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const line = ws.apply("gas_line_add", (m) => addGasLine(m, {
+          start: a["start"] as MmPoint,
+          end: a["end"] as MmPoint,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.gas_lines.find((g) => g.site_id === line.id) ?? null));
+      },
+    ),
+
+    gas_line_update: tool(
+      "Изменить газовую линию: переместить начало (start) или конец (end), мм. Мм→см только " +
+        "для явно переданных значений. gas_line_id — id линии (site_id) или метка G<n> из model_get.",
+      {
+        gas_line_id: z.string().min(1).describe("метка G<n> из model_get или id сайта"),
+        start: mmPoint.optional().describe("новое начало линии, мм"),
+        end: mmPoint.optional().describe("новый конец линии, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const line = ws.apply("gas_line_update", (m) => updateGasLine(m, {
+          gasLineId: resolveGasLine(m, a["gas_line_id"] as string).id,
+          start: a["start"] as MmPoint | undefined,
+          end: a["end"] as MmPoint | undefined,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.gas_lines.find((g) => g.site_id === line.id) ?? null));
+      },
+    ),
+
+    gas_line_delete: tool(
+      "Удалить газовую линию (метка G<n> из model_get).",
+      { gas_line_id: z.string().min(1).describe("метка G<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("gas_line_delete", (m) => {
+          deleteGasLine(m, resolveGasLine(m, a["gas_line_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["gas_line_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
     // ---------- Чтение и проверка (§7.6) ----------
     model_get: tool(
       "Текущая модель плана в компактном виде: стены W1… (осевые концы, длины по осям и внутренним граням, толщины, проёмы с отступами), " +
-        "комнаты R1… (площади м², периметры), предметы I1…, колонны P1… (пункт меню «Несущая колонна»), ригели B1… (пункт меню «Потолочный ригель»). " +
-        "Обычно < 5 КБ. id сайта — в поле site_id; метки W/R/I/P/B можно использовать в других инструментах.",
+        "комнаты R1… (площади м², периметры), предметы I1…, колонны P1… (пункт меню «Несущая колонна»), ригели B1… (пункт меню «Потолочный ригель»), " +
+        "газовые линии G1… (пункт меню «Коммуникации» → «Газовый трубопровод»). " +
+        "Обычно < 5 КБ. id сайта — в поле site_id; метки W/R/I/P/B/G можно использовать в других инструментах.",
       { detail: z.enum(["compact", "full"]).optional() },
       async (a) => {
         const ws = wsOf();
