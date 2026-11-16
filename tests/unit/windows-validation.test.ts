@@ -81,7 +81,7 @@ test("№6: применимость параметров по типам — ч
   const { top, bottom } = rect(model);
   const w = addOpening(model, { wallId: top.id, type: "window", centerMm: 2000 });
   const fw = addOpening(model, { wallId: top.id, type: "french_window", centerMm: 700 });
-  const d = addOpening(model, { wallId: top.id, type: "door", centerMm: 3000, widthMm: 800, heightMm: 2000, sillHeightMm: 0 });
+  const d = addOpening(model, { wallId: top.id, type: "door", centerMm: 3000, widthMm: 800, heightMm: 2000 });
   invalid(() => addOpening(model, { wallId: top.id, type: "window", centerMm: 2000, windowWidthMm: 1000 }), /window_balcony/);
   invalid(() => addOpening(model, { wallId: top.id, type: "window", centerMm: 2000, doorPosition: "left" }), /window_balcony/);
   invalid(() => updateOpening(model, { wallId: top.id, holeId: w.id, casements: 2, impostHeightMm: 1400 }), /window_door/);
@@ -89,6 +89,9 @@ test("№6: применимость параметров по типам — ч
   invalid(() => addOpening(model, { wallId: top.id, type: "french_window_coupe", centerMm: 700, casements: 1 }), /французск/);
   invalid(() => updateOpening(model, { wallId: top.id, holeId: d.id, sillOverhangMm: 50 }), /окнам/);
   invalid(() => updateOpening(model, { wallId: top.id, holeId: d.id, slopeAngleDeg: 10 }), /окнам/);
+  // sill_height_mm у дверей не применим: высота от пола у дверей в редакторе не задаётся (этап 37)
+  invalid(() => addOpening(model, { wallId: top.id, type: "door", centerMm: 700, sillHeightMm: 100 }), /высота от пола у дверей/);
+  invalid(() => updateOpening(model, { wallId: top.id, holeId: d.id, sillHeightMm: 100 }), /высота от пола у дверей/);
   // импост в пределах двери: ниже подоконника и выше верха двери — нельзя
   invalid(() => addOpening(model, { wallId: bottom.id, type: "window_door", centerMm: 500, impostHeightMm: 3000 }), /импост/);
   invalid(() => addOpening(model, { wallId: bottom.id, type: "window_door", centerMm: 500, impostHeightMm: 90 }), /импост/);
@@ -122,7 +125,7 @@ test("№3: update балконного блока — общая ширина �
 test("ревью 30 N1/N2/N4: смена типа в update отвергается атомарно для любых пар типов", () => {
   const model = emptyModel();
   const { top, bottom } = rect(model);
-  const d = addOpening(model, { wallId: top.id, type: "door", centerMm: 500, leaves: 2, sillHeightMm: 100 });
+  const d = addOpening(model, { wallId: top.id, type: "door", centerMm: 500, leaves: 2 });
   const wd = addOpening(model, { wallId: top.id, type: "window_balcony", centerMm: 3000 });
   const w = addOpening(model, { wallId: bottom.id, type: "window", centerMm: 2000 });
   const d2 = addOpening(model, { wallId: bottom.id, type: "door", centerMm: 500 });
