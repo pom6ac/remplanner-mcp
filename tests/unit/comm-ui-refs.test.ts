@@ -37,7 +37,8 @@ function loadRef(name: string): Ref {
 }
 
 const REFS = [
-  "water", "water_column_cold", "radiator_old", "air", "gas_boiler",
+  "water", "water_column_cold", "water_column_hot", "drainage_column", "heat_pipe",
+  "radiator_old", "air", "gas_pipe", "gas_boiler", "gas_meter", "fire_detector",
   "ceiling_water", "conditioner_cage",
 ] as const;
 
@@ -89,6 +90,34 @@ test("comm: план a:1 — все 15 предметов меню «Комму�
   assert.deepEqual(itemPlanFromEntry(toToolEntry("sofa_double", { id: 92, title: "Диван", group: "furniture", width: 140, height: 80, self_height: 85, plan: { furniture: 6 } })), { furniture: 6 });
   // газовая линия — отдельная сущность, item_add неприменим
   assert.ok(LINE_TOOLS.has(COMM_MENU_LINE));
+});
+
+/** Ревью 59 №4: честная пометка покрытия эталонами. UI-эталоны (клик в редакторе,
+ *  пробы 57-comm-ui3 + дампы) есть у 13 из 15 предметов. У ventilation_hole и
+ *  electric_shield_old эталонов НЕТ: постановка кликом в пробах 57 не добавила объект
+ *  (57-comm-ui/ventilation_hole.json, electric_shield_old.json — added: items пуст).
+ *  Их пункт ниже (план a:1) — синтетический, о факте редактора не заявляет. */
+const REFS_WITHOUT_UI_ETHALONE = new Set(["ventilation_hole", "electric_shield_old"]);
+
+test("comm: покрытие эталонами — 13 из 15 предметов меню сняты с UI, 2 помечены синтетическими", () => {
+  const withRefs = COMM_MENU_ITEMS.filter((n) => !REFS_WITHOUT_UI_ETHALONE.has(n));
+  assert.equal(withRefs.length, 13);
+  for (const name of withRefs) {
+    let ref: unknown;
+    try {
+      ref = JSON.parse(readFileSync(join(here, `../fixtures/ui-ref-comm-${name}.json`), "utf8"));
+    } catch {
+      ref = null;
+    }
+    assert.ok(ref, `у ${name} должен быть UI-эталон ui-ref-comm-${name}.json`);
+    assert.equal((ref as Ref).model_object.name, name, `${name}: эталон отвечает за тот же пункт`);
+  }
+  for (const name of REFS_WITHOUT_UI_ETHALONE) {
+    assert.throws(
+      () => JSON.parse(readFileSync(join(here, `../fixtures/ui-ref-comm-${name}.json`), "utf8")),
+      `${name}: UI-эталона нет и не заявляется`,
+    );
+  }
 });
 
 test("comm: applyToolFixes — патчи fix_tools редактора (этап 57): размеры/группа/anchor стояков", async () => {
@@ -206,6 +235,7 @@ for (const key of REFS) {
       ...(key === "radiator_old" ? { elevationMm: 100 } : {}),
       ...(key === "gas_boiler" ? { elevationMm: 1000, heightMm: 670 } : {}),
       ...(key === "conditioner_cage" ? { elevationMm: 150, heightMm: 600 } : {}),
+      ...(key === "gas_meter" ? { elevationMm: 1400 } : {}),
     });
     assert.equal(props.name, src["name"]);
     // размеры из каталога = эталонные

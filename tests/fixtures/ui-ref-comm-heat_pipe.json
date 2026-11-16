@@ -1,0 +1,58 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), проба 57-comm-ui3 (клик в комнате), model project.copy(\"server\"), без сохранения; id предмета и id_room/id_room_zone обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); план {\"a\":1} (ключ каталога init отображён в a); эталон этапа 59 — из дампа .orca-reports/57-comm-ui/heat_pipe.json (raw бандл уже содержит 8×8/furniture — fix_tools его не правит)",
+ "menu_title": "Стояк отопления",
+ "tool_id": "plannertool_heat_pipe",
+ "catalog_defaults_cm": {
+  "id": 493,
+  "width": 8,
+  "height": 8,
+  "self_height": 0,
+  "plan": {
+   "init": 1
+  },
+  "anchor": "free",
+  "is_magnetized": false,
+  "can_be_outside": false
+ },
+ "model_object": {
+  "name": "heat_pipe",
+  "pc": {
+   "x": 527.58,
+   "y": 286.36
+  },
+  "angle": 0,
+  "width": 8,
+  "height": 8,
+  "plan": {
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 493,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 527.58,
+   "y": 286.36
+  },
+  "center3d": {
+   "x": 527.58,
+   "y": 286.36
+  },
+  "id_room": "0",
+  "id_room_zone": "0"
+ }
+}

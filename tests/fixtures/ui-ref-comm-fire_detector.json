@@ -1,0 +1,61 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), проба 57-comm-ui3 (клик у стены, магнит к стене dev-проекта), model project.copy(\"server\"), без сохранения; id предмета и id_wall/id_wall_old обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); план {\"a\":1} (ключ каталога init отображён в a); эталон этапа 59 — из дампа .orca-reports/57-comm-ui/fire_detector.json (raw бандл уже содержит 12×12 — fix_tools его не правит)",
+ "menu_title": "Пожарный датчик",
+ "tool_id": "plannertool_fire_detector",
+ "catalog_defaults_cm": {
+  "id": 498,
+  "width": 12,
+  "height": 12,
+  "self_height": 0,
+  "plan": {
+   "init": 1
+  },
+  "anchor": "free",
+  "is_magnetized": false,
+  "can_be_outside": false
+ },
+ "model_object": {
+  "name": "fire_detector",
+  "pc": {
+   "x": 47,
+   "y": 462.53
+  },
+  "angle": 0,
+  "width": 12,
+  "height": 12,
+  "plan": {
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 498,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 47,
+   "y": 462.53
+  },
+  "center3d": {
+   "x": 47,
+   "y": 462.53
+  },
+  "id_room": "0",
+  "id_room_zone": "0",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r"
+ }
+}
