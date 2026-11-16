@@ -6,7 +6,7 @@ import {
   type Segment,
 } from "./geometry.ts";
 import { McpError } from "../errors.ts";
-import { prepareHolePoints, refreshWallHoles, holeRange } from "./openings.ts";
+import { prepareHolePoints, refreshWallHoles, holeRange, normalizeWallOpeningFormats } from "./openings.ts";
 
 // Топология стен (design §12.3): Node задаёт ТОЛЬКО геометрию — оси, толщину, T-концы на
 // гранях. Связи (node/edge), грани на стыках и комнаты редактор строит сам из геометрии
@@ -287,6 +287,9 @@ function extendExistingEnds(model: Model, p1: Point, p2: Point, depth: number, s
 function refreshWallHolesSafe(wall: Wall): void {
   try {
     refreshWallHoles(wall);
+    // формат opening тоже приводится к виду для проёмов изменённой стены (ревью 38):
+    // legacy door_coupe без opening после moveWall не должен уходить редактору
+    normalizeWallOpeningFormats(wall);
   } catch {
     /* проёмы без корректных точек остаются как есть — их поймает validate */
   }

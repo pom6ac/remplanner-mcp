@@ -740,6 +740,22 @@ export const KIND_BY_HOLE_TYPE: Record<string, OpeningKind> = {};
 for (const k of Object.values(OPENING_KINDS)) KIND_BY_HOLE_TYPE[k.type] = k;
 
 /**
+ * Нормализация формата opening у проёмов стены, чья геометрия изменилась (ревью 38,
+ * путь «перенос стены, сохраняющий недопустимый opening»): legacy-объекты v0.1.1
+ * (например door_coupe без opening) после moveWall/updateWall пересчитывают точки, но
+ * сохраняли недопустимый формат — MCP отдавал бы редактору проём, который restore не
+ * восстанавливает. Вызывается стеновыми трансформациями рядом с refreshWallHoles только
+ * для стен, чья геометрия изменилась: проёмы нетронутых стен не модифицируются.
+ * Атомарность обеспечивает atomic() вызывающей трансформации. Неизвестные типы не трогаются.
+ */
+export function normalizeWallOpeningFormats(wall: Wall): void {
+  for (const hole of Object.values(wall.holes)) {
+    const kind = KIND_BY_HOLE_TYPE[normalizeHoleType(hole.type)];
+    if (kind) normalizeOpeningFormat(hole, kind);
+  }
+}
+
+/**
  * Legacy-имя типа балконного блока в старых моделях → каноническое type (ревью 28, R2):
  * старый объект type:"window_balcony" не находился в KIND_BY_HOLE_TYPE и обходил
  * валидатор и запрет переходов.

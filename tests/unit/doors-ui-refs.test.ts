@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import type { Hole, Model, Wall } from "../../src/model/types.ts";
 import { newId } from "../../src/model/types.ts";
 import { mmToCm, roundTenthMm as r2 } from "../../src/model/units.ts";
-import { addRoomRect } from "../../src/model/walls.ts";
+import { addRoomRect, moveWall } from "../../src/model/walls.ts";
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, holeOffsetCm, holeRange } from "../../src/model/openings.ts";
 import { pointsAroundCenter, pointAtLength } from "../../src/model/geometry.ts";
 import { compactModel } from "../../src/model/compact.ts";
@@ -402,6 +402,27 @@ test("legacy v0.1.1 (9ae566f): старые дефолты doorway/coupe/system_
   assert.equal(cp2.opening, "r-l");
 
   assert.deepEqual(untouched, untouchedSnap, "нетронутая legacy-дверь не изменилась");
+});
+
+// ---------- Перенос стены (ревью 38: путь, сохраняющий недопустимый opening) ----------
+
+test("перенос стены: legacy door_coupe без opening нормализуется к формату вида; проёмы нетронутых стен не меняются", () => {
+  const model = emptyModel();
+  const { top, bottom } = rect(model);
+  // legacy door_coupe v0.1.1 без opening на переносимой стене — restore такой объект не берёт
+  const cp = legacyAddOpening9ae566f(model, { wallId: top.id, type: "door_coupe", centerMm: 1000 });
+  assert.equal(cp.opening, undefined);
+  // legacy-дверь на стене, которую не переносим, — не должна измениться
+  const untouched = legacyAddOpening9ae566f(model, { wallId: bottom.id, type: "door", centerMm: 1000, heightMm: 2000 });
+  const untouchedSnap = structuredClone(untouched);
+  const modelSnap = structuredClone(model);
+
+  moveWall(model, { wallId: top.id, offsetMm: 100 });
+
+  assert.equal(cp.opening, "r-l", "после moveWall формат opening приведён к виду (двухчастный)");
+  assert.deepEqual(untouched, untouchedSnap, "проём нетронутой стены не изменился");
+  // проверяемая трансформация не задела нижнюю стену целиком
+  assert.deepEqual(model.walls[bottom.id], modelSnap.walls[bottom.id], "стена без переноса не изменилась");
 });
 
 // ---------- Регрессия окон (этап 25) ----------
