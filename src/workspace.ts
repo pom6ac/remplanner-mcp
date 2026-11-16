@@ -168,8 +168,23 @@ function rawJsonHasEntities(value: unknown, depth = 0): boolean {
   return false;
 }
 
-/** id проёмов модели: id holes по всем стенам (ревью v0.1.1 №4/№5 — сравнение по id). */
-function openingIds(model: Model): Set<string> {
+/**
+ * Убрать id_room вершин световых линий (этап 84): редактор сам пересчитывает
+ * принадлежность узла комнате при draw/normalize (живая проба 84: узлы получили
+ * id_room комнаты вместо "" из serialize LedStrip) — в сверке РАБОЧЕЙ копии с
+ * нормализованной это производное поле; сверка после save идёт по нормализованному
+ * ожиданию и остаётся строгой.
+ */
+function stripVertexIdRoom<T>(lines: T): T {
+  for (const line of Object.values(lines as Record<string, { vertexes?: Array<Record<string, unknown>> }>)) {
+    if (Array.isArray(line?.vertexes)) {
+      for (const v of line.vertexes) delete v["id_room"];
+    }
+  }
+  return lines;
+}
+
+/** id проёмов модели: id holes по всем стенам (ревью v0.1.1 №4/№5 — сравнение по id). */function openingIds(model: Model): Set<string> {
   const out = new Set<string>();
   for (const [wid, w] of Object.entries(model.walls ?? {})) {
     for (const [hid, h] of Object.entries(w.holes ?? {})) {
@@ -1095,7 +1110,7 @@ export class Workspace {
         ["line_strips", "line_strips", "линейный свет"],
       ];
       for (const [key, _coll, label] of lightCollections) {
-        const wsLines = (this.modelInternal![key] ?? {}) as Record<string, GasLineSig>;
+        const wsLines = stripVertexIdRoom(structuredClone((this.modelInternal![key] ?? {}) as Record<string, GasLineSig>)) as Record<string, GasLineSig>;
         const normLines = ((norm.model as Record<string, unknown>)[key as string] ?? {}) as Record<string, unknown>;
         const lostLines = missingIds(new Set(Object.keys(wsLines)), new Set(Object.keys(normLines)));
         const graphNorm = gasLineGraphMismatches(structuredClone(wsLines), normLines, label);
@@ -1379,19 +1394,22 @@ export class Workspace {
     // этап 64: потери границ и проёмов пола при нормализации
     const bordersNorm = checkBordersAfterNormalize(this.modelInternal!, norm.model as Model);
     const holesNorm = checkLevelHolesAfterNormalize(this.modelInternal!, norm.model as Model);
-    // этап 84: семантическая сверка световых линий локальной и нормализованной моделей
+    // этап 84: семантическая сверка световых линий локальной и нормализованной моделей.
+    // id_room вершин — производное (редактор пересчитывает принадлежность узла комнате
+    // при draw/normalize), в предсохранительной сверке исключается — иначе штатный
+    // допис-id_room объявлялся бы потерей (живая проба 84: узлы получили id_room комнаты).
     const ledGraphNorm = gasLineGraphMismatches(
-      structuredClone(this.modelInternal!.led_strips ?? {}) as Record<string, GasLineSig>,
+      stripVertexIdRoom(structuredClone(this.modelInternal!.led_strips ?? {})) as Record<string, GasLineSig>,
       (norm.model as { led_strips?: Record<string, unknown> }).led_strips ?? {},
       "светодиодная лента",
     );
     const stripesGraphNorm = gasLineGraphMismatches(
-      structuredClone(this.modelInternal!.stripes_light ?? {}) as Record<string, GasLineSig>,
+      stripVertexIdRoom(structuredClone(this.modelInternal!.stripes_light ?? {})) as Record<string, GasLineSig>,
       (norm.model as { stripes_light?: Record<string, unknown> }).stripes_light ?? {},
       "трековая шина",
     );
     const lineStripsGraphNorm = gasLineGraphMismatches(
-      structuredClone(this.modelInternal!.line_strips ?? {}) as Record<string, GasLineSig>,
+      stripVertexIdRoom(structuredClone(this.modelInternal!.line_strips ?? {})) as Record<string, GasLineSig>,
       (norm.model as { line_strips?: Record<string, unknown> }).line_strips ?? {},
       "линейный свет",
     );

@@ -103,6 +103,7 @@ test("84: эталоны ui-ref-light-* — 26 светильников снят
   for (const name of names) {
     const fx = JSON.parse(readFileSync(join(here, `../fixtures/ui-ref-light-${name}.json`), "utf8"));
     const m = fx.model_object as Record<string, unknown>;
+    if (m["name"] === undefined) continue; // эталоны линий (из живой модели) — в отдельном тесте ниже
     const d = fx.catalog_defaults_cm as Record<string, unknown>;
     assert.equal(m["name"], name, `${name}: эталон отвечает за тот же пункт`);
     assert.equal(m["width"], d.width, `${name}: ширина из каталога`);
@@ -467,4 +468,27 @@ test("84: регрессия — трубы, газовые линии и пре
   assert.equal(JSON.stringify(led), beforeLed, "перенос предмета не задевает световые линии (нет вершин-предметов)");
   assert.equal(gas.length, 1);
   assert.throws(() => deleteItem(model, spot.id), McpError, "предмет подключён к трубе — сначала pipe_delete");
+});
+
+// ---------- эталоны световых линий (живая проверка PRO-проекта, обезличены) ----------
+
+test("84: эталоны ui-ref-light-{led_strip,pendent_strip,line_light} — формат serialize в обе стороны", () => {
+  for (const [name, kind] of [["led_strip", "led"], ["pendent_strip", "pendent"], ["line_light", "line"]] as const) {
+    const fx = JSON.parse(readFileSync(join(here, `../fixtures/ui-ref-light-${name}.json`), "utf8"));
+    const m = fx.model_object as Record<string, unknown>;
+    assert.equal(m["type"], name, `${name}: эталон отвечает за тот же вид`);
+    assert.equal((m["props"] as Record<string, unknown>)["name"], name);
+    // обратная сторона: addLightLine воспроизводит структуру эталона (те же ключи объекта)
+    const model = baseModel();
+    const line = addLightLine(model, {
+      kind,
+      path: (m["vertexes"] as { point: { x: number; y: number } }[]).map((v) => ({ x: v.point.x * 10, y: v.point.y * 10 })),
+    }) as Record<string, unknown>;
+    const gotKeys = Object.keys(line).sort().join(",");
+    const wantKeys = Object.keys(m).sort().join(",");
+    assert.equal(gotKeys, wantKeys, `${name}: набор полей совпадает (эталон из живой модели)`);
+    assert.equal(line["type"], m["type"]);
+    assert.deepEqual(line["props"], { id: line["id"], name });
+    assert.equal((line["vertexes"] as { type: string }[])[0]!.type, "node");
+  }
 });
