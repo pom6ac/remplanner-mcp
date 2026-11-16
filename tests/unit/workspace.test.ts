@@ -105,6 +105,28 @@ test("workspace: история ограничена 50 шагами", async () 
   assert.equal(ws.historyInfo().canUndo, 0);
 });
 
+test("workspace: apply атомарен — исключение внутри fn оставляет модель неизменной (этап 55, ревью №6)", async () => {
+  const server = { saveId: "s1", model: fixtureModel() };
+  const ws = newWorkspace(server);
+  await ws.open("123", "1");
+  // снимок ДО вызова (правило задачи)
+  const snapshot = JSON.stringify(ws.model);
+  assert.throws(() =>
+    ws.apply("broken", (m) => {
+      // частичная мутация до исключения — как неатомарный инструмент оставил бы модель изменённой
+      addWall(m, { start: { x: 0, y: 6000 }, end: { x: 1000, y: 6000 } });
+      (m.items as Record<string, unknown>)["_tmp"] = { id: "_tmp", name: "x", pc: { x: 0, y: 0 }, angle: 0, width: 1, height: 1, plan: {} };
+      throw new McpError("INVALID_ARGUMENT", "сбой внутри мутации");
+    }), McpError);
+  assert.equal(JSON.stringify(ws.model), snapshot, "каноническая копия не изменилась");
+  assert.equal(ws.project!.dirty, false, "dirty не выставляется");
+  assert.equal(ws.historyInfo().steps, 0, "снимок истории не пишется");
+  // успешный путь не сломан: клон становится канонической копией
+  const res = ws.apply("ok", (m) => addWall(m, { start: { x: 0, y: 6000 }, end: { x: 1000, y: 6000 } }));
+  assert.ok(res.id);
+  assert.equal(Object.keys(ws.model.walls).length, 5);
+});
+
 test("workspace: SAVE_CONFLICT при чужом сохранении; force пишет поверх", async () => {
   const server = { saveId: "s1", model: fixtureModel() };
   const ws = newWorkspace(server);

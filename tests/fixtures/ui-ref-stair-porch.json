@@ -1,0 +1,74 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), scripts/probes/53-stairs-ui.ts, model project.copy(\"server\"), без сохранения; id предмета и id_room/id_room_zone/id_wall обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); anchor:wall, can_be_outside:1; projection и wall_line; угол 180",
+ "menu_title": "Лестница для крыльца",
+ "tool_id": "plannertool_porch",
+ "catalog_defaults_cm": {
+  "id": 302,
+  "width": 120,
+  "height": 80,
+  "self_height": 0,
+  "plan": {
+   "furniture": 6
+  },
+  "anchor": "wall",
+  "is_magnetized": true,
+  "can_be_outside": true
+ },
+ "model_object": {
+  "name": "porch",
+  "pc": {
+   "x": 182.429,
+   "y": 758.1
+  },
+  "angle": 180,
+  "projection": {
+   "x": 182.43,
+   "y": 718.1
+  },
+  "width": 120,
+  "height": 80,
+  "plan": {
+   "furniture": 6,
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 302,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": false
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 182.429,
+   "y": 758.1
+  },
+  "center3d": {
+   "x": 182.429,
+   "y": 758.1
+  },
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r",
+  "wall_line": {
+   "p1": {
+    "x": 122.429,
+    "y": 718.1
+   },
+   "p2": {
+    "x": 242.429,
+    "y": 718.1
+   }
+  }
+ }
+}

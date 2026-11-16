@@ -1,0 +1,59 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), scripts/probes/53-stairs-ui.ts, model project.copy(\"server\"), без сохранения; id предмета и id_room/id_room_zone/id_wall обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); свободная постановка кликом в комнате; план {furniture:6, a:1}",
+ "menu_title": "Прямая маршевая лестница",
+ "tool_id": "plannertool_ladder_march",
+ "catalog_defaults_cm": {
+  "id": 146,
+  "width": 260,
+  "height": 80,
+  "self_height": 0,
+  "plan": {
+   "furniture": 6
+  },
+  "anchor": "free",
+  "is_magnetized": true,
+  "can_be_outside": false
+ },
+ "model_object": {
+  "name": "ladder_march",
+  "pc": {
+   "x": 1027.2,
+   "y": 373.299
+  },
+  "angle": -90,
+  "width": 260,
+  "height": 80,
+  "plan": {
+   "furniture": 6,
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 146,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": false
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 1027.2,
+   "y": 373.299
+  },
+  "center3d": {
+   "x": 1027.2,
+   "y": 373.299
+  },
+  "id_room": "0",
+  "id_room_zone": "0"
+ }
+}
