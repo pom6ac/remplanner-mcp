@@ -1,5 +1,5 @@
 {
- "_source": "живая проверка PRO-проекта (headless MCP, схема «бэкап → запись → проверка → восстановление», id проекта/плана из env, проба 84-live-check), нормализованная модель редактора после save→reopen (model_get detail full); id линии/вершин/комнаты обезличены (\"0\"/\"1\"/\"2\"), координаты заменены на синтетические; формат — LedStrip.serialize бандла app.3.0",
+ "_source": "живая проверка PRO-проекта (headless MCP, схема «бэкап → запись → проверка → восстановление», id проекта/плана из env, проба 84-live-check), нормализованная модель редактора после save→reopen (model_get detail full); id линии/вершин/комнаты обезличены (\"0\"/\"1\"/\"2\"), координаты заменены на синтетические, length пересчитан по ним; формат — LedStrip.serialize бандла app.3.0",
  "menu_title": "Светодиодная подсветка",
  "tool_id": "plannertool_led_strip",
  "model_object": {
@@ -64,7 +64,7 @@
    "3": "node"
   },
   "type": "led_strip",
-  "length": 0.5,
+  "length": 2,
   "props": {
    "id": "0",
    "name": "led_strip"

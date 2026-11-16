@@ -629,7 +629,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "Линии-графы — НЕ предметы: газовая линия gas_line → gas_line_add, трубы водоснабжения " +
         "water_pipe/water_hot_pipe/drainage_pipe → pipe_add, световые линии листа «Освещение» led_strip → led_strip_add, " +
         "recessed_strip/surface_stripe/pendent_strip → stripe_add, line_light → line_light_add. " +
-        "Освещение (лист «Освещение», группа lights — 44 предмета из 49): люстры chandelier, hanging_chandelier, потолочные " +
+        "Освещение (лист «Освещение», группа lights — 40 предметов из 49; остальные 5 — световые линии " +
+        "(led_strip/recessed_strip/surface_stripe/pendent_strip/line_light) и 4 — трековые споты track_spot/track_pendent_spot/" +
+        "track_panel_spot/track_line_spot на шину, оба вида не item_add): люстры chandelier, hanging_chandelier, потолочные " +
         "светильники lightspot, lightspot_surface, подвесные hanging_light*, рейлинговые track_single/double/triple, " +
         "светильник Армстронг armstrong_light, бра bra, bra_shades, лампы led_lamp, light_stick, настенные wall_spot, wall_lamp, " +
         "подсветка для картин painting_lighting и др. — предметы каталога (item_add, размеры/высота из каталога). " +

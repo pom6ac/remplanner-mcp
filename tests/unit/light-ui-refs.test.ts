@@ -428,19 +428,33 @@ test("84: mock save — все три коллекции доходят до с�
   assert.equal(Object.keys(m.line_strips ?? {}).length, 1);
 });
 
-test("84: mock save — редактор дописал id_room узлам и переставил узлы местами → verified без ложной блокировки", async () => {
+test("84: mock save — редактор дописал id_room узлам ('synthetic-room') и переставил узлы местами → verified без ложной блокировки", async () => {
   const { model, led } = lightScenario();
   const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
   const ws = saveMock(server, () => {}, (m) => {
-    // редактор переупорядочил узлы (перестановка) и дописал id_room (штатная нормализация)
+    // редактор переупорядочил узлы (перестановка) и дописал id_room (штатная нормализация):
+    // serialize берёт поле заново из getItem(vertex.id).id_room — производное
     const coll = (m as { led_strips?: Record<string, LedStrip> }).led_strips!;
     const line = coll[led.id]!;
     line.vertexes = [structuredClone(line.vertexes[1]!), structuredClone(line.vertexes[0]!)];
     line.items = { [line.vertexes[0]!.id]: "node", [line.vertexes[1]!.id]: "node" };
+    for (const v of line.vertexes) v.id_room = "synthetic-room";
   });
   await ws.open("0", "1");
   const res = await ws.save();
-  assert.equal(res.verified, true, "перестановка узлов — допустимая нормализация");
+  assert.equal(res.verified, true, "перестановка узлов и допис-id_room — допустимая нормализация");
+  // 85 №5: порча id_room на сервере после save видна — ожидание уже нормализовано,
+  // производное поле сверяется на равенство
+  const server2: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws2 = saveMock(server2, (s) => {
+    const line = (s.model as { led_strips?: Record<string, LedStrip> }).led_strips![led.id]!;
+    line.vertexes[0]!.id_room = "other-room";
+  }, (m) => {
+    const line = (m as { led_strips?: Record<string, LedStrip> }).led_strips![led.id]!;
+    for (const v of line.vertexes) v.id_room = "synthetic-room";
+  });
+  await ws2.open("0", "1");
+  await assert.rejects(ws2.save(), (e: unknown) => e instanceof McpError && e.code === "SITE_ERROR");
 });
 
 test("84: mock save — редактор потерял ленту при нормализации → NORMALIZATION_DROPPED, записи нет", async () => {
@@ -549,5 +563,12 @@ test("84: эталоны ui-ref-light-{led_strip,pendent_strip,line_light} — �
     assert.equal(line["type"], m["type"]);
     assert.deepEqual(line["props"], { id: line["id"], name });
     assert.equal((line["vertexes"] as { type: string }[])[0]!.type, "node");
+    // 85 №4: эталон сверяется целиком — длина по рёбрам и геометрия узлов (см), а не только ключи
+    assert.equal(lightLengthM(line as unknown as Pick<LedStrip, "vertexes" | "matrix">), m["length"], `${name}: длина совпадает с эталоном`);
+    assert.deepEqual(
+      (line["vertexes"] as { point: { x: number; y: number } }[]).map((v) => v.point),
+      (m["vertexes"] as { point: { x: number; y: number } }[]).map((v) => v.point),
+      `${name}: геометрия узлов совпадает с эталоном`,
+    );
   }
 });
