@@ -11,8 +11,38 @@ import type { FixtureEnvelope } from "../../src/model/types.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
 import { deleteWall } from "../../src/model/walls.ts";
+import { validateModel } from "../../src/model/validate.ts";
+import { addPillar, pillarCorners, pillarEdges } from "../../src/model/pillars.ts";
+import type { Model, Pillar } from "../../src/model/types.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..");
+
+/** Комната [0,0]…[600,300] (внутренние грани), как в ревью 42/43. */
+const ROOMS = [{
+  roomId: null,
+  polygon: [{ x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 300 }, { x: 0, y: 300 }],
+  areaCm2: 180000,
+  axisAreaCm2: null,
+}];
+
+/** Стена-эталон примыкания: ось y=100.5, толщина 25 (грани y=88 и y=113). */
+function pillarModel(): Model {
+  return {
+    walls: {
+      w: {
+        id: "w", plan: "a", role: "wall", depth: 25, height: 270, material: "a_block",
+        p1: { x: 32.7, y: 100.5 }, p2: { x: 523.7, y: 100.5 }, holes: {},
+      },
+    },
+    items: {},
+    pillars: {},
+  } as unknown as Model;
+}
+
+/** Колонна, прижатая гранью b к верхней грани стены w (pc ≈ (452.08, 78)). */
+function attachPillar(m: Model): Pillar {
+  return addPillar(m, { center: { x: 4520.8, y: 780 } }, ROOMS);
+}
 
 const COMPAT = { global_version: null, planner_version: null, bundles: [], object_id: null, plan_id: null, present: { WALLS: true, ROOMS2: true, restore: true, draw: true, copy: true, save: true, canvas: true, wall_link1: true, wall_link2: true, wall_calc: true } };
 
@@ -61,4 +91,26 @@ test("№5 wall_delete размыкает контур: комната уход�
   assert.equal(out.rounds, 1, "одна запись, без повторной попытки");
   assert.equal(saves, 1);
   assert.equal(Object.keys((server as { rooms2?: Record<string, unknown> }).rooms2 ?? {}).length, 0);
+});
+
+// ---------- №3 (остаток ревью 44): валидатор на конечном предикате контакта ----------
+
+test("№3 model_validate: далёкая колонна без eds за концом стены — PILLAR_OUTSIDE_ROOM", () => {
+  const m = pillarModel();
+  const p = attachPillar(m);
+  // переносим уже существующую колонну далеко за конец стены (pc.x=10000),
+  // eds очищен — модель «как с сервера», в обход исправленного addPillar
+  p.pc = { x: 10000, y: 78 };
+  const corners = pillarCorners(p.pc, p.width, p.height, p.angle ?? 0);
+  [p.p1, p.p2, p.p3, p.p4] = corners;
+  p.edges = pillarEdges(corners);
+  p.eds = {};
+  const problems = validateModel(m, ROOMS).filter((x) => x.code === "PILLAR_OUTSIDE_ROOM");
+  assert.equal(problems.length, 1, JSON.stringify(problems));
+});
+
+test("№3 model_validate: примыкающая колонна по-прежнему без PILLAR-ошибок (регрессия эталона)", () => {
+  const m = pillarModel();
+  attachPillar(m);
+  assert.equal(validateModel(m, ROOMS).filter((x) => x.code.startsWith("PILLAR")).length, 0);
 });

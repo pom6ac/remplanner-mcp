@@ -6,7 +6,7 @@ import {
   polygonArea, polygonSignedArea, overlapArea, type Segment, type Polygon,
 } from "./geometry.ts";
 import { holeRange } from "./openings.ts";
-import { pillarPolygon } from "./pillars.ts";
+import { edgeOnWallFace, pillarPolygon, PILLAR_DEFS } from "./pillars.ts";
 import { prepareForRestore } from "./walls.ts";
 
 export type ValidationProblem = {
@@ -315,21 +315,18 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
     for (const pillar of pillars) {
       if (knownRooms.some((room) => pointInPolygon(room.polygon, pillar.pc))) continue;
       // колонна вплотную к стене (грань на линии грани) — валидна вне полигонов комнат
-      // (эталон ui-ref-pillar-wall: центр примыкающей колонны вне rooms2)
+      // (эталон ui-ref-pillar-wall: центр примыкающей колонны вне rooms2). Контакт —
+      // тот же конечный предикат edgeOnWallFace, что в eds/inRoom/инвариантах
+      // (ревью 44 №3): колонна за концом стены — не примыкание
       const corners = pillarPolygon(pillar);
       let touching = false;
       for (let k = 0; k < 4 && !touching; k++) {
         const ea = corners[k]!;
         const eb = corners[(k + 1) % 4]!;
-        const cx = (ea.x + eb.x) / 2;
-        const cy = (ea.y + eb.y) / 2;
         for (const wall of walls) {
           if (!wall.l1 || !wall.l2 || !wall.r1 || !wall.r2) continue;
           for (const [fa, fb] of [[wall.l1, wall.l2], [wall.r1, wall.r2]] as [Point, Point][]) {
-            const fx = fb.x - fa.x, fy = fb.y - fa.y;
-            const flen = Math.hypot(fx, fy);
-            if (flen < 1e-9) continue;
-            if (Math.abs((cx - fa.x) * fy - (cy - fa.y) * fx) / flen < 0.9) touching = true;
+            if (edgeOnWallFace(ea, eb, fa, fb, PILLAR_DEFS.snapTolCm - 0.1)) touching = true;
           }
         }
       }
