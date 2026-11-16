@@ -85,8 +85,16 @@ test(
 
 test(
   "render-items-dom: разметка редактора (глобал 757) item_x_<id> — считается видимой",
-  withDom([{ cls: "item_x__ladder1" }, { cls: "item_y__windoor2" }], () => {
+  withDom([{ cls: "item_x__ladder1" }, { cls: "item_x__windoor2" }], () => {
     assert.equal(itemsRenderedInSvg(["_ladder1", "_windoor2"]), true);
+  }),
+);
+
+test(
+  "render-items-dom: точный токен item_x_<id> — чужой id с тем же суффиксом не матчится (этап 55, ревью №5)",
+  withDom([{ cls: "item_x_notsofa1" }], () => {
+    assert.equal(itemsRenderedInSvg(["sofa1"]), false, "item_x_notsofa1 не закрывает sofa1");
+    assert.equal(itemsRenderedInSvg(["notsofa1"]), true, "свой id матчится точно");
   }),
 );
 

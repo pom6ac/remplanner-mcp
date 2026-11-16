@@ -400,9 +400,10 @@ export function buildHandle(
  * реализация: исполняется через page.waitForFunction и в тестах на DOM-фрагменте.
  * Идентификатор сопоставляется ТОЧНО — атрибут id или data-id, равный id предмета,
  * либо точный токен класса (этап 53: у текущего редактора предмет — класс вида
- * `item_x_<id>`, принимается токен `item_*<id>` с префиксом «item_»); подстрока
- * давала ложное совпадение sofa1 ↔ sofa10, когда отсутствующий sofa1 «закрывался»
- * видимым sofa10.
+ * `item_x_<id>`; этап 55, ревью №5: сопоставляется ровно токен `item_x_<id>`, а не
+ * произвольный префикс «item_» с суффиксом — видимый `item_x_notsofa1` не должен
+ * закрывать ожидание отсутствующего sofa1); подстрока давала ложное совпадение
+ * sofa1 ↔ sofa10, когда отсутствующий sofa1 «закрывался» видимым sofa10.
  */
 export function itemsRenderedInSvg(ids: string[]): boolean {
   const svg = document.querySelector("#canvas_v2_wrapper svg");
@@ -411,10 +412,11 @@ export function itemsRenderedInSvg(ids: string[]): boolean {
     const el = [...svg.querySelectorAll("*")].find((e) => {
       if (e.getAttribute("id") === id) return true;
       if (e.getAttribute("data-id") === id) return true;
-      // текущая разметка редактора (глобал 757): предмет — класс вида `item_x_<id>`
+      // текущая разметка редактора (глобал 757): предмет — класс ровно `item_x_<id>`
       // (id сайта уже начинается с «_», поэтому в классе он выглядит как «__<id>»);
-      // префикс «item_» и суффикс ровно `<id>` исключают ложные совпадения sofa1 ↔ sofa10/sofa10x
-      return (e.getAttribute("class") ?? "").split(/\s+/).some((tok) => tok === id || (tok.startsWith("item_") && tok.endsWith(id)));
+      // точное равенство токена исключает ложные совпадения sofa1 ↔ sofa10/sofa10x
+      // и notsofa1 ↔ sofa1 (этап 55, ревью №5)
+      return (e.getAttribute("class") ?? "").split(/\s+/).some((tok) => tok === id || tok === `item_x_${id}`);
     });
     if (!el) return false;
     const r = el.getBoundingClientRect();
