@@ -1,0 +1,31 @@
+{
+ "_source": "drag по UI анонимного проекта (headless Chromium, проба 64-ui-refs, инструмент floor_hole: перетаскивание прямоугольника внутри комнаты), model project.copy(\"server\"), без сохранения; нормализованная форма сверена пробой 64-norm2 (restore→draw→copy); id проёма/вершин/комнаты обезличены (0); координаты — реальные точки листа init (не идентифицируют). Поля модели: polygon — 4 угла (см, Y вниз), matrix — кольцо 4×4 в обе стороны ({length:1}), vertexes — узлы type \"node\", items — карта id→\"node\", type \"floor_hole\", plan \"a\", length — число вершин, area — площадь м², pc — центр. id_room редактор при restore не пересчитывает — в постановке UI это id комнаты (обезличен).",
+ "entity": {
+  "id": "0",
+  "plan": "a",
+  "polygon": [
+   { "x": 100, "y": -250 },
+   { "x": 200, "y": -250 },
+   { "x": 200, "y": -150 },
+   { "x": 100, "y": -150 }
+  ],
+  "matrix": [
+   [null, { "length": 1 }, null, { "length": 1 }],
+   [{ "length": 1 }, null, { "length": 1 }, null],
+   [null, { "length": 1 }, null, { "length": 1 }],
+   [{ "length": 1 }, null, { "length": 1 }, null]
+  ],
+  "vertexes": [
+   { "id": "0", "point": { "x": 100, "y": -250 }, "type": "node" },
+   { "id": "0", "point": { "x": 200, "y": -250 }, "type": "node" },
+   { "id": "0", "point": { "x": 200, "y": -150 }, "type": "node" },
+   { "id": "0", "point": { "x": 100, "y": -150 }, "type": "node" }
+  ],
+  "items": { "0": "node" },
+  "type": "floor_hole",
+  "length": 4,
+  "id_room": "0",
+  "area": 1,
+  "pc": { "x": 150, "y": -200 }
+ }
+}

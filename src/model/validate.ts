@@ -7,6 +7,7 @@ import {
 } from "./geometry.ts";
 import { holeRange } from "./openings.ts";
 import { edgeOnWallFace, pillarPolygon, PILLAR_DEFS } from "./pillars.ts";
+import { borderRingPolygons, borderRingContact } from "./terraces.ts";
 import { prepareForRestore } from "./walls.ts";
 
 export type ValidationProblem = {
@@ -23,6 +24,9 @@ export type ValidationProblem = {
     | "PILLARS_OVERLAP"
     | "PILLAR_OUTSIDE_ROOM"
     | "RIGEL_BAD_GEOMETRY"
+    | "BORDER_BAD_GEOMETRY"
+    | "LEVEL_HOLE_BAD_GEOMETRY"
+    | "LEVEL_HOLES_OVERLAP"
     | "MISSING_WALL_FACES"
     | "MISSING_HOLE_POINTS";
   message: string;
@@ -314,6 +318,8 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
   }
   if (knownRooms.length > 0) {
     for (const pillar of pillars) {
+      // ревью 66 №7: столб террасы валидируется по геометрии террас, а не по комнатам дома
+      if (pillar.role === "terrace_column") continue;
       if (knownRooms.some((room) => pointInPolygon(room.polygon, pillar.pc))) continue;
       // колонна вплотную к стене (грань на линии грани) — валидна вне полигонов комнат
       // (эталон ui-ref-pillar-wall: центр примыкающей колонны вне rooms2). Контакт —
@@ -341,6 +347,23 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
     }
   }
 
+  // столбы террас (ревью 66 №7): центр — внутри замкнутого кольца террасы или на его
+  // границе (допуск прижатия 3 см, как в terrace_column_add); правил комнат дома — нет
+  const terraceRings = borderRingPolygons(model.terrace_borders ?? {});
+  for (const pillar of pillars) {
+    if (pillar.role !== "terrace_column") continue;
+    const inside = terraceRings.some((ring) => pointInPolygon(ring, pillar.pc) || borderRingContact(ring, pillar.pc, 3));
+    if (!inside) {
+      problems.push({
+        code: "PILLAR_OUTSIDE_ROOM",
+        message: terraceRings.length === 0
+          ? `столб террасы ${pillar.id} вне контура террасы — замкнутого кольца границ террасы нет`
+          : `столб террасы ${pillar.id} вне контура террасы — центр должен быть в кольце границ террасы`,
+        details: { pillar_id: pillar.id, pc: pillar.pc, kind: "terrace_column_outside_terrace" },
+      });
+    }
+  }
+
   // ригели (этап 47): редактор геометрию ригеля не проверяет, но restore падает на
   // неконечной оси и нулевой длине (Rigel.calc) — проверяем только это
   for (const rigel of Object.values(model.rigels ?? {})) {
@@ -359,6 +382,56 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
         message: `ригель ${rigel.id}: некорректная геометрия (${bad.join(", ")}) — редактор не восстановит такой ригель`,
         details: { rigel_id: rigel.id, fields: bad },
       });
+    }
+  }
+
+  // границы террас/участка (этап 64): restore удаляет нулевые границы и границы
+  // с неконечными точками (TerraceBorders/TerritoryBorders.restore) — предупреждаем
+  for (const [key, name] of [["terrace_borders", "граница террасы"], ["territory_borders", "граница участка"]] as const) {
+    for (const border of Object.values(model[key] ?? {})) {
+      const bad: string[] = [];
+      for (const [endName, pt] of [["p1", border.p1], ["p2", border.p2]] as const) {
+        if (!pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) bad.push(`${endName}`);
+      }
+      if (bad.length === 0 && Math.hypot(border.p2.x - border.p1.x, border.p2.y - border.p1.y) < 0.05) {
+        bad.push("zero_length");
+      }
+      if (bad.length > 0) {
+        problems.push({
+          code: "BORDER_BAD_GEOMETRY",
+          message: `${name} ${border.id}: некорректная геометрия (${bad.join(", ")}) — редактор удалит её при восстановлении`,
+          details: { border_id: border.id, collection: key, fields: bad },
+        });
+      }
+    }
+  }
+
+  // проёмы в полу (этап 64): restore ожидает конечный полигон без самопересечений;
+  // пересечение проёмов редактор не проверяет, но такие проёмы некорректны семантически
+  const holes = Object.values(model.level_holes ?? {});
+  for (const hole of holes) {
+    const bad: string[] = [];
+    if ((hole.type ?? "") !== "floor_hole") bad.push(`type:${hole.type ?? ""}`);
+    if (!Array.isArray(hole.polygon) || hole.polygon.length < 3) bad.push("polygon");
+    else for (const p of hole.polygon) if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) bad.push("polygon");
+    if (bad.length > 0) {
+      problems.push({
+        code: "LEVEL_HOLE_BAD_GEOMETRY",
+        message: `проём в полу ${hole.id}: некорректная геометрия (${bad.join(", ")})`,
+        details: { hole_id: hole.id, fields: bad },
+      });
+    }
+  }
+  for (let i = 0; i < holes.length; i++) {
+    for (let j = i + 1; j < holes.length; j++) {
+      const area = overlapArea(holes[i]!.polygon as Polygon, holes[j]!.polygon as Polygon);
+      if (area > 0.01) {
+        problems.push({
+          code: "LEVEL_HOLES_OVERLAP",
+          message: `проёмы в полу ${holes[i]!.id} и ${holes[j]!.id} пересекаются (${Math.round(area * 100) / 100} см²)`,
+          details: { holes: [holes[i]!.id, holes[j]!.id], overlap_cm2: Math.round(area * 100) / 100 },
+        });
+      }
     }
   }
 
