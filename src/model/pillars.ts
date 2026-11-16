@@ -196,9 +196,47 @@ function snapToWallFace(
 }
 
 /**
+ * Общий предикат контакта конечных отрезков (ревью 43 №3): грань колонны [ea,eb]
+ * касается грани стены [fa,fb], когда (1) отрезки параллельны, (2) оба конца грани
+ * колонны не дальше tolCm от прямой грани стены, (3) проекции перекрываются вдоль
+ * грани стены (запас tolCm). Бесконечные прямые не используются: колонна за концом
+ * стены — не примыкание (ловится условием 3), повёрнутая грань с серединой на линии —
+ * тоже (условия 1 и 2). Один предикат для eds/inRoom/инвариантов/model_validate.
+ */
+export function edgeOnWallFace(ea: Point, eb: Point, fa: Point, fb: Point, tolCm: number): boolean {
+  const ex = eb.x - ea.x;
+  const ey = eb.y - ea.y;
+  const fx = fb.x - fa.x;
+  const fy = fb.y - fa.y;
+  const elen = Math.hypot(ex, ey);
+  const flen = Math.hypot(fx, fy);
+  if (elen < 1e-9 || flen < 1e-9) return false;
+  // (1) параллельность
+  if (Math.abs(ex * fy - ey * fx) / (elen * flen) > 1e-6) return false;
+  // (2) оба конца грани колонны не дальше tolCm от прямой грани стены
+  const distToLine = (p: Point): number => Math.abs((p.x - fa.x) * fy - (p.y - fa.y) * fx) / flen;
+  if (Math.max(distToLine(ea), distToLine(eb)) > tolCm) return false;
+  // (3) перекрытие проекций вдоль грани стены
+  const along = (p: Point): number => ((p.x - fa.x) * fx + (p.y - fa.y) * fy) / (flen * flen);
+  const t1 = Math.min(along(ea), along(eb));
+  const t2 = Math.max(along(ea), along(eb));
+  const slack = tolCm / flen;
+  return t2 >= -slack && t1 <= 1 + slack;
+}
+
+/** Углы колонны из p1..p4, а при их отсутствии — расчёт из pc/width/height/angle. */
+function storedCorners(pillar: Pillar): [Point, Point, Point, Point] {
+  if (pillar.p1 && pillar.p2 && pillar.p3 && pillar.p4) {
+    return [pillar.p1, pillar.p2, pillar.p3, pillar.p4];
+  }
+  return pillarCorners(pillar.pc, pillar.width, pillar.height, pillar.angle ?? 0);
+}
+
+/**
  * Примыкание грани к стене для eds (формат модели редактора): грань лежит на грани стены
- * (после прижатия — расстояние 0). Пересчитывается редактором при restore; пишем
- * каноничный вид как в эталоне UI (wall.balc — признак балконной стены).
+ * (после прижатия — расстояние 0), предикат контакта конечных отрезков с допуском 0,05 см.
+ * Пересчитывается редактором при restore; пишем каноничный вид как в эталоне UI
+ * (wall.balc — признак балконной стены).
  */
 function pillarEds(candidate: Pillar, model: Model): Record<string, unknown> {
   const corners = pillarCorners(candidate.pc, candidate.width, candidate.height, candidate.angle ?? 0);
@@ -217,13 +255,7 @@ function pillarEds(candidate: Pillar, model: Model): Record<string, unknown> {
         continue;
       }
       for (const [fa, fb] of [[faces.l1, faces.l2], [faces.r1, faces.r2]] as [Point, Point][]) {
-        const fx = fb.x - fa.x;
-        const fy = fb.y - fa.y;
-        const flen = Math.hypot(fx, fy);
-        if (flen < 1e-9) continue;
-        const onLine = (p: Point): boolean =>
-          Math.abs((p.x - fa.x) * fy - (p.y - fa.y) * fx) / flen < 0.05;
-        if (onLine(ea) && onLine(eb)) {
+        if (edgeOnWallFace(ea, eb, fa, fb, 0.05)) {
           eds[side] = {
             p1: { x: r2(ea.x), y: r2(ea.y) },
             p2: { x: r2(eb.x), y: r2(eb.y) },
@@ -236,15 +268,13 @@ function pillarEds(candidate: Pillar, model: Model): Record<string, unknown> {
   return eds;
 }
 
-/** inRoom: 1 — ни одна грань не лежит на линии грани стены (как в редакторе), иначе 0. */
+/** inRoom: 1 — ни одна грань не лежит на грани стены (предикат контакта, допуск 0,9 см), иначе 0. */
 function pillarInRoom(candidate: Pillar, model: Model): number {
   const corners = pillarCorners(candidate.pc, candidate.width, candidate.height, candidate.angle ?? 0);
   const pairs: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 0]];
   for (const [i, j] of pairs) {
     const ea = corners[i]!;
     const eb = corners[j]!;
-    const cx = (ea.x + eb.x) / 2;
-    const cy = (ea.y + eb.y) / 2;
     for (const wall of Object.values(model.walls)) {
       let faces: { l1: Point; l2: Point; r1: Point; r2: Point };
       try {
@@ -253,11 +283,7 @@ function pillarInRoom(candidate: Pillar, model: Model): number {
         continue;
       }
       for (const [fa, fb] of [[faces.l1, faces.l2], [faces.r1, faces.r2]] as [Point, Point][]) {
-        const fx = fb.x - fa.x;
-        const fy = fb.y - fa.y;
-        const flen = Math.hypot(fx, fy);
-        if (flen < 1e-9) continue;
-        if (Math.abs((cx - fa.x) * fy - (cy - fa.y) * fx) / flen < 0.9) return 0;
+        if (edgeOnWallFace(ea, eb, fa, fb, PILLAR_DEFS.snapTolCm - 0.1)) return 0;
       }
     }
   }
@@ -316,15 +342,13 @@ export function assertPillarInvariants(
   if (rooms && rooms.length > 0) {
     const inside = rooms.some((room) => pointInPolygon(room.polygon, candidate.pc));
     if (!inside && Object.keys(candidate.eds ?? {}).length === 0) {
-      // примыкание к стене по граням (как pillarInRoom, но точнее: грань на линии грани стены)
-      const corners = pillarCorners(candidate.pc, candidate.width, candidate.height, candidate.angle ?? 0);
+      // примыкание к стене по граням — общий предикат контакта (ревью 43 №3)
+      const corners = storedCorners(candidate);
       const pairs: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 0]];
       let touching = false;
       for (const [i, j] of pairs) {
         const ea = corners[i]!;
         const eb = corners[j]!;
-        const cx = (ea.x + eb.x) / 2;
-        const cy = (ea.y + eb.y) / 2;
         for (const wall of Object.values(model.walls)) {
           let faces: { l1: Point; l2: Point; r1: Point; r2: Point };
           try {
@@ -333,11 +357,7 @@ export function assertPillarInvariants(
             continue;
           }
           for (const [fa, fb] of [[faces.l1, faces.l2], [faces.r1, faces.r2]] as [Point, Point][]) {
-            const fx = fb.x - fa.x;
-            const fy = fb.y - fa.y;
-            const flen = Math.hypot(fx, fy);
-            if (flen < 1e-9) continue;
-            if (Math.abs((cx - fa.x) * fy - (cy - fa.y) * fx) / flen < 0.9) touching = true;
+            if (edgeOnWallFace(ea, eb, fa, fb, PILLAR_DEFS.snapTolCm - 0.1)) touching = true;
           }
         }
       }
@@ -464,4 +484,35 @@ export function updatePillar(model: Model, params: UpdatePillarParams, rooms?: R
 export function deletePillar(model: Model, pillarId: string): void {
   if (!model.pillars[pillarId]) throw new McpError("NOT_FOUND", `колонна ${pillarId} не найдена`);
   delete model.pillars[pillarId];
+}
+
+/**
+ * Финализация стеновых мутаций для колонн (ревью 43 №1): после moveWall/updateWall/
+ * splitWall/deleteWall/add* пересчитать eds/edges/inRoom ВСЕХ колонн по текущим
+ * стенам (примыкания к удалённой стене исчезают, свободные грани возвращаются,
+ * привязка после split переходит к нужной части) и проверить коллизии с телами
+ * стен — перенос стены в колонну даёт GEOMETRY_CONFLICT. Вызывается внутри atomic()
+ * стен: ошибка откатывает и стены, и колонны к исходному виду.
+ */
+export function refreshPillarsAfterWallChange(model: Model): void {
+  const pillars = model.pillars;
+  if (!pillars || Object.keys(pillars).length === 0) return;
+  for (const pillar of Object.values(pillars)) {
+    const corners = storedCorners(pillar);
+    pillar.edges = pillarEdges(corners);
+    finalizeCandidate(pillar, model);
+  }
+  for (const pillar of Object.values(pillars)) {
+    const poly = pillarPolygon(pillar);
+    for (const wall of Object.values(model.walls)) {
+      const wp = wallPolygon(wall);
+      if (!wp) continue;
+      const area = overlapArea(poly, wp);
+      if (area > PILLAR_DEFS.overlapTolCm2) {
+        throw new McpError("GEOMETRY_CONFLICT", `колонна ${pillar.id} пересекает стену ${wall.id} (${Math.round(area * 100) / 100} см²) после изменения стены — отодвиньте стену или удалите колонну`, {
+          details: { kind: "pillar_over_wall_after_wall_change", pillar_id: pillar.id, wall_id: wall.id, overlap_cm2: Math.round(area * 100) / 100 },
+        });
+      }
+    }
+  }
 }

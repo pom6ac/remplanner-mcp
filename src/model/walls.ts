@@ -7,6 +7,7 @@ import {
 } from "./geometry.ts";
 import { McpError } from "../errors.ts";
 import { prepareHolePoints, refreshWallHoles, holeRange, normalizeWallOpeningFormats } from "./openings.ts";
+import { refreshPillarsAfterWallChange } from "./pillars.ts";
 
 // Топология стен (design §12.3): Node задаёт ТОЛЬКО геометрию — оси, толщину, T-концы на
 // гранях. Связи (node/edge), грани на стыках и комнаты редактор строит сам из геометрии
@@ -112,15 +113,21 @@ function geomError(code: "INVALID_GEOMETRY" | "UNSUPPORTED_JUNCTION", message: s
 }
 
 /**
- * Атомарность (правило 7, R2-3): мутация выполняется на стенах-клоне; при ошибке
- * model.walls восстанавливается побайтно.
+ * Атомарность (правило 7, R2-3): мутация выполняется на клоне стен; при ошибке
+ * model.walls и model.pillars восстанавливаются побайтно. После успешной мутации —
+ * финализация колонн (ревью 43 №1): пересчёт eds/edges/inRoom и проверка коллизий
+ * в той же атомарной операции; конфликт откатывает и стены, и колонны.
  */
 function atomic<T>(model: Model, fn: () => T): T {
-  const backup = structuredClone(model.walls);
+  const backupWalls = structuredClone(model.walls);
+  const backupPillars = structuredClone(model.pillars ?? {});
   try {
-    return fn();
+    const result = fn();
+    refreshPillarsAfterWallChange(model);
+    return result;
   } catch (e) {
-    model.walls = backup;
+    model.walls = backupWalls;
+    model.pillars = backupPillars;
     throw e;
   }
 }
