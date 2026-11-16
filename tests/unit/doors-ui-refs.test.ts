@@ -36,14 +36,19 @@ const DOOR_KEYS = [
 ] as const;
 
 /**
- * Сверка ВСЕХ семантических ключей эталона (как на «Окнах», ревью 26 №7): идём по ключам
- * эталона. Служебные и вычисляемые редактором поля пропускаются. opening в эталон не
- * включён: редактор вычисляет его по стороне помещения, в MCP он задаётся параметром swing.
+ * Сверка семантических ключей эталона В ОБЕ СТОРОНЫ (ревью 38, R2): идём и по ключам
+ * эталона (лишнее поле в результате — ошибка, если эталон его не имеет), и по ключам
+ * результата (потеря поля эталона — ошибка). Служебные и вычисляемые MCP поля
+ * пропускаются по явным спискам. opening входит в эталоны: редактор пишет дефолт вида,
+ * в MCP он задаётся параметром swing (формат зависит от типа — §5.2).
  */
 const SERVICE_KEYS = new Set(["plan", "id", "parent", "parent_depth", "position", "offset", "f0offset", "_wall"]);
+/** Вычисляемые MCP поля геометрии (края/центр проёма на оси) — не семантика эталона. */
+const COMPUTED_KEYS = new Set(["pc", "at", "p1", "p2"]);
 
 function expectStructural(hole: Hole, ref: Record<string, unknown>) {
   const et = ref.defaults_model_cm as Record<string, unknown>;
+  // прямая: каждый ключ эталона обязан присутствовать в результате с тем же значением
   for (const f of Object.keys(et)) {
     if (SERVICE_KEYS.has(f)) continue;
     if (et[f] === undefined) {
@@ -52,7 +57,25 @@ function expectStructural(hole: Hole, ref: Record<string, unknown>) {
       assert.deepEqual(hole[f], et[f], `${ref.catalog_key}: поле ${f}`);
     }
   }
+  // обратная: каждый семантический ключ результата обязан быть в эталоне
+  for (const f of Object.keys(hole)) {
+    if (SERVICE_KEYS.has(f) || COMPUTED_KEYS.has(f)) continue;
+    if (hole[f] === undefined) continue;
+    assert.ok(f in et && et[f] !== undefined, `${ref.catalog_key}: в результате лишнее поле ${f}, которого нет в эталоне`);
+  }
 }
+
+test("двери не содержат оконных полей floor_height, sill, slopes (ревью 38, R2)", () => {
+  const model = emptyModel();
+  const walls = addRoomRect(model, { origin: { x: 0, y: 0 }, widthMm: 36000, depthMm: 36000, thicknessMm: 200 });
+  DOOR_KEYS.forEach((key, i) => {
+    // по 5 дверей на стену с шагом 3400 мм — умещаются и гаражные (3000), и x4 (3200)
+    const hole = addOpening(model, { wallId: walls[i % 4]!.id, type: key, centerMm: 2000 + Math.floor(i / 4) * 3400 });
+    assert.equal(hole.floor_height, undefined, `${key}: floor_height`);
+    assert.equal(hole.sill, undefined, `${key}: sill`);
+    assert.equal(hole.slopes, undefined, `${key}: slopes`);
+  });
+});
 
 for (const key of DOOR_KEYS) {
   test(`дверь ${key}: структура дефолтов совпадает с эталоном UI`, () => {
