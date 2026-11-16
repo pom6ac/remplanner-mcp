@@ -1,4 +1,12 @@
 // 37-doors: матрица restore — для каждого типа двери: без opening / "r" / "r-l".
+//
+// Проект для пробы задаётся env; без env — выход до обращения к API (как в пробах 25-*).
+const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
+const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
+if (!OBJECT_ID || !PLAN_ID) {
+  console.error("Задайте REMPLANNER_PROBE_OBJECT_ID и REMPLANNER_PROBE_PLAN_ID: проба открывает указанный проект.");
+  process.exit(1);
+}
 import { readFileSync } from "node:fs";
 import { openEditor } from "../../src/editor/adapter.ts";
 import { closeBrowser } from "../../src/browser.ts";
@@ -9,7 +17,7 @@ import { addOpening, prepareHolePoints } from "../../src/model/openings.ts";
 import type { Model } from "../../src/model/types.ts";
 
 const session = { ...loadSession(STATE_PATH), account: true } as const;
-const loaded = await loadModel(session, "7887657", "1001798");
+const loaded = await loadModel(session, OBJECT_ID, PLAN_ID);
 const TYPES = ["doorway","door","door_double","door_coupe","door_coupe_double","door_penal","door_penal_double","door_roto","door_roto_double","door_book","door_book_double","door_bellows","door_glass","door_garage","door_system_x2","door_system_x3","door_system_x4","door_system_penal_x2","door_system_penal_x3","door_system_penal_x4"];
 // одна длинная пустая стена под все варианты
 const WALL = "_nyxb3";
@@ -25,7 +33,7 @@ for (const t of TYPES) {
     results[t][String(opening)] = "pending";
   }
 }
-const editor = await openEditor(session, "7887657", "1001798", 60_000, { anonymous: false });
+const editor = await openEditor(session, OBJECT_ID, PLAN_ID, 60_000, { anonymous: false });
 const tryRestore = (m: any) => editor.page.evaluate((mm) => {
   try { (window as any).$Project.restore(mm); return "ok"; } catch (e: any) { return "FAIL"; }
 }, JSON.parse(JSON.stringify(m)));

@@ -1,5 +1,5 @@
 {
- "_source": "клик по UI проекта 7887657 (headless Chromium), scripts/probes/37-doors-ui.ts + 37-doors-ui-props.ts, model project.copy(\"server\"), без сохранения; id/parent/_wall обезличены (0); opening — наблюдённое значение дефолта (сторона помещения варьирует r/l, формат фиксирован: одно- или двухчастный по матрице 37-dbg-opening-matrix)",
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), scripts/probes/37-doors-ui.ts + 37-doors-ui-props.ts, model project.copy(\"server\"), без сохранения; id/parent/_wall обезличены (0); opening — наблюдённое значение дефолта (сторона помещения варьирует r/l, формат фиксирован: одно- или двухчастный по матрице 37-dbg-opening-matrix)",
  "menu_title": "Дверь-купе 2-створчатая",
  "catalog_key": "door_coupe_double",
  "model_type": "door_coupe_double",
