@@ -1,9 +1,9 @@
 // T17: рабочее пространство — история undo/redo (до 50), dirty, снимок в backups/,
 // SAVE_CONFLICT при чужом сохранении, верификация по GET.
+import "./helpers/tmp-home.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, existsSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
@@ -124,26 +124,18 @@ test("workspace: SAVE_CONFLICT при чужом сохранении; force п�
 });
 
 test("workspace: перед сохранением — снимок в backups/, после — верификация по GET", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "remplanner-ws-"));
-  const realBackups = await import("../../src/config.ts");
-  const orig = realBackups.BACKUPS_DIR;
-  // подменяем каталог бэкапов через модуль нельзя (const) — проверяем реальный путь создания
-  try {
-    const server = { saveId: "s1", model: fixtureModel() };
-    const ws = newWorkspace(server);
-    await ws.open("123", "1");
-    ws.apply("wall_add", (m) => addWall(m, { start: { x: 0, y: 6000 }, end: { x: 1000, y: 6000 } }));
-    const res = await ws.save();
-    assert.equal(res.rounds, 1);
-    assert.ok(existsSync(res.backup_path), `бэкап ${res.backup_path} создан`);
-    assert.match(res.backup_path, /123-1-.*\.json$/);
-    const backup = JSON.parse(readFileSync(res.backup_path, "utf8")) as { model: Model; save_id: string };
-    assert.equal(backup.save_id, "s1", "в бэкапе — модель ДО сохранения");
-    assert.equal(Object.keys(backup.model.walls).length, 5);
-    void dir; void orig;
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  // каталог бэкапов — временный (helpers/tmp-home.ts: REMPLANNER_HOME до импорта config)
+  const server = { saveId: "s1", model: fixtureModel() };
+  const ws = newWorkspace(server);
+  await ws.open("123", "1");
+  ws.apply("wall_add", (m) => addWall(m, { start: { x: 0, y: 6000 }, end: { x: 1000, y: 6000 } }));
+  const res = await ws.save();
+  assert.equal(res.rounds, 1);
+  assert.ok(existsSync(res.backup_path), `бэкап ${res.backup_path} создан`);
+  assert.match(res.backup_path, /123-1-.*\.json$/);
+  const backup = JSON.parse(readFileSync(res.backup_path, "utf8")) as { model: Model; save_id: string };
+  assert.equal(backup.save_id, "s1", "в бэкапе — модель ДО сохранения");
+  assert.equal(Object.keys(backup.model.walls).length, 5);
 });
 
 test("workspace: редактор удалил стены при нормализации → NORMALIZATION_DROPPED", async () => {

@@ -1,7 +1,10 @@
-import type { Model } from "./types.ts";
+import type { Model, ItemProps, Point } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
 import { roomPolygons, type RoomPolygon } from "./items.ts";
-import { pointInPolygon, segmentsCross, dist, type Segment } from "./geometry.ts";
+import {
+  pointInPolygon, segmentsCross, dist, closestPoint, projectionLength, lineIntersection,
+  polygonArea, polygonSignedArea, type Segment, type Polygon,
+} from "./geometry.ts";
 import { holeRange } from "./openings.ts";
 import { prepareForRestore } from "./walls.ts";
 
@@ -14,6 +17,7 @@ export type ValidationProblem = {
     | "OPENING_OFF_AXIS"
     | "OPENINGS_OVERLAP"
     | "ITEM_OUTSIDE_ROOM"
+    | "ITEM_INTERSECTS_WALL"
     | "MISSING_WALL_FACES"
     | "MISSING_HOLE_POINTS";
   message: string;
@@ -21,6 +25,10 @@ export type ValidationProblem = {
 };
 
 const MIN_WALL_CM = 3;
+/** Геометрический допуск «в пользу внутри»: касание грани (зазор 0 и погрешность
+ *  sin/cos до 1 мм) не ошибка (ревью v0.1.1 №1). Отрицательный допуск исключал
+ *  проверку угла на границе — касание получало ITEM_OUTSIDE_ROOM с вылетом 0 мм. */
+const ITEM_TOUCH_TOLERANCE_CM = 0.1;
 
 /**
  * Инварианты модели перед сохранением (design §3) и перед $Project.restore.
@@ -189,7 +197,9 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
     }
   }
 
-  // предметы вне помещений; при полном отсутствии комнат предметы проверить нечем (№19)
+  // предметы: bbox с учётом поворота (дефект 2, отчёт 11) — выход за внутренние грани
+  // комнат и пересечение с телом стены, с величиной вылета в мм. При полном отсутствии
+  // комнат предметы проверить нечем (№19).
   const knownRooms: RoomPolygon[] = rooms && rooms.length > 0 ? rooms : roomPolygons(model);
   const items = Object.values(model.items);
   if (knownRooms.length === 0 && items.length > 0) {
@@ -202,18 +212,137 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
     }
   } else {
     for (const item of items) {
-      const inside = knownRooms.some((room) => pointInPolygon(room.polygon, item.pc));
-      if (!inside) {
+      const rect = itemRectCm(item);
+      const centerRoom = knownRooms.find((room) => pointInPolygon(room.polygon, item.pc));
+      if (!centerRoom) {
         problems.push({
           code: "ITEM_OUTSIDE_ROOM",
           message: `предмет ${item.id} (${item.name}) вне помещений`,
           details: { item_id: item.id, pc: item.pc },
+        });
+        continue;
+      }
+      // выход углов bbox за комнаты: угол должен попадать хотя бы в одну комнату
+      // (многокомнатный предмет — диван в проёме — не проблема)
+      const outside = rect.filter((c) => !knownRooms.some((room) => pointInPolygon(room.polygon, c, ITEM_TOUCH_TOLERANCE_CM)));
+      if (outside.length > 0) {
+        const protrusionCm = Math.max(...outside.map((c) => distToPolygon(centerRoom.polygon, c)));
+        problems.push({
+          code: "ITEM_OUTSIDE_ROOM",
+          message: `предмет ${item.id} (${item.name}) вылезает за внутренние грани комнаты на ${round0(protrusionCm * 10)} мм`,
+          details: { item_id: item.id, pc: item.pc, protrusion_mm: round0(protrusionCm * 10), corners_outside: outside.length },
+        });
+      }
+    }
+    // пересечение bbox с телом стены (грани вычислены prepareForRestore на клоне)
+    for (const item of items) {
+      const rect = itemRectCm(item);
+      for (const wall of walls) {
+        if (!wall.l1 || !wall.l2 || !wall.r1 || !wall.r2) continue; // MISSING_WALL_FACES выше
+        const wallPoly: Polygon = [wall.l1, wall.l2, wall.r2, wall.r1];
+        if (overlapArea(rect, wallPoly) < 0.01) continue; // < 0.01 см² — касание, не пересечение
+        const face: Segment = { p1: wall.l1, p2: wall.l2 };
+        const faceR: Segment = { p1: wall.r1, p2: wall.r2 };
+        const rectCenter = polyCenter(rect);
+        const picked = dist(closestPoint(face, rectCenter).point, rectCenter) <= dist(closestPoint(faceR, rectCenter).point, rectCenter) ? face : faceR;
+        // нормаль грани в сторону предмета
+        const d = { x: picked.p2.x - picked.p1.x, y: picked.p2.y - picked.p1.y };
+        const len = Math.hypot(d.x, d.y) || 1;
+        let n = { x: d.y / len, y: -d.x / len };
+        const faceMid = { x: (picked.p1.x + picked.p2.x) / 2, y: (picked.p1.y + picked.p2.y) / 2 };
+        if (n.x * (rectCenter.x - faceMid.x) + n.y * (rectCenter.y - faceMid.y) > 0) n = { x: -n.x, y: -n.y };
+        // вылет — насколько углы прошли за грань в тело стены (см)
+        const axis: Segment = { p1: wall.p1, p2: wall.p2 };
+        const beyond = rect
+          .map((c) => ({ corner: c, proj: (c.x - picked.p1.x) * n.x + (c.y - picked.p1.y) * n.y }))
+          .filter((e) => e.proj > 0.05);
+        if (beyond.length === 0) continue;
+        // часть вылета в пределах проёма (дверь/окно на всю толщину) стеной не считается:
+        // проекция вылетевших углов вдоль оси стены должна покрываться проёмом
+        const lo = Math.min(...beyond.map((e) => projectionLength(axis, e.corner)));
+        const hi = Math.max(...beyond.map((e) => projectionLength(axis, e.corner)));
+        const inHole = Object.values(wall.holes ?? {}).some((h) => {
+          const [f, t] = holeRange(wall, h);
+          return lo >= f - 1 && hi <= t + 1;
+        });
+        if (inHole) continue;
+        const protrusionMm = round0(Math.max(...beyond.map((e) => e.proj)) * 10);
+        problems.push({
+          code: "ITEM_INTERSECTS_WALL",
+          message: `предмет ${item.id} (${item.name}) пересекает стену ${wall.id} (вылет ${protrusionMm} мм)`,
+          details: { item_id: item.id, wall_id: wall.id, protrusion_mm: protrusionMm },
         });
       }
     }
   }
 
   return problems;
+}
+
+/** Прямоугольник предмета в см с учётом поворота (pc, width вдоль оси, height — глубина). */
+function itemRectCm(item: ItemProps): Polygon {
+  const a = ((item.angle ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(a);
+  const sin = Math.sin(a);
+  const hw = (item.width ?? 0) / 2;
+  const hd = (item.height ?? 0) / 2;
+  return ([
+    [-hw, -hd],
+    [hw, -hd],
+    [hw, hd],
+    [-hw, hd],
+  ] as const).map(([lx, ly]) => ({
+    x: item.pc.x + lx * cos - ly * sin,
+    y: item.pc.y + lx * sin + ly * cos,
+  }));
+}
+
+/** Расстояние от точки до полигона (минимум по рёбрам), см. */
+function distToPolygon(poly: Polygon, p: Point): number {
+  let best = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const seg: Segment = { p1: poly[i]!, p2: poly[(i + 1) % poly.length]! };
+    best = Math.min(best, dist(closestPoint(seg, p).point, p));
+  }
+  return best;
+}
+
+function polyCenter(poly: Polygon): Point {
+  let sx = 0;
+  let sy = 0;
+  for (const p of poly) {
+    sx += p.x;
+    sy += p.y;
+  }
+  return { x: sx / poly.length, y: sy / poly.length };
+}
+
+/**
+ * Площадь пересечения двух полигонов, см² (Sutherland–Hodgman: subject режется
+ * внутренностью clip; clip ожидается выпуклым — тело стены). Касание даёт ~0.
+ */
+function overlapArea(subject: Polygon, clip: Polygon): number {
+  let out = subject;
+  const sign = polygonSignedArea(clip) >= 0 ? 1 : -1;
+  for (let i = 0; i < clip.length && out.length > 0; i++) {
+    const a = clip[i]!;
+    const b = clip[(i + 1) % clip.length]!;
+    const side = (p: Point): number => sign * ((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x));
+    const input = out;
+    out = [];
+    for (let j = 0; j < input.length; j++) {
+      const cur = input[j]!;
+      const prev = input[(j + input.length - 1) % input.length]!;
+      const curIn = side(cur) >= -1e-9;
+      const prevIn = side(prev) >= -1e-9;
+      if (curIn !== prevIn) {
+        const isect = lineIntersection({ p1: prev, p2: cur }, { p1: a, p2: b });
+        if (isect) out.push(isect);
+      }
+      if (curIn) out.push(cur);
+    }
+  }
+  return polygonArea(out);
 }
 
 function isPoint(p: { x: number; y: number } | undefined): p is { x: number; y: number } {

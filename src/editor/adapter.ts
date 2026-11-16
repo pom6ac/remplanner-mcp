@@ -6,6 +6,7 @@ import { McpError } from "../errors.ts";
 import { parseSaveResponse, isReloadResponse } from "../api.ts";
 import { saveLimiter } from "../http.ts";
 import { PAGE } from "./inject.js";
+import { wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm } from "../model/walls.ts";
 import { readCompat, assertCompatible, trackVersion, type CompatInfo, type CompatPresent } from "./compat.ts";
 import type { SessionState } from "../session.ts";
 
@@ -56,6 +57,15 @@ export type RenderOptions = {
   sheet?: string;
   widthPx?: number;
   dimensions?: boolean;
+  /**
+   * id предметов, которые должны быть ВИДНЫ на листе options.sheet (ревью v0.1.1 №3).
+   * Вычисляет вызывающий: предметы не с этого листа (например, мебель на init) в
+   * список не включаются — их слой на листе заведомо скрыт. draw и загрузка иконок
+   * асинхронны — без ожидания скриншот фиксирует холст без предметов (дефект 1,
+   * живая проба 17). Проверяются реальные DOM-элементы с видимостью, не подстрока
+   * в innerHTML; при таймауте — RENDER_OUT_OF_SYNC без PNG.
+   */
+  itemIds?: string[];
 };
 
 export type EditorHandle = {
@@ -216,10 +226,11 @@ export function buildHandle(
     page,
     async normalize(model, waitMs = 1200): Promise<NormalizeResult> {
       await page.evaluate(PAGE.clearFog);
-      // R2-16: сравниваем ВХОДНУЮ модель с результатом — молчаливое удаление
-      // элементов редактором не должно проходить как успех. Стен может стать
-      // БОЛЬШЕ (редактор режет стены сам), меньше — потеря; проёмы и предметы
-      // потеряны быть не могут.
+      // R2-16 + ревью v0.1.1 №4: сравниваем ВХОДНУЮ модель с результатом — молчаливое
+      // удаление элементов редактором не должно проходить как успех. Стены сравниваются
+      // по покрытию осей (wallAxisCoverageCm): разрез и слияние коллинеарных стен —
+      // допустимая нормализация (design §12), реальная потеря стены покрытие уменьшает;
+      // проёмы и предметы потеряны быть не могут.
       const input = {
         walls: Object.keys((model as { walls?: Record<string, unknown> }).walls ?? {}).length,
         holes: Object.values((model as { walls?: Record<string, { holes?: Record<string, unknown> }> }).walls ?? {})
@@ -253,9 +264,15 @@ export function buildHandle(
         last = result;
         const copyWalls = Object.keys((result.model as { walls?: Record<string, unknown> })?.walls ?? {}).length;
         if (copyWalls === 0 && result.after.walls > 0) continue; // copy отстаёт — повтор
-        // сверка «вход → редактор»: явная политика допустимых изменений (R2-16)
+        // сверка «вход → редактор»: явная политика допустимых изменений (R2-16, №4,
+        // R2-3): стены — эквивалентность канонических наборов осевых отрезков,
+        // разрез/слияние коллинеарных стен допустимы, сдвиг/лишняя стена — нет
         const dropped: string[] = [];
-        if (result.after.walls < input.walls) dropped.push(`walls ${input.walls}→${result.after.walls}`);
+        const inputWalls = (model as { walls?: Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }> }).walls;
+        const afterWalls = (result.model as { walls?: Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }> }).walls;
+        if (!wallAxisSetsEqual(wallAxisSegments(afterWalls), wallAxisSegments(inputWalls))) {
+          dropped.push(`walls axis segments ${wallAxisSegments(inputWalls).length}→${wallAxisSegments(afterWalls).length} (покрытие ${Math.round(wallAxisCoverageCm(inputWalls) * 10)}→${Math.round(wallAxisCoverageCm(afterWalls) * 10)} мм)`);
+        }
         if (result.after.holes < input.holes) dropped.push(`openings ${input.holes}→${result.after.holes}`);
         if (result.after.items < input.items) dropped.push(`items ${input.items}→${result.after.items}`);
         if (dropped.length > 0) {
@@ -375,6 +392,30 @@ export function buildHandle(
 }
 
 /**
+ * Предикат видимости предметов в SVG листа (ревью v0.1.1 №3, R2-2) — единственная
+ * реализация: исполняется через page.waitForFunction и в тестах на DOM-фрагменте.
+ * Идентификатор сопоставляется ТОЧНО — атрибут id или data-id, равный id предмета,
+ * либо точный токен класса; подстрока давала ложное совпадение sofa1 ↔ sofa10,
+ * когда отсутствующий sofa1 «закрывался» видимым sofa10.
+ */
+export function itemsRenderedInSvg(ids: string[]): boolean {
+  const svg = document.querySelector("#canvas_v2_wrapper svg");
+  if (!svg) return false;
+  return ids.every((id) => {
+    const el = [...svg.querySelectorAll("*")].find((e) => {
+      if (e.getAttribute("id") === id) return true;
+      if (e.getAttribute("data-id") === id) return true;
+      return (e.getAttribute("class") ?? "").split(/\s+/).includes(id);
+    });
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== "none" && cs.visibility !== "hidden";
+  });
+}
+
+/**
  * Рендер плана в PNG: переключение листа, скриншот элемента #canvas_v2_wrapper.
  * Публичные точки редактора ($Project.setPlanName / $Project.focus) опциональны:
  * при отсутствии — клик по навигации листов (.groups_navi_item.plan_*).
@@ -384,6 +425,17 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
   const width = options.widthPx ?? 1600;
   await page.evaluate(PAGE.clearFog);
   await switchSheet(page, sheet);
+  // предметы: draw и загрузка иконок асинхронны — ждём видимые DOM-элементы каждого
+  // предмета на листе (ревью v0.1.1 №3); при таймауте PNG не отдаётся
+  const itemIds = options.itemIds ?? [];
+  if (itemIds.length > 0) {
+    await page.waitForFunction(itemsRenderedInSvg, itemIds, { timeout: BROWSER_TIMEOUT_MS, polling: 250 }).catch(() => {
+      throw new McpError("RENDER_OUT_OF_SYNC", `предметы не отрисованы на листе «${sheet}» (${itemIds.join(", ")}) — картинка не отдаётся`, {
+        hint: "повторите render_plan; при повторении сверитесь с model_get и model_validate",
+        details: { items: itemIds, sheet },
+      });
+    });
+  }
   if (options.dimensions === false) {
     await page.evaluate(() => {
       const t = document.querySelector("#plannertool_ruler, .toolid16");
@@ -443,24 +495,33 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
   return buf;
 }
 
+/**
+ * Тело переключения листа — единственная реализация (ревью v0.1.1 №6), исполняется
+ * через page.evaluate. Клик по навигации (.groups_navi_item.plan_<имя>) — путь
+ * пользователя: он включает видимость слоёв листа (живая проба 17: после
+ * $Project.setPlanName("furniture") предметы остаются display:none, после клика
+ * по навигации — рисуются). setPlanName — запасной путь, когда навигации нет.
+ */
+export function switchSheetInPage(name: string): "click" | "setPlanName" | null {
+  const nav = document.querySelector(`.groups_navi_item.plan_${name}`);
+  if (nav) {
+    (nav as HTMLElement).click();
+    return "click";
+  }
+  const w = window as unknown as { $Project?: { setPlanName?: (n: string) => void } };
+  if (w.$Project && typeof w.$Project.setPlanName === "function") {
+    try {
+      w.$Project.setPlanName(name);
+      return "setPlanName";
+    } catch {
+      /* не критично */
+    }
+  }
+  return null;
+}
+
 async function switchSheet(page: Page, sheet: string): Promise<void> {
-  const done = await page.evaluate((name) => {
-    const w = window as unknown as { $Project?: { setPlanName?: (n: string) => void } };
-    if (w.$Project && typeof w.$Project.setPlanName === "function") {
-      try {
-        w.$Project.setPlanName(name);
-        return "fn";
-      } catch {
-        /* fallback ниже */
-      }
-    }
-    const nav = document.querySelector(`.groups_navi_item.plan_${name}`);
-    if (nav) {
-      (nav as HTMLElement).click();
-      return "click";
-    }
-    return null;
-  }, sheet).catch(() => null);
+  const done = await page.evaluate(switchSheetInPage, sheet).catch(() => null);
   if (done === null && sheet !== "init") {
     throw new McpError("INVALID_ARGUMENT", `лист плана «${sheet}» не найден (навигация .groups_navi_item.plan_${sheet})`);
   }

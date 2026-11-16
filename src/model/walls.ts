@@ -936,3 +936,109 @@ export function prepareForRestore(model: Model): void {
   prepareWallFaces(model);
   prepareHolePoints(model);
 }
+
+/**
+ * Канонический набор осевых отрезков стен (ревью v0.1.1-r2 R2-3): стены группируются
+ * по прямым (каноническое направление в [0, π), квантование угла 1e-6 рад и смещения
+ * 0.05 см), на каждой прямой коллинеарные перекрывающиеся отрезки объединяются,
+ * координаты вдоль прямой округляются до 1 мм. Эквивалентность геометрии — это
+ * равенство таких множеств (wallAxisSetsEqual), а не сумма длин: сдвиг, замена
+ * стены равной длины и лишняя стена дают ту же сумму, но другой набор.
+ */
+export type WallAxisSegment = {
+  /** Каноническое направление прямой (единичный вектор, угол в [0, π)). */
+  ux: number;
+  uy: number;
+  /** Смещение прямой от начала координат, см. */
+  offset: number;
+  /** Концы отрезка вдоль прямой от начала координат, см (округлены до 1 мм). */
+  a: number;
+  b: number;
+};
+
+export function wallAxisSegments(
+  walls: Record<string, Pick<Wall, "p1" | "p2">> | Record<string, { p1: Point; p2: Point }> | undefined,
+): WallAxisSegment[] {
+  type Line = { ux: number; uy: number; offset: number; spans: Array<[number, number]> };
+  const lines = new Map<string, Line>();
+  for (const w of Object.values(walls ?? {})) {
+    const dx = w.p2.x - w.p1.x;
+    const dy = w.p2.y - w.p1.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-9) continue;
+    let ux = dx / len;
+    let uy = dy / len;
+    // каноническое направление прямой: угол в [0, π)
+    if (uy < 0 || (uy === 0 && ux < 0)) {
+      ux = -ux;
+      uy = -uy;
+    }
+    const offset = -uy * w.p1.x + ux * w.p1.y;
+    // группировка по прямой: квантованный ключ — стены на одной прямой после
+    // разреза/слияния попадают в одну группу, соседние параллельные — нет
+    const key = `${Math.round(Math.atan2(uy, ux) * 1e6)}:${Math.round(offset * 20)}`;
+    let line = lines.get(key);
+    if (!line) {
+      line = { ux, uy, offset, spans: [] };
+      lines.set(key, line);
+    }
+    const t1 = (w.p1.x * ux + w.p1.y * uy);
+    const t2 = (w.p2.x * ux + w.p2.y * uy);
+    line.spans.push([Math.min(t1, t2), Math.max(t1, t2)]);
+  }
+  const out: WallAxisSegment[] = [];
+  for (const line of lines.values()) {
+    line.spans.sort((a, b) => a[0] - b[0]);
+    let cur = line.spans[0]!;
+    const merged: Array<[number, number]> = [];
+    for (let i = 1; i < line.spans.length; i++) {
+      const s = line.spans[i]!;
+      if (s[0] <= cur[1] + 0.05) {
+        cur[1] = Math.max(cur[1], s[1]);
+      } else {
+        merged.push(cur);
+        cur = s;
+      }
+    }
+    merged.push(cur);
+    for (const [a, b] of merged) {
+      // округление до 1 мм (ревью v0.1.1-r2 R2-3)
+      out.push({ ux: line.ux, uy: line.uy, offset: line.offset, a: Math.round(a * 10) / 10, b: Math.round(b * 10) / 10 });
+    }
+  }
+  out.sort((x, y) => (x.ux - y.ux) || (x.uy - y.uy) || (x.offset - y.offset) || (x.a - y.a));
+  return out;
+}
+
+/**
+ * Эквивалентность канонических наборов осевых отрезков (ревью v0.1.1-r2 R2-3):
+ * каждый отрезок одной модели должен иметь парный отрезок другой на той же прямой
+ * (направление совпадает, смещение в допуске) с совпадающими концами в допуске —
+ * в обе стороны (лишнее покрытие тоже отвергается). Допуск по умолчанию 1 мм.
+ */
+export function wallAxisSetsEqual(a: WallAxisSegment[], b: WallAxisSegment[], tolCm = 0.1): boolean {
+  if (a.length !== b.length) return false;
+  const used = new Array<boolean>(b.length).fill(false);
+  for (const s of a) {
+    let matched = false;
+    for (let i = 0; i < b.length; i++) {
+      if (used[i]) continue;
+      const t = b[i]!;
+      const sameLine =
+        Math.abs(t.ux - s.ux) <= 1e-6 && Math.abs(t.uy - s.uy) <= 1e-6 &&
+        Math.abs(t.offset - s.offset) <= tolCm;
+      if (sameLine && Math.abs(t.a - s.a) <= tolCm && Math.abs(t.b - s.b) <= tolCm) {
+        used[i] = true;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) return false;
+  }
+  return true;
+}
+
+/** Суммарная длина канонических осевых отрезков — только для сообщений и деталей ошибок. */
+export function wallAxisCoverageCm(walls: Record<string, Pick<Wall, "p1" | "p2">> | Record<string, { p1: Point; p2: Point }> | undefined): number {
+  return wallAxisSegments(walls).reduce((sum, s) => sum + (s.b - s.a), 0);
+}
