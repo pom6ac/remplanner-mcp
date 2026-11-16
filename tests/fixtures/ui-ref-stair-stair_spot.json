@@ -1,0 +1,78 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), scripts/probes/53-stairs-ui.ts, model project.copy(\"server\"), без сохранения; id предмета и id_room/id_room_zone/id_wall обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); группа lights, over_floor {value:20, display:true}, магнит к стене",
+ "menu_title": "Светильник для подсветки пола",
+ "tool_id": "plannertool_stair_spot",
+ "catalog_defaults_cm": {
+  "id": 1543,
+  "width": 12,
+  "height": 14,
+  "self_height": 6,
+  "plan": {
+   "light": 10
+  },
+  "anchor": "wall",
+  "is_magnetized": true,
+  "can_be_outside": true
+ },
+ "model_object": {
+  "name": "stair_spot",
+  "pc": {
+   "x": 112.92,
+   "y": 719.1
+  },
+  "angle": 180,
+  "projection": {
+   "x": 112.92,
+   "y": 718.1
+  },
+  "width": 12,
+  "height": 14,
+  "plan": {
+   "light": 10,
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 1543,
+  "over_floor": {
+   "value": 20,
+   "display": true
+  },
+  "self_height": 6,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 112.92,
+   "y": 719.1
+  },
+  "center3d": {
+   "x": 112.92,
+   "y": 719.1
+  },
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "l",
+  "wall_line": {
+   "p1": {
+    "x": 106.92,
+    "y": 712.1
+   },
+   "p2": {
+    "x": 118.92,
+    "y": 712.1
+   }
+  }
+ }
+}
