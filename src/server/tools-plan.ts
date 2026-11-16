@@ -89,6 +89,16 @@ function resolveBorder(model: Model, key: "terrace_borders" | "territory_borders
   return throwNotFound(`граница ${ref} не найдена (id сайта или метка ${label}<n> из model_get)`);
 }
 
+/** Конец границы в публичном ответе: мм (ревью 68 №3 — как во всём MCP). */
+function mmPointOf(p: { x: number; y: number }): { x: number; y: number } {
+  return { x: Math.round(p.x * 10), y: Math.round(p.y * 10) };
+}
+
+/** Граница для публичного ответа: концы в мм. */
+function borderResponse(b: TerraceBorder): { id: string; p1: { x: number; y: number }; p2: { x: number; y: number } } {
+  return { id: b.id, p1: mmPointOf(b.p1), p2: mmPointOf(b.p2) };
+}
+
 /** Проём в полу по site-id или метке FH1…FH_n из model_get. */
 function resolveFloorHole(model: Model, ref: string): { id: string } {
   const holes = model.level_holes ?? {};
@@ -943,7 +953,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         const ws = wsOf();
         const borders = ws.apply("terrace_add", (m) => addBorderRing(m, "terrace_borders", "терраса", { points: a["points"] as MmPoint[] }));
-        return ok({ created: borders.length, borders: borders.map((b) => ({ id: b.id, p1: b.p1, p2: b.p2 })), hint: SCENARIO_HINT });
+        return ok({ created: borders.length, borders: borders.map(borderResponse), hint: SCENARIO_HINT });
       },
     ),
 
@@ -962,7 +972,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           start: a["start"] as MmPoint | undefined,
           end: a["end"] as MmPoint | undefined,
         }));
-        return ok({ border: { id: border.id, p1: border.p1, p2: border.p2 }, hint: SCENARIO_HINT });
+        return ok({ border: borderResponse(border), hint: SCENARIO_HINT });
       },
     ),
 
@@ -1063,7 +1073,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         const ws = wsOf();
         const borders = ws.apply("territory_add", (m) => addBorderRing(m, "territory_borders", "участок", { points: a["points"] as MmPoint[] }));
-        return ok({ created: borders.map((b) => ({ id: b.id, p1: b.p1, p2: b.p2 })), hint: SCENARIO_HINT });
+        return ok({ created: borders.map(borderResponse), hint: SCENARIO_HINT });
       },
     ),
 
@@ -1082,7 +1092,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           start: a["start"] as MmPoint | undefined,
           end: a["end"] as MmPoint | undefined,
         }));
-        return ok({ border: { id: border.id, p1: border.p1, p2: border.p2 }, hint: SCENARIO_HINT });
+        return ok({ border: borderResponse(border), hint: SCENARIO_HINT });
       },
     ),
 

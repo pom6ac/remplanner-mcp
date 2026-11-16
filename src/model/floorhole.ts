@@ -2,7 +2,7 @@ import type { Model, LevelHole, Point } from "./types.ts";
 import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
-import { pointInPolygon, polygonArea, overlapArea, lineIntersection, type Polygon, type Segment } from "./geometry.ts";
+import { pointInPolygon, pointOnSegment, polygonArea, overlapArea, lineIntersection, type Polygon, type Segment } from "./geometry.ts";
 import type { RoomPolygon } from "./items.ts";
 import { McpError } from "../errors.ts";
 
@@ -69,20 +69,50 @@ function buildCandidate(id: string, c1Cm: Point, c2Cm: Point, roomId: string | n
 }
 
 /**
- * Собственное пересечение двух отрезков — не по касанию и не в общих концах
- * (ревью 66 №5): пересечение рёбер проёма с границей комнаты значит выход за неё.
+ * Полигон целиком внутри полигона (ревью 68 №2): все вершины внутри/на границе,
+ * плюс каждое ребро внутреннего полигона разбивается точками пересечения с рёбрами
+ * внешнего (включая касания в вершинах и коллинеарные наложения) — середина каждого
+ * интервала должна быть внутри/на границе. Проверка середин ловит проход ребра через
+ * вершину вогнутой комнаты наружу: пересечение в вершине само по себе не исключается
+ * (касание изнутри законно), но за вершиной интервалы вне комнаты дают отказ.
  */
-function segmentsProperlyCross(a: Segment, b: Segment): boolean {
-  const p = lineIntersection(a, b);
-  if (!p) return false;
-  const onSeg = (s: Segment, q: Point): boolean => {
-    const cross = (s.p2.x - s.p1.x) * (q.y - s.p1.y) - (s.p2.y - s.p1.y) * (q.x - s.p1.x);
-    if (Math.abs(cross) > 1e-6) return false;
-    const dot = (q.x - s.p1.x) * (s.p2.x - s.p1.x) + (q.y - s.p1.y) * (s.p2.y - s.p1.y);
-    const len2 = (s.p2.x - s.p1.x) ** 2 + (s.p2.y - s.p1.y) ** 2;
-    return dot >= 1e-6 && dot <= len2 - 1e-6;
-  };
-  return onSeg(a, p) && onSeg(b, p);
+function polygonInsidePolygon(inner: Polygon, outer: Polygon): boolean {
+  for (const v of inner) {
+    if (!pointInPolygon(outer, v)) return false;
+  }
+  const T_EPS = 1e-9;
+  for (let i = 0; i < inner.length; i++) {
+    const a = inner[i]!;
+    const b = inner[(i + 1) % inner.length]!;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const edge: Segment = { p1: a, p2: b };
+    // параметр точки p на ребре (ребро невырожденное — размеры проверены)
+    const tOf = (p: Point): number => (Math.abs(dx) >= Math.abs(dy) ? (p.x - a.x) / dx : (p.y - a.y) / dy);
+    const ts: number[] = [0, 1];
+    for (let j = 0; j < outer.length; j++) {
+      const roomEdge: Segment = { p1: outer[j]!, p2: outer[(j + 1) % outer.length]! };
+      const p = lineIntersection(edge, roomEdge);
+      if (p) {
+        const t = tOf(p);
+        if (t > T_EPS && t < 1 - T_EPS && pointOnSegment(roomEdge, p, 1e-6)) ts.push(t);
+      } else {
+        // параллельны: коллинеарная накладка — концы ребра комнаты на ребре проёма
+        for (const q of [roomEdge.p1, roomEdge.p2]) {
+          if (!pointOnSegment(edge, q, 1e-6)) continue;
+          const t = tOf(q);
+          if (t > T_EPS && t < 1 - T_EPS) ts.push(t);
+        }
+      }
+    }
+    ts.sort((x, y) => x - y);
+    for (let k = 0; k + 1 < ts.length; k++) {
+      if (ts[k + 1]! - ts[k]! < T_EPS) continue;
+      const mid = { x: a.x + (dx * (ts[k]! + ts[k + 1]!)) / 2, y: a.y + (dy * (ts[k]! + ts[k + 1]!)) / 2 };
+      if (!pointInPolygon(outer, mid)) return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -119,18 +149,14 @@ function assertHoleInvariants(candidate: LevelHole, model: Model, rooms: RoomPol
       });
     }
   }
-  // каждое ребро проёма не пересекает границу комнаты (ревью 66 №5: вогнутая комната)
-  const rn = room.polygon.length;
-  for (let i = 0; i < 4; i++) {
-    const edge: Segment = { p1: candidate.polygon[i]!, p2: candidate.polygon[(i + 1) % 4]! };
-    for (let j = 0; j < rn; j++) {
-      const roomEdge: Segment = { p1: room.polygon[j]!, p2: room.polygon[(j + 1) % rn]! };
-      if (segmentsProperlyCross(edge, roomEdge)) {
-        throw new McpError("GEOMETRY_CONFLICT", "проём в полу пересекает стену — прямоугольник должен быть целиком внутри комнаты", {
-          details: { kind: "floor_hole_over_wall", edge: i + 1, room_id: room.roomId },
-        });
-      }
-    }
+  // полное включение прямоугольника в комнату (ревью 68 №2): рёбра разбиваются
+  // точками пересечения с рёбрами комнаты (включая касания в вершинах и коллинеарные
+  // наложения), середины интервалов — внутри комнаты; ловит проход через вершину
+  // вогнутой комнаты наружу (Г-/П-образная комната)
+  if (!polygonInsidePolygon(candidate.polygon, room.polygon)) {
+    throw new McpError("GEOMETRY_CONFLICT", "проём в полу пересекает стену — прямоугольник должен быть целиком внутри комнаты", {
+      details: { kind: "floor_hole_over_wall", room_id: room.roomId },
+    });
   }
   for (const other of Object.values(model.level_holes ?? {})) {
     if (other.id === candidate.id) continue;

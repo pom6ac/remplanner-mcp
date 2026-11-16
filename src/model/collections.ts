@@ -24,10 +24,26 @@ export const MODEL_ENTITY_COLLECTIONS = [
 
 export type ModelEntityCollection = (typeof MODEL_ENTITY_COLLECTIONS)[number];
 
+/**
+ * Обязательные коллекции (ревью 68 №1): инвариант Model — walls/items/pillars/
+ * rulers/comments существуют всегда (как в пустом проекте редактора и как clear
+ * в main до этапа 67). Очистка/замена оставляет их пустыми объектами, а не
+ * отсутствующими — иначе validate/add падают на undefined.
+ */
+export const MODEL_REQUIRED_COLLECTIONS = ["walls", "items", "pillars", "rulers", "comments"] as const;
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
 /** Очистить все коллекции объектов в рабочей копии (project_clear). */
 export function clearEntityCollections(model: Model): void {
   for (const key of MODEL_ENTITY_COLLECTIONS) {
-    delete model[key];
+    if ((MODEL_REQUIRED_COLLECTIONS as readonly string[]).includes(key)) {
+      model[key] = {} as never;
+    } else {
+      delete model[key];
+    }
   }
   delete model.rooms1;
   delete model.rooms2;
@@ -35,17 +51,20 @@ export function clearEntityCollections(model: Model): void {
 
 /**
  * Заменить коллекции объектов содержимым импортируемой модели (project_import_plan):
- * коллекция из источника копируется целиком, отсутствующая в источнике — удаляется
+ * коллекция из источника копируется целиком; отсутствующая в источнике обязательная
+ * — оставляется пустой (инвариант Model, ревью 68 №1), необязательная — удаляется
  * (импорт заменяет планировку, а не дополняет её). total_height и rooms2 — по
  * прежней семантике импорта; rooms1 источника переносится тоже (часть модели).
  */
 export function replaceEntityCollections(target: Model, source: Model): void {
   for (const key of MODEL_ENTITY_COLLECTIONS) {
     const value = source[key];
-    if (value === undefined || value === null) {
-      delete target[key];
-    } else {
+    if (isRecord(value)) {
       target[key] = structuredClone(value) as never;
+    } else if ((MODEL_REQUIRED_COLLECTIONS as readonly string[]).includes(key)) {
+      target[key] = {} as never;
+    } else {
+      delete target[key];
     }
   }
   target.total_height = source.total_height ?? 270;

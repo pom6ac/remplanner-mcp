@@ -582,6 +582,67 @@ test("rev67 M5: без комнат проём не проверить — по�
   assert.equal(JSON.stringify(model), before);
 });
 
+// ---------- ревью 68 №2: полное включение проёма в вогнутую комнату ----------
+
+const P_ROOM_EXTRA = [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 10 }, { x: 30, y: 60 }, { x: 40, y: 60 }, { x: 40, y: 10 }, { x: 40, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+const P_ROOM = [{ x: 0, y: 0 }, { x: 30, y: 0 }, { x: 30, y: 60 }, { x: 40, y: 60 }, { x: 40, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+const L_ROOM = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 40 }, { x: 40, y: 40 }, { x: 40, y: 100 }, { x: 0, y: 100 }];
+const SQUARE_ROOM = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+
+const room = (polygon: { x: number; y: number }[]): RoomPolygon[] => [{ roomId: "rc", polygon, areaCm2: 0, axisAreaCm2: null }];
+
+test("rev68 M2: проём через вырез П-образной комнаты с дополнительными коллинеарными вершинами — отказ", () => {
+  const { model } = roomModel();
+  const before = JSON.stringify(model);
+  // воспроизведение ревью 68: углы и центр внутри, 500 см² проёма — в вырезе x 30..40, y 0..60
+  assert.throws(() => addFloorHole(model, { corner1: { x: 100, y: 100 }, corner2: { x: 900, y: 900 } }, room(P_ROOM_EXTRA)), (e: unknown) =>
+    e instanceof McpError && e.code === "GEOMETRY_CONFLICT");
+  assert.equal(JSON.stringify(model), before);
+});
+
+test("rev68 M2: эквивалентность — тот же отказ без коллинеарных вершин контура", () => {
+  const { model } = roomModel();
+  assert.throws(() => addFloorHole(model, { corner1: { x: 100, y: 100 }, corner2: { x: 900, y: 900 } }, room(P_ROOM)), (e: unknown) =>
+    e instanceof McpError && e.code === "GEOMETRY_CONFLICT");
+});
+
+test("rev68 M2: проём через вырез Г-образной комнаты — отказ; в полке — принимается", () => {
+  const { model } = roomModel();
+  // вырез Г-образной комнаты: x 40..100, y 40..100; угол (60,60) в вырезе
+  assert.throws(() => addFloorHole(model, { corner1: { x: 200, y: 100 }, corner2: { x: 600, y: 600 } }, room(L_ROOM)), (e: unknown) =>
+    e instanceof McpError && e.code === "GEOMETRY_CONFLICT");
+  // полка Г-образной комнаты: x 0..100, y 0..40 (см); проём 450..950 × 50..350 мм
+  const hole = addFloorHole(model, { corner1: { x: 450, y: 50 }, corner2: { x: 950, y: 350 } }, room(L_ROOM));
+  assert.ok(near(hole.area, 0.15), `area ${hole.area}`);
+});
+
+test("rev68 M2: проём в верхней части П-образной комнаты (мимо выреза) — принимается", () => {
+  const { model } = roomModel();
+  const hole = addFloorHole(model, { corner1: { x: 100, y: 650 }, corner2: { x: 900, y: 950 } }, room(P_ROOM));
+  assert.ok(near(hole.area, 0.24), `area ${hole.area}`);
+  assert.equal(hole.id_room, "rc");
+});
+
+test("rev68 M2: касание в вершине комнаты — принимается (угол на вершине, ребро вдоль выреза)", () => {
+  const { model } = roomModel();
+  // угол (0,0) — вершина комнаты
+  const hole = addFloorHole(model, { corner1: { x: 0, y: 0 }, corner2: { x: 500, y: 500 } }, room(SQUARE_ROOM));
+  assert.ok(near(hole.area, 0.25), `area ${hole.area}`);
+  // ребро вплотную к стенке выреза x=30 (коллинеарно), угол (30,10) — вершина выреза
+  const model2 = roomModel().model;
+  const hole2 = addFloorHole(model2, { corner1: { x: 100, y: 100 }, corner2: { x: 300, y: 550 } }, room(P_ROOM_EXTRA));
+  assert.ok(near(hole2.area, 0.09), `area ${hole2.area}`);
+});
+
+test("rev68 M2: перенос проёма в вырез — update отклоняется, модель не меняется", () => {
+  const { model } = roomModel();
+  const hole = addFloorHole(model, { corner1: { x: 100, y: 650 }, corner2: { x: 900, y: 950 } }, room(P_ROOM));
+  const before = JSON.stringify(model);
+  assert.throws(() => updateFloorHole(model, { holeId: hole.id, corner1: { x: 100, y: 100 }, corner2: { x: 900, y: 900 } }, room(P_ROOM)), (e: unknown) =>
+    e instanceof McpError && e.code === "GEOMETRY_CONFLICT");
+  assert.equal(JSON.stringify(model), before);
+});
+
 test("rev67 minor6: столб во второй террасе из двух колец — принимается", () => {
   const model = terraceModel();
   addBorderRing(model, "terrace_borders", "терраса", {
