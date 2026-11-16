@@ -1,0 +1,73 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), проба 57-comm-ui3 (клик у стены, anchor:wall), model project.copy(\"server\"), без сохранения; id предмета и id_room/id_room_zone/id_wall/id_pillar обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); план {\"a\":1} (ключ каталога init отображён в a)",
+ "menu_title": "Ввод водоснабжения",
+ "tool_id": "plannertool_ceiling_water",
+ "catalog_defaults_cm": {
+  "id": 1361,
+  "width": 20,
+  "height": 18,
+  "self_height": 0,
+  "plan": {
+   "init": 1
+  },
+  "anchor": "wall",
+  "is_magnetized": true,
+  "can_be_outside": true
+ },
+ "model_object": {
+  "name": "ceiling_water",
+  "pc": {
+   "x": 182.43,
+   "y": 727.1
+  },
+  "angle": 180,
+  "projection": {
+   "x": 182.43,
+   "y": 718.1
+  },
+  "width": 20,
+  "height": 18,
+  "plan": {
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 1361,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 182.43,
+   "y": 727.1
+  },
+  "center3d": {
+   "x": 182.43,
+   "y": 727.1
+  },
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r",
+  "wall_line": {
+   "p1": {
+    "x": 172.43,
+    "y": 718.1
+   },
+   "p2": {
+    "x": 192.43,
+    "y": 718.1
+   }
+  }
+ }
+}
