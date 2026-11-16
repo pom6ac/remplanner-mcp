@@ -425,7 +425,8 @@ SVG-отрисовка вида; параметров «ширина марша/
 - **`dimensions.display`** (эталоны UI): у `water`, `water_column_hot`, `water_column_cold`,
   `drainage_column`, `air` редактор пишет `display:false`; у `radiator_old`, `gas_pipe`,
   `gas_boiler`, `gas_meter`, `fire_detector`, `ceiling_water`, `conditioner_cage` — `true`.
-- **`over_floor`**: у `radiator_old` редактор пишет `{value:10, display:false}` (подъём 100 см),
+- **`over_floor`**: у `radiator_old` редактор пишет `{value:10, display:false}` (подъём 10 см —
+  `value` в сантиметрах, 10 см = 100 мм),
   у `gas_boiler` — `{value:100, display:true}` (h 67 см), у `gas_meter` — `{value:140, display:true}`
   (h 21 см), у `conditioner_cage` — `{value:15, display:false}` (h 60 см); у стояков `over_floor`
   нет. `item_add` переносит эти значения (`elevation_mm`/`height_mm`).
@@ -447,7 +448,8 @@ SVG-отрисовка вида; параметров «ширина марша/
   103.9 см → 1.04, 158.1 см → 1.58). Рисуется в UI drag-отрезками; перетаскивание от вершины
   существующей линии продолжает граф (вершина срастается с графом). Лимитов в `defs` нет.
   При restore редактор пересчитывает `length` сам (проверено живым кругом, этап 57); после save
-  верификация по GET сверяет узлы (допуск 0,1 см), тип и длину (допуск 2 см).
+  верификация по GET сверяет узлы (допуск 0,1 см), тип, рёбра `matrix` (топологию) и длину
+  (допуск 2 см); потеря рёбер при нормализации — `NORMALIZATION_DROPPED` (этап 59).
 - **Комнаты**: постановка предметов пересчитывает `rooms1` (id комнат перегенерируются —
   штатно), `rooms2`/площади не меняются.
 

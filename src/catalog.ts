@@ -130,8 +130,9 @@ export function extractToolsBundleName(pageHtml: string): string {
  * - drainage_column (Канализационный стояк): 15×15, furniture, free;
  * - ceiling_water (Ввод водоснабжения): 20×18, furniture, anchor WALL;
  * - air (Вентиляционный короб): 30×30, furniture, free;
- * - gas_pipe (Газовый стояк): delete_only (в модели уже стоит у пользователя — ставится
- *   только демонтажем; item_add для него редактором не выполняется).
+ * - gas_pipe (Газовый стояк): delete_only:true — значение живого редактора после
+ *   fix_tools; семантика флага не подтверждена (проба 57 поставила его кликом
+ *   локально, без save).
  * Остальные инструменты fix_tools не трогает (radiator_old, gas_boiler, gas_meter,
  * electric_shield_old, conditioner_cage и т.д. — как в бандле).
  */

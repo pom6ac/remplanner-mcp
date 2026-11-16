@@ -4,17 +4,20 @@
 
 ### Добавлено
 
-- **Раздел «Коммуникации» редактора: покрыты все 16 пунктов меню** (эталоны сняты из UI —
+- **Раздел «Коммуникации» редактора: 16 пунктов меню** (этап 57; UI-эталоны —
   `tests/fixtures/ui-ref-comm-*.json`): 15 пунктов — **предметы каталога** (группа `furniture`:
   стояки `water`, `water_column_hot`, `water_column_cold`, `drainage_column`, отопление
   `heat_pipe`/`radiator_old`, вентиляция `air`, газ `gas_pipe`/`gas_boiler`/`gas_meter`,
   `fire_detector`, у стены `ceiling_water`/`electric_shield_old`/`conditioner_cage`) — ставятся
   существующими `catalog_search` + `item_add` (план `{init:1}` каталога отображается в модельный
-  `{a:1}`, `dimensions.display` и `over_floor` — по эталонам UI). 16-й пункт — **газовая линия**
-  `gas_line`: отдельная сущность `model.pipes_gas` (граф узлов, длина в метрах) с новыми
-  инструментами `gas_line_add`/`gas_line_update`/`gas_line_delete` по образцу ригелей;
+  `{a:1}`, `dimensions.display` и `over_floor` — по эталонам UI). UI-эталоны сняты для 13 из 15
+  предметов; у `ventilation_hole` и `electric_shield_old` эталонов постановки нет (клик в пробах
+  объект не создал) — их пункты меню проверяются синтетически (этап 59). 16-й пункт —
+  **газовая линия** `gas_line`: отдельная сущность `model.pipes_gas` (граф узлов, длина в метрах)
+  с новыми инструментами `gas_line_add`/`gas_line_update`/`gas_line_delete` по образцу ригелей;
   `item_add` для линий отвергается `INVALID_ARGUMENT`. Верификация save по GET сверяет газовые
-  линии (узлы, тип, длина), потеря при нормализации — `NORMALIZATION_DROPPED`.
+  линии (узлы, тип, рёбра `matrix`, длина), потеря/искажение при нормализации —
+  `NORMALIZATION_DROPPED` (этап 59).
 - **Раздел «Лестницы» редактора: покрыты все 21 пунктов меню** (эталоны сняты из UI —
   `tests/fixtures/ui-ref-stair-*.json`): лестницы — **предметы каталога** (группа `stairs`),
   а не отдельная сущность — ставятся существующими `catalog_search` + `item_add`
