@@ -1,0 +1,121 @@
+{
+ "_source": "эталон формата из нормализованной модели редактора: живая проверка этапа 78 (PRO-проект, схема «копия → запись → проверка → восстановление», проба 78-live-check.ts): труба water_pipe (коллектор → узел → вывод ХВС+ГВС) пережила save → reopen; id вершин и координаты заменены на синтетические (см), привязка к квартире отсутствует; план в модели трубы отсутствует (Pipe.serialize бандла app.3.0 не пишет plan)",
+ "menu_title": "Труба ХВС",
+ "tool_id": "plannertool_water_pipe",
+ "catalog_defaults_cm": {
+  "id": 0,
+  "width": 0,
+  "height": 0,
+  "self_height": 0,
+  "plan": {
+   "waterplan": 27,
+   "water": 27
+  },
+  "anchor": "free"
+ },
+ "model_object": {
+  "id": "0",
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    },
+    null
+   ],
+   [
+    {
+     "length": 1
+    },
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    null,
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "i1",
+    "point": {
+     "x": 100,
+     "y": 100
+    },
+    "type": "multi"
+   },
+   {
+    "id": "n1",
+    "point": {
+     "x": 200,
+     "y": 100
+    },
+    "type": "node"
+   },
+   {
+    "id": "i2",
+    "point": {
+     "x": 300,
+     "y": 100
+    },
+    "type": "waterspot"
+   }
+  ],
+  "items": {
+   "i1": "multi",
+   "n1": "node",
+   "i2": "waterspot"
+  },
+  "type": "water_pipe",
+  "length": 2
+ },
+ "semantics": {
+  "connectable_waterspots": {
+   "water_pipe": [
+    "waterspot_cold",
+    "waterspot_cold_hot",
+    "waterspot_drainage_cold",
+    "waterspot_drainage_cold_hot",
+    "waterspot_collector",
+    "water",
+    "ceiling_water",
+    "water_column_cold"
+   ],
+   "water_hot_pipe": [
+    "waterspot_hot",
+    "waterspot_cold_hot",
+    "waterspot_drainage_hot",
+    "waterspot_drainage_cold_hot",
+    "waterspot_collector",
+    "water",
+    "ceiling_water",
+    "water_column_hot"
+   ],
+   "drainage_pipe": [
+    "waterspot_drainage",
+    "waterspot_drainage_cold",
+    "waterspot_drainage_hot",
+    "waterspot_drainage_cold_hot",
+    "water",
+    "drainage_column"
+   ]
+  },
+  "multi_spots": [
+   "waterspot_collector",
+   "water_column_cold",
+   "water_column_hot"
+  ],
+  "items_values": {
+   "collector_or_column": "multi",
+   "waterspot": "waterspot",
+   "ceiling_water": "ceiling_water",
+   "node": "node"
+  },
+  "reverse_link": "props.pipes.{water_pipe_id|water_hot_pipe_id|drainage_pipe_id} = id трубы (multi — массив)"
+ }
+}

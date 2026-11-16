@@ -30,6 +30,7 @@ const EXPECTED_TOOLS = [
   "rigel_add", "rigel_update", "rigel_delete",
   // §7.4d — газовая линия (пункт меню «Коммуникации», этап 57)
   "gas_line_add", "gas_line_update", "gas_line_delete",
+  "pipe_add", "pipe_update", "pipe_delete",
   // §7.4e — проем в полу, терраса и участок (этап 64)
   "floor_hole_add", "floor_hole_update", "floor_hole_delete",
   "terrace_add", "terrace_border_update", "terrace_border_delete",

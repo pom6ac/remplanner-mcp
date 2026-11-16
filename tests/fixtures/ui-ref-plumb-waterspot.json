@@ -1,0 +1,73 @@
+{
+ "_source": "клик в UI анонимного проекта (headless Chromium, база «коридор + 3 комнаты» синтетическая), проба 78-plumb-ui.ts, model project.copy(\"server\"), без сохранения; id предмета/комнаты/стен — случайные id сессии; координаты — точки синтетического листа; id проектов/планов и данные пользователя отсутствуют",
+ "menu_title": "Вывод ХВС+ГВС",
+ "tool_id": "plannertool_waterspot_cold_hot",
+ "catalog_defaults_cm": {
+  "id": 211,
+  "width": 16,
+  "height": 9,
+  "self_height": 0,
+  "plan": {
+   "waterplan": 27,
+   "water": 27
+  },
+  "anchor": "free",
+  "over_floor": {
+   "value": 50,
+   "display": false
+  }
+ },
+ "model_object": {
+  "name": "waterspot_cold_hot",
+  "pc": {
+   "x": 150,
+   "y": -290
+  },
+  "angle": 180,
+  "projection": {
+   "x": 150,
+   "y": -290
+  },
+  "id_room": "_q7p3s",
+  "width": 16,
+  "height": 9,
+  "plan": {
+   "water": 27
+  },
+  "id": "_obhx9",
+  "item_id": 211,
+  "waterspots_change_sequence": 1,
+  "over_floor": {
+   "value": 50,
+   "display": false
+  },
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 150,
+   "y": -290
+  },
+  "center3d": {
+   "x": 150,
+   "y": -290
+  },
+  "id_room_zone": "_4qb7k",
+  "id_wall": "_46d9s",
+  "id_wall_old": "_46d9s",
+  "wall_direction": "r"
+ }
+}

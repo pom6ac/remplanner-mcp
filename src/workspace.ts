@@ -93,7 +93,7 @@ export type SaveOutcome = {
   verified: boolean;
   rounds: number;
   /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено. */
-  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; terrace_borders: number; territory_borders: number; level_holes: number };
+  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number };
   /** Предупреждения (удаления объектов сервера). */
   warnings: string[];
 };
@@ -105,8 +105,8 @@ export const MAX_HISTORY = 50;
 /** Результат мутации стен: полезное значение + предупреждения (офлайн-режим). */
 export type WallMutation<T> = { result: T; warnings: string[] };
 
-/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии, границы террас/участка, проёмы пола. */
-export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; terrace_borders: number; territory_borders: number; level_holes: number } {
+/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии, трубы воды, границы террас/участка, проёмы пола. */
+export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number } {
   const m = model as Model;
   const walls = m.walls ?? {};
   return {
@@ -116,6 +116,7 @@ export function modelCounts(model: Model | Record<string, unknown>): { walls: nu
     pillars: Object.keys(m.pillars ?? {}).length,
     rigels: Object.keys(m.rigels ?? {}).length,
     gas_lines: Object.keys(m.pipes_gas ?? {}).length,
+    pipes: Object.keys(m.pipes ?? {}).length,
     terrace_borders: Object.keys(m.terrace_borders ?? {}).length,
     territory_borders: Object.keys(m.territory_borders ?? {}).length,
     level_holes: Object.keys(m.level_holes ?? {}).length,
@@ -144,6 +145,7 @@ export function modelIsContentEmpty(model: Model): boolean {
   const nonEmpty = (v: unknown): boolean => v !== null && v !== undefined && typeof v === "object" && Object.keys(v as object).length > 0;
   if (nonEmpty(model.pillars) || nonEmpty(model.rigels) || nonEmpty(model.rulers) || nonEmpty(model.comments)) return false;
   if (nonEmpty(model.pipes_gas)) return false;
+  if (nonEmpty(model.pipes)) return false;
   if (nonEmpty(model.terrace_borders) || nonEmpty(model.territory_borders) || nonEmpty(model.level_holes)) return false;
   if (nonEmpty(model.rooms2) || nonEmpty(model.rooms1)) return false;
   return true;
@@ -450,21 +452,31 @@ function gasVertexMatch(expected: GasVertexSig[], got: GasVertexSig[]): number[]
 }
 
 /**
- * Расхождение газовых линий между двумя наборами — ПОЛНАЯ семантическая сверка
- * (ревью 61 №1): идентичности, вершины с согласованным сопоставлением (допуск
- * 0,1 см), рёбра matrix целиком в обе стороны (длины с допуском 0,02 м),
- * пустота диагонали (петля не проходит, ревью 62 №7), items,
- * plan и все прочие поля ожидаемой стороны; длина линии (допуск 0,02 м).
+ * Расхождение линий-графов (газовые линии, трубы водоснабжения) между двумя наборами —
+ * ПОЛНАЯ семантическая сверка (ревью 61 №1): идентичности, вершины с согласованным
+ * сопоставлением (допуск 0,1 см), рёбра matrix целиком в обе стороны (длины с допуском
+ * 0,02 м), пустота диагонали (петля не проходит, ревью 62 №7), items, plan и все прочие
+ * поля ожидаемой стороны; длина линии (допуск 0,02 м).
+ * entityLabel — имя сущности в сообщениях («газовая линия», «труба»).
+ * lenientItemVertices — у сущностей с вершинами-предметами (трубы) точку вершины
+ * сверяем мягко: редактор пересчитывает точку подключения к габариту предмета
+ * (connector geometry, бандл app.3.0 Piping.get_point), поэтому локальная точка
+ * (центр предмета) отличается от нормализованной; сверяются id/тип/поля и матрица.
  * Возвращает список человекочитаемых расхождений; пустой список — совпадают.
  */
-function gasLineGraphMismatches(expected: Record<string, GasLineSig>, got: Record<string, unknown>): string[] {
+function gasLineGraphMismatches(
+  expected: Record<string, GasLineSig>,
+  got: Record<string, unknown>,
+  entityLabel = "газовая линия",
+  lenientItemVertices = false,
+): string[] {
   const out: string[] = [];
   const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
     a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
   for (const [id, g0] of Object.entries(expected)) {
     const g = got[id] as GasLineSig | undefined;
     if (!g) {
-      out.push(`${id}: газовая линия исчезла после сохранения`);
+      out.push(`${id}: ${entityLabel} исчезла после сохранения`);
       continue;
     }
     const expV = g0.vertexes ?? [];
@@ -478,7 +490,8 @@ function gasLineGraphMismatches(expected: Record<string, GasLineSig>, got: Recor
       const e = expV[i]!;
       const s = gotV[map[i]!]!;
       if ((e.type ?? "") !== (s.type ?? "")) out.push(`${id}: тип узла ${i} изменился (на сервере «${s.type ?? ""}»; ожидалось «${e.type ?? ""}»)`);
-      if (!near(s.point?.x, e.point?.x, GAS_VERTEX_TOL_CM) || !near(s.point?.y, e.point?.y, GAS_VERTEX_TOL_CM)) {
+      const loosePoint = lenientItemVertices && (e.type ?? "node") !== "node";
+      if (!loosePoint && (!near(s.point?.x, e.point?.x, GAS_VERTEX_TOL_CM) || !near(s.point?.y, e.point?.y, GAS_VERTEX_TOL_CM))) {
         out.push(`${id}: узел ${i} сместился (на сервере ${s.point?.x},${s.point?.y}; ожидалось ${e.point?.x},${e.point?.y})`);
       }
       for (const [k, v] of Object.entries(e)) {
@@ -818,6 +831,23 @@ export class Workspace {
           details: { lost_gas_lines: lostGasNorm, gas_line_mismatches: gasGraphNorm },
         });
       }
+      // этап 78: трубы водоснабжения после нормализации не теряются (сверка семантики
+      // графа; точки вершин-предметов — мягко: редактор пересчитывает подключение)
+      const wsPipeIds = new Set(Object.keys(this.modelInternal!.pipes ?? {}));
+      const normPipes = (norm.model as { pipes?: Record<string, unknown> }).pipes ?? {};
+      const normPipeIds = new Set(Object.keys(normPipes));
+      const lostPipesNorm = missingIds(wsPipeIds, normPipeIds);
+      const pipesGraphNorm = gasLineGraphMismatches(
+        structuredClone(this.modelInternal!.pipes ?? {}) as Record<string, GasLineSig>,
+        normPipes,
+        "труба",
+        true,
+      );
+      if (lostPipesNorm.length > 0 || pipesGraphNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил трубы водоснабжения — мутация отменена`, {
+          details: { lost_pipes: lostPipesNorm, pipe_mismatches: pipesGraphNorm },
+        });
+      }
       // этап 64: границы террас/участка и проёмы в полу после нормализации не теряются
       const lostBorders = checkBordersAfterNormalize(this.modelInternal!, norm.model as Model);
       if (lostBorders.length > 0) {
@@ -948,6 +978,7 @@ export class Workspace {
       pillars: missingIds(new Set(Object.keys(serverModel.pillars ?? {})), new Set(Object.keys(this.modelInternal!.pillars ?? {}))),
       rigels: missingIds(new Set(Object.keys(serverModel.rigels ?? {})), new Set(Object.keys(this.modelInternal!.rigels ?? {}))),
       gas_lines: missingIds(new Set(Object.keys(serverModel.pipes_gas ?? {})), new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}))),
+      pipes: missingIds(new Set(Object.keys(serverModel.pipes ?? {})), new Set(Object.keys(this.modelInternal!.pipes ?? {}))),
       terrace_borders: missingIds(new Set(Object.keys(serverModel.terrace_borders ?? {})), new Set(Object.keys(this.modelInternal!.terrace_borders ?? {}))),
       territory_borders: missingIds(new Set(Object.keys(serverModel.territory_borders ?? {})), new Set(Object.keys(this.modelInternal!.territory_borders ?? {}))),
       level_holes: missingIds(new Set(Object.keys(serverModel.level_holes ?? {})), new Set(Object.keys(this.modelInternal!.level_holes ?? {}))),
@@ -959,6 +990,7 @@ export class Workspace {
       pillars: deletedIds.pillars.length,
       rigels: deletedIds.rigels.length,
       gas_lines: deletedIds.gas_lines.length,
+      pipes: deletedIds.pipes.length,
       terrace_borders: deletedIds.terrace_borders.length,
       territory_borders: deletedIds.territory_borders.length,
       level_holes: deletedIds.level_holes.length,
@@ -972,6 +1004,7 @@ export class Workspace {
     if (willDelete.pillars > 0) warnings.push(`будут удалены колонны (${willDelete.pillars}), которых нет в модели: ${idList(deletedIds.pillars)}`);
     if (willDelete.rigels > 0) warnings.push(`будут удалены ригели (${willDelete.rigels}), которых нет в модели: ${idList(deletedIds.rigels)}`);
     if (willDelete.gas_lines > 0) warnings.push(`будут удалены газовые линии (${willDelete.gas_lines}), которых нет в модели: ${idList(deletedIds.gas_lines)}`);
+    if (willDelete.pipes > 0) warnings.push(`будут удалены трубы водоснабжения (${willDelete.pipes}), которых нет в модели: ${idList(deletedIds.pipes)}`);
     if (willDelete.terrace_borders > 0) warnings.push(`будут удалены границы террас (${willDelete.terrace_borders}), которых нет в модели: ${idList(deletedIds.terrace_borders)}`);
     if (willDelete.territory_borders > 0) warnings.push(`будут удалены границы участка (${willDelete.territory_borders}), которых нет в модели: ${idList(deletedIds.territory_borders)}`);
     if (willDelete.level_holes > 0) warnings.push(`будут удалены проёмы в полу (${willDelete.level_holes}), которых нет в модели: ${idList(deletedIds.level_holes)}`);
@@ -1038,6 +1071,11 @@ export class Workspace {
     const expectedGasLines = structuredClone((norm.model as { pipes_gas?: Record<string, GasLineSig> }).pipes_gas ?? {});
     const localGasIds = new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}));
     const gotGasIds = new Set(Object.keys((norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {}));
+    // этап 78: трубы водоснабжения — ожидаемые из нормализованной модели (точки
+    // вершин-предметов редактор пересчитывает — сверка локальной копии мягкая)
+    const expectedPipes = structuredClone((norm.model as { pipes?: Record<string, GasLineSig> }).pipes ?? {});
+    const localPipeIds = new Set(Object.keys(this.modelInternal!.pipes ?? {}));
+    const gotPipeIds = new Set(Object.keys((norm.model as { pipes?: Record<string, unknown> }).pipes ?? {}));
     // этап 64: ожидаемые границы террас/участка и проёмы в полу — из нормализованной модели
     const expectedBorders = {
       terrace_borders: structuredClone((norm.model as { terrace_borders?: Record<string, unknown> }).terrace_borders ?? {}),
@@ -1049,12 +1087,19 @@ export class Workspace {
     const lostPillars = missingIds(localPillarIds, gotPillarIds);
     const lostRigels = missingIds(localRigelIds, gotRigelIds);
     const lostGasLines = missingIds(localGasIds, gotGasIds);
+    const lostPipes = missingIds(localPipeIds, gotPipeIds);
     // ревью 59 №1: до save сверяется семантический граф локальной и нормализованной
     // моделей (узлы, тип, рёбра matrix, длина) — normalizer, обнуливший рёбра,
     // не проходит как «verified»
     const gasGraphNorm = gasLineGraphMismatches(
       structuredClone(this.modelInternal!.pipes_gas ?? {}) as Record<string, GasLineSig>,
       (norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {},
+    );
+    const pipesGraphNorm = gasLineGraphMismatches(
+      structuredClone(this.modelInternal!.pipes ?? {}) as Record<string, GasLineSig>,
+      (norm.model as { pipes?: Record<string, unknown> }).pipes ?? {},
+      "труба",
+      true,
     );
     // этап 64: потери границ и проёмов пола при нормализации
     const bordersNorm = checkBordersAfterNormalize(this.modelInternal!, norm.model as Model);
@@ -1076,8 +1121,8 @@ export class Workspace {
     }
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
-      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 ||
-      gasGraphNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0 || propsNorm.length > 0
+      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 || lostPipes.length > 0 ||
+      gasGraphNorm.length > 0 || pipesGraphNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0 || propsNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -1094,6 +1139,8 @@ export class Workspace {
           lost_rigels: lostRigels,
           lost_gas_lines: lostGasLines,
           gas_line_mismatches: gasGraphNorm,
+          lost_pipes: lostPipes,
+          pipe_mismatches: pipesGraphNorm,
           border_mismatches: bordersNorm,
           level_hole_mismatches: holesNorm,
           wall_role_mismatches: rolesNorm,
@@ -1134,6 +1181,9 @@ export class Workspace {
       // и длине (ревью 59 №1 — топология входит в сверку)
       const gasAfter = (after.model["pipes_gas"] as Record<string, unknown> | undefined) ?? {};
       const gasMismatch = gasLineGraphMismatches(expectedGasLines, gasAfter);
+      // этап 78: трубы водоснабжения после save — по нормализованной семантике графа
+      const pipesAfter = (after.model["pipes"] as Record<string, unknown> | undefined) ?? {};
+      const pipeMismatch = gasLineGraphMismatches(expectedPipes, pipesAfter, "труба");
       // этап 64: границы террас/участка и проёмы в полу после save — по нормализованной семантике
       const bordersAfter = {
         terrace_borders: (after.model["terrace_borders"] as Record<string, unknown> | undefined) ?? {},
@@ -1155,7 +1205,7 @@ export class Workspace {
         wallsAfterTyped as unknown as Record<string, BalconyWallProps>,
       );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -1168,6 +1218,7 @@ export class Workspace {
             axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,
             pillar_mismatches: pillarMismatch, rigel_mismatches: rigelMismatch, item_mismatches: itemMismatch,
             gas_line_mismatches: gasMismatch,
+            pipe_mismatches: pipeMismatch,
             border_mismatches: borderMismatch,
             level_hole_mismatches: holeMismatch,
             wall_role_mismatches: wallRoleMismatch,
@@ -1199,7 +1250,7 @@ export class Workspace {
     prepareForRestore(prepared);
     const norm = await editor.normalize(prepared as unknown as Record<string, unknown>);
     if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
-    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items, pillars: norm.after.pillars ?? Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}).length, rigels: norm.after.rigels ?? Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}).length };
+    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items, pillars: norm.after.pillars ?? Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}).length, rigels: norm.after.rigels ?? Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}).length, pipes: Object.keys((norm.model as { pipes?: Record<string, unknown> }).pipes ?? {}).length };
     // стены — по каноническому набору осевых отрезков (ревью v0.1.1-r2 R2-3):
     // слияние/разрез коллинеарных стен — допустимая нормализация, сдвиг и лишние
     // стены — расхождение; проёмы и предметы — по счётчикам
@@ -1212,6 +1263,7 @@ export class Workspace {
     if (seen.openings !== expected.openings) mismatch.push(`openings: в модели ${expected.openings}, в редакторе ${seen.openings}`);
     if (seen.items !== expected.items) mismatch.push(`items: в модели ${expected.items}, в редакторе ${seen.items}`);
     if (seen.pillars !== expected.pillars) mismatch.push(`pillars: в модели ${expected.pillars}, в редакторе ${seen.pillars}`);
+    if (seen.pipes !== expected.pipes) mismatch.push(`pipes: в модели ${expected.pipes}, в редакторе ${seen.pipes}`);
     if (seen.rigels !== expected.rigels) mismatch.push(`rigels: в модели ${expected.rigels}, в редакторе ${seen.rigels}`);
     if (mismatch.length > 0) {
       throw new McpError("RENDER_OUT_OF_SYNC", `редактор показывает не текущую модель (${mismatch.join(", ")}) — картинка не отдаётся`, {
