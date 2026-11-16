@@ -156,13 +156,26 @@ async function main() {
   //    стен) — сверяем с базовой линией, снятой до изменений (ревью 73 №5):
   //    новых проблем быть не должно
   const v = await call(client, "model_validate", {});
-  const fresh = (v.problems ?? []).filter((p: any) => !baseCodes.has(`${p.code}:${p.details?.wall_id ?? p.details?.hole_id ?? ""}`));
+  // WALL_DANGLING на только что созданных стенах ожидаем: модельный слой ставит
+  // только геометрию, связи (link) строит редактор при normalize/draw (design §12.3);
+  // до save они отсутствуют всегда — это не дефект добавления (save-верификация
+  // и reopen ниже проверяют итог). Остальные новые проблемы — дефект.
+  const createdIds = new Set(balc.map((w: any) => w.id));
+  const fresh = (v.problems ?? []).filter((p: any) =>
+    !baseCodes.has(`${p.code}:${p.details?.wall_id ?? p.details?.hole_id ?? ""}`)
+    && !(p.code === "WALL_DANGLING" && createdIds.has(p.details?.wall_id)));
   console.log("validate: базовых проблем", (vBase.problems ?? []).length, ", новых", fresh.length);
   if (fresh.length > 0) throw new Error("validate: новые проблемы: " + JSON.stringify(fresh).slice(0, 400));
-  const t0 = Date.now();
-  const saved = await ws.save();
-  console.log(`save ok in ${Date.now() - t0} ms; verified=${saved.verified}, rounds=${saved.rounds}, will_delete=${JSON.stringify(saved.will_delete)}`);
-  if (!saved.verified) throw new Error("save не verified");
+  // безопасность восстановления (ревью 73, cleanup): при любом исключении ПОСЛЕ
+  // успешного save созданные ограждения удаляются и модель сверяется с бэкапом —
+  // процесс не завершается, оставив проект изменённым
+  let persisted = false;
+  try {
+    const t0 = Date.now();
+    const saved = await ws.save();
+    persisted = true;
+    console.log(`save ok in ${Date.now() - t0} ms; verified=${saved.verified}, rounds=${saved.rounds}, will_delete=${JSON.stringify(saved.will_delete)}`);
+    if (!saved.verified) throw new Error("save не verified");
 
   // 4. reopen + сверка
   await call(client, "project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
@@ -266,5 +279,38 @@ async function main() {
 
   await client.close();
   process.exit(equal && nameGone && (snapOk !== false) ? 0 : 2);
+  } catch (e) {
+    console.error("FAIL:", String(e).slice(0, 1200));
+    if (persisted && balc) {
+      // аварийное восстановление: удаляем только созданные пробой объекты по ID
+      try {
+        ws.apply("71-live-cleanup", (m: any) => {
+          let n = 0;
+          for (const id of balc.map((w: any) => w.id)) {
+            if (m.walls[id]) { delete m.walls[id]; n++; }
+          }
+          return { balcony_walls: n };
+        });
+        await new Promise((res) => setTimeout(res, 5000)); // сохранение не чаще раза в 5 с
+        const s = await ws.save();
+        await call(client, "project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
+        const restored = await call(client, "model_get", { detail: "full" });
+        const equal = strip(restored) === strip(before);
+        console.log("аварийное восстановление:", `save verified=${s.verified}, сверка с бэкапом ${equal ? "OK" : "РАСХОЖДЕНИЕ"}`);
+        if (!equal) {
+          const b0 = strip(before), b1 = strip(restored);
+          for (let i = 0; i < Math.max(b0.length, b1.length); i++) {
+            if (b0[i] !== b1[i]) {
+              console.log("первое расхождение на", i, ":", b0.slice(Math.max(0, i - 120), i + 120), "|||", b1.slice(Math.max(0, i - 120), i + 120));
+              break;
+            }
+          }
+        }
+      } catch (e2) {
+        console.error("аварийное восстановление НЕ УДАЛОСЬ (проект может остаться изменённым):", String(e2).slice(0, 400));
+      }
+    }
+    process.exit(1);
+  }
 }
 main().catch((e) => { console.error("FAIL:", String(e).slice(0, 1200)); process.exit(1); });
