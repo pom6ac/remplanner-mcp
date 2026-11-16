@@ -13,8 +13,8 @@ import { McpError } from "../errors.ts";
  * высота, глубина (hole.depth — не толщина стены!), подоконник, дефолтное opening.
  * Двери (все 20 пунктов-проёмов меню «Двери и проемы»): проверены кликами по UI, эталоны
  * tests/fixtures/ui-ref-door-<тип>.json (этап 37, 2026-11-16): model.type, размеры,
- * глубина 4, casing/slope_angle/casements; opening редактор вычисляет по стороне помещения,
- * в MCP задаётся swing; лимиты размеров — из defs редактора (проба 37-dbg-defs.ts).
+ * глубина 4, casing/slope_angle/casements и opening (дефолт вида, формат зависит от типа);
+ * в MCP swing переопределяет opening; лимиты размеров — из defs редактора (проба 37-dbg-defs.ts).
  * Пункты doors_coupe_*, door_remote, door_videoremote — предметы каталога, не проёмы.
  */
 export type OpeningKind = {
@@ -25,7 +25,7 @@ export type OpeningKind = {
   depthCm: number;
   /** Высота от пола до низа проёма, см (подоконник окна / ноль у двери). */
   sillCm: number;
-  /** Только окна: дефолтное поле opening модели (сторона петель, как в UI). */
+  /** Дефолтное поле opening модели (дефолт вида из эталона UI; у дверей и окон). */
   defaultOpening?: string;
   /** Только окна: поле slopes модели (вылет откоса), если UI его создаёт. */
   slopesCm?: number;
@@ -58,7 +58,7 @@ export type OpeningKind = {
 export const OPENING_KINDS: Record<string, OpeningKind> = {
   // двери (group doors) — эталоны ui-ref-door-*.json (этап 37, 2026-11-16), лимиты из defs редактора:
   // у всех дверей depth 4, height 210 (garage 225), по умолчанию casing 1 (doorway/garage — 0),
-  // slope_angle 0, casements 1; opening редактор вычисляет по стороне помещения (в MCP — swing)
+  // slope_angle 0, casements 1; opening — дефолт вида из эталона (в MCP переопределяется swing)
   doorway: { type: "doorway", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
     defaultCasing: 0, defaultOpening: "r", widthMinMm: 500, widthMaxMm: 6000 },
   door: { type: "single", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
