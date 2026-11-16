@@ -325,7 +325,10 @@ function saveMock(server: SaveServer, afterSave: (s: SaveServer) => void, transf
     },
     async openEditor() { return editor; },
   };
-  return new Workspace(deps);
+  const ws = new Workspace(deps);
+  // ревью 75: снимок не пишется ни в домашний каталог, ни на диск — подмена writeBackup
+  (ws as unknown as { writeBackup: () => string }).writeBackup = () => "/offline";
+  return ws;
 }
 
 test("save: балкон сохраняется штатно — verified=true, без ложных блокировок", async () => {
@@ -464,4 +467,183 @@ test("save: нормализатор сменил height ограждения �
     return true;
   });
   assert.equal(saves, 0, "до записи дело не дошло");
+});
+
+// ревью 75 №2 (переоткрыт): сверка свойств ограждений — по геометрическому покрытию
+// оси, а не по совпадению id: rename, split и merge с испорченными свойствами у
+// любой части не проходят; допустимая нормализация (rename/split/merge без изменения
+// свойств, округление) — проходит
+
+/** Ограда-отрезок оси 0..400 (addBalcony), id для манипуляций в mock-нормализаторе. */
+function singleBalcony(): { model: Model; id: string } {
+  const model = roomModel().model;
+  const [w] = addBalcony(model, { points: [{ x: 0, y: 0 }, { x: 4000, y: 0 }] });
+  return { model, id: w!.id };
+}
+
+type NormWalls = Record<string, { id?: string; p1: { x: number; y: number }; p2: { x: number; y: number }; height?: number; depth?: number; material?: string; role?: string }>;
+
+function normWalls(m: Record<string, unknown>): NormWalls {
+  return m.walls as NormWalls;
+}
+
+test("save: rename ограждения с изменённым height — NORMALIZATION_DROPPED до записи (ревью 75 №2)", async () => {
+  const { model, id } = singleBalcony();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  let saves = 0;
+  const ws = saveMock(server, () => { saves++; }, (m) => {
+    const walls = normWalls(m);
+    const w = walls[id]!;
+    w.id = "renamed";
+    delete walls[id];
+    walls["renamed"] = w;
+    w.height = 123;
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "NORMALIZATION_DROPPED");
+    const details = (e as { details?: { wall_property_mismatches?: string[] } }).details;
+    assert.ok(
+      (details?.wall_property_mismatches ?? []).some((x) => x.includes("height") && x.includes("renamed")),
+      JSON.stringify(details),
+    );
+    return true;
+  });
+  assert.equal(saves, 0, "до записи дело не дошло");
+});
+
+test("save: split ограждения с испорченным height только у новой части — NORMALIZATION_DROPPED (ревью 75 №2)", async () => {
+  const { model, id } = singleBalcony();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  let saves = 0;
+  const ws = saveMock(server, () => { saves++; }, (m) => {
+    const walls = normWalls(m);
+    const first = walls[id]!;
+    const second = structuredClone(first) as NormWalls[string];
+    first.p2 = { x: 200, y: 0 };
+    second.id = "wb2";
+    second.p1 = { x: 200, y: 0 };
+    second.height = 123;
+    walls["wb2"] = second;
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "NORMALIZATION_DROPPED");
+    const details = (e as { details?: { wall_property_mismatches?: string[] } }).details;
+    assert.ok(
+      (details?.wall_property_mismatches ?? []).some((x) => x.includes("height") && x.includes("wb2")),
+      JSON.stringify(details),
+    );
+    return true;
+  });
+  assert.equal(saves, 0, "до записи дело не дошло");
+});
+
+test("save: merge двух коллинеарных оград с изменённым height — NORMALIZATION_DROPPED (ревью 75 №2)", async () => {
+  const { model, id } = singleBalcony();
+  // локально делим ограду на две коллинеарные части A (0..200) и B (200..400)
+  const a = model.walls[id]!;
+  const b = structuredClone(a);
+  a.p2 = { x: 200, y: 0 };
+  b.id = "wb2";
+  b.p1 = { x: 200, y: 0 };
+  model.walls["wb2"] = b;
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  let saves = 0;
+  const ws = saveMock(server, () => { saves++; }, (m) => {
+    const walls = normWalls(m);
+    const merged = structuredClone(walls[id]!) as NormWalls[string];
+    merged.id = "wbm";
+    merged.p2 = { x: 400, y: 0 };
+    merged.height = 123;
+    delete walls[id];
+    delete walls["wb2"];
+    walls["wbm"] = merged;
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "NORMALIZATION_DROPPED");
+    const details = (e as { details?: { wall_property_mismatches?: string[] } }).details;
+    assert.ok(
+      (details?.wall_property_mismatches ?? []).some((x) => x.includes("height") && x.includes("wbm")),
+      JSON.stringify(details),
+    );
+    return true;
+  });
+  assert.equal(saves, 0, "до записи дело не дошло");
+});
+
+test("save: rename ограждения без изменения свойств — допустимая нормализация, verified=true (ревью 75 №2)", async () => {
+  const { model, id } = singleBalcony();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (m) => {
+    const walls = normWalls(m);
+    const w = walls[id]!;
+    w.id = "renamed";
+    delete walls[id];
+    walls["renamed"] = w;
+  });
+  await ws.open("0", "1");
+  const out = await ws.save();
+  assert.equal(out.verified, true);
+  assert.equal(out.rounds, 1);
+});
+
+test("save: split ограждения без изменения свойств — допустимая нормализация, verified=true (ревью 75 №2)", async () => {
+  const { model, id } = singleBalcony();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (m) => {
+    const walls = normWalls(m);
+    const first = walls[id]!;
+    const second = structuredClone(first) as NormWalls[string];
+    first.p2 = { x: 200, y: 0 };
+    second.id = "wb2";
+    second.p1 = { x: 200, y: 0 };
+    walls["wb2"] = second;
+  });
+  await ws.open("0", "1");
+  const out = await ws.save();
+  assert.equal(out.verified, true);
+  assert.equal(out.rounds, 1);
+});
+
+test("save: merge двух коллинеарных оград без изменения свойств — допустимая нормализация (ревью 75 №2)", async () => {
+  const { model, id } = singleBalcony();
+  const a = model.walls[id]!;
+  const b = structuredClone(a);
+  a.p2 = { x: 200, y: 0 };
+  b.id = "wb2";
+  b.p1 = { x: 200, y: 0 };
+  model.walls["wb2"] = b;
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (m) => {
+    const walls = normWalls(m);
+    const merged = structuredClone(walls[id]!) as NormWalls[string];
+    merged.id = "wbm";
+    merged.p2 = { x: 400, y: 0 };
+    delete walls[id];
+    delete walls["wb2"];
+    walls["wbm"] = merged;
+  });
+  await ws.open("0", "1");
+  const out = await ws.save();
+  assert.equal(out.verified, true);
+  assert.equal(out.rounds, 1);
+});
+
+test("save: округление height/depth ограждения в допуске — не расхождение, verified=true (ревью 75 №2)", async () => {
+  const { model, id } = singleBalcony();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (m) => {
+    const w = normWalls(m)[id]!;
+    w.height = 100.05;
+    w.depth = 9.95;
+  });
+  await ws.open("0", "1");
+  const out = await ws.save();
+  assert.equal(out.verified, true);
+  assert.equal(out.rounds, 1);
 });
