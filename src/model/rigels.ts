@@ -387,8 +387,9 @@ function assignRigel(target: Rigel, candidate: Rigel): void {
 
 /**
  * rigel_add: ставит потолочный ригель (мм): ось start→end, толщина depth_mm
- * (по умолчанию 300), высота height_mm (по умолчанию 300). Концы при расстоянии
- * ≤ 30 мм от грани стены/колонны/ригеля прилипают к ней, как в UI.
+ * (по умолчанию 300), высота height_mm (по умолчанию 300). Концы в пределах
+ * 30 мм от грани стены/колонны/ригеля прилипают к ней — консервативный магнит
+ * MCP (в редакторе радиус ≥ 40 см, но связи редактор пересчитывает сам).
  * Ревью 48 №1: вход в общую атомарную финализацию — зависимые ригели
  * пересчитывают связи и полигоны; при ошибке модель идентична snapshot.
  */
@@ -460,49 +461,65 @@ export function deleteRigel(model: Model, rigelId: string): void {
 
 /**
  * Пересчёт связей ригелей после изменения стен/колонн/ригелей (этап 47; ревью 48
- * №1 и №2): связи, указывающие на изменившиеся/удалённые грани, пересчитываются
- * предикатом Rigel.link, а у ригелей с ненулевыми связями пересчитывается форма
- * (polygon/l/r) даже при неизменных id/z1 — геометрия связанной грани могла
- * измениться (поворот колонны, перенос стены). Ригели с погашенными связями
- * (обе 0) и без изменений не трогаются — побайтово прежние. Положение ригеля
- * (p1/p2) редактор не двигает — связи не притягивают ригель. Ошибок не даёт
- * (модель не меняется при невозможности пересчёта — связи просто гасятся).
+ * №1 и №2): связи, указывающие на изменившиеся/удалённые/перестроенные грани,
+ * пересчитываются предикатом Rigel.link, а у ригелей с ненулевыми связями
+ * пересчитывается форма (polygon/l/r) даже при неизменных id/z1 — геометрия
+ * связанной грани могла измениться (поворот колонны, перенос стены). Ригели с
+ * погашенными связями (обе 0) и без изменений не трогаются — побайтово прежние.
+ * Положение ригеля (p1/p2) редактор не двигает — связи не притягивают ригель.
+ *
+ * Финализация транзитивная (ревью 50 major 50-1): проходы повторяются до
+ * неподвижной точки — зависимый ригель C в цепочке A→B→C обязан увидеть уже
+ * пересчитанную грань B, каким бы ни был порядок коллекции. Число проходов
+ * ограничено (ригели + 2): взаимные связи (A↔B, A→B→C→A) сходятся за два
+ * прохода, а колеблющийся цикл не крутится бесконечно — при не-сходимости
+ * бросается INTERNAL, и вызывающая операция откатывается атомарно к snapshot.
  * Вызывается внутри atomic() стен и атомарных операций колонн и ригелей.
  */
 export function refreshRigelsAfterWallOrPillarChange(model: Model): void {
   const rigels = model.rigels;
   if (!rigels || Object.keys(rigels).length === 0) return;
-  for (const rigel of Object.values(rigels)) {
-    const axis: Segment = { p1: rigel.p1, p2: rigel.p2 };
-    const canceled = cancelSameLinks(rigelLink(rigel.p1, axis, model, rigel.id), rigelLink(rigel.p2, axis, model, rigel.id));
-    const link1 = canceled.p1;
-    const link2 = canceled.p2;
-    const linksSame =
-      JSON.stringify(rigel.p1.link ?? 0) === JSON.stringify(link1) &&
-      JSON.stringify(rigel.p2.link ?? 0) === JSON.stringify(link2);
-    if (linksSame && link1 === 0 && link2 === 0) {
-      continue; // несвязанный ригель не трогаем (байт в байт)
+  const maxPasses = Object.keys(rigels).length + 2;
+  for (let pass = 0; pass < maxPasses; pass++) {
+    let changed = false;
+    for (const rigel of Object.values(rigels)) {
+      const axis: Segment = { p1: rigel.p1, p2: rigel.p2 };
+      const canceled = cancelSameLinks(rigelLink(rigel.p1, axis, model, rigel.id), rigelLink(rigel.p2, axis, model, rigel.id));
+      const link1 = canceled.p1;
+      const link2 = canceled.p2;
+      const linksSame =
+        JSON.stringify(rigel.p1.link ?? 0) === JSON.stringify(link1) &&
+        JSON.stringify(rigel.p2.link ?? 0) === JSON.stringify(link2);
+      if (linksSame && link1 === 0 && link2 === 0) {
+        continue; // несвязанный ригель не трогаем (байт в байт)
+      }
+      const candidate = structuredClone(rigel);
+      candidate.p1.link = link1;
+      candidate.p2.link = link2;
+      const shape = buildPolygon(candidate.p1, candidate.p2, candidate.depth, model, candidate.id, {
+        p1: link1,
+        p2: link2,
+      });
+      candidate.polygon = shape.polygon;
+      candidate.l = roundSeg(shape.l);
+      candidate.r = roundSeg(shape.r);
+      if (
+        linksSame &&
+        sameShape(candidate.polygon, rigel.polygon) &&
+        samePoint(candidate.l.p1, rigel.l.p1) && samePoint(candidate.l.p2, rigel.l.p2) &&
+        samePoint(candidate.r.p1, rigel.r.p1) && samePoint(candidate.r.p2, rigel.r.p2)
+      ) {
+        continue; // связи и форма не изменились — ригель не трогаем (байт в байт)
+      }
+      assignRigel(rigel, candidate);
+      changed = true;
     }
-    const candidate = structuredClone(rigel);
-    candidate.p1.link = link1;
-    candidate.p2.link = link2;
-    const shape = buildPolygon(candidate.p1, candidate.p2, candidate.depth, model, candidate.id, {
-      p1: link1,
-      p2: link2,
-    });
-    candidate.polygon = shape.polygon;
-    candidate.l = roundSeg(shape.l);
-    candidate.r = roundSeg(shape.r);
-    if (
-      linksSame &&
-      sameShape(candidate.polygon, rigel.polygon) &&
-      samePoint(candidate.l.p1, rigel.l.p1) && samePoint(candidate.l.p2, rigel.l.p2) &&
-      samePoint(candidate.r.p1, rigel.r.p1) && samePoint(candidate.r.p2, rigel.r.p2)
-    ) {
-      continue; // связи и форма не изменились — ригель не трогаем (байт в байт)
-    }
-    assignRigel(rigel, candidate);
+    if (!changed) return; // неподвижная точка: результат совпадает с повторной финализацией
   }
+  throw new McpError(
+    "INTERNAL",
+    `финализация связей ригелей не сошлась за ${maxPasses} проходов — циклические связи не стабилизируются`,
+  );
 }
 
 /** Совпадение точек с допуском (шум точности редактора не считается изменением). */
