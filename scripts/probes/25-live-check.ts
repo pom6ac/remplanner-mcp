@@ -87,6 +87,8 @@ for (const [i, job] of JOBS.entries()) {
       process.exit(1);
     }
     added.push({ id: r.entity.id, label: job.type, expect: job.expect });
+    // freeCenter считает по этой же структуре — сразу учесть добавленный проём
+    wall.openings.push({ offset_mm: r.entity.offset_mm, width_mm: r.entity.width_mm });
     placed = true;
   }
   if (!placed) {
