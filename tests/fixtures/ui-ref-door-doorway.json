@@ -1,0 +1,66 @@
+{
+ "_source": "клик по UI проекта 7887657 (headless Chromium), scripts/probes/37-doors-ui.ts + 37-doors-ui-props.ts, model project.copy(\"server\"), без сохранения; id/parent/_wall обезличены (0); opening удалён — вычисляется редактором по стороне помещения, в MCP задаётся swing",
+ "menu_title": "Проем без двери",
+ "catalog_key": "doorway",
+ "model_type": "doorway",
+ "defaults_model_cm": {
+  "plan": "a",
+  "type": "doorway",
+  "group": "doors",
+  "width": 80,
+  "height": 210,
+  "depth": 4,
+  "slope_angle": 0,
+  "casing": 0,
+  "casements": 1,
+  "id": "0"
+ },
+ "props_panel": [
+  {
+   "id": "cm-door",
+   "html": "<div class=\"contextmenu v2\" id=\"cm-door\" style=\"display: block; top: 501px; left: 758px;\">\n            <div class=\"contextmenu_item input\">\n                Ширина проема:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" action=\"width\" type=\"text\" maxlength=\"5\" value=\"\" placeholder=\"80\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item input\">\n                Высота проема:\n                <div class=\"contextmenu_item_input\">\n                    <input class=\"numeric\" action=\"height\" type=\"text\" maxlength=\"5\" value=\"\" placeholder=\"210\">\n                    <span>ОК</span><em class=\"project-units\">см</em>\n                </div>\n            </div>\n            <div class=\"contextmenu_item switch pointer\" data-switcher-container=\"casing\" style=\"\">\n                <div class=\"footer_bar_tool_switch\" data-switcher=\"casing\"><span></span></div>\n                Короб с наличниками\n            </div>\n            <div class=\"contextmenu_item switch pointer\" data-switcher-container=\"arc\" style=\"\">\n                <div class=\"footer_bar_tool_switch\" data-switcher=\"arc\"><span></span></div>\n                Арочный проем\n            </div>\n            <div class=\"contextmenu_item pointer\" action=\"rotate\">\n                Изменить открывание\n            </div>\n                        <div id=\"cm-door--custom-options\">\n\n            </div>\n\n            <div class=\"contextmenu_item icons\"><em>Действия:</em>\n                <div class=\"contextmenu_item_icon turn\" action=\"rotate\">\n                    <span style=\"margin-left:-35px;\">Повернуть</span>\n                </div>\n                <div class=\"contextmenu_item_icon move\" data-button=\"move\">\n                    <span style=\"margin-left:-42px;\">Переместить</span>\n                </div>\n                <div class=\"contextmenu_item_icon copy\" action=\"copy\">\n                    <span style=\"margin-left: -39px\">Создать копию</span>\n                </div>\n                <div class=\"contextmenu_item_icon delete\" action=\"delete\">\n                    <span style=\"margin-left:-29px;\">Удалить</span>\n                </div>\n            </div>\n        </div>"
+  }
+ ],
+ "field_map_ui_to_model": [
+  {
+   "field": "width",
+   "set": "130",
+   "model": {
+    "plan": "a",
+    "type": "doorway",
+    "group": "doors",
+    "width": 130,
+    "height": 210,
+    "depth": 4,
+    "opening": "r",
+    "id": "_xdfps",
+    "position": "c",
+    "offset": 0,
+    "slope_angle": 0,
+    "casing": 0,
+    "casements": 1,
+    "selected": 1
+   }
+  },
+  {
+   "field": "height",
+   "set": "190",
+   "model": {
+    "plan": "a",
+    "type": "doorway",
+    "group": "doors",
+    "width": 130,
+    "height": 190,
+    "depth": 4,
+    "opening": "r",
+    "id": "_xdfps",
+    "position": "c",
+    "offset": 0,
+    "slope_angle": 0,
+    "casing": 0,
+    "casements": 1,
+    "selected": 1
+   }
+  }
+ ]
+}

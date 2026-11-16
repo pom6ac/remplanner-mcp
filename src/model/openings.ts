@@ -8,10 +8,14 @@ import { McpError } from "../errors.ts";
 
 /**
  * Таблица «ключ каталога → hole.type / group / дефолты».
- * Двери: door → single проверено кликами по UI (T1), остальные — по имени бандла.
  * Окна (все 7 пунктов меню «Окна»): проверены кликами по UI, эталоны
  * tests/fixtures/ui-ref-window-<тип>.json (этап 25, 2026-11-16): model.type, ширина,
  * высота, глубина (hole.depth — не толщина стены!), подоконник, дефолтное opening.
+ * Двери (все 20 пунктов-проёмов меню «Двери и проемы»): проверены кликами по UI, эталоны
+ * tests/fixtures/ui-ref-door-<тип>.json (этап 37, 2026-11-16): model.type, размеры,
+ * глубина 4, casing/slope_angle/casements; opening редактор вычисляет по стороне помещения,
+ * в MCP задаётся swing; лимиты размеров — из defs редактора (проба 37-dbg-defs.ts).
+ * Пункты doors_coupe_*, door_remote, door_videoremote — предметы каталога, не проёмы.
  */
 export type OpeningKind = {
   type: string;
@@ -35,30 +39,59 @@ export type OpeningKind = {
   impostOffsetCm?: number;
   /** Дефолтное поле filling (конфигурация заполнения, эталон UI — только у балконной двери). */
   defaultFilling?: number;
+  /** Только двери: дефолтный «Короб с наличниками» (эталон UI; 0 у doorway/door_garage). */
+  defaultCasing?: 0 | 1;
+  /** Лимиты ширины/высоты из defs редактора (панель свойств), мм. */
+  widthMinMm?: number;
+  widthMaxMm?: number;
+  heightMinMm?: number;
+  heightMaxMm?: number;
 };
 
 export const OPENING_KINDS: Record<string, OpeningKind> = {
-  // двери (group doors)
-  doorway: { type: "doorway", group: "doors", widthMm: 900, heightMm: 2100, depthCm: 10, sillCm: 0 },
-  door: { type: "single", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_double: { type: "double", group: "doors", widthMm: 1200, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_coupe: { type: "door_coupe", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_coupe_double: { type: "door_coupe_double", group: "doors", widthMm: 1200, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_penal: { type: "door_penal", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_penal_double: { type: "door_penal_double", group: "doors", widthMm: 1200, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_roto: { type: "door_roto", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_roto_double: { type: "door_roto_double", group: "doors", widthMm: 1200, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_book: { type: "door_book", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_book_double: { type: "door_book_double", group: "doors", widthMm: 1200, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_bellows: { type: "door_bellows", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_glass: { type: "door_glass", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_garage: { type: "door_garage", group: "doors", widthMm: 3000, heightMm: 2250, depthCm: 4, sillCm: 0 },
-  door_system_x2: { type: "door_system_x2", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_system_x3: { type: "door_system_x3", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_system_x4: { type: "door_system_x4", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_system_penal_x2: { type: "door_system_penal_x2", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_system_penal_x3: { type: "door_system_penal_x3", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
-  door_system_penal_x4: { type: "door_system_penal_x4", group: "doors", widthMm: 800, heightMm: 2000, depthCm: 4, sillCm: 0 },
+  // двери (group doors) — эталоны ui-ref-door-*.json (этап 37, 2026-11-16), лимиты из defs редактора:
+  // у всех дверей depth 4, height 210 (garage 225), по умолчанию casing 1 (doorway/garage — 0),
+  // slope_angle 0, casements 1; opening редактор вычисляет по стороне помещения (в MCP — swing)
+  doorway: { type: "doorway", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 0, widthMinMm: 500, widthMaxMm: 6000 },
+  door: { type: "single", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000, heightMinMm: 1000 },
+  door_double: { type: "double", group: "doors", widthMm: 1200, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 1000, widthMaxMm: 6000 },
+  door_coupe: { type: "door_coupe", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_coupe_double: { type: "door_coupe_double", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_penal: { type: "door_penal", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_penal_double: { type: "door_penal_double", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_roto: { type: "door_roto", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_roto_double: { type: "door_roto_double", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_book: { type: "door_book", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_book_double: { type: "door_book_double", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_bellows: { type: "door_bellows", group: "doors", widthMm: 1200, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_glass: { type: "door_glass", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_garage: { type: "door_garage", group: "doors", widthMm: 3000, heightMm: 2250, depthCm: 4, sillCm: 0,
+    defaultCasing: 0, widthMinMm: 2000, widthMaxMm: 6000, heightMinMm: 2000, heightMaxMm: 3000 },
+  door_system_x2: { type: "door_system_x2", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_system_x3: { type: "door_system_x3", group: "doors", widthMm: 2400, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_system_x4: { type: "door_system_x4", group: "doors", widthMm: 3200, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_system_penal_x2: { type: "door_system_penal_x2", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_system_penal_x3: { type: "door_system_penal_x3", group: "doors", widthMm: 2400, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+  door_system_penal_x4: { type: "door_system_penal_x4", group: "doors", widthMm: 3200, heightMm: 2100, depthCm: 4, sillCm: 0,
+    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
   // окна (group windows) — эталоны ui-ref-window-*.json, проверено в UI
   windowway: { type: "windowway", group: "windows", widthMm: 1200, heightMm: 1500, depthCm: 6, sillCm: 85,
     defaultOpening: "r", slopesCm: 20, defaultCasements: 1, sillSide: "l" },
@@ -239,6 +272,26 @@ export function validateOpeningParams(kind: OpeningKind, p: Partial<AddOpeningPa
     .filter((k) => p[k] !== undefined);
   if (sillKeys.length > 0 && kind.group !== "windows") {
     invalidParam(`параметры ${sillKeys.map((k) => PARAM_MCP_NAME[k]).join(", ")} применимы только к окнам`);
+  }
+  if (p.sillHeightMm !== undefined && kind.group !== "windows") {
+    invalidParam("sill_height_mm не применим к дверям — высота от пола у дверей в редакторе не задаётся (только у окон и балконной двери)");
+  }
+  // лимиты размеров из defs редактора (этап 37): ширина/высота дверей в панели ограничены
+  if (p.widthMm !== undefined) {
+    if (kind.widthMinMm !== undefined && p.widthMm < kind.widthMinMm) {
+      invalidParam(`width_mm меньше минимума типа ${kind.type} (${kind.widthMinMm} мм по панели редактора)`);
+    }
+    if (kind.widthMaxMm !== undefined && p.widthMm > kind.widthMaxMm) {
+      invalidParam(`width_mm больше максимума типа ${kind.type} (${kind.widthMaxMm} мм по панели редактора)`);
+    }
+  }
+  if (p.heightMm !== undefined) {
+    if (kind.heightMinMm !== undefined && p.heightMm < kind.heightMinMm) {
+      invalidParam(`height_mm меньше минимума типа ${kind.type} (${kind.heightMinMm} мм по панели редактора)`);
+    }
+    if (kind.heightMaxMm !== undefined && p.heightMm > kind.heightMaxMm) {
+      invalidParam(`height_mm больше максимума типа ${kind.type} (${kind.heightMaxMm} мм по панели редактора)`);
+    }
   }
   // согласованность частей балконного блока проверяется один раз при построении
   // кандидат-копии (windoorParts) и в итоговых инвариантах assertHoleInvariants — без повторов
@@ -501,8 +554,13 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
   if (opening) hole.opening = opening;
   if (params.arched) hole["arched"] = 1;
   if (kind.group === "windows") applyWindowFields(hole, kind, params, parts ?? undefined);
-  else if (params.casing !== undefined) hole.casing = params.casing ? 1 : 0;
-  if (kind.group !== "windows" && params.leaves !== undefined) hole.casements = params.leaves;
+  else {
+    // двери (этап 37): короб с наличниками по умолчанию (у doorway/garage выключен),
+    // число полотен casements 1, угол рассвета 0 — как в эталоне UI
+    hole.casing = params.casing === undefined ? (kind.defaultCasing ?? 1) : params.casing ? 1 : 0;
+    hole.casements = params.casements ?? params.leaves ?? 1;
+    hole.slope_angle = 0;
+  }
 
   setHolePoints(wall, hole);
   assertHoleInvariants(hole); // все инварианты кандидата — до записи в модель (ревью 28, R3/R4)

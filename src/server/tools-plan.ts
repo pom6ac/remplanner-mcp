@@ -267,23 +267,35 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     // ---------- Проёмы (§7.3) ----------
     opening_add: tool(
-      "Добавить проём на стену. Двери: door (дверь 80×200), door_double (двустворчатая 120), doorway (проём без двери), " +
-        "door_coupe, door_penal, door_roto, door_book, door_bellows, door_glass, door_garage, door_system_*. " +
+      "Добавить проём на стену. Двери (пункты меню «Двери и проемы»): doorway (Проем без двери 80×210), " +
+        "door (Дверь стандартная 80×210), door_double (Дверь 2-створчатая 120), door_coupe (Дверь-купе сдвижная 80), " +
+        "door_coupe_double (Дверь-купе 2-створчатая 160), door_penal (Дверь-пенал раздвижная 80), " +
+        "door_penal_double (Дверь-пенал 2-створчатая 160), door_roto (Рото-дверь 80), door_roto_double (Рото-дверь 160), " +
+        "door_book (Дверь-книжка 80), door_book_double (Дверь-книжка 160), door_bellows (Дверь-гармошка 120), " +
+        "door_glass (Стеклянная дверь 80), door_garage (Гаражные ворота 300×225), " +
+        "door_system_x2/x3/x4 (Каскадная система 2/3/4-створчатая 160/240/320), " +
+        "door_system_penal_x2/x3/x4 (Раздвижная система 2/3/4-створчатая 160/240/320). " +
+        "Пункты меню «Двери-купе 2/3/4-дверные» (doors_coupe_2x/3x/4x), «Домофон» (door_remote) и «Видеодомофон» " +
+        "(door_videoremote) — предметы каталога, ставятся item_add, а не opening_add. " +
         "Окна (пункты меню «Окна»): windowway (Проем без окна 120×150), window (Стандартное окно 120×150, подоконник 85), " +
         "window_balcony (Балконный блок 180: окно+дверь, параметры window_*_mm/door_*_mm/door_position), " +
         "window_door (Балконная дверь 80×225), french_window (Французское окно распашное 120×250), " +
         "french_window_coupe (Французское окно раздвижное 120×250), french_window_double (Французское окно 4-створчатое 180×250). " +
         "Положение: offset_mm + from (смещение края проёма от угла комнаты; from=end — от противоположного конца) " +
-        "или center_mm (центр от начала оси стены). Размеры в мм; окна: sill_height_mm (подоконник), casements (створки), " +
-        "slope_angle_deg (угол рассвета), sill_thickness_mm/sill_overhang_mm/sill_overmeasure_mm (подоконник). " +
-        "Параметры применяются строго по типу: части балконного блока (window_*_mm, door_*_mm, door_position) — только " +
-        "window_balcony, impost_height_mm — только window_door, casements у французских окон не принимается; " +
+        "или center_mm (центр от начала оси стены). Размеры в мм; двери: swing (сторона петель/открывания), " +
+        "casing (короб с наличниками; по умолчанию включён, у doorway и door_garage выключен); " +
+        "окна: sill_height_mm (подоконник), casements (створки), slope_angle_deg (угол рассвета), " +
+        "sill_thickness_mm/sill_overhang_mm/sill_overmeasure_mm (подоконник). " +
+        "Параметры применяются строго по типу: sill_height_mm и sill-параметры — только окна, " +
+        "части балконного блока (window_*_mm, door_*_mm, door_position) — только window_balcony, " +
+        "impost_height_mm — только window_door, casements у французских окон не принимается; " +
         "door_position поддерживает только left (редактор сохраняет лишь левую дверь). " +
+        "Ширина/высота проверяются по лимитам типа из панели редактора. " +
         "Проём должен целиком помещаться на стене и не пересекать другие проёмы и примыкания стен (GEOMETRY_CONFLICT).",
       {
         wall_id: wallRef,
         type: z.string().refine((t) => t in OPENING_KINDS, { message: "неизвестный тип проёма" })
-          .describe(`door, door_double, doorway, window, windowway, window_balcony, window_door, french_window, french_window_coupe, french_window_double, … (всего ${Object.keys(OPENING_KINDS).length} типов)`),
+          .describe(`door, door_double, doorway, door_coupe, door_penal, door_roto, door_book, door_bellows, door_glass, door_garage, door_system_*, window, windowway, window_balcony, window_door, french_window, french_window_coupe, french_window_double (всего ${Object.keys(OPENING_KINDS).length} типов)`),
         offset_mm: mmInt.optional(),
         from: z.enum(["start", "end"]).optional(),
         center_mm: mmInt.optional(),
@@ -291,7 +303,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         height_mm: mmInt.optional(),
         sill_height_mm: mmInt.optional().describe("окна: высота подоконника над полом"),
         swing: swing.optional().describe("двери: петля и сторона открывания"),
-        casements: z.number().int().min(0).max(6).optional().describe("окна: число створок"),
+        casing: z.boolean().optional().describe("короб с наличниками (двери и окна); по умолчанию включён, у doorway и door_garage выключен"),
+        casements: z.number().int().min(0).max(6).optional().describe("окна и двери: число створок (кроме французских окон)"),
         slope_angle_deg: z.number().min(0).max(45).optional().describe("окна: угол рассвета (откосов), градусы"),
         sill_thickness_mm: mmInt.optional().describe("окна: толщина подоконника"),
         sill_overhang_mm: mmInt.optional().describe("окна: вылет подоконника"),
@@ -316,6 +329,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           heightMm: a["height_mm"] as number | undefined,
           sillHeightMm: a["sill_height_mm"] as number | undefined,
           swing: a["swing"] as { hinge: "start" | "end"; into: "left" | "right" } | undefined,
+          casing: a["casing"] as boolean | undefined,
           casements: a["casements"] as number | undefined,
           slopeAngleDeg: a["slope_angle_deg"] as number | undefined,
           sillThicknessMm: a["sill_thickness_mm"] as number | undefined,
@@ -334,10 +348,13 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     opening_update: tool(
-      "Изменить проём: размеры, положение (offset_mm/from или center_mm), подоконник, сторону открывания, створки, " +
-        "угол рассвета; у балконного блока — window_*_mm/door_*_mm/door_position, у балконной двери impost_height_mm. " +
-        "Параметры применяются строго по типу проёма: части балконного блока — только window_balcony, " +
-        "impost_height_mm — только window_door, casements у французских окон не принимается, door_position — только left. " +
+      "Изменить проём: размеры, положение (offset_mm/from или center_mm), сторону открывания (swing), " +
+        "короб с наличниками (casing); у окон — подоконник, створки, угол рассвета; у балконного блока — " +
+        "window_*_mm/door_*_mm/door_position, у балконной двери impost_height_mm. " +
+        "Параметры применяются строго по типу проёма: sill_height_mm и sill-параметры — только окна, " +
+        "части балконного блока — только window_balcony, impost_height_mm — только window_door, " +
+        "casements у французских окон не принимается, door_position — только left; " +
+        "ширина/высота проверяются по лимитам типа из панели редактора. " +
         "Смена типа не поддерживается: переданный type, отличный от текущего, вернёт INVALID_ARGUMENT — " +
         "удалите проём (opening_delete) и добавьте новый (opening_add) с нужным типом; передача текущего типа — no-op. " +
         "Поля не указанные — не меняются. opening_id — id проёма (site_id) из model_get.",
@@ -353,7 +370,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         height_mm: mmInt.optional(),
         sill_height_mm: mmInt.optional(),
         swing: swing.optional(),
-        casements: z.number().int().min(0).max(6).optional().describe("окна: число створок (кроме французских окон)"),
+        casing: z.boolean().optional().describe("короб с наличниками (двери и окна)"),
+        casements: z.number().int().min(0).max(6).optional().describe("окна и двери: число створок (кроме французских окон)"),
         slope_angle_deg: z.number().min(0).max(45).optional().describe("окна: угол рассвета, градусы"),
         sill_thickness_mm: mmInt.optional(),
         sill_overhang_mm: mmInt.optional(),
@@ -387,6 +405,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             heightMm: a["height_mm"] as number | undefined,
             sillHeightMm: a["sill_height_mm"] as number | undefined,
             swing: a["swing"] as { hinge: "start" | "end"; into: "left" | "right" } | undefined,
+            casing: a["casing"] as boolean | undefined,
             casements: a["casements"] as number | undefined,
             slopeAngleDeg: a["slope_angle_deg"] as number | undefined,
             sillThicknessMm: a["sill_thickness_mm"] as number | undefined,
