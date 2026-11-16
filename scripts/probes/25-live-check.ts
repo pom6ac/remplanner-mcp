@@ -1,5 +1,8 @@
-// 25-windows: живая проверка раздела «Окна» через MCP-инструменты в dev-проекте <REMPLANNER_PROBE_OBJECT_ID>.
+// 25-windows: живая проверка раздела «Окна» через MCP-инструменты.
 // 7 типов с нестандартными параметрами → model_validate → project_save → переоткрытие → сверка → render_plan.
+//
+// ВНИМАНИЕ: проба ОТКРЫВАЕТ и ПИШЕТ (project_save) в указанный аккаунтный проект и
+// предназначена ТОЛЬКО для dev-проекта; как доказательство живого сценария не используется.
 // node scripts/probes/25-live-check.ts
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -8,7 +11,7 @@ import { ServerContext } from "../../src/server/context.ts";
 import { buildServer } from "../../src/server.ts";
 
 // Проект для пробы задаётся env: проба открывает указанный проект, а 25-live-check
-// ещё и сохраняет в него (project_save). Без env — отказ (ревью 26, №5).
+// ещё и сохраняет в него. Без env — отказ (ревью 26, №5).
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
 if (!OBJECT_ID || !PLAN_ID) {
@@ -26,7 +29,7 @@ const client = new Client({ name: "25-windows-live", version: "0.0.0" });
 const [a, b] = InMemoryTransport.createLinkedPair();
 await Promise.all([server.connect(b), client.connect(a)]);
 
-await client.callTool({ name: "project_open", arguments: { object_id: "<REMPLANNER_PROBE_OBJECT_ID>", plan_id: "<REMPLANNER_PROBE_PLAN_ID>" } });
+await client.callTool({ name: "project_open", arguments: { object_id: OBJECT_ID, plan_id: PLAN_ID } });
 const before = json(await client.callTool({ name: "model_get", arguments: {} }));
 
 // стены для окон: без проёмов, с запасом длины

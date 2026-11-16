@@ -159,10 +159,21 @@ function invalidParam(msg: string): never {
   throw new McpError("INVALID_ARGUMENT", msg);
 }
 
+/** Числовой вход — конечное число > 0 (ревью 28, R3: Infinity проходит проверку «> 0»). */
+function finitePositive(name: string, v: number | undefined): void {
+  if (v !== undefined && !(Number.isFinite(v) && v > 0)) invalidParam(`${name} должен быть конечным числом > 0`);
+}
+
+/** Числовой вход — конечное число. */
+function finiteNumber(name: string, v: number | undefined): void {
+  if (v !== undefined && !Number.isFinite(v)) invalidParam(`${name} должен быть конечным числом`);
+}
+
 /**
- * Таблица применимости параметров по типам проёмов и общий валидатор (ревью 26, №1/№2/№3/№6).
- * Запускается до любой мутации — и в opening_add, и в opening_update; неприменимые параметры
- * и противоречивые сочетания отвергаются INVALID_ARGUMENT:
+ * Таблица применимости параметров по типам проёмов и общий валидатор (ревью 26, №1/№2/№3/№6;
+ * ревью 28, R2/R3/R4). Запускается до любой мутации — и в opening_add, и в opening_update;
+ * неприменимые параметры и противоречивые сочетания отвергаются INVALID_ARGUMENT:
+ *  - все числовые входы — конечные числа (R3: Infinity/NaN не проходят проверку «> 0»);
  *  - части балконного блока (window_*_mm, door_*_mm, door_position) — только у windoor;
  *  - итоговые ширины окна и двери — конечные и > 0; общая ширина согласована с частями;
  *  - в update общая ширина без частей пересчитывает части пропорционально прежним
@@ -172,10 +183,15 @@ function invalidParam(msg: string): never {
  *  - impost_height_mm — только балконная дверь, значение в пределах высоты двери;
  *  - casements у французских окон не принимается (в модели всегда 0);
  *  - подоконник (sill_*) и угол рассвета — только у окон.
+ *
+ * Выбор поведения (ревью 28, R4): если импост не передан явно, но перестаёт помещаться
+ * в дверь после изменения height_mm/sill_height_mm, выбирается ОШИБКА, а не пропорциональная
+ * коррекция — молча двигать геометрию нельзя; итоговый offset проверяется по кандидат-копии
+ * в assertHoleInvariants и при add, и при update.
  */
 export function validateOpeningParams(kind: OpeningKind, p: Partial<AddOpeningParams>, current?: Hole): void {
-  if (p.widthMm !== undefined && !(p.widthMm > 0)) invalidParam("width_mm должен быть конечным числом > 0");
-  if (p.heightMm !== undefined && !(p.heightMm > 0)) invalidParam("height_mm должен быть конечным числом > 0");
+  finitePositive("width_mm", p.widthMm);
+  finitePositive("height_mm", p.heightMm);
   if (kind.windoor && p.heightMm !== undefined) {
     invalidParam("у балконного блока нет общей высоты — задайте высоты частей window_height_mm/door_height_mm");
   }
@@ -187,10 +203,20 @@ export function validateOpeningParams(kind: OpeningKind, p: Partial<AddOpeningPa
   if (p.doorPosition === "right") {
     invalidParam("door_position: right не поддерживается — редактор сохраняет балконный блок только с левой дверью (l)");
   }
-  for (const [name, v] of [["window_width_mm", p.windowWidthMm], ["window_height_mm", p.windowHeightMm],
-    ["door_width_mm", p.doorWidthMm], ["door_height_mm", p.doorHeightMm]] as const) {
-    if (v !== undefined && !(v > 0)) invalidParam(`${name} должен быть конечным числом > 0`);
-  }
+  finitePositive("window_width_mm", p.windowWidthMm);
+  finitePositive("window_height_mm", p.windowHeightMm);
+  finitePositive("door_width_mm", p.doorWidthMm);
+  finitePositive("door_height_mm", p.doorHeightMm);
+  finiteNumber("impost_height_mm", p.impostHeightMm);
+  finiteNumber("sill_height_mm", p.sillHeightMm);
+  finiteNumber("center_mm", p.centerMm);
+  finiteNumber("offset_mm", p.offsetMm);
+  finiteNumber("slope_angle_deg", p.slopeAngleDeg);
+  finiteNumber("sill_thickness_mm", p.sillThicknessMm);
+  finiteNumber("sill_overhang_mm", p.sillOverhangMm);
+  finiteNumber("sill_overmeasure_mm", p.sillOvermeasureMm);
+  finiteNumber("casements", p.casements);
+  finiteNumber("leaves", p.leaves);
   if (p.impostHeightMm !== undefined && kind.impostOffsetCm === undefined) {
     invalidParam("impost_height_mm применим только к балконной двери (window_door)");
   }
@@ -214,7 +240,8 @@ export function validateOpeningParams(kind: OpeningKind, p: Partial<AddOpeningPa
   if (sillKeys.length > 0 && kind.group !== "windows") {
     invalidParam(`параметры ${sillKeys.map((k) => PARAM_MCP_NAME[k]).join(", ")} применимы только к окнам`);
   }
-  if (kind.windoor) windoorParts(kind, p, current); // согласованность общей ширины и частей
+  // согласованность частей балконного блока проверяется один раз при построении
+  // кандидат-копии (windoorParts) и в итоговых инвариантах assertHoleInvariants — без повторов
 }
 
 function wallAxis(wall: Wall): Segment {
@@ -322,12 +349,18 @@ function checkPlacement(wall: Wall, at: number, width: number, ignoreHoleId?: st
  * Приоритет — явно заданные части; недостающая часть дополняется из общей ширины.
  * Общая ширина против суммы частей — ошибка; в update общая ширина без частей
  * пересчитывает части пропорционально прежним (ревью 26, №2/№3).
+ * Единицы (ревью 28, R1): в см переводятся только явно переданные мм; текущие
+ * значения частей из модели уже в см и переносятся как есть.
  */
 function windoorParts(kind: OpeningKind, p: Partial<AddOpeningParams>, current?: Hole): {
   ww?: number; wh: number; dw?: number; dh: number; widthCm: number;
 } {
-  const wh = mmToCm(p.windowHeightMm ?? (current?.window_height as number | undefined) ?? 1500);
-  const dh = mmToCm(p.doorHeightMm ?? (current?.door_height as number | undefined) ?? 2250);
+  const wh = p.windowHeightMm !== undefined
+    ? mmToCm(p.windowHeightMm)
+    : ((current?.window_height as number | undefined) ?? 150); // 150 см — эталон UI
+  const dh = p.doorHeightMm !== undefined
+    ? mmToCm(p.doorHeightMm)
+    : ((current?.door_height as number | undefined) ?? 225); // 225 см — эталон UI
   const wwGiven = p.windowWidthMm !== undefined ? mmToCm(p.windowWidthMm) : undefined;
   const dwGiven = p.doorWidthMm !== undefined ? mmToCm(p.doorWidthMm) : undefined;
   const prevWw = current?.window_width as number | undefined;
@@ -380,13 +413,12 @@ function windoorParts(kind: OpeningKind, p: Partial<AddOpeningParams>, current?:
 }
 
 /** Поля окна из панели свойств: sill, slope_angle, casements, slopes, windoor-часть. */
-function applyWindowFields(hole: Hole, kind: OpeningKind, p: AddOpeningParams): void {
-  if (kind.windoor) {
-    const { ww, wh, dw, dh } = windoorParts(kind, p);
-    hole.window_width = ww;
-    hole.window_height = wh;
-    hole.door_width = dw;
-    hole.door_height = dh;
+function applyWindowFields(hole: Hole, kind: OpeningKind, p: AddOpeningParams, parts?: { ww?: number; wh: number; dw?: number; dh: number }): void {
+  if (kind.windoor && parts) {
+    hole.window_width = parts.ww;
+    hole.window_height = parts.wh;
+    hole.door_width = parts.dw;
+    hole.door_height = parts.dh;
     hole.door_position = "l"; // right отвергается валидатором (№4): редактор сохраняет только l
   }
   if (kind.defaultFilling !== undefined) hole.filling = kind.defaultFilling;
@@ -421,11 +453,11 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
       hint: `доступны: ${Object.keys(OPENING_KINDS).join(", ")}`,
     });
   }
-  // применимость параметров и согласованность частей — до любых вычислений и мутаций (№1/№6)
+  // применимость параметров и входы — до любых вычислений и мутаций (№1/№6; ревью 28, R3)
   validateOpeningParams(kind, params);
-  const widthCm = kind.windoor
-    ? windoorParts(kind, params).widthCm
-    : mmToCm(params.widthMm ?? kind.widthMm);
+  // части балконного блока разбираются один раз: кандидат строится до мутации (ревью 28, R1–R4)
+  const parts = kind.windoor ? windoorParts(kind, params) : null;
+  const widthCm = parts ? parts.widthCm : mmToCm(params.widthMm ?? kind.widthMm);
   const len = axisLength(wall);
   let at: number;
   if (params.centerMm !== undefined) {
@@ -462,14 +494,55 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
   const opening = openingFromSwing(params.swing) ?? (kind.group === "windows" ? kind.defaultOpening : undefined);
   if (opening) hole.opening = opening;
   if (params.arched) hole["arched"] = 1;
-  if (kind.group === "windows") applyWindowFields(hole, kind, params);
+  if (kind.group === "windows") applyWindowFields(hole, kind, params, parts ?? undefined);
   else if (params.casing !== undefined) hole.casing = params.casing ? 1 : 0;
   if (kind.group !== "windows" && params.leaves !== undefined) hole.casements = params.leaves;
 
   setHolePoints(wall, hole);
-  assertFiniteHole(hole); // модель не мутирует, пока геометрия не проверена на конечность (№1)
+  assertHoleInvariants(hole); // все инварианты кандидата — до записи в модель (ревью 28, R3/R4)
   wall.holes[holeId] = hole;
   return hole;
+}
+
+/**
+ * Итоговые инварианты кандидат-копии проёма (ревью 28, R1–R4): конечность вычисленной
+ * геометрии, согласованность частей балконного блока и импост в пределах итоговой высоты
+ * двери — при add и при изменении зависимых размеров, даже если impost_height_mm не передан.
+ * Выбор поведения (ревью 28, R4): импост, переставший помещаться, — ОШИБКА, а не
+ * пропорциональная коррекция: молча двигать сохранённую геометрию нельзя.
+ * Выполняется один раз на кандидате до любого изменения модели.
+ */
+function assertHoleInvariants(hole: Hole): void {
+  assertFiniteHole(hole);
+  if (hole.type === "windoor") {
+    if (hole.height !== undefined) {
+      throw new McpError("INTERNAL", "у балконного блока поле height отсутствует — высоты хранятся в частях", {
+        details: { kind: "windoor_has_height", hole_id: hole.id },
+      });
+    }
+    const ww = hole.window_width;
+    const dw = hole.door_width;
+    if (typeof ww !== "number" || !(ww > 0) || typeof dw !== "number" || !(dw > 0)) {
+      throw new McpError("INVALID_ARGUMENT", "у балконного блока должны быть положительные ширины частей window_width/door_width", {
+        details: { kind: "windoor_parts_missing", hole_id: hole.id },
+      });
+    }
+    if (Math.abs(hole.width - (ww + dw)) > 0.03) {
+      throw new McpError("INVALID_ARGUMENT", `общая ширина балконного блока противоречит частям: ${Math.round(hole.width * 10)} мм ≠ ${Math.round(ww * 10)} + ${Math.round(dw * 10)} мм`, {
+        details: { kind: "windoor_parts_mismatch", hole_id: hole.id },
+      });
+    }
+  }
+  const impost = hole.impost_offset as number | undefined;
+  if (impost !== undefined) {
+    const doorH = (hole.door_height as number | undefined) ?? hole.height;
+    if (doorH === undefined || !(impost > 0) || !(impost < doorH)) {
+      throw new McpError("INVALID_ARGUMENT",
+        `высота импоста (${Math.round(impost * 10)} мм от низа двери) не помещается в дверь высотой ${doorH === undefined ? "—" : Math.round(doorH * 10)} мм — уменьшите impost_height_mm или увеличьте height_mm`, {
+          details: { kind: "impost_outside_door", hole_id: hole.id },
+        });
+    }
+  }
 }
 
 /**
@@ -558,13 +631,75 @@ function touchesWindoor(p: Partial<AddOpeningParams>): boolean {
 const KIND_BY_HOLE_TYPE: Record<string, OpeningKind> = {};
 for (const k of Object.values(OPENING_KINDS)) KIND_BY_HOLE_TYPE[k.type] = k;
 
+/**
+ * Legacy-имя типа балконного блока в старых моделях → каноническое type (ревью 28, R2):
+ * старый объект type:"window_balcony" не находился в KIND_BY_HOLE_TYPE и обходил
+ * валидатор и запрет переходов.
+ */
+function normalizeHoleType(type: string): string {
+  return type === "window_balcony" ? "windoor" : type;
+}
+
+/**
+ * Переносит проверенного кандидата в модель, сохраняя identity объекта hole:
+ * сначала удаляются ключи, которых у кандидата нет, затем присваиваются значения.
+ * Вызывается один раз после всех проверок — до него модель не меняется (ревью 28, R3).
+ */
+function assignHole(target: Hole, candidate: Hole): void {
+  const keys = new Set([...Object.keys(target), ...Object.keys(candidate)]);
+  for (const k of keys) {
+    if (k in candidate) (target as Record<string, unknown>)[k] = (candidate as Record<string, unknown>)[k];
+    else delete (target as Record<string, unknown>)[k];
+  }
+}
+
+/**
+ * Смена типа между не-балконными типами (ревью 28, выбор поведения задокументирован
+ * в отчёте 29): конверсия РАЗРЕШЕНА — поля, неприменимые новому типу, сбрасываются,
+ * применимые выставляются в дефолты нового типа (casements, filling, slopes, импост,
+ * сторона подоконника, opening). Переходы на/с балконного блока по-прежнему отвергаются.
+ */
+function applyKindConversion(hole: Hole, kind: OpeningKind): void {
+  if (kind.group === "windows") {
+    hole.slope_angle = 0;
+    if (kind.defaultCasements !== undefined) hole.casements = kind.defaultCasements;
+    else delete hole.casements;
+    if (kind.defaultFilling !== undefined) hole.filling = kind.defaultFilling;
+    else delete hole.filling;
+    if (kind.slopesCm !== undefined) hole.slopes = kind.slopesCm;
+    else delete hole.slopes;
+    if (kind.impostOffsetCm !== undefined) hole.impost_offset = kind.impostOffsetCm;
+    else delete hole.impost_offset;
+    const sill = hole.sill as HoleSill | undefined;
+    if (sill === undefined) {
+      // дефолтный подоконник вида (как в addOpening: толщина 4 см, вылет 0)
+      hole.sill = { thinkness: 4, overhang: 0, overmeasure: 0, side: kind.sillSide ?? "l" };
+    } else if (kind.sillSide !== undefined) {
+      sill.side = kind.sillSide;
+    }
+    if (kind.defaultOpening !== undefined && hole.opening === undefined) hole.opening = kind.defaultOpening;
+    if (hole.floor_height === undefined) hole.floor_height = mmToCm(kind.sillCm * 10); // эталон UI: у окон floor_height есть всегда
+  } else {
+    // двери: оконные поля (подоконник, створки, угол, импост, заполнение) не применимы
+    delete hole.sill;
+    delete hole.slope_angle;
+    delete hole.slopes;
+    delete hole.casements;
+    delete hole.filling;
+    delete hole.impost_offset;
+    delete hole.floor_height;
+  }
+}
+
 /** opening_update: меняет размеры/положение проёма с повторной проверкой коллизий. */
 export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   const wall = model.walls[params.wallId];
   if (!wall) throw new McpError("NOT_FOUND", `стена ${params.wallId} не найдена`);
   const hole = wall.holes[params.holeId];
   if (!hole) throw new McpError("NOT_FOUND", `проём ${params.holeId} не найден`);
-  // смена типа — до любой мутации (№3): конверсия между windoor и остальными типами не тривиальна
+  // смена типа — до любой мутации (№3): конверсия между windoor и остальными типами не тривиальна;
+  // legacy window_balcony нормализуется к windoor и там, и тут (ревью 28, R2)
+  const holeType = normalizeHoleType(hole.type);
   let kind: OpeningKind | undefined;
   if (params.type !== undefined) {
     kind = OPENING_KINDS[params.type];
@@ -573,17 +708,33 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
         hint: `доступны: ${Object.keys(OPENING_KINDS).join(", ")}`,
       });
     }
-    if (kind.type !== hole.type && (hole.type === "windoor" || kind.type === "windoor")) {
+    if (kind.type !== holeType && (holeType === "windoor" || kind.type === "windoor")) {
       throw new McpError("INVALID_ARGUMENT",
         `смена типа «${hole.type}» на «${kind.type}» не поддерживается: удалите проём и добавьте заново (opening_delete + opening_add)`);
     }
   }
-  const effKind = kind ?? KIND_BY_HOLE_TYPE[hole.type];
-  // применимость параметров — до любой мутации (№1/№6)
-  if (effKind) validateOpeningParams(effKind, params, hole);
+  const effKind = kind ?? KIND_BY_HOLE_TYPE[holeType];
+  if (!effKind) {
+    // неизвестный тип в модели не пропускается мимо валидатора (ревью 28, R2)
+    throw new McpError("INVALID_ARGUMENT", `неизвестный тип проёма в модели: ${hole.type}`, {
+      hint: `доступны: ${Object.values(OPENING_KINDS).map((k) => k.type).join(", ")}`,
+    });
+  }
+  // применимость параметров и входы — до любой мутации (№1/№6; ревью 28, R3)
+  validateOpeningParams(effKind, params, hole);
 
-  // разбор частей — до мутации; само присваивание после checkPlacement
-  const windoor = effKind?.windoor && touchesWindoor(params)
+  // кандидат-копия: все проверки и вычисления — на копии, исходный hole не меняется,
+  // пока не пройдут проверка коллизий и итоговые инварианты (ревью 28, R1/R3/R4)
+  const candidate = structuredClone(hole);
+  if (hole.type !== effKind.type || hole.group !== effKind.group) {
+    candidate.type = effKind.type; // нормализация legacy-имени типа
+    candidate.group = effKind.group;
+  }
+  const typeChanged = kind !== undefined && kind.type !== holeType;
+  if (typeChanged) applyKindConversion(candidate, kind!);
+
+  // разбор частей — до мутации; присваивание только кандидату
+  const windoor = effKind.windoor && touchesWindoor(params)
     ? windoorParts(effKind, params, hole)
     : null;
 
@@ -615,38 +766,37 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   }
   checkPlacement(wall, at, width, hole.id); // до мутации: при ошибке модель не меняется
 
-  if (windoor) applyWindoorPartsFrom(hole, windoor, params);
+  if (windoor) applyWindoorPartsFrom(candidate, windoor, params);
   if (kind) {
-    hole.type = kind.type;
-    hole.group = kind.group;
-    if (kind.group === "windows" && kind.defaultOpening !== undefined && hole.opening === undefined) {
-      hole.opening = kind.defaultOpening;
+    if (kind.group === "windows" && kind.defaultOpening !== undefined && candidate.opening === undefined) {
+      candidate.opening = kind.defaultOpening;
     }
   }
-  if (heightCm !== undefined) hole.height = heightCm;
+  if (heightCm !== undefined) candidate.height = heightCm;
   if (sillFloor !== undefined) {
-    if (sillFloor > 0) hole.floor_height = sillFloor;
-    else delete hole.floor_height;
+    if (sillFloor > 0) candidate.floor_height = sillFloor;
+    else delete candidate.floor_height;
   }
   if (params.swing) {
     const opening = openingFromSwing(params.swing);
-    if (opening) hole.opening = opening;
+    if (opening) candidate.opening = opening;
   }
-  if (params.arched !== undefined) hole["arched"] = params.arched ? 1 : 0;
-  if (params.casing !== undefined) hole.casing = params.casing ? 1 : 0;
+  if (params.arched !== undefined) candidate["arched"] = params.arched ? 1 : 0;
+  if (params.casing !== undefined) candidate.casing = params.casing ? 1 : 0;
   if (params.casements !== undefined || params.leaves !== undefined) {
     const cas = params.casements ?? params.leaves;
-    if (cas !== undefined) hole.casements = cas;
+    if (cas !== undefined) candidate.casements = cas;
   }
-  if (params.slopeAngleDeg !== undefined) hole.slope_angle = params.slopeAngleDeg;
+  if (params.slopeAngleDeg !== undefined) candidate.slope_angle = params.slopeAngleDeg;
   if (params.sillThicknessMm !== undefined || params.sillOverhangMm !== undefined || params.sillOvermeasureMm !== undefined) {
-    applySill(hole, params);
+    applySill(candidate, params);
   }
-  if (impost !== undefined) hole.impost_offset = impost;
-  hole.width = r2(width);
-  hole.at = r2(at);
-  refreshHole(wall, hole);
-  assertFiniteHole(hole);
+  if (impost !== undefined) candidate.impost_offset = impost;
+  candidate.width = r2(width);
+  candidate.at = r2(at);
+  refreshHole(wall, candidate);
+  assertHoleInvariants(candidate); // финальные инварианты — тоже до изменения модели (R3/R4)
+  assignHole(hole, candidate);
   return hole;
 }
 
