@@ -41,6 +41,13 @@ export type OpeningKind = {
   defaultFilling?: number;
   /** Только двери: дефолтный «Короб с наличниками» (эталон UI; 0 у doorway/door_garage). */
   defaultCasing?: 0 | 1;
+  /**
+   * Формат поля opening, который переживает restore у этого типа (этап 37, матрица
+   * проб 37-dbg-opening-matrix): "single" — одна буква ("r"/"l", у двустворчатых
+   * сдвижных и garage/x4/penal), "double" — две ("r-l" и др., у одностворчатых сдвижных).
+   * Не задан — формат свободный (распашные двери).
+   */
+  openingFormat?: "single" | "double";
   /** Лимиты ширины/высоты из defs редактора (панель свойств), мм. */
   widthMinMm?: number;
   widthMaxMm?: number;
@@ -53,45 +60,45 @@ export const OPENING_KINDS: Record<string, OpeningKind> = {
   // у всех дверей depth 4, height 210 (garage 225), по умолчанию casing 1 (doorway/garage — 0),
   // slope_angle 0, casements 1; opening редактор вычисляет по стороне помещения (в MCP — swing)
   doorway: { type: "doorway", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 0, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 0, defaultOpening: "r", widthMinMm: 500, widthMaxMm: 6000 },
   door: { type: "single", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000, heightMinMm: 1000 },
+    defaultCasing: 1, defaultOpening: "r-l", widthMinMm: 500, widthMaxMm: 6000, heightMinMm: 1000 },
   door_double: { type: "double", group: "doors", widthMm: 1200, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 1000, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r", widthMinMm: 1000, widthMaxMm: 6000 },
   door_coupe: { type: "door_coupe", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r-l", openingFormat: "double", widthMinMm: 500, widthMaxMm: 6000 },
   door_coupe_double: { type: "door_coupe_double", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r", openingFormat: "single", widthMinMm: 500, widthMaxMm: 6000 },
   door_penal: { type: "door_penal", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r", openingFormat: "single", widthMinMm: 500, widthMaxMm: 6000 },
   door_penal_double: { type: "door_penal_double", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r", widthMinMm: 500, widthMaxMm: 6000 },
   door_roto: { type: "door_roto", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r-l", openingFormat: "double", widthMinMm: 500, widthMaxMm: 6000 },
   door_roto_double: { type: "door_roto_double", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r", widthMinMm: 500, widthMaxMm: 6000 },
   door_book: { type: "door_book", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r-l", widthMinMm: 500, widthMaxMm: 6000 },
   door_book_double: { type: "door_book_double", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r", openingFormat: "single", widthMinMm: 500, widthMaxMm: 6000 },
   door_bellows: { type: "door_bellows", group: "doors", widthMm: 1200, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r-l", openingFormat: "double", widthMinMm: 500, widthMaxMm: 6000 },
   door_glass: { type: "door_glass", group: "doors", widthMm: 800, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r-l", widthMinMm: 500, widthMaxMm: 6000 },
   door_garage: { type: "door_garage", group: "doors", widthMm: 3000, heightMm: 2250, depthCm: 4, sillCm: 0,
-    defaultCasing: 0, widthMinMm: 2000, widthMaxMm: 6000, heightMinMm: 2000, heightMaxMm: 3000 },
+    defaultCasing: 0, defaultOpening: "r", openingFormat: "single", widthMinMm: 2000, widthMaxMm: 6000, heightMinMm: 2000, heightMaxMm: 3000 },
   door_system_x2: { type: "door_system_x2", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r-l", openingFormat: "double", widthMinMm: 500, widthMaxMm: 6000 },
   door_system_x3: { type: "door_system_x3", group: "doors", widthMm: 2400, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r-l", openingFormat: "double", widthMinMm: 500, widthMaxMm: 6000 },
   door_system_x4: { type: "door_system_x4", group: "doors", widthMm: 3200, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r", openingFormat: "single", widthMinMm: 500, widthMaxMm: 6000 },
   door_system_penal_x2: { type: "door_system_penal_x2", group: "doors", widthMm: 1600, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r-l", openingFormat: "double", widthMinMm: 500, widthMaxMm: 6000 },
   door_system_penal_x3: { type: "door_system_penal_x3", group: "doors", widthMm: 2400, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r-l", openingFormat: "double", widthMinMm: 500, widthMaxMm: 6000 },
   door_system_penal_x4: { type: "door_system_penal_x4", group: "doors", widthMm: 3200, heightMm: 2100, depthCm: 4, sillCm: 0,
-    defaultCasing: 1, widthMinMm: 500, widthMaxMm: 6000 },
+    defaultCasing: 1, defaultOpening: "r", openingFormat: "single", widthMinMm: 500, widthMaxMm: 6000 },
   // окна (group windows) — эталоны ui-ref-window-*.json, проверено в UI
   windowway: { type: "windowway", group: "windows", widthMm: 1200, heightMm: 1500, depthCm: 6, sillCm: 85,
     defaultOpening: "r", slopesCm: 20, defaultCasements: 1, sillSide: "l" },
@@ -139,14 +146,51 @@ export type WindowParams = {
 };
 
 /**
- * swing {hinge, into} → строка opening в модели.
- * Проверен только вариант fixture: дверь, открывающаяся от p2 влево → "r-l";
- * остальные комбинации выводятся по той же схеме и не проверены живым кругом.
+ * swing {hinge, into} → строка opening в модели с учётом формата типа (этап 37):
+ * у типов с openingFormat "single" (двустворчатые сдвижные, garage, penal, x4) — одна буква
+ * (сторона открывания), у остальных — две (петля-направление, как в v0.1.1).
+ * Комбинация fixture: дверь, открывающаяся от p2 влево → "r-l".
  */
-export function openingFromSwing(swing?: { hinge: "start" | "end"; into: "left" | "right" }): string | undefined {
+export function openingFromSwing(
+  swing?: { hinge: "start" | "end"; into: "left" | "right" },
+  kind?: OpeningKind,
+): string | undefined {
   if (!swing) return undefined;
+  if (kind?.openingFormat === "single") return swing.into === "left" ? "l" : "r";
   const leaf = swing.into === "left" ? "l" : "r";
   return `${swing.hinge === "end" ? "r" : "l"}-${leaf}`;
+}
+
+/**
+ * Приводит поле opening проёма к формату, который переживает restore у типа (этап 37):
+ * у типов с openingFormat "single" двухчастная строка ("r-l") от версии v0.1.1 ломает
+ * редактор (WallHole.draw: reading 'x') — нормализуем к букве направления; у типов с
+ * "double" отсутствие opening (v0.1.1 без swing) тоже ломает редактор — ставим дефолт вида.
+ * Возвращает true, если значение изменилось.
+ */
+function normalizeOpeningFormat(hole: Hole, kind: OpeningKind): boolean {
+  const cur = hole.opening as string | undefined;
+  if (kind.openingFormat === "single") {
+    // одночастный формат: одна буква r/l
+    if (cur === undefined) {
+      hole.opening = kind.defaultOpening ?? "r";
+      return true;
+    }
+    if (cur.length !== 1) {
+      hole.opening = cur.includes("-") ? (cur.split("-")[1] ?? kind.defaultOpening ?? "r") : kind.defaultOpening ?? "r";
+      return true;
+    }
+    return false;
+  }
+  if (kind.openingFormat === "double") {
+    // двухчастный формат обязателен: отсутствие opening от v0.1.1 редактор не восстанавливает
+    if (cur === undefined || !cur.includes("-")) {
+      hole.opening = kind.defaultOpening ?? "r-l";
+      return true;
+    }
+    return false;
+  }
+  return false;
 }
 
 export type AddOpeningParams = WindowParams & {
@@ -550,7 +594,8 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
   else if (kind.group === "windows") hole.floor_height = 0; // эталон UI: у окон floor_height присутствует всегда
   // у балконного блока поле height в модели отсутствует (эталон ui-ref-window-window_balcony)
   if (kind.windoor) delete hole.height;
-  const opening = openingFromSwing(params.swing) ?? (kind.group === "windows" ? kind.defaultOpening : undefined);
+  // opening: swing с учётом формата типа, иначе дефолт вида (окна и двери, этап 25/37)
+  const opening = openingFromSwing(params.swing, kind) ?? kind.defaultOpening;
   if (opening) hole.opening = opening;
   if (params.arched) hole["arched"] = 1;
   if (kind.group === "windows") applyWindowFields(hole, kind, params, parts ?? undefined);
@@ -821,9 +866,12 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
     else delete candidate.floor_height;
   }
   if (params.swing) {
-    const opening = openingFromSwing(params.swing);
+    const opening = openingFromSwing(params.swing, effKind);
     if (opening) candidate.opening = opening;
   }
+  // legacy-нормализация opening (этап 37): объекты v0.1.1 без opening (или с двухчастным
+  // у однобуквенных типов) редактор не восстанавливает — приводим к формату вида
+  normalizeOpeningFormat(candidate, effKind);
   if (params.arched !== undefined) candidate["arched"] = params.arched ? 1 : 0;
   if (params.casing !== undefined) candidate.casing = params.casing ? 1 : 0;
   if (params.casements !== undefined || params.leaves !== undefined) {

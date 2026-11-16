@@ -23,7 +23,7 @@ function emptyModel(): Model {
 
 function rect(model: Model) {
   const walls = addRoomRect(model, { origin: { x: 0, y: 0 }, widthMm: 4000, depthMm: 3000, thicknessMm: 200 });
-  return { top: walls[0]!, bottom: walls[2]! };
+  return { top: walls[0]!, right: walls[1]!, bottom: walls[2]!, left: walls[3]! };
 }
 
 /** 20 пунктов меню «Двери и проемы», поставленных кликами в UI (этап 37). */
@@ -97,6 +97,54 @@ test("дверь: swing задаёт opening; casing выключает коро
   assert.equal(dw.casing, 0);
   const gr = addOpening(model, { wallId: bottom.id, type: "door_garage", centerMm: 2000 });
   assert.equal(gr.casing, 0);
+});
+
+test("дверь: дефолтный opening по эталону UI — у сдвижных двухчастный, у двустворчатых однобуквенный", () => {
+  const model = emptyModel();
+  const { top, bottom, right, left } = rect(model);
+  // сдвижные одинарные: двухчастный формат (restore без него падает — матрица 37-dbg-opening-matrix)
+  assert.equal(addOpening(model, { wallId: top.id, type: "door_coupe", centerMm: 500 }).opening, "r-l");
+  assert.equal(addOpening(model, { wallId: top.id, type: "door_roto", centerMm: 1500 }).opening, "r-l");
+  assert.equal(addOpening(model, { wallId: top.id, type: "door_bellows", centerMm: 3500 }).opening, "r-l");
+  assert.equal(addOpening(model, { wallId: bottom.id, type: "door_penal", centerMm: 500, swing: { hinge: "end", into: "left" } }).opening, "l");
+  // двустворчатые сдвижные/garage: однобуквенный формат
+  assert.equal(addOpening(model, { wallId: bottom.id, type: "door_coupe_double", centerMm: 1700, widthMm: 1600 }).opening, "r");
+  assert.equal(addOpening(model, { wallId: top.id, type: "door_penal", centerMm: 2500 }).opening, "r");
+  assert.equal(addOpening(model, { wallId: left.id, type: "door_garage", centerMm: 1500, widthMm: 2000, heightMm: 2000 }).opening, "r");
+  const gr = addOpening(model, { wallId: right.id, type: "door_system_x3", centerMm: 1500, widthMm: 2400 });
+  assert.equal(gr.opening, "r-l");
+});
+
+test("дверь: update нормализует opening legacy-объектов v0.1.1 к формату вида", () => {
+  const model = emptyModel();
+  const { top } = rect(model);
+  // legacy door_coupe без opening (v0.1.1 не писал opening) — редактор такой объект не восстанавливает
+  const legacy: Hole = {
+    id: "lc1", plan: "a", type: "door_coupe", group: "doors",
+    pc: { x: 170, y: -10 }, width: 80, height: 210, depth: 4, at: 130,
+    p1: { x: 130, y: -10 }, p2: { x: 210, y: -10 },
+  };
+  top.holes[legacy.id] = legacy;
+  updateOpening(model, { wallId: top.id, holeId: legacy.id, widthMm: 900 });
+  assert.equal(legacy.opening, "r-l"); // дефолт вида (двухчастный формат обязателен)
+  // legacy door_penal с двухчастным opening от v0.1.1 (ломает редактор) → однобуквенный
+  const legacy2: Hole = {
+    id: "lc2", plan: "a", type: "door_penal", group: "doors",
+    pc: { x: 300, y: -10 }, width: 80, height: 210, depth: 4, at: 260, opening: "r-l",
+    p1: { x: 260, y: -10 }, p2: { x: 340, y: -10 },
+  };
+  top.holes[legacy2.id] = legacy2;
+  updateOpening(model, { wallId: top.id, holeId: legacy2.id, heightMm: 2100 });
+  assert.equal(legacy2.opening, "l"); // буква направления (вторая часть "r-l")
+  // распашная дверь без opening не дополняется (формат свободный)
+  const legacy3: Hole = {
+    id: "lc3", plan: "a", type: "single", group: "doors",
+    pc: { x: 60, y: -10 }, width: 80, height: 210, depth: 4, at: 20,
+    p1: { x: 20, y: -10 }, p2: { x: 100, y: -10 },
+  };
+  top.holes[legacy3.id] = legacy3;
+  updateOpening(model, { wallId: top.id, holeId: legacy3.id, widthMm: 900 });
+  assert.equal(legacy3.opening, undefined);
 });
 
 test("дверь: casing в update меняет короб, swing меняет открывание", () => {

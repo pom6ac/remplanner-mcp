@@ -214,6 +214,18 @@
 порталы, например 200×10, self_height 230, plan furniture+a), «Домофон» (`door_remote` id 566, 15×15,
 over_floor 30) и «Видеодомофон» (`door_videoremote` id 502, over_floor 160). Они ставятся `item_add`.
 
+**Формат поля `opening` обязателен для сдвижных дверей** **[проверено матрицей restore,
+проба `37-dbg-opening-matrix`]**: у одностворчатых сдвижных (`door_coupe`, `door_roto`,
+`door_bellows`, `door_system_x2/x3`, `door_system_penal_x2/x3`) редактор восстанавливает проём
+только с двухчастным `opening` («r-l» и перестановки); у `door_coupe_double`, `door_penal`,
+`door_book_double`, `door_garage`, `door_system_x4`, `door_system_penal_x4` — только с
+однобуквенным («r»/«l»); у распашных (`doorway`, `door`, `door_double`, `door_penal_double`,
+`door_roto_double`, `door_book`, `door_glass`) формат свободный. Проём без `opening` у сдвижных
+типов при restore падает (`Cannot read properties of undefined (reading 'x')` в `WallHole.draw`).
+Поэтому `opening_add` пишет дефолтный `opening` вида (эталонные значения: «r-l» у одностворчатых
+сдвижных, «r» у двустворчатых), `swing` у однобуквенных типов даёт одну букву, а
+`opening_update` нормализует legacy-объекты v0.1.1 (без `opening` или с неверным форматом).
+
 ## 6. Мебель, сантехника и прочие объекты каталога
 
 - Ставятся **только внутрь замкнутых помещений**, на пустое поле поставить нельзя.

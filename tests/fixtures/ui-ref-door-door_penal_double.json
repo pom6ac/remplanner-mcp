@@ -1,5 +1,5 @@
 {
- "_source": "клик по UI проекта 7887657 (headless Chromium), scripts/probes/37-doors-ui.ts + 37-doors-ui-props.ts, model project.copy(\"server\"), без сохранения; id/parent/_wall обезличены (0); opening удалён — вычисляется редактором по стороне помещения, в MCP задаётся swing",
+ "_source": "клик по UI проекта 7887657 (headless Chromium), scripts/probes/37-doors-ui.ts + 37-doors-ui-props.ts, model project.copy(\"server\"), без сохранения; id/parent/_wall обезличены (0); opening — наблюдённое значение дефолта (сторона помещения варьирует r/l, формат фиксирован: одно- или двухчастный по матрице 37-dbg-opening-matrix)",
  "menu_title": "Дверь-пенал 2-створчатая",
  "catalog_key": "door_penal_double",
  "model_type": "door_penal_double",
@@ -13,7 +13,8 @@
   "slope_angle": 0,
   "casing": 1,
   "casements": 1,
-  "id": "0"
+  "id": "0",
+  "opening": "r"
  },
  "props_panel": [
   {
