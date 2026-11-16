@@ -44,7 +44,7 @@ export type CompactOpening = {
   door_width_mm?: number;
   door_height_mm?: number;
   door_position?: "l" | "r";
-  /** Балконная дверь: импост, мм от пола. */
+  /** Балконная дверь: импост, мм от низа двери (поле impost_offset модели; высота от пола = значение + подоконник). */
   impost_offset_mm?: number;
 };
 

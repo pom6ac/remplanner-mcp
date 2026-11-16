@@ -1,4 +1,4 @@
-// 25-windows: съём эталонов 7 типов окон из UI проекта 7887657 (аккаунт, по разрешению).
+// 25-windows: съём эталонов 7 типов окон из UI проекта <REMPLANNER_PROBE_OBJECT_ID> (аккаунт, по разрешению).
 // КЛИКИ ТОЛЬКО ЛОКАЛЬНО: project.save не вызывается, на сервер ничего не пишется.
 // node scripts/probes/25-windows-ui.ts [--only=window,windowway,...]
 // Вывод: .orca-reports/25-windows-ui/<key>.json, скриншоты screenshots/25-win-*.png
@@ -67,8 +67,17 @@ function dumpMenus(page: Page): Promise<Record<string, unknown>[]> {
   });
 }
 
+// Проект для пробы задаётся env: проба открывает указанный проект, а 25-live-check
+// ещё и сохраняет в него (project_save). Без env — отказ (ревью 26, №5).
+const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
+const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
+if (!OBJECT_ID || !PLAN_ID) {
+  console.error("Задайте REMPLANNER_PROBE_OBJECT_ID и REMPLANNER_PROBE_PLAN_ID: проба открывает (25-live-check — и сохраняет в) указанный проект.");
+  process.exit(1);
+}
+
 const session = { ...loadSession(STATE_PATH), account: true } as const;
-const editor = await openEditor(session, "7887657", "1001798", 60_000, { anonymous: false });
+const editor = await openEditor(session, OBJECT_ID, PLAN_ID, 60_000, { anonymous: false });
 mkdirSync(OUT, { recursive: true });
 const only = arg("only")?.split(",");
 try {

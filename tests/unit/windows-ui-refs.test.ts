@@ -33,13 +33,18 @@ const WINDOW_KEYS = [
   "french_window", "french_window_coupe", "french_window_double",
 ];
 
+/**
+ * Сверка ВСЕХ семантических ключей эталона (ревью 26, №7): идём по ключам эталона,
+ * а не по списку полей модели. Исключение — служебные и геометрические поля,
+ * которые редактор вычисляет сам: parent/_wall/position/offset и идентификаторы.
+ */
+const SERVICE_KEYS = new Set(["plan", "id", "parent", "parent_depth", "position", "offset", "f0offset", "_wall"]);
+
 /** Сверка структурных полей проёма с эталоном UI (геометрию pc/p1/p2 не сравниваем). */
 function expectStructural(hole: Hole, ref: Record<string, unknown>) {
   const et = ref.defaults_model_cm as Record<string, unknown>;
-  const fields = ["type", "group", "width", "height", "depth", "floor_height", "opening",
-    "casements", "slopes", "slope_angle", "casing", "sill", "window_width", "window_height",
-    "door_width", "door_height", "door_position", "impost_offset"];
-  for (const f of fields) {
+  for (const f of Object.keys(et)) {
+    if (SERVICE_KEYS.has(f)) continue;
     if (et[f] === undefined) {
       assert.ok(hole[f] === undefined, `${ref.catalog_key}: поле ${f} не должно задаваться (эталон без него)`);
     } else if (f === "sill" && hole.sill && et.sill) {
@@ -80,14 +85,24 @@ test("windoor: window_width_mm/door_width_mm задают части, итог �
   assert.equal(hole.door_position, "l");
 });
 
-test("windoor: door_position=right и door_width_mm без окна", () => {
+test("windoor: door_width_mm без окна, door_position=right — INVALID_ARGUMENT", () => {
   const model = emptyModel();
-  const { top } = rect(model);
-  const hole = addOpening(model, { wallId: top.id, type: "window_balcony", centerMm: 2000, doorPosition: "right", doorWidthMm: 900 });
-  assert.equal(hole.door_position, "r");
+  const { top, bottom } = rect(model);
+  const hole = addOpening(model, { wallId: top.id, type: "window_balcony", centerMm: 2000, doorWidthMm: 900 });
+  assert.equal(hole.door_position, "l");
   assert.equal(hole.door_width, 90);
   assert.equal(hole.window_width, 90); // 1800 − 900
   assert.equal(hole.width, 180);
+  // right не поддерживается: редактор сохраняет только левую дверь (ревью 26, №4)
+  assert.throws(
+    () => addOpening(model, { wallId: bottom.id, type: "window_balcony", centerMm: 2000, doorPosition: "right" }),
+    /right.*не поддерживается|левой дверью/u,
+  );
+  const wd = addOpening(model, { wallId: bottom.id, type: "window_balcony", centerMm: 2000 });
+  assert.throws(
+    () => updateOpening(model, { wallId: bottom.id, holeId: wd.id, doorPosition: "right" }),
+    /right/u,
+  );
 });
 
 test("окно: новые параметры панели свойств попадают в модель", () => {
@@ -127,11 +142,41 @@ test("opening_update: новые параметры меняют существ�
   assert.equal(w.casing, 0);
   // windoor: части через update
   const wd = addOpening(model, { wallId: bottom.id, type: "window_balcony", centerMm: 2000 });
-  updateOpening(model, { wallId: bottom.id, holeId: wd.id, windowWidthMm: 1200, doorPosition: "right" });
+  updateOpening(model, { wallId: bottom.id, holeId: wd.id, windowWidthMm: 1200 });
   assert.equal(wd.window_width, 120);
   assert.equal(wd.door_width, 80); // дверь не задана — остаётся дефолтной, как в UI
   assert.equal(wd.width, 200);
-  assert.equal(wd.door_position, "r");
+});
+
+test("compact: новые поля проёмов конвертируются в мм (UI-фикстуры, ревью 26 №8)", () => {
+  const model = emptyModel();
+  const { top } = rect(model);
+  const wd = addOpening(model, {
+    wallId: top.id, type: "window_balcony", centerMm: 2200,
+    windowWidthMm: 1000, windowHeightMm: 1600, doorWidthMm: 800, doorHeightMm: 2200,
+  });
+  assert.equal(wd.width, 180); // ширина = сумма частей
+  const door = addOpening(model, { wallId: top.id, type: "window_door", centerMm: 3500, impostHeightMm: 1400 });
+  const win = addOpening(model, {
+    wallId: top.id, type: "window", centerMm: 700,
+    casements: 2, slopeAngleDeg: 15, sillThicknessMm: 60, sillOverhangMm: 50, sillOvermeasureMm: 70,
+  });
+  const cm = compactModel(model);
+  const byId = new Map(cm.walls.flatMap((w) => w.openings).map((o) => [o.id, o]));
+  const cwd = byId.get(wd.id)!;
+  assert.equal(cwd.window_width_mm, 1000);
+  assert.equal(cwd.window_height_mm, 1600);
+  assert.equal(cwd.door_width_mm, 800);
+  assert.equal(cwd.door_height_mm, 2200);
+  assert.equal(cwd.door_position, "l");
+  assert.equal(cwd.height_mm, 0); // у windoor height нет — compact отдаёт 0
+  const cdoor = byId.get(door.id)!;
+  assert.equal(cdoor.impost_offset_mm, 1300); // 1400 от пола − 100 подоконник, от низа двери
+  const cwin = byId.get(win.id)!;
+  assert.equal(cwin.casements, 2);
+  assert.equal(cwin.slope_angle_deg, 15);
+  assert.equal(cwin.opening, "r-l");
+  assert.deepEqual(cwin.sill, { thickness_mm: 60, overhang_mm: 50, overmeasure_mm: 70 });
 });
 
 test("регрессия: старый проект без новых полей — compact и update не падают и не добавляют лишнего", () => {

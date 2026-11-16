@@ -14,8 +14,17 @@ const SHOTS = "screenshots";
 const DEF_W: Record<string, number> = { windowway: 120, window: 120, window_balcony: 180, window_door: 80, french_window: 120, french_window_coupe: 120, french_window_double: 180 };
 const TYPES = ["windowway", "window", "window_balcony", "window_door", "french_window", "french_window_coupe", "french_window_double"];
 
+// Проект для пробы задаётся env: проба открывает указанный проект, а 25-live-check
+// ещё и сохраняет в него (project_save). Без env — отказ (ревью 26, №5).
+const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
+const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
+if (!OBJECT_ID || !PLAN_ID) {
+  console.error("Задайте REMPLANNER_PROBE_OBJECT_ID и REMPLANNER_PROBE_PLAN_ID: проба открывает (25-live-check — и сохраняет в) указанный проект.");
+  process.exit(1);
+}
+
 const session = { ...loadSession(STATE_PATH), account: true } as const;
-const editor = await openEditor(session, "7887657", "1001798", 60_000, { anonymous: false });
+const editor = await openEditor(session, OBJECT_ID, PLAN_ID, 60_000, { anonymous: false });
 mkdirSync(OUT, { recursive: true });
 try {
   const page = editor.page;
