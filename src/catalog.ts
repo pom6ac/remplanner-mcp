@@ -118,6 +118,39 @@ export function extractToolsBundleName(pageHtml: string): string {
   return m[1]!;
 }
 
+/**
+ * Патчи редактора fix_tools() (бандл app.3.0, этап 57, 2026-11-16): бандл planner.tools
+ * отдаёт у ряда «исходно-плановых» инструментов нулевые размеры/чужую группу, а редактор
+ * сразу после загрузки правит их кодом fix_tools() (tools=window.global_tools — та же
+ * ссылка). Патчи воспроизведены из исходника fix_tools (пробы 57-comm-gt/57-comm-src:
+ * значения совпадают с window.global_tools живого редактора) и применяются к каталогу
+ * MCP (идемпотентно — абсолютные значения):
+ * - water (Сантехнический стояк): 20×20, group furniture, anchor free;
+ * - water_column_hot / water_column_cold (стояки ГВС/ХВС): 10×10, furniture, free;
+ * - drainage_column (Канализационный стояк): 15×15, furniture, free;
+ * - ceiling_water (Ввод водоснабжения): 20×18, furniture, anchor WALL;
+ * - air (Вентиляционный короб): 30×30, furniture, free;
+ * - gas_pipe (Газовый стояк): delete_only:true — значение живого редактора после
+ *   fix_tools; семантика флага не подтверждена (проба 57 поставила его кликом
+ *   локально, без save).
+ * Остальные инструменты fix_tools не трогает (radiator_old, gas_boiler, gas_meter,
+ * electric_shield_old, conditioner_cage и т.д. — как в бандле).
+ */
+export function applyToolFixes(tools: ToolsBundle): ToolsBundle {
+  const set = (name: string, patch: Record<string, unknown>): void => {
+    const raw = tools[name];
+    if (raw && typeof raw === "object") Object.assign(raw as Record<string, unknown>, patch);
+  };
+  set("water", { width: 20, height: 20, group: "furniture", anchor: "free" });
+  set("water_column_hot", { width: 10, height: 10, group: "furniture", anchor: "free" });
+  set("water_column_cold", { width: 10, height: 10, group: "furniture", anchor: "free" });
+  set("drainage_column", { width: 15, height: 15, group: "furniture", anchor: "free" });
+  set("ceiling_water", { width: 20, height: 18, group: "furniture", anchor: "wall" });
+  set("air", { width: 30, height: 30, group: "furniture", anchor: "free" });
+  set("gas_pipe", { delete_only: true });
+  return tools;
+}
+
 function cachePath(globalVersion: string): string {
   return join(CACHE_DIR, `catalog-${globalVersion}.json`);
 }
@@ -126,7 +159,7 @@ export function loadCachedTools(globalVersion: string): ToolsBundle | null {
   const path = cachePath(globalVersion);
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as ToolsBundle;
+    return applyToolFixes(JSON.parse(readFileSync(path, "utf8")) as ToolsBundle);
   } catch {
     return null;
   }
@@ -149,7 +182,7 @@ export async function fetchTools(bundleName: string, globalVersion: string): Pro
   if (!res.ok) {
     throw new McpError("SITE_ERROR", `не удалось скачать бандл каталога ${bundleName} (${res.status})`);
   }
-  const tools = extractGlobalTools(await res.text());
+  const tools = applyToolFixes(extractGlobalTools(await res.text()));
   saveCachedTools(globalVersion, tools);
   return tools;
 }

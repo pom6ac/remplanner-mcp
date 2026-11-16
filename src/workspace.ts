@@ -50,7 +50,7 @@ export type SaveOutcome = {
   verified: boolean;
   rounds: number;
   /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено. */
-  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number };
+  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number };
   /** Предупреждения (удаления объектов сервера). */
   warnings: string[];
 };
@@ -62,8 +62,8 @@ export const MAX_HISTORY = 50;
 /** Результат мутации стен: полезное значение + предупреждения (офлайн-режим). */
 export type WallMutation<T> = { result: T; warnings: string[] };
 
-/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели. */
-export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number } {
+/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии. */
+export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number } {
   const m = model as Model;
   const walls = m.walls ?? {};
   return {
@@ -72,6 +72,7 @@ export function modelCounts(model: Model | Record<string, unknown>): { walls: nu
     items: Object.keys(m.items ?? {}).length,
     pillars: Object.keys(m.pillars ?? {}).length,
     rigels: Object.keys(m.rigels ?? {}).length,
+    gas_lines: Object.keys(m.pipes_gas ?? {}).length,
   };
 }
 
@@ -96,6 +97,7 @@ export function modelIsContentEmpty(model: Model): boolean {
   if (c.walls > 0 || c.items > 0) return false;
   const nonEmpty = (v: unknown): boolean => v !== null && v !== undefined && typeof v === "object" && Object.keys(v as object).length > 0;
   if (nonEmpty(model.pillars) || nonEmpty(model.rigels) || nonEmpty(model.rulers) || nonEmpty(model.comments)) return false;
+  if (nonEmpty(model.pipes_gas)) return false;
   if (nonEmpty(model.rooms2) || nonEmpty(model.rooms1)) return false;
   return true;
 }
@@ -188,6 +190,202 @@ type RigelSig = { p1?: Point; p2?: Point; depth?: number; height?: number; ceili
 
 /** Значимая геометрия/тип предмета для сверки после сохранения (этап 55, ревью №1). */
 type ItemSig = { name?: string; pc?: { x: number; y: number }; width?: number; height?: number; angle?: number };
+
+/**
+ * Значимая семантика газовой линии для сверки (этап 57, ревью 59 №1, ревью 61 №1 —
+ * ПОЛНАЯ сверка, а не по выбранным полям). Сравнивается семантическая проекция
+ * всего объекта линии: plan и остальные скалярные поля (набор полей задаёт
+ * ожидаемая сторона — лишние поля сервера не потеря данных), вершины — с
+ * согласованным сопоставлением (по стабильному id; при переупорядочивании —
+ * по типу и координатам, ревью 61 №6), matrix целиком в обе стороны (направленные
+ * рёбра, т.е. и симметрия формата) и соответствие items узлам.
+ */
+type GasVertexSig = { id?: string; point?: Point; type?: string } & Record<string, unknown>;
+
+type GasLineSig = {
+  vertexes?: GasVertexSig[];
+  length?: number;
+  type?: string;
+  plan?: unknown;
+  matrix?: (null | { length?: number })[][];
+  items?: Record<string, unknown>;
+} & Record<string, unknown>;
+
+/** Допуск сверки координат вершин, см (округление редактора до сотых см). */
+const GAS_VERTEX_TOL_CM = 0.1;
+/** Допуск сверки длин (рёбра matrix, длина линии) — метры, округление до 2 знаков. */
+const GAS_LENGTH_TOL_M = 0.02;
+
+/** Глубокое равенство с допуском на числа (набор полей задаёт ожидаемая сторона). */
+function deepEqualTol(expected: unknown, got: unknown, tol: number): boolean {
+  if (typeof expected === "number" && typeof got === "number") return Math.abs(expected - got) <= tol;
+  if (expected === null || expected === undefined || got === null || got === undefined) return expected === got;
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(got) || expected.length !== got.length) return false;
+    return expected.every((v, i) => deepEqualTol(v, got[i], tol));
+  }
+  if (typeof expected === "object") {
+    if (typeof got !== "object") return false;
+    return Object.entries(expected as Record<string, unknown>).every(
+      ([k, v]) => k in (got as object) && deepEqualTol(v, (got as Record<string, unknown>)[k], tol),
+    );
+  }
+  return expected === got;
+}
+
+/** Есть ли направленное ребро i→j в матрице смежности (некорректные индексы — нет). */
+function gasEdge(line: GasLineSig, i: number, j: number): boolean {
+  return Boolean((line.matrix?.[i]?.[j] ?? null) !== null);
+}
+
+/**
+ * Согласованное сопоставление вершин двух графов (ревью 61 №6): сначала по
+ * стабильному id (id — identity, редактор может переупорядочивать vertexes),
+ * иначе жадно по типу и координатам с допуском GAS_VERTEX_TOL_CM. Возвращает
+ * map[i] = индекс вершины в got или null, если согласованного сопоставления нет.
+ */
+function gasVertexMatch(expected: GasVertexSig[], got: GasVertexSig[]): number[] | null {
+  if (expected.length !== got.length) return null;
+  const used = new Array<boolean>(got.length).fill(false);
+  const map = new Array<number>(expected.length).fill(-1);
+  const gotById = new Map<string, number>();
+  got.forEach((v, i) => {
+    if (typeof v.id === "string" && !gotById.has(v.id)) gotById.set(v.id, i);
+  });
+  let allById = true;
+  expected.forEach((v, i) => {
+    const j = typeof v.id === "string" ? gotById.get(v.id) : undefined;
+    if (j === undefined || used[j]!) {
+      allById = false;
+      return;
+    }
+    map[i] = j!;
+    used[j] = true;
+  });
+  if (allById) return map;
+  used.fill(false);
+  map.fill(-1);
+  for (let i = 0; i < expected.length; i++) {
+    let best = -1;
+    let bestD = Infinity;
+    for (let j = 0; j < got.length; j++) {
+      if (used[j]) continue;
+      if ((expected[i]!.type ?? "") !== (got[j]!.type ?? "")) continue;
+      const ex = expected[i]!.point?.x;
+      const ey = expected[i]!.point?.y;
+      const gx = got[j]!.point?.x;
+      const gy = got[j]!.point?.y;
+      if (ex === undefined || ey === undefined || gx === undefined || gy === undefined) continue;
+      const d = Math.max(Math.abs(ex - gx), Math.abs(ey - gy));
+      if (d <= GAS_VERTEX_TOL_CM && d < bestD) {
+        bestD = d;
+        best = j;
+      }
+    }
+    if (best < 0) return null;
+    map[i] = best;
+    used[best] = true;
+  }
+  return map;
+}
+
+/**
+ * Расхождение газовых линий между двумя наборами — ПОЛНАЯ семантическая сверка
+ * (ревью 61 №1): идентичности, вершины с согласованным сопоставлением (допуск
+ * 0,1 см), рёбра matrix целиком в обе стороны (длины с допуском 0,02 м),
+ * пустота диагонали (петля не проходит, ревью 62 №7), items,
+ * plan и все прочие поля ожидаемой стороны; длина линии (допуск 0,02 м).
+ * Возвращает список человекочитаемых расхождений; пустой список — совпадают.
+ */
+function gasLineGraphMismatches(expected: Record<string, GasLineSig>, got: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
+    a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
+  for (const [id, g0] of Object.entries(expected)) {
+    const g = got[id] as GasLineSig | undefined;
+    if (!g) {
+      out.push(`${id}: газовая линия исчезла после сохранения`);
+      continue;
+    }
+    const expV = g0.vertexes ?? [];
+    const gotV = g.vertexes ?? [];
+    const map = expV.length === gotV.length ? gasVertexMatch(expV, gotV) : null;
+    if (!map) {
+      out.push(`${id}: узлы не сопоставлены (на сервере ${gotV.length}; ожидалось ${expV.length})`);
+      continue;
+    }
+    for (let i = 0; i < expV.length; i++) {
+      const e = expV[i]!;
+      const s = gotV[map[i]!]!;
+      if ((e.type ?? "") !== (s.type ?? "")) out.push(`${id}: тип узла ${i} изменился (на сервере «${s.type ?? ""}»; ожидалось «${e.type ?? ""}»)`);
+      if (!near(s.point?.x, e.point?.x, GAS_VERTEX_TOL_CM) || !near(s.point?.y, e.point?.y, GAS_VERTEX_TOL_CM)) {
+        out.push(`${id}: узел ${i} сместился (на сервере ${s.point?.x},${s.point?.y}; ожидалось ${e.point?.x},${e.point?.y})`);
+      }
+      for (const [k, v] of Object.entries(e)) {
+        if (k === "id" || k === "point" || k === "type") continue;
+        const sVal = (s as Record<string, unknown>)[k];
+        if (!deepEqualTol(v, sVal, GAS_VERTEX_TOL_CM)) {
+          out.push(`${id}: узел ${i}, поле ${k} изменилось (на сервере ${JSON.stringify(sVal ?? null)}; ожидалось ${JSON.stringify(v)})`);
+        }
+      }
+    }
+    // matrix целиком: направленные рёбра под согласованным сопоставлением —
+    // обе стороны формата (порча обратного ребра не проходит, ревью 61 №1);
+    // диагональ обязана быть пустой (эталон и src/model/pipes.ts), петля
+    // обнаруживается (ревью 62 №7)
+    const n = expV.length;
+    for (let i = 0; i < n; i++) {
+      const d0 = g0.matrix?.[i]?.[i] ?? null;
+      const d = g.matrix?.[map[i]!]?.[map[i]!] ?? null;
+      if ((d0 !== null) !== (d !== null)) {
+        out.push(`${id}: петля на узле ${i} ${d !== null ? "добавлена" : "потеряна"} на сервере (matrix[i][i] изменилась)`);
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        if (i === j) continue;
+        const e0 = g0.matrix?.[i]?.[j] ?? null;
+        const e = g.matrix?.[map[i]!]?.[map[j]!] ?? null;
+        if ((e0 !== null) !== (e !== null)) {
+          out.push(`${id}: ребро ${i}–${j} ${e0 !== null ? "потеряно" : "добавлено"} на сервере (matrix изменилась)`);
+        } else if (e0 !== null && e !== null) {
+          const l0 = (e0 as { length?: number }).length;
+          const l = (e as { length?: number }).length;
+          if (!near(l, l0, GAS_LENGTH_TOL_M)) out.push(`${id}: длина ребра ${i}–${j} изменилась (на сервере ${l}; ожидалось ${l0})`);
+        }
+      }
+    }
+    // соответствие items узлам — под тем же согласованным сопоставлением
+    const gotItems = g.items ?? {};
+    const expItems = g0.items ?? {};
+    const unclaimed = new Set(Object.keys(gotItems));
+    for (let i = 0; i < expV.length; i++) {
+      const expId = expV[i]!.id;
+      const gotId = gotV[map[i]!]!.id;
+      if (expId === undefined) continue;
+      if (gotId === undefined || !(gotId in gotItems)) {
+        out.push(`${id}: узел ${expId} пропал из items`);
+        continue;
+      }
+      unclaimed.delete(gotId);
+      if (!deepEqualTol(expItems[expId], gotItems[gotId], GAS_VERTEX_TOL_CM)) {
+        out.push(`${id}: значение items узла ${expId} изменилось (на сервере ${JSON.stringify(gotItems[gotId] ?? null)}; ожидалось ${JSON.stringify(expItems[expId])})`);
+      }
+    }
+    if (unclaimed.size > 0) out.push(`${id}: лишние узлы в items (${[...unclaimed].sort().join(", ")})`);
+    // план, тип, длина и все прочие поля объекта линии (ревью 61 №1: включая plan)
+    if ((g.type ?? "") !== (g0.type ?? "")) out.push(`${id}: тип изменился (на сервере «${g.type ?? ""}»; ожидалось «${g0.type ?? ""}»)`);
+    if (!near(g.length, g0.length, GAS_LENGTH_TOL_M)) out.push(`${id}: длина изменилась (на сервере ${g.length}; ожидалось ${g0.length})`);
+    for (const [k, v] of Object.entries(g0)) {
+      if (k === "vertexes" || k === "matrix" || k === "items" || k === "type" || k === "length") continue;
+      const sVal = (g as Record<string, unknown>)[k];
+      if (!deepEqualTol(v, sVal, GAS_LENGTH_TOL_M)) {
+        out.push(`${id}: поле ${k} изменилось (на сервере ${JSON.stringify(sVal ?? null)}; ожидалось ${JSON.stringify(v)})`);
+      }
+    }
+  }
+  return out;
+}
 
 /**
  * Расхождение предметов между нормализованной моделью и сервером после save (этап 55,
@@ -444,6 +642,22 @@ export class Workspace {
           details: { lost_rigels: lostRigelsNorm },
         });
       }
+      // этап 57: газовые линии после нормализации не теряются (сверка идентичностей);
+      // ревью 59 №1: кроме идентичностей сверяется семантический граф (узлы, тип,
+      // рёбра matrix, длина) — normalizer, обнуливший рёбра, не проходит молча
+      const wsGasIds = new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}));
+      const normGas = (norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {};
+      const normGasIds = new Set(Object.keys(normGas));
+      const lostGasNorm = missingIds(wsGasIds, normGasIds);
+      const gasGraphNorm = gasLineGraphMismatches(
+        structuredClone(this.modelInternal!.pipes_gas ?? {}) as Record<string, GasLineSig>,
+        normGas,
+      );
+      if (lostGasNorm.length > 0 || gasGraphNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил газовые линии — мутация отменена`, {
+          details: { lost_gas_lines: lostGasNorm, gas_line_mismatches: gasGraphNorm },
+        });
+      }
       // нормализованная копия становится канонической
       this.modelInternal = toModel(structuredClone(norm.model as unknown as Record<string, unknown>));
       if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
@@ -560,6 +774,7 @@ export class Workspace {
       items: missingIds(new Set(Object.keys(serverModel.items ?? {})), new Set(Object.keys(this.modelInternal!.items ?? {}))),
       pillars: missingIds(new Set(Object.keys(serverModel.pillars ?? {})), new Set(Object.keys(this.modelInternal!.pillars ?? {}))),
       rigels: missingIds(new Set(Object.keys(serverModel.rigels ?? {})), new Set(Object.keys(this.modelInternal!.rigels ?? {}))),
+      gas_lines: missingIds(new Set(Object.keys(serverModel.pipes_gas ?? {})), new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}))),
     };
     const willDelete = {
       walls: deletedIds.walls.length,
@@ -567,6 +782,7 @@ export class Workspace {
       items: deletedIds.items.length,
       pillars: deletedIds.pillars.length,
       rigels: deletedIds.rigels.length,
+      gas_lines: deletedIds.gas_lines.length,
     };
     const warnings: string[] = [];
     const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
@@ -576,6 +792,7 @@ export class Workspace {
     if (willDelete.items > 0) warnings.push(`будут удалены предметы (${willDelete.items}), которых нет в модели: ${idList(deletedIds.items)}`);
     if (willDelete.pillars > 0) warnings.push(`будут удалены колонны (${willDelete.pillars}), которых нет в модели: ${idList(deletedIds.pillars)}`);
     if (willDelete.rigels > 0) warnings.push(`будут удалены ригели (${willDelete.rigels}), которых нет в модели: ${idList(deletedIds.rigels)}`);
+    if (willDelete.gas_lines > 0) warnings.push(`будут удалены газовые линии (${willDelete.gas_lines}), которых нет в модели: ${idList(deletedIds.gas_lines)}`);
     if (fresh.save_id !== saveIdBefore) {
       if (!this.editorInternal && !options.force) {
         throw new McpError(
@@ -634,10 +851,23 @@ export class Workspace {
     const expectedItems = structuredClone((norm.model as { items?: Record<string, ItemSig> }).items ?? {});
     const localRigelIds = new Set(Object.keys(this.modelInternal!.rigels ?? {}));
     const gotRigelIds = new Set(Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}));
+    // этап 57: газовые линии — ожидаемые (из нормализованной модели, того, что ушло
+    // на save: редактор пересчитывает length) и потерянные при нормализации
+    const expectedGasLines = structuredClone((norm.model as { pipes_gas?: Record<string, GasLineSig> }).pipes_gas ?? {});
+    const localGasIds = new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}));
+    const gotGasIds = new Set(Object.keys((norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {}));
     const lostOpenings = missingIds(localOpeningIds, gotOpeningIds);
     const lostItems = missingIds(localItemIds, gotItemIds);
     const lostPillars = missingIds(localPillarIds, gotPillarIds);
     const lostRigels = missingIds(localRigelIds, gotRigelIds);
+    const lostGasLines = missingIds(localGasIds, gotGasIds);
+    // ревью 59 №1: до save сверяется семантический граф локальной и нормализованной
+    // моделей (узлы, тип, рёбра matrix, длина) — normalizer, обнуливший рёбра,
+    // не проходит как «verified»
+    const gasGraphNorm = gasLineGraphMismatches(
+      structuredClone(this.modelInternal!.pipes_gas ?? {}) as Record<string, GasLineSig>,
+      (norm.model as { pipes_gas?: Record<string, unknown> }).pipes_gas ?? {},
+    );
     const gotSegments = wallAxisSegments(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
@@ -647,7 +877,8 @@ export class Workspace {
     }
     if (
       !wallAxisSetsEqual(gotSegments, expected.segments) ||
-      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0
+      lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 ||
+      gasGraphNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -661,6 +892,8 @@ export class Workspace {
           lost_items: lostItems,
           lost_pillars: lostPillars,
           lost_rigels: lostRigels,
+          lost_gas_lines: lostGasLines,
+          gas_line_mismatches: gasGraphNorm,
         },
       });
     }
@@ -694,8 +927,12 @@ export class Workspace {
       // а не только счётчиком при нормализации
       const itemsAfter = (after.model["items"] as Record<string, unknown> | undefined) ?? {};
       const itemMismatch = itemVerificationMismatches(expectedItems, itemsAfter);
+      // этап 57: газовые линии после save сверяются по id, типу, узлам, рёбрам matrix
+      // и длине (ревью 59 №1 — топология входит в сверку)
+      const gasAfter = (after.model["pipes_gas"] as Record<string, unknown> | undefined) ?? {};
+      const gasMismatch = gasLineGraphMismatches(expectedGasLines, gasAfter);
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -707,6 +944,7 @@ export class Workspace {
             coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>) * 10),
             axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,
             pillar_mismatches: pillarMismatch, rigel_mismatches: rigelMismatch, item_mismatches: itemMismatch,
+            gas_line_mismatches: gasMismatch,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });

@@ -1,0 +1,65 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, ID проекта/плана обезличены), проба 57-comm-ui3 (клик в комнате, магнит к стене dev-проекта), model project.copy(\"server\"), без сохранения; id предмета и id_room/id_room_zone/id_wall/id_wall_old обезличены (\"0\"); координаты — реальные точки листа init (не идентифицируют); план {\"a\":1} (ключ каталога init отображён в a); эталон этапа 59 — из дампа .orca-reports/57-comm-ui/water_column_hot.json (raw бандл отдаёт 0×0/walls, в UI редактора fix_tools правит на 10×10/furniture)",
+ "menu_title": "Стояк гор. водоснабжения",
+ "tool_id": "plannertool_water_column_hot",
+ "catalog_defaults_cm": {
+  "id": 1512,
+  "width": 10,
+  "height": 10,
+  "self_height": 0,
+  "plan": {
+   "init": 1
+  },
+  "anchor": "free",
+  "is_magnetized": true,
+  "can_be_outside": false
+ },
+ "model_object": {
+  "name": "water_column_hot",
+  "pc": {
+   "x": 377.78,
+   "y": 261.19
+  },
+  "angle": 0,
+  "projection": {
+   "x": 377.78,
+   "y": 261.299
+  },
+  "width": 10,
+  "height": 10,
+  "plan": {
+   "a": 1
+  },
+  "id": "0",
+  "item_id": 1512,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": false
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 377.78,
+   "y": 261.19
+  },
+  "center3d": {
+   "x": 377.78,
+   "y": 261.19
+  },
+  "id_room": "0",
+  "id_room_zone": "0",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r"
+ }
+}

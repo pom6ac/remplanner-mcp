@@ -119,6 +119,33 @@ const STAIR_DIMENSIONS_HIDDEN = new Set([
   "ladder_march", "ladder_2march", "spiral_staircase", "upper_march", "porch",
 ]);
 
+/**
+ * dimensions.display у пунктов меню «Коммуникации» (этап 57): подтверждено пробами
+ * UI (57-comm-ui*, клики в dev-проекте, эталоны ui-ref-comm-*) — у пяти видов редактор
+ * пишет display:false (water, water_column_hot, water_column_cold, drainage_column, air),
+ * у остальных (radiator_old, gas_pipe, gas_boiler, gas_meter, fire_detector,
+ * ceiling_water, conditioner_cage) — display:true. У ventilation_hole и
+ * electric_shield_old эталонов постановки нет (UI не воспроизвёл), пишется display:true
+ * (поведение мебели), это не заявляется как факт о них.
+ */
+const COMM_DIMENSIONS_HIDDEN = new Set([
+  "water", "water_column_hot", "water_column_cold", "drainage_column", "air",
+]);
+
+/**
+ * Флаг display у over_floor у пунктов меню «Коммуникации» (этап 57, эталоны ui-ref-comm-*):
+ * у radiator_old и conditioner_cage редактор пишет {value, display:false}; у gas_boiler —
+ * {value, display:true}. Для остальных видов эталонов с over_floor нет — display:true
+ * (поведение stair_spot/ui-ref-sofa), это не заявляется как факт о них.
+ */
+const COMM_OVER_FLOOR_DISPLAY_FALSE = new Set(["radiator_old", "conditioner_cage"]);
+
+/**
+ * Линейные трубы (этап 57): «Газовый трубопровод» gas_line редактор ставит в отдельную
+ * коллекцию model.pipes_gas (граф узлов), а не в items — через item_add он неприменим.
+ */
+export const LINE_TOOLS = new Set(["gas_line"]);
+
 function itemPlan(entry: ToolEntry | undefined): Record<string, number> {
   const mapped = itemPlanFromEntry(entry);
   return Object.keys(mapped).length > 0 ? mapped : { furniture: 1 };
@@ -136,6 +163,12 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
   if (entry?.anchor === "wall" && !("againstWall" in params.position)) {
     throw new McpError("INVALID_ARGUMENT", `предмет «${entry.name}» ставится только у стены (anchor: wall — так же в редакторе), используйте against_wall`, {
       details: { kind: "wall_anchor_required", item: entry.name },
+    });
+  }
+  // этап 57: газовая линия — отдельная сущность (model.pipes_gas), не предмет
+  if (entry && LINE_TOOLS.has(entry.name)) {
+    throw new McpError("INVALID_ARGUMENT", `«${entry.name}» — линия (труба), ставится инструментом gas_line_add, а не item_add: редактор пишет её в отдельную коллекцию pipes_gas`, {
+      details: { kind: "line_tool_required", item: entry.name },
     });
   }
   const widthCm = mmToCm(params.widthMm ?? (entry ? entry.width * 10 : 100));
@@ -217,12 +250,15 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
     layer: null,
     comment: { id: "" },
     demount: 0,
-    // этап 55, ревью №3: display — как в эталонах UI (у пяти видов лестниц false)
-    dimensions: { display: !STAIR_DIMENSIONS_HIDDEN.has(params.name) },
+    // этап 55, ревью №3 / этап 57: display — как в эталонах UI (у пяти видов лестниц
+    // и пяти видов «Коммуникаций» false)
+    dimensions: { display: !STAIR_DIMENSIONS_HIDDEN.has(params.name) && !COMM_DIMENSIONS_HIDDEN.has(params.name) },
     rotated: 0,
-    // этап 55, ревью №3: подъём над полом — в форме редактора {value, display}
-    // (эталон ui-ref-stair-stair_spot: {value:20, display:true}), а не числом
-    over_floor: params.elevationMm !== undefined ? { value: r2(mmToCm(params.elevationMm)), display: true } : null,
+    // этап 55, ревью №3 / этап 57: подъём над полом — в форме редактора {value, display};
+    // display — по эталонам UI (у radiator_old/conditioner_cage false, у прочих true)
+    over_floor: params.elevationMm !== undefined
+      ? { value: r2(mmToCm(params.elevationMm)), display: !COMM_OVER_FLOOR_DISPLAY_FALSE.has(params.name) }
+      : null,
   };
   model.items[id] = props;
   return props;

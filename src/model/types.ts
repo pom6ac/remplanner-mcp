@@ -187,6 +187,35 @@ export type Rigel = {
   [key: string]: unknown;
 };
 
+/**
+ * Газовая линия (model.pipes_gas, пункт меню «Коммуникации» → «Газовый трубопровод»,
+ * этап 57, 2026-11-16): эталоны tests/fixtures/ui-ref-comm-gas_line.json. Граф трубы:
+ * vertexes — узлы (point в см, type "node"), matrix — матрица смежности N×N
+ * (диагональ null, у связной пары {length:1}), items — карта id узла → "node",
+ * type "gas_line", plan "a" (лист исходного плана), length — длина трубы в метрах
+ * (сумма сегментов, округление редактора до 2 знаков).
+ */
+export type GasLineVertex = {
+  id: string;
+  point: Point;
+  type: "node" | (string & {});
+};
+
+export type GasLine = {
+  id: string;
+  /** Матрица смежности: matrix[i][j] — {length:1} у связных узлов, null иначе. */
+  matrix: ({ length: number } | null)[][];
+  vertexes: GasLineVertex[];
+  /** Карта id узла → тип ("node"). */
+  items: Record<string, string>;
+  type: "gas_line" | (string & {});
+  /** Лист: "a" — исходный план. */
+  plan: string;
+  /** Длина трубы, м (сумма сегментов, округление редактора до 2 знаков). */
+  length: number;
+  [key: string]: unknown;
+};
+
 export type Model = {
   v: number;
   id: string;
@@ -201,6 +230,8 @@ export type Model = {
   pillars: Record<string, Pillar>;
   /** Потолочные ригели (пункт меню «Потолочный ригель»); у старых моделей может отсутствовать. */
   rigels?: Record<string, Rigel>;
+  /** Газовые линии (пункт меню «Коммуникации» → «Газовый трубопровод»); у старых моделей может отсутствовать. */
+  pipes_gas?: Record<string, GasLine>;
   rulers: Record<string, unknown>;
   comments: Record<string, unknown>;
   total_height: number;
