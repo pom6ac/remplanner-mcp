@@ -85,11 +85,28 @@ export type CompactPillar = {
   total_height_mm: number;
 };
 
+export type CompactRigel = {
+  id: string;
+  site_id: string;
+  /** Концы оси, мм. */
+  from: [number, number];
+  to: [number, number];
+  /** Толщина на плане, мм. */
+  depth_mm: number;
+  /** Опускание от потолка, мм. */
+  height_mm: number;
+  /** Тип отделки потолка ("" — без отделки). */
+  ceiling_type: string;
+  /** Привязки концов: {end, ot, id}. */
+  links: { end: "p1" | "p2"; ot: string; id: string }[];
+};
+
 export type CompactModel = {
   walls: CompactWall[];
   rooms: CompactRoom[];
   items: CompactItem[];
   pillars: CompactPillar[];
+  rigels: CompactRigel[];
   total_height_mm: number;
 };
 
@@ -209,12 +226,31 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     total_height_mm: round0(cmToMm(pillar.total_height ?? 270)),
   }));
 
+  const rigels: CompactRigel[] = Object.values(model.rigels ?? {}).map((rigel, i) => {
+    const links: CompactRigel["links"] = [];
+    for (const end of ["p1", "p2"] as const) {
+      const link = rigel[end]?.link;
+      if (link && typeof link === "object") links.push({ end, ot: link.ot, id: link.id });
+    }
+    return {
+      id: `B${i + 1}`,
+      site_id: rigel.id,
+      from: [round0(cmToMm(rigel.p1.x)), round0(cmToMm(rigel.p1.y))],
+      to: [round0(cmToMm(rigel.p2.x)), round0(cmToMm(rigel.p2.y))],
+      depth_mm: round0(cmToMm(rigel.depth)),
+      height_mm: round0(cmToMm(rigel.height)),
+      ceiling_type: rigel.ceiling_type ?? "",
+      links,
+    };
+  });
+
   const totalHeight = typeof model.total_height === "number" ? model.total_height : 270;
   return {
     walls,
     rooms: compactRooms,
     items,
     pillars,
+    rigels,
     total_height_mm: round0(cmToMm(totalHeight)),
   };
 }

@@ -6,6 +6,7 @@ import { wallFaces } from "./walls.ts";
 import { McpError } from "../errors.ts";
 import { lineIntersection, overlapArea, pointInPolygon, type Polygon } from "./geometry.ts";
 import type { RoomPolygon } from "./items.ts";
+import { refreshRigelsAfterWallOrPillarChange } from "./rigels.ts";
 
 /**
  * Колонны (пункт меню «Несущая колонна», model.pillars, этап 41, 2026-11-16).
@@ -443,6 +444,7 @@ export function addPillar(model: Model, params: AddPillarParams, rooms?: RoomPol
   finalizeCandidate(candidate, model);
   assertPillarInvariants(candidate, model, rooms); // инварианты кандидата — до записи в модель
   model.pillars[candidate.id] = candidate;
+  refreshRigelsAfterWallOrPillarChange(model);
   return candidate;
 }
 
@@ -477,13 +479,15 @@ export function updatePillar(model: Model, params: UpdatePillarParams, rooms?: R
   finalizeCandidate(candidate, model);
   assertPillarInvariants(candidate, model, rooms);
   assignPillar(pillar, candidate);
+  refreshRigelsAfterWallOrPillarChange(model);
   return pillar;
 }
 
-/** pillar_delete: удаляет колонну. */
+/** pillar_delete: удаляет колонну (связи ригелей с её гранями пересчитываются). */
 export function deletePillar(model: Model, pillarId: string): void {
   if (!model.pillars[pillarId]) throw new McpError("NOT_FOUND", `колонна ${pillarId} не найдена`);
   delete model.pillars[pillarId];
+  refreshRigelsAfterWallOrPillarChange(model);
 }
 
 /**

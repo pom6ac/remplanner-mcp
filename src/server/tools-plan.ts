@@ -8,6 +8,7 @@ import {
 } from "../model/walls.ts";
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
+import { addRigel, updateRigel, deleteRigel } from "../model/rigels.ts";
 import { addItem, updateItem, deleteItem, itemsList, roomPolygons, type RoomPolygon } from "../model/items.ts";
 import { compactModel, wallLengthMm } from "../model/compact.ts";
 import { validateModel } from "../model/validate.ts";
@@ -42,6 +43,19 @@ function resolvePillar(model: Model, ref: string): import("../model/types.ts").P
     if (pillar) return pillar;
   }
   return throwNotFound(`колонна ${ref} не найдена (id сайта или метка P<n> из model_get)`);
+}
+
+/** Ригель по site-id или метке B1…B_n. */
+function resolveRigel(model: Model, ref: string): import("../model/types.ts").Rigel {
+  const rigels = model.rigels ?? {};
+  if (rigels[ref]) return rigels[ref]!;
+  const m = /^B(\d+)$/.exec(ref);
+  if (m) {
+    const list = Object.values(rigels);
+    const rigel = list[Number(m[1]) - 1];
+    if (rigel) return rigel;
+  }
+  return throwNotFound(`ригель ${ref} не найден (id сайта или метка B<n> из model_get)`);
 }
 
 /** Предмет по site-id или метке I1…I_n. */
@@ -675,11 +689,78 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
     ),
 
+    // ---------- Потолочные ригели (пункт меню «Потолочный ригель», этап 47) ----------
+    rigel_add: tool(
+      "Поставить потолочный ригель (пункт меню «Потолочный ригель»): балка-прямоугольник на плане " +
+        "от точки start до точки end (ось, мм). Толщина depth_mm (по умолчанию 300, лимиты " +
+        "100..1000 мм) и высота height_mm — опускание от потолка (по умолчанию 300, 100..1000 мм, " +
+        "лимиты панели редактора). Концы оси на расстоянии до 30 мм от грани стены, колонны или " +
+        "другого ригеля прилипают к ней (конец срезается по линии грани, как в UI). Ригель не " +
+        "влияет на комнаты и площадь. После добавления вызывайте model_validate и project_save.",
+      {
+        start: mmPoint.describe("начало оси ригеля, мм"),
+        end: mmPoint.describe("конец оси ригеля, мм"),
+        depth_mm: mmInt.optional().describe("толщина на плане, мм (по умолчанию 300)"),
+        height_mm: mmInt.optional().describe("опускание от потолка, мм (по умолчанию 300)"),
+        ceiling_type: z.string().optional().describe("тип отделки потолка (по умолчанию пусто — ригель без отделки)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const rigel = ws.apply("rigel_add", (m) => addRigel(m, {
+          start: a["start"] as MmPoint,
+          end: a["end"] as MmPoint,
+          depthMm: a["depth_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+          ceilingType: a["ceiling_type"] as string | undefined,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.rigels.find((r) => r.site_id === rigel.id) ?? null));
+      },
+    ),
+
+    rigel_update: tool(
+      "Изменить потолочный ригель: переместить ось (start/end, мм), изменить толщину (depth_mm), " +
+        "высоту (height_mm) или тип отделки (ceiling_type). Мм→см только для явно переданных " +
+        "значений. rigel_id — id ригеля (site_id) или метка B<n> из model_get.",
+      {
+        rigel_id: z.string().min(1).describe("метка B<n> из model_get или id сайта"),
+        start: mmPoint.optional().describe("новое начало оси, мм"),
+        end: mmPoint.optional().describe("новый конец оси, мм"),
+        depth_mm: mmInt.optional(),
+        height_mm: mmInt.optional(),
+        ceiling_type: z.string().optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const rigel = ws.apply("rigel_update", (m) => updateRigel(m, {
+          rigelId: resolveRigel(m, a["rigel_id"] as string).id,
+          start: a["start"] as MmPoint | undefined,
+          end: a["end"] as MmPoint | undefined,
+          depthMm: a["depth_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+          ceilingType: a["ceiling_type"] as string | undefined,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.rigels.find((r) => r.site_id === rigel.id) ?? null));
+      },
+    ),
+
+    rigel_delete: tool(
+      "Удалить потолочный ригель (метка B<n> из model_get).",
+      { rigel_id: z.string().min(1).describe("метка B<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("rigel_delete", (m) => {
+          deleteRigel(m, resolveRigel(m, a["rigel_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["rigel_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
     // ---------- Чтение и проверка (§7.6) ----------
     model_get: tool(
       "Текущая модель плана в компактном виде: стены W1… (осевые концы, длины по осям и внутренним граням, толщины, проёмы с отступами), " +
-        "комнаты R1… (площади м², периметры), предметы I1…, колонны P1… (пункт меню «Несущая колонна»). " +
-        "Обычно < 5 КБ. id сайта — в поле site_id; метки W/R/I/P можно использовать в других инструментах.",
+        "комнаты R1… (площади м², периметры), предметы I1…, колонны P1… (пункт меню «Несущая колонна»), ригели B1… (пункт меню «Потолочный ригель»). " +
+        "Обычно < 5 КБ. id сайта — в поле site_id; метки W/R/I/P/B можно использовать в других инструментах.",
       { detail: z.enum(["compact", "full"]).optional() },
       async (a) => {
         const ws = wsOf();

@@ -29,7 +29,8 @@ export type RenderRevision = {
   openings: number;
   items: number;
   pillars?: number;
-  editor: { walls: number; openings: number; items: number; pillars?: number };
+  rigels?: number;
+  editor: { walls: number; openings: number; items: number; pillars?: number; rigels?: number };
 };
 
 export type RenderEditorLike = {
