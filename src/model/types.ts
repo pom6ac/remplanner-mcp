@@ -23,6 +23,8 @@ export type WallNode = Point & {
   link?: WallLink;
   /** Бэкап позиции узла у редактора; перед restore снимаем (мешает переносам). */
   bak?: unknown;
+  /** Пометка демонтажа конца стены (лист «Демонтаж», этап 103). */
+  demount?: number;
 };
 
 export type Hole = {

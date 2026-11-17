@@ -244,6 +244,15 @@ function assertNoCrossing(model: Model, p1: Point, p2: Point, skipIds: ReadonlyS
 
 function makeWall(model: Model, p1: Point, p2: Point, params: { thicknessMm?: number; material?: string; plan?: "a" | "c"; role?: WallRole; heightMm?: number }): Wall {
   const depth = mmToCm(params.thicknessMm ?? 200);
+  // перегородки листа «Перегородки» имеют свои материалы c_* (этап 103,
+  // эталон ui-ref-replan-partitions); материалы исходных стен a_* не применяются
+  const material = params.material ?? (params.plan === "c" ? "c_pgb" : "a_block");
+  if (params.plan === "c" && material.startsWith("a_")) {
+    throw new McpError("INVALID_ARGUMENT", `материал «${material}» — материал исходных стен, у перегородок листа «Перегородки» свои материалы`, {
+      hint: "для plan:\"c\" используйте c_pgb, c_block, c_brick, c_gypsum, c_glass (PRO), c_bar (PRO)",
+      details: { kind: "partition_material_invalid", material },
+    });
+  }
   const id = uniqueId(model);
   const wall: Wall = {
     id,
@@ -258,7 +267,7 @@ function makeWall(model: Model, p1: Point, p2: Point, params: { thicknessMm?: nu
     p2: { x: r2(p2.x), y: r2(p2.y) },
     p1st: 0,
     p2st: 0,
-    material: params.material ?? "a_block",
+    material,
     color: 0,
     level: "1",
     show_dls: true,

@@ -1,0 +1,28 @@
+{
+ "_source": "клики UI в анонимном проекте на синтетической базе «коридор + 3 комнаты» (проба 103-replan-fixtures, без save); id объектов обезличены, координаты — синтетическая база, см (модель редактора)",
+ "original_hole": {
+  "plan": "a",
+  "type": "single",
+  "hasReplacement": 1,
+  "pc": {
+   "x": 349.9999999999999,
+   "y": 0
+  },
+  "width": 80
+ },
+ "new_hole": {
+  "plan": "c",
+  "type": "doorway",
+  "group": "doors",
+  "position": "c",
+  "casing": 0,
+  "pc": {
+   "x": 349.9999,
+   "y": 0
+  },
+  "width": 80,
+  "height": 210,
+  "parent": "id474",
+  "parent_depth": 20
+ }
+}

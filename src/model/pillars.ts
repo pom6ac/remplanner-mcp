@@ -36,6 +36,12 @@ export type AddPillarParams = {
   widthMm?: number;
   heightMm?: number;
   angleDeg?: number;
+  /**
+   * kind (этап 103): column — несущая колонна исходного плана (по умолчанию);
+   * gypsum_box — ГКЛ-короб листа «Перегородки» (plan:"c", role_:"gypsum",
+   * эталон ui-ref-replan-gypsum-box: ширина 70 см, глубина 20 см, inRoom, id_room).
+   */
+  kind?: "column" | "gypsum_box";
 };
 
 export type UpdatePillarParams = Partial<AddPillarParams> & { pillarId: string };
@@ -449,10 +455,27 @@ function atomicPillar<T>(model: Model, fn: () => T): T {
 /** pillar_add: ставит колонну (мм), прижимает к грани стены при расстоянии ≤ 3 см, проверяет коллизии. */
 export function addPillar(model: Model, params: AddPillarParams, rooms?: RoomPolygon[]): Pillar {
   validatePillarParams(params);
+  const box = params.kind === "gypsum_box";
   const pcCm = { x: mmToCm(params.center.x), y: mmToCm(params.center.y) };
-  const { width, height } = pillarSizeCm(params.widthMm, params.heightMm);
+  const defaults = box ? { widthMm: 700, heightMm: 200 } : {};
+  const { width, height } = pillarSizeCm(params.widthMm ?? defaults.widthMm, params.heightMm ?? defaults.heightMm);
   const angleDeg = params.angleDeg ?? 0;
   const candidate = buildCandidate(model, newId(10), pcCm, width, height, angleDeg);
+  if (box) {
+    // ГКЛ-короб (эталон ui-ref-replan-gypsum-box): план «Перегородок», роль gypsum,
+    // id_room комнаты, в которой стоит центр; угол поворота в эталоне 0
+    candidate.plan = "c";
+    candidate.role = "gypsum";
+    candidate.role_ = "gypsum";
+    const room = rooms?.find((r) => pointInPolygon(r.polygon, pcCm));
+    if (!room) {
+      throw new McpError("OUTSIDE_ROOM", "центр ГКЛ-короба вне помещения — короб ставится внутри комнаты листа «Перегородки»", {
+        hint: "задайте center внутри контура комнаты или добавьте комнату (room_add_rect)",
+        details: { kind: "box_outside_room", pc: pcCm },
+      });
+    }
+    candidate.id_room = room.roomId;
+  }
   const snap = snapToWallFace(candidate, model);
   if (snap) {
     candidate.pc = { x: r2(candidate.pc.x + snap.dx), y: r2(candidate.pc.y + snap.dy) };

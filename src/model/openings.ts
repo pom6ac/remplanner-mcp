@@ -212,6 +212,13 @@ export type AddOpeningParams = WindowParams & {
   casing?: boolean;
   /** Устаревшее имя casements (число створок). */
   leaves?: number;
+  /**
+   * Замена исходного проёма (этап 103): новый проём пишется с plan:"c" и position:"c"
+   * на том же месте, а исходный получает hasReplacement:1 (эталон ui-ref-replan-replacement).
+   * Демонтированный проём и уже заменённый — INVALID_ARGUMENT (проба 103-replan-extra:
+   * UI doorway поверх демонтированной двери проём не ставит).
+   */
+  replacesHoleId?: string;
 };
 
 /** MCP-имена параметров для текстов ошибок валидатора. */
@@ -430,7 +437,7 @@ function checkPlacement(wall: Wall, at: number, width: number, ignoreHoleId?: st
       details: { kind: "opening_outside_wall", wall_id: wall.id, at_cm: r2(at), width_cm: width, wall_len_cm: r2(len) },
     });
   }
-  for (const other of Object.values(wall.holes)) {
+  for (const other of Object.values(wall.holes ?? {})) {
     if (other.id === ignoreHoleId) continue;
     const [o1, o2] = holeRange(wall, other);
     if (at < o2 - 1e-6 && o1 < at + width) {
@@ -557,6 +564,31 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
       details: { kind: "opening_on_balcony", wall_id: wall.id },
     });
   }
+  // замена исходного проёма (этап 103): проверки до мутации
+  let replaced: Hole | null = null;
+  if (params.replacesHoleId !== undefined) {
+    replaced = wall.holes[params.replacesHoleId] ?? null;
+    if (!replaced) {
+      throw new McpError("NOT_FOUND", `проём ${params.replacesHoleId} не найден на стене ${wall.id}`, {
+        details: { kind: "hole_not_found", wall_id: wall.id, hole_id: params.replacesHoleId },
+      });
+    }
+    if (replaced.plan === "c") {
+      throw new McpError("INVALID_ARGUMENT", `проём ${replaced.id} — уже проём листа «Перегородки» (plan:c), заменять можно только исходные проёмы`, {
+        details: { kind: "replace_plan_c", wall_id: wall.id, hole_id: replaced.id },
+      });
+    }
+    if (replaced.hasReplacement) {
+      throw new McpError("INVALID_ARGUMENT", `проём ${replaced.id} уже заменён — снимите прежнюю замену (opening_delete нового проёма)`, {
+        details: { kind: "already_replaced", wall_id: wall.id, hole_id: replaced.id },
+      });
+    }
+    if (replaced.demount === 1) {
+      throw new McpError("INVALID_ARGUMENT", `проём ${replaced.id} демонтирован — заменять демонтированный проём нельзя (как в UI); сначала отмените демонтаж (demolish_cancel)`, {
+        details: { kind: "replace_demounted", wall_id: wall.id, hole_id: replaced.id },
+      });
+    }
+  }
   const kind = OPENING_KINDS[params.type];
   if (!kind) {
     throw new McpError("INVALID_ARGUMENT", `неизвестный тип проёма: ${params.type}`, {
@@ -578,10 +610,15 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
     // tEdge — координата угла внутренней грани вдоль оси (№9 ревью)
     const tEdge = offsetFrom === "inner" ? innerEdgeOffsetCm(model, wall, fromEnd ? "end" : "start") : fromEnd ? len : 0;
     at = fromEnd ? tEdge - mmToCm(params.offsetMm) - widthCm : tEdge + mmToCm(params.offsetMm);
+  } else if (replaced) {
+    // замена без смещения — по центру исходного проёма
+    const axis = wallAxis(wall);
+    const repT = replaced.at ?? projectionLength({ p1: axis.p1, p2: replaced.pc }, replaced.pc);
+    at = repT - (widthCm - replaced.width) / 2;
   } else {
     at = mmToCm(0);
   }
-  checkPlacement(wall, at, widthCm);
+  checkPlacement(wall, at, widthCm, replaced?.id);
 
   const pc = pointAtLength(wallAxis(wall), at + widthCm / 2);
   const holeId = newId(10);
@@ -615,7 +652,15 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
   }
 
   setHolePoints(wall, hole);
+  if (replaced) {
+    // замена исходного проёма (эталон ui-ref-replan-replacement): проём листа «c»
+    // по центру исходного, у исходного — hasReplacement:1
+    hole.plan = "c";
+    hole.position = "c";
+    replaced.hasReplacement = 1;
+  }
   assertHoleInvariants(hole); // все инварианты кандидата — до записи в модель (ревью 28, R3/R4)
+  wall.holes ??= {};
   wall.holes[holeId] = hole;
   return hole;
 }
