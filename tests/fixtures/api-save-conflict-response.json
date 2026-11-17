@@ -1,4 +1,5 @@
 {
-  "result": "fail",
-  "html_code": "<div>Последний раз проект был сохранен в другой вкладке... <button onclick=save_project_from_fog>Сохранить все равно</button></div>"
+ "_source": "POST /setup/api/planner/save/ — ответ конфликта версий с диалогом «Сохранить все равно» (анонимный проект, 15.11.2026, global_version=757); короткий технический ответ, данных проекта не содержит. Добавлено при стороже фикстур (аудит 65 A2).",
+ "result": "fail",
+ "html_code": "<div>Последний раз проект был сохранен в другой вкладке... <button onclick=save_project_from_fog>Сохранить все равно</button></div>"
 }

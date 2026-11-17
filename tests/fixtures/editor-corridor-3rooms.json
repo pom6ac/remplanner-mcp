@@ -1,10 +1,10 @@
 {
- "_source": "GET-модель анонимного проекта после restore голой геометрии «коридор + 3 комнаты» (оси как в .orca-reports/10-editor-api-probe.json сценарий B, global_version 757) → draw → save → reload; снят scripts/probes/dump-corridor-fixture.ts 2026-11-15, object_id 7886898 (аноним, аккаунт не использовался)",
+ "_source": "GET-модель анонимного проекта после restore голой геометрии «коридор + 3 комнаты» (оси как в .orca-reports/10-editor-api-probe.json сценарий B, global_version 757) → draw → save → reload; снят scripts/probes/dump-corridor-fixture.ts 2026-11-15, анонимный проект (ID объекта/плана обезличены на 0, аккаунт не использовался)",
  "global_version": "757",
  "model": {
   "v": 3,
-  "id": "7886898",
-  "plan_id": "1000160",
+  "id": "0",
+  "plan_id": "0",
   "walls": {
    "w1": {
     "id": "w1",
