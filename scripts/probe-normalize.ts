@@ -2,7 +2,8 @@
 // Запуск: node scripts/probe-normalize.ts refs
 import { chromium } from 'playwright-core';
 import type { Page } from 'playwright-core';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
+import { anonymizeEditorIds, anonymizeProjectIds, writeFixture } from './anonymize.ts';
 
 const BASE = 'https://remplanner.ru';
 
@@ -55,9 +56,17 @@ async function dumpState(page: Page, name: string) {
       copy: w.__snap(w.project.copy('server')),
     };
   });
-  await writeFile(`tests/fixtures/ui-ref-${name}.json`, JSON.stringify(d, null, 2));
+  // Аудит 65 A2: в эталон идёт только серверная модель copy, сразу в обезличенном
+  // виде (общая санитизация scripts/anonymize.ts) и с _source. Runtime-дампы
+  // walls/items/rooms1/rooms2 тесты не проверяют — в файл не пишутся.
+  const { data } = anonymizeEditorIds(d.copy);
+  await writeFixture(
+    `tests/fixtures/ui-ref-${name}.json`,
+    { copy: anonymizeProjectIds(data as Record<string, unknown>) },
+    `Серверная модель project.copy("server") анонимного проекта remplanner.ru (создан кнопкой «Нарисовать чертежи своими руками» в чистом browser context, аккаунт не использовался), сценарий ${name} — scripts/probe-normalize.ts (режим refs), снято ${new Date().toISOString().slice(0, 10)}. ID проекта/плана и внутренние ID стен, комнат, проёмов, предметов заменены на синтетические детерминированно (scripts/anonymize.ts).`,
+  );
   await page.screenshot({ path: `screenshots/t1-ref-${name}.png` });
-  console.log('эталон', name, ': walls=', Object.keys(d.walls).length, 'items=', Object.keys(d.items).length, 'rooms2=', Object.keys(d.rooms2).length);
+  console.log('эталон', name, ': walls=', Object.keys(d.walls).length, 'items=', Object.keys(d.items).length, 'rooms2=', Object.keys(d.rooms2).length, '(copy обезличен)');
 }
 
 async function toolsList(page: Page) {
@@ -193,4 +202,12 @@ async function main() {
   await page.waitForTimeout(1500);
   await browser.close();
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+// Ревью 159 m5 (инцидент 158): main() — только при явном аргументе refs.
+// Импорт модуля не должен запускать headed Chrome и живой сценарий,
+// перезаписывающий эталоны: без refs печатаем usage и выходим.
+if (process.argv[2] === 'refs') {
+  main().catch((e) => { console.error(e); process.exit(1); });
+} else {
+  console.error('Запуск: node scripts/probe-normalize.ts refs (без аргумента refs сценарий не выполняется)');
+  process.exit(1);
+}

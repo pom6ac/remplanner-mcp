@@ -54,4 +54,9 @@ async function main() {
   console.log('copy holes:', Object.values(copy.walls).flatMap((w: any) => Object.keys(w.holes || {})).length);
   await browser.close();
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+// Ревью 159 m5 (инцидент 158): main() — только при прямом запуске файла;
+// импорт модуля не должен запускать живой сценарий.
+if (process.argv[1]?.endsWith("probe-restore-debug6.ts")) {
+  main().catch((e) => { console.error(e); process.exit(1); });
+}
+
