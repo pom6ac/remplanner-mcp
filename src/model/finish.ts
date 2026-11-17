@@ -356,7 +356,7 @@ function removeCollinear(poly: Point[]): Point[] {
  * стрелки, начиная с лексикографически минимальной вершины. Один и тот же контур
  * с любым стартовым ребром, направлением и лишними точками на прямых даёт одну форму.
  */
-function canonicalPolygon(poly: Point[] | undefined): Point[] | null {
+export function canonicalPolygon(poly: Point[] | undefined): Point[] | null {
   if (!poly || poly.length < 3) return null;
   let pts: Point[] = [];
   for (const p of poly) {
@@ -379,7 +379,7 @@ function canonicalPolygon(poly: Point[] | undefined): Point[] | null {
   return [...pts.slice(mi), ...pts.slice(0, mi)];
 }
 
-function polygonsEqual(a: Point[] | undefined, b: Point[] | undefined): boolean {
+export function polygonsEqual(a: Point[] | undefined, b: Point[] | undefined): boolean {
   const ca = canonicalPolygon(a), cb = canonicalPolygon(b);
   if (!ca || !cb || ca.length !== cb.length) return false;
   return ca.every((p, i) => Math.abs(p.x - cb[i]!.x) <= COORD_TOL && Math.abs(p.y - cb[i]!.y) <= COORD_TOL);
@@ -664,8 +664,92 @@ function roomPolygon(room: RoomRec): Point[] | undefined {
   return (room.polygon ?? room.points) as Point[] | undefined;
 }
 
+/** Полигон комнаты записи (polygon ?? points) — для сопоставления по каноническому контуру. */
+export function roomPolygonOf(room: unknown): Point[] | undefined {
+  return roomPolygon((room ?? {}) as RoomRec);
+}
+
+/**
+ * Сопоставление комнат по каноническому контуру (ревью 95 R1): ID — только подсказка,
+ * проверенная геометрией. Общий слой для сверки отделки и сверки комнат при save
+ * (этап 126) — не дублируется.
+ */
+export function matchRoomsByContour(
+  expectedRooms: Record<string, unknown> | undefined,
+  gotRooms: Record<string, unknown> | undefined,
+): { pairs: Map<string, string>; matchedGot: Set<string> } {
+  const exp = (expectedRooms ?? {}) as RoomsMap;
+  const got = (gotRooms ?? {}) as RoomsMap;
+  const pairs = new Map<string, string>();
+  const matchedGot = new Set<string>();
+  for (const [rid, room] of Object.entries(exp)) {
+    const cand = got[rid];
+    if (cand && polygonsEqual(roomPolygon(room), roomPolygon(cand))) {
+      pairs.set(rid, rid);
+      matchedGot.add(rid);
+    }
+  }
+  for (const [rid, room] of Object.entries(exp)) {
+    if (pairs.has(rid)) continue;
+    const found = Object.keys(got).find((k) => !matchedGot.has(k) && polygonsEqual(roomPolygon(room), roomPolygon(got[k]!)));
+    if (found) {
+      pairs.set(rid, found);
+      matchedGot.add(found);
+    }
+  }
+  return { pairs, matchedGot };
+}
+
 function roomHasFloorCeiling(room: RoomRec): boolean {
   return Boolean(floorSig(room) || ceilingSig(room));
+}
+
+/**
+ * Классификация наследников при изменившейся топологии (только режим normalize).
+ * Изменение контура — ещё не смена топологии (ревью 100 N4/N5): классификация по
+ * площадям. split доказан несколькими комнатами результата, merge — несколькими
+ * реальными источниками; иначе (перенос стены, деформация, расширение одной комнаты) —
+ * та же комната с новой геометрией, строгая проверка без послаблений.
+ */
+export type RoomHeir = { key: string; kind: "split" | "merge" | "same"; partKeys: string[] } | null;
+
+export function roomHeirs(
+  expectedRooms: Record<string, unknown> | undefined,
+  gotRooms: Record<string, unknown> | undefined,
+  exact: Map<string, string>,
+  mode: FinishMode = "normalize",
+): Map<string, RoomHeir> {
+  const exp = (expectedRooms ?? {}) as RoomsMap;
+  const got = (gotRooms ?? {}) as RoomsMap;
+  const gotKeys = Object.keys(got);
+  const unmatchedExp = Object.keys(exp).filter((rid) => !exact.has(rid));
+  const heirOf = new Map<string, RoomHeir>();
+  if (mode !== "normalize") return heirOf;
+  for (const rid of unmatchedExp) {
+    const room = exp[rid]!;
+    const poly = roomPolygon(room);
+    let best: { key: string; shareExp: number } | null = null;
+    for (const k of gotKeys) {
+      const shareExp = overlapShare(poly ?? [], roomPolygon(got[k]!) ?? []);
+      if (shareExp < SPLIT_MIN) continue;
+      if (!best || shareExp > best.shareExp) best = { key: k, shareExp };
+    }
+    if (!best) { heirOf.set(rid, null); continue; }
+    // комнаты результата, в основном лежащие внутри исходной (эталон 98: split)
+    const partKeys = Object.keys(got).filter((k) => {
+      const gp = roomPolygon(got[k]!) ?? [];
+      return polygonArea(gp) > 1e-9 && overlapShare(gp, poly ?? []) >= PART_SHARE_MIN;
+    });
+    if (partKeys.length >= 2) {
+      heirOf.set(rid, { key: best.key, kind: "split", partKeys });
+      continue;
+    }
+    const sources = unmatchedExp.filter((s) =>
+      overlapShare(roomPolygon(exp[s]!) ?? [], roomPolygon(got[best!.key]!) ?? []) >= SPLIT_MIN,
+    );
+    heirOf.set(rid, { key: best.key, kind: sources.length >= 2 ? "merge" : "same", partKeys: [] });
+  }
+  return heirOf;
 }
 
 /** Режим сверки отделки: «normalize» — до записи (штатная топология редактора),
@@ -698,61 +782,14 @@ export function finishCompare(
   const gotW = asFinishWalls(gotWalls);
   const problems: string[] = [];
   const warnings: string[] = [];
-  const gotKeys = Object.keys(got);
 
   // 1. точное сопоставление по каноническому контуру (id — подсказка, проверенная геометрией)
-  const exact = new Map<string, string>(); // expId → gotId
-  const claimed = new Set<string>();
-  for (const [rid, room] of Object.entries(exp)) {
-    const cand = got[rid];
-    if (cand && polygonsEqual(roomPolygon(room), roomPolygon(cand))) {
-      exact.set(rid, rid);
-      claimed.add(rid);
-    }
-  }
-  for (const [rid, room] of Object.entries(exp)) {
-    if (exact.has(rid)) continue;
-    const found = gotKeys.find((k) => !claimed.has(k) && polygonsEqual(roomPolygon(room), roomPolygon(got[k]!)));
-    if (found) {
-      exact.set(rid, found);
-      claimed.add(found);
-    }
-  }
+  const { pairs: exact } = matchRoomsByContour(expectedRooms, gotRooms);
   const unmatchedExp = Object.keys(exp).filter((rid) => !exact.has(rid));
 
-  // 2. наследники при изменившейся топологии (только режим normalize). Изменение
-  //    контура — ещё не смена топологии (ревью 100 N4/N5): классификация по площадям.
-  //    split доказан несколькими комнатами результата, merge — несколькими реальными
-  //    источниками; иначе (перенос стены, деформация, расширение одной комнаты) —
-  //    та же комната с новой геометрией, строгая проверка без послаблений.
-  type HeirInfo = { key: string; kind: "split" | "merge" | "same"; partKeys: string[] } | null;
-  const heirOf = new Map<string, HeirInfo>();
-  if (mode === "normalize") {
-    for (const rid of unmatchedExp) {
-      const room = exp[rid]!;
-      const poly = roomPolygon(room);
-      let best: { key: string; shareExp: number } | null = null;
-      for (const k of gotKeys) {
-        const shareExp = overlapShare(poly ?? [], roomPolygon(got[k]!) ?? []);
-        if (shareExp < SPLIT_MIN) continue;
-        if (!best || shareExp > best.shareExp) best = { key: k, shareExp };
-      }
-      if (!best) { heirOf.set(rid, null); continue; }
-      // комнаты результата, в основном лежащие внутри исходной (эталон 98: split)
-      const partKeys = Object.keys(got).filter((k) => {
-        const gp = roomPolygon(got[k]!) ?? [];
-        return polygonArea(gp) > 1e-9 && overlapShare(gp, poly ?? []) >= PART_SHARE_MIN;
-      });
-      if (partKeys.length >= 2) {
-        heirOf.set(rid, { key: best.key, kind: "split", partKeys });
-        continue;
-      }
-      const sources = unmatchedExp.filter((s) =>
-        overlapShare(roomPolygon(exp[s]!) ?? [], roomPolygon(got[best.key]!) ?? []) >= SPLIT_MIN,
-      );
-      heirOf.set(rid, { key: best.key, kind: sources.length >= 2 ? "merge" : "same", partKeys: [] });
-    }
-  }
+  // 2. наследники при изменившейся топологии (только режим normalize) — общий слой
+  //    (используется и сверкой комнат при save, этап 126)
+  const heirOf = roomHeirs(expectedRooms, gotRooms, exact, mode);
   /** Наследник без смены топологии: сверять строго, как совпадающую комнату. */
   const sameMatch = (rid: string): string | undefined => {
     const h = heirOf.get(rid);
