@@ -1,10 +1,12 @@
 // 142: свободные концы стен — стандарт remplanner (отчёт 132 часть 1, FAQ 2.1).
 // Эталоны ui-ref-free-wall-{partition,a}.json — клики UI в анонимном проекте
 // (проба scripts/probes/142-free-wall-fixtures.ts): ГКЛ-перегородка plan:"c" и
-// стена plan:"a" с двумя свободными концами. Живой save (132 и проба 142):
-// редактор сохраняет обе стены без потерь и предупреждений, errors — нули.
-// Здесь: модельный слой воспроизводит эталонную семантику; mock save с точной
-// формой из редактора — verified без ложной потери (дрейф координат 10.999 vs 11).
+// стена plan:"a" с двумя свободными концами. Эталоны сняты БЕЗ save (форма модели
+// после draw); сохранение свободных стен без потерь подтверждено живыми пробами
+// 132 и 142 (save verified → reopen → стены на месте, errors — нули), не эталоном.
+// Здесь: модельный слой воспроизводит эталонную семантику; mock save сверяет
+// присланные стены с эталоном (план, материал, глубина) и пишет точную форму из
+// редактора — verified без ложной потери (дрейф координат 10.999 vs 11).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -85,20 +87,34 @@ type EditorModel = Record<string, unknown>;
 /**
  * Mock-редактор на эталонной форме: normalize отдаёт стены модели, дополненные
  * эталонной перегородкой с дрейфом координат редактора (p2.y = 10.999…), save
- * пишет нормализованную модель; GET возвращает то же — как живой редактор 142.
+ * сверяет присланные стены с эталоном (план, материал, глубина — ревью 144 M4:
+ * неверная стена от Workspace падает на assert, а не молча «сохраняется»; id
+ * редактор перегенерирует при restore, сверяется семантика) и пишет точную
+ * форму из редактора — verified без ложной потери (дрейф координат 10.999 vs 11).
  */
 function fixtureEditor(partition: Wall, extraFree: Wall): { editor: EditorLike; server: { saveId: string; model: EditorModel } } {
   const server: { saveId: string; model: EditorModel } = { saveId: "s1", model: { walls: {} } };
+  const refs = new Map([[partition.id, partition], [extraFree.id, extraFree]]);
+  let sentWalls: Record<string, Wall> = {};
   const editor: EditorLike = {
     objectId: "0", planId: "1",
     async normalize(model) {
       const copy = structuredClone(model) as Model & Record<string, unknown>;
+      sentWalls = structuredClone(copy.walls as Record<string, Wall>);
       // редактор при restore пересчитывает координаты (дрейф ~1e-12, эталон 10.999)
       const walls = Object.values(copy.walls as Record<string, Wall>).map((w) => ({ id: w.id, p1: w.p1, p2: w.p2, depth: w.depth }));
       const c = { walls: walls.length, holes: 0, items: 0, pillars: 0, rigels: 0 };
       return { model: copy, rooms: [], before: c, after: c, walls, errors: null } as unknown as NormalizeResult;
     },
     async save() {
+      // сверка присланных стен с эталоном перед подменой (ревью 144 M4): id
+      // редактор перегенерирует при restore, сверяем план/материал/глубину
+      const sigOf = (w: Wall): string => `${w.plan}/${w.material}/${w.depth}`;
+      assert.deepEqual(
+        Object.values(sentWalls).map(sigOf).sort(),
+        [...refs.values()].map(sigOf).sort(),
+        `присланные стены соответствуют эталону: ${JSON.stringify(Object.values(sentWalls).map((w) => ({ plan: w.plan, material: w.material, depth: w.depth })))}`,
+      );
       // редактор сохраняет точную эталонную форму (как в пробе 142 после save)
       const saved = structuredClone({ walls: { [partition.id]: partition, [extraFree.id]: extraFree } }) as unknown as EditorModel;
       server.model = saved;
