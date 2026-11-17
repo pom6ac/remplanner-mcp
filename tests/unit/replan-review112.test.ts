@@ -5,6 +5,9 @@
 // Ревью 111: не переносить наследование на внутренний узел разреза (внутренние
 // узлы разреза ожидаемо соединены); сопоставление унаследованных концов
 // один-к-одному.
+// Ревью 144 M1 (PR #19): разрыв стыка после split — оторванный нормализатором
+// соединённый конец, снова INVALID_GEOMETRY (предупреждение только для концов,
+// свободных уже в кандидате).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -71,19 +74,21 @@ function wsWithIsolatedWall(editor: EditorLike): { ws: Workspace; isolated: Wall
 
 // ---------- Workspace: fault injection в нормализатор на разрезанной стене ----------
 
-test("112 R10: разрыв стыка 2 мм после split в normalize — INVALID_GEOMETRY (воспроизведение 111)", async () => {
+test("142/144: разрыв стыка 2 мм после split в normalize — INVALID_GEOMETRY (нормализатор оторвал соединённый конец)", async () => {
   const { ws, isolated } = wsWithIsolatedWall(gapAfterSplitEditor(0.2));
   await ws.open("123", "1");
   await assert.rejects(
     ws.applyWalls("wall_split", (mm) => splitWall(mm, isolated.id, 3000)),
     (e: unknown) => {
-      const err = e as { code?: string; details?: { unattached?: unknown[] } };
-      return err.code === "INVALID_GEOMETRY" && Array.isArray(err.details?.unattached);
+      assert.equal((e as { code?: string }).code, "INVALID_GEOMETRY");
+      assert.match((e as Error).message, /оторвал соединённый конец/, (e as Error).message);
+      assert.match((e as Error).message, /\(3000; -6000\)/, "точка разрыва внутреннего стыка в мм");
+      return true;
     },
   );
-  // отказ атомарен: стена осталась целой, второй половины нет
-  assert.ok(ws.model.walls[isolated.id], "исходная стена на месте");
-  assert.equal(ws.model.walls[isolated.id]!.p2.x, 600, "p2 не сдвинут");
+  // результат split не применён: модель без второй половины
+  const halves = Object.values(ws.model.walls as Record<string, Wall>).filter((w) => Math.abs(w.p1.y + 600) < 1e-9 && Math.abs(w.p2.y + 600) < 1e-9);
+  assert.equal(halves.length, 1, "разрез откачен: исходная стена на месте");
 });
 
 test("112 R10: штатный split изолированной стены проходит, стык соединён", async () => {
@@ -97,11 +102,15 @@ test("112 R10: штатный split изолированной стены про
   assert.equal(cut.length, 0, "внутренний узел разреза соединён");
 });
 
-test("112 R10: граница допуска — зазор 0,51 см после split тоже отклоняется", async () => {
+test("142/144: зазор 0,51 см после split — тоже INVALID_GEOMETRY, допуск сопоставления не оправдывает отрыв", async () => {
   const { ws, isolated } = wsWithIsolatedWall(gapAfterSplitEditor(0.51));
   await ws.open("123", "1");
   await assert.rejects(
     ws.applyWalls("wall_split", (mm) => splitWall(mm, isolated.id, 3000)),
-    (e: unknown) => (e as { code?: string }).code === "INVALID_GEOMETRY",
+    (e: unknown) => {
+      assert.equal((e as { code?: string }).code, "INVALID_GEOMETRY");
+      assert.match((e as Error).message, /оторвал соединённый конец/, (e as Error).message);
+      return true;
+    },
   );
 });

@@ -150,16 +150,17 @@ test("108 R10: wall_move изолированной стены проходит 
   assert.equal(ws.model.walls[isolated.id]!.p1.y, -620);
 });
 
-test("108 R10: операция, создающая новый висячий конец, — INVALID_GEOMETRY", async () => {
+test("142: операция, создающая новый висячий конец, проходит с предупреждением wall_free_ends (мм)", async () => {
   const { ws } = wsWithIsolatedWall();
   await ws.open("123", "1");
-  await assert.rejects(
-    ws.applyWalls("wall_add", (mm) => addWall(mm, { start: { x: 0, y: 10000 }, end: { x: 3000, y: 10000 } })),
-    (e: unknown) => {
-      const err = e as { code?: string; details?: { unattached?: unknown[] } };
-      return err.code === "INVALID_GEOMETRY" && Array.isArray(err.details?.unattached) && (err.details.unattached as unknown[]).length === 2;
-    },
-  );
+  const { warnings } = await ws.applyWalls("wall_add", (mm) => addWall(mm, { start: { x: 0, y: 10000 }, end: { x: 3000, y: 10000 } }));
+  const free = warnings.find((w) => w.startsWith("wall_free_ends"));
+  assert.ok(free, `предупреждение wall_free_ends в warnings: ${JSON.stringify(warnings)}`);
+  assert.match(free!, /\(0; 10000\)/, "первый конец в мм");
+  assert.match(free!, /\(3000; 10000\)/, "второй конец в мм");
+  // новая свободная стена в модели
+  const added = Object.values(ws.model.walls).find((w) => w.p1.x === 0 && w.p1.y === 1000 && w.p2.x === 300 && w.p2.y === 1000);
+  assert.ok(added, "свободная стена добавлена в модель");
 });
 
 // ---------- R4: пара замены в updateOpening ----------

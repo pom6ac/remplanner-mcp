@@ -9,7 +9,7 @@ import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, Edit
 import type { Model, Point } from "./model/types.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
-import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmatchedDanglingEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, assertNoNewWarmFloorCrossing, type WallAxisSegment } from "./model/walls.ts";
+import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmatchedDanglingEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, assertNoNewWarmFloorCrossing, type WallAxisSegment, type DanglingEnd } from "./model/walls.ts";
 import { dist, closestPoint, pointInPolygon, segmentsCross, type Polygon as GeoPolygon } from "./model/geometry.ts";
 import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey, PIPE_COLLECTIONS, CLIMATE_PIPE_KINDS } from "./model/pipes.ts";
 import { warmFloorMismatches } from "./model/climate.ts";
@@ -64,6 +64,46 @@ function checkLevelHolesAfterNormalize(local: Model, norm: Model): string[] {
 
 // T17: рабочее пространство — открытые проекты, каноническая модель (GET), история
 // undo/redo (до 50), dirty, save_id, снимок в backups/ перед сохранением, SAVE_CONFLICT.
+
+/**
+ * Публичная метка висячего конца: стена как в model_get (W<n>) и конец start/end,
+ * не внутренние p1/p2 (ревью 144 M2). wallIndex — порядок стен, по которому model_get
+ * нумерует метки: для намеренных концов — norm.walls (каноническая модель после
+ * применения), для оторванных — рабочая модель до мутации (мутация откатывается).
+ */
+function danglingEndLabel(wallIndex: Map<string, number>, d: DanglingEnd): string {
+  const n = wallIndex.get(d.wallId);
+  const wall = n !== undefined ? `W${n + 1}` : d.wallId;
+  return `${wall}.${d.node === "p1" ? "start" : "end"} (${Math.round(d.point.x * 10)}; ${Math.round(d.point.y * 10)})`;
+}
+
+/** Первые 5 концов, дальше «и ещё N» (ревью 144 M2). */
+function endsPreview(labels: string[]): string {
+  const shown = labels.slice(0, 5).join(", ");
+  return labels.length > 5 ? `${shown}, и ещё ${labels.length - 5}` : shown;
+}
+
+/**
+ * Метка стены кандидата для оторванного нормализатором конца (ревью 144 M1/M2):
+ * конец смещён от соединённого положения в clone — берём ближайший конец стены
+ * кандидата; мутация откатывается, поэтому model_get покажет стены рабочей
+ * модели (кандидата), а идентификаторы norm стен редактор мог перенумеровать.
+ */
+function cloneWallLabel(cloneWalls: ReadonlyArray<{ id: string; p1: Point; p2: Point }>, d: DanglingEnd): string {
+  let best = "";
+  let bestDist = Infinity;
+  cloneWalls.forEach((w, i) => {
+    for (const p of [w.p1, w.p2] as const) {
+      const dd = dist(p, d.point);
+      if (dd < bestDist) {
+        bestDist = dd;
+        best = `W${i + 1}`;
+      }
+    }
+  });
+  return best;
+}
+
 
 /** Подмножество EditorHandle, нужное workspace (структурно совместимо с EditorHandle). */
 export type EditorLike = {
@@ -1428,26 +1468,50 @@ export class Workspace {
           details: { over_walls: over },
         });
       }
-      // §12.4: конец, который Node ставил на грань или в узел, остался без связи.
-      // ревью 108 R10: отклоняются только НОВЫЕ несоединённые концы — унаследованные
-      // (присутствовали в модели до операции) штатные демонтаж/перенос не блокируют;
-      // защита новых дефектов сохранена полностью.
-      // ревью 110 R10: унаследованные концы сопоставляются геометрически (точка конца
-      // с допуском, с учётом ожидаемого переноса/разреза/слияния стены операцией —
-      // expectedDanglingEndPoints), а не по `wallId.node`: нормализатор редактора
-      // может перенумеровывать стены и менять направление оси, ключ наследования —
-      // физическое положение конца, а не идентификаторы.
-      // ревью 111 R10: сопоставление один-к-одному — каждая унаследованная точка
-      // оправдывает не более одного конца после операции; позиция конца по
-      // wallId.node переносится только если конец остался несоединённым
-      // (внутренние узлы разреза при split ожидаемо соединены).
+      // §12.4: свободные концы стен — правило одно: намеренно свободный конец —
+      // предупреждение, оторванный нормализатором — отказ.
+      // 142: свободные концы — штатная механика редактора (стандарт remplanner,
+      // FAQ 2.1: свободностоящие перегородки plan:"c" и стены plan:"a" со свободными
+      // концами save сохраняет без потерь и предупреждений). Конец, свободный уже
+      // в кандидате (clone до normalize) — пользователь сам нарисовал свободную
+      // стену или операция осознанно оставила конец свободным: предупреждение
+      // wall_free_ends; помещение из свободной стены не образуется (ограничение
+      // редактора, не ошибка). Конец, соединённый в кандидате и оторванный
+      // нормализатором (§12.4: «конец, который Node ставил на грань или в узел,
+      // остался без связи», баг 111), — дефект: INVALID_GEOMETRY.
+      // ревью 110/111 R10: унаследованные концы сопоставляются геометрически
+      // (точка конца с допуском, с учётом ожидаемого переноса/разреза/слияния
+      // стены операцией — expectedDanglingEndPoints), а не по `wallId.node`:
+      // нормализатор редактора может перенумеровывать стены и менять направление
+      // оси, ключ наследования — физическое положение конца; сопоставление
+      // один-к-одному (ревью 111 R10) — и здесь, и при классификации концов.
+      const candidateDangling = findUnattachedEnds(Object.values(clone.walls));
       const danglingAll = findUnattachedEnds(norm.walls ?? []);
       const expectedEnds = expectedDanglingEndPoints(beforeDangling, Object.values(clone.walls));
-      const dangling = unmatchedDanglingEnds(danglingAll, expectedEnds);
-      if (dangling.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации появились новые несоединённые концы стен (${dangling.slice(0, 5).map((d) => `${d.wallId}.${d.node}`).join(", ")}) — мутация отменена`, {
-          details: { unattached: dangling, unattached_inherited: [...beforeDanglingKeys] },
-        });
+      const notInherited = unmatchedDanglingEnds(danglingAll, expectedEnds);
+      // намеренные свободные концы: после исключения унаследованных совпадают
+      // с концами, свободными уже в кандидате (один-к-одному, допуск дрейфа);
+      // остальные — оторванные нормализатором соединённые концы
+      const broken = unmatchedDanglingEnds(notInherited, candidateDangling.map((d) => d.point));
+      const intended = notInherited.filter((d) => !broken.includes(d));
+      if (broken.length > 0) {
+        const cloneWalls = Object.values(clone.walls);
+        const brokenLabels = broken.map((d) => `${cloneWallLabel(cloneWalls, d)}.${d.node === "p1" ? "start" : "end"} (${Math.round(d.point.x * 10)}; ${Math.round(d.point.y * 10)})`);
+        throw new McpError(
+          "INVALID_GEOMETRY",
+          `нормализатор оторвал соединённый конец стены: ${endsPreview(brokenLabels)} — в кандидате конец был соединён, ` +
+            `после normalize остался без связи (дефект §12.4) — мутация отменена`,
+          { details: { broken_ends: brokenLabels } },
+        );
+      }
+      if (intended.length > 0) {
+        const normIndex = new Map((norm.walls ?? []).map((w, i) => [w.id, i]));
+        const intendedLabels = intended.map((d) => danglingEndLabel(normIndex, d));
+        warnings.push(
+          `wall_free_ends: намеренно свободные концы стен, мм: ${endsPreview(intendedLabels)} — ` +
+            `редактор допускает свободные концы (штатно), помещение из свободной стены не образуется; ` +
+            `унаследованные до операции: ${beforeDanglingKeys.size}`,
+        );
       }
       // §12.4: выросли счётчики ошибок редактора
       const grown = errorGrowth(this.lastErrors ?? (this.modelInternal!["errors"] as Record<string, number> | undefined) ?? null, norm.errors ?? null);
