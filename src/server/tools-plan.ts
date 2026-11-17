@@ -11,6 +11,7 @@ import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
 import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../model/rigels.ts";
 import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind } from "../model/pipes.ts";
 import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, LIGHT_COLLECTION_BY_KIND, type LightKind } from "../model/lighting.ts";
+import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.ts";
 import type { LedStrip, StripLight, LineStrip } from "../model/types.ts";
 import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
 import {
@@ -639,6 +640,17 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "wall_lamp, painting_lighting, light_stick) — только against_wall, высота по умолчанию 140 см из каталога (elevation_mm переопределяет). " +
         "Трековые споты track_spot/track_pendent_spot/track_panel_spot/track_line_spot ставятся НА трековую шину — " +
         "MCP пока не поддерживает подключение к шине. " +
+        "Электрика (листы «Розетки» и «Выключатели», этап 88): пристенные розетки socket, socket_ip44, socket_power, " +
+        "socket_380, socket_tv, socket_usb, socket_hdmi, socket_phone, socket_audio, socket_ip (поз. PRO: floor_socket, " +
+        "ceiling_socket, furniture_socket) и выключатели light_switch, light_switch_double (поз. PRO: light_switch_triple, " +
+        "light_dimmer, light_switch_through, light_switch_through_double, light_switch_cross, light_switch_cross_double, " +
+        "light_switch_master) — предметы каталога item_add у стены (against_wall; высота установки по умолчанию 30 см у " +
+        "розеток и 90 см у выключателей из каталога, elevation_mm переопределяет). Редактор пишет их группой " +
+        "socket_group (одна под-розетка) — model_get показывает items[] с socket_group[]. Группа розеток — несколько " +
+        "под-розеток на одной пластине (как клик рядом в редакторе) — пока одиночными item_add. " +
+        "Связь «выключатель → светильник» — cable_add (выключатель item_add, светильник item_add, затем cable_add); " +
+        "cable (Соединительная линия) — не item_add. Потолочная ceiling_socket и напольная floor_socket розетки ставятся " +
+        "свободно (center/in_room). Выводы проводов (wire*, группа wires) и электрощит — отдельные этапы. " +
         "Меню «Терраса и участок»: диваны terrace-серии (sofa_pottery_barn_malibu_wicker, sofa_coup_detat_campanha, " +
         "armchair_solana_papasan) — предметы каталога (item_add, план furniture); сами терраса/ограждение/столб — " +
         "отдельные сущности (terrace_add, terrace_fence_add, terrace_column_add), «Террасная доска» terrace_board — " +
@@ -1172,6 +1184,51 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           return true;
         });
         return ok({ deleted: a["line_light_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Электрика: связь «выключатель → светильник» (лист «Выключатели», этап 88) ----------
+    cable_add: tool(
+      "Соединить выключатель со светильником (лист «Выключатели», инструмент «Соединительная линия», PRO в UI): " +
+        "switch_item_id — предмет-группа с выключателем (light_switch*, item_add), lamp_item_id — светильник " +
+        "(люстры, бра, светильники группы lights, вентилятор fan; трековые шины/ленты — следующий этап). " +
+        "switch_sub_id — id под-розетки-выключателя внутри группы (model_get items[].socket_group[].id); " +
+        "по умолчанию первая под-розетка со свободным ключом. path — промежуточные узлы (мм, опционально). " +
+        "У выключателя ограничение по клавишам (light_switch — 1 связь, double — 2, triple — 3); у светильника " +
+        "одно подключение. Коллекция cables — отдельная сущность; обратные ссылки на предметах ставятся " +
+        "автоматически (cables.cable_id). Ответ — компактная сущность CB: switch_item_id (группа), switch_sub_id " +
+        "(под-розетка) и lamp_item_id раздельно. После добавления вызывайте model_validate и project_save.",
+      {
+        switch_item_id: z.string().min(1).describe("предмет-группа с выключателем (I<n> из model_get или id сайта)"),
+        switch_sub_id: z.string().optional().describe("id под-розетки-выключателя (socket_group[].id); по умолчанию первый свободный"),
+        lamp_item_id: z.string().min(1).describe("светильник (I<n> из model_get или id сайта)"),
+        path: z.array(mmPoint).max(MAX_CABLE_PATH_NODES).optional().describe("промежуточные узлы, мм; не более 32"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const cable = ws.apply("cable_add", (m) => addCable(m, {
+          switchItemId: resolveItem(m, a["switch_item_id"] as string).id,
+          switchSubId: a["switch_sub_id"] as string | undefined,
+          lampItemId: resolveItem(m, a["lamp_item_id"] as string).id,
+          path: a["path"] as MmPoint[] | undefined,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.cables.find((g) => g.site_id === cable.id) ?? null));
+      },
+    ),
+
+    cable_delete: tool(
+      "Удалить связь «выключатель → светильник» (метка CB<n> из model_get): обратные ссылки " +
+        "(cables.cable_id у под-розетки выключателя, у светильника и у световых линий) снимаются автоматически.",
+      { cable_id: z.string().min(1).describe("метка CB<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("cable_delete", (m) => {
+          const id = compactModel(m).cables.find((c) => c.id === (a["cable_id"] as string) || c.site_id === (a["cable_id"] as string))?.site_id
+            ?? (a["cable_id"] as string);
+          deleteCable(m, id);
+          return true;
+        });
+        return ok({ deleted: a["cable_id"], hint: SCENARIO_HINT });
       },
     ),
 

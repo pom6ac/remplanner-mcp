@@ -1,0 +1,168 @@
+{
+ "_source": "связь построена UI-методами редактора (класс Cabling) в PRO-проекте из env, проба 88-elec-live (без сохранения, откат перезагрузкой); id кабеля/группы/под-розетки/светильника обезличены последовательными подстановками, id комнат — \"0\", координаты синтетические (см). Согласован синтетическим пересчётом (ревью 90 R4): вершина выключателя = center под-розетки, вершина светильника = pc светильника, length = длина по matrix (gasLineLengthM по координатам вершин, 2 знака), cable_id обратных ссылок = id кабеля",
+ "tool_id": "plannertool_cable",
+ "model_cable": {
+  "id": "id1",
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "id2|s|id3",
+    "point": {
+     "x": 100,
+     "y": 102
+    },
+    "type": "switch"
+   },
+   {
+    "id": "id4",
+    "point": {
+     "x": 180,
+     "y": 100
+    },
+    "type": "lamp"
+   }
+  ],
+  "items": {
+   "id2|s|id3": "switch",
+   "id4": "lamp"
+  },
+  "type": "cable",
+  "color_custom": "",
+  "length": 0.8,
+  "on_arc": 1
+ },
+ "switch_item": {
+  "name": "socket_group",
+  "pc": {
+   "x": 953.199,
+   "y": 312.719
+  },
+  "angle": -90,
+  "projection": {
+   "x": 962.199,
+   "y": 312.72
+  },
+  "id_room": "0",
+  "width": 14,
+  "height": 18,
+  "plan": {
+   "light_connections": 29
+  },
+  "socket_group": [
+   {
+    "name": "light_switch",
+    "id": "id3",
+    "real_center": {
+     "x": 100,
+     "y": 100
+    },
+    "center": {
+     "x": 100,
+     "y": 102
+    },
+    "center_prs": {
+     "x": 100,
+     "y": 102
+    },
+    "cables": {
+     "cable_id": [
+      "id1"
+     ]
+    }
+   }
+  ],
+  "legend": "",
+  "id": "id2",
+  "item_id": 577,
+  "over_floor": {
+   "value": 90,
+   "display": true,
+   "vd": 90
+  },
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 953.199,
+   "y": 312.719
+  },
+  "center3d": {
+   "x": 953.199,
+   "y": 312.719
+  },
+  "id_room_zone": "0",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "s"
+ },
+ "lamp_item": {
+  "name": "chandelier",
+  "pc": {
+   "x": 180,
+   "y": 100
+  },
+  "id_room": "0",
+  "width": 24,
+  "height": 24,
+  "plan": {
+   "light": 10
+  },
+  "id": "id4",
+  "item_id": 35,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "angle": 0,
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 180,
+   "y": 106
+  },
+  "center3d": {
+   "x": 180,
+   "y": 106
+  },
+  "id_room_zone": "0",
+  "cables": {
+   "cable_id": "id1"
+  }
+ }
+}
