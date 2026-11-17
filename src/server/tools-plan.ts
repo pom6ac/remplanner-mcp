@@ -15,6 +15,10 @@ import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.t
 import type { LedStrip, StripLight, LineStrip } from "../model/types.ts";
 import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
 import {
+  setFloorFinish, removeFloorFinish, setWallFinish, removeWallFinish, setCeilingFinish, removeCeilingFinish,
+  resolveRoom as resolveRoomFinish, finishList,
+} from "../model/finish.ts";
+import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
 } from "../model/terraces.ts";
 import { addBalcony, updateBalcony, deleteBalcony, balconyWall } from "../model/balcony.ts";
@@ -1283,6 +1287,133 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           return true;
         });
         return ok({ deleted: a["floor_hole_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Отделка (листы «Напольные покрытия»/«Отделка стен»/«Потолки», этап 94) ----------
+    finish_floor_set: tool(
+      "Задать комнате покрытие пола (лист «Напольные покрытия»; отделка хранится по комнате). " +
+        "Покрытия: laminate, laminate_corky, laminate_vinyl, laminate_quartz_vinyl, laminate_spc, laminate_pvh, " +
+        "parquet_board, engineer_board, wood_board, parquet, terrace_board, floor_tile, stoneware_wood (PRO), " +
+        "stoneware_marble (PRO), metlah (PRO), mosaic (PRO), hex_tile (PRO), linoleum, fitted_carpet, corky_floor, floor_3d. " +
+        "Неизвестное — INVALID_ARGUMENT. Размеры планок/швы/угол раскладки необязательны (умолчания редактора). " +
+        "После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        cover: z.string().min(1).describe("ключ покрытия пола"),
+        angle_deg: z.number().finite().optional().describe("угол раскладки, градусы (по умолчанию 0)"),
+        plank_length_mm: mmInt.optional().describe("длина планки/стороны плитки, мм"),
+        plank_width_mm: mmInt.optional().describe("ширина планки/стороны плитки, мм"),
+        stitch_width_mm: mm.optional().describe("ширина шва, мм"),
+        type_laying: z.enum(["1/2", "1/3", "tile", "line"]).optional().describe("раскладка: 1/2, 1/3 (доска), tile (плитка), line"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_floor_set", (m) => setFloorFinish(m, a["room_id"] as string, a["cover"] as never, {
+          angleDeg: a["angle_deg"] as number | undefined,
+          plankLengthMm: a["plank_length_mm"] as number | undefined,
+          plankWidthMm: a["plank_width_mm"] as number | undefined,
+          stitchWidthMm: a["stitch_width_mm"] as number | undefined,
+          typeLaying: a["type_laying"] as "1/2" | "1/3" | "tile" | "line" | undefined,
+        }));
+        return ok({ room_id: a["room_id"], cover: a["cover"], floor_id: res.id, hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_floor_remove: tool(
+      "Снять покрытие пола комнаты (инструмент remove_flooring).",
+      { room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("finish_floor_remove", (m) => { removeFloorFinish(m, a["room_id"] as string); return true; });
+        return ok({ room_id: a["room_id"], removed: "floor", hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_wall_set: tool(
+      "Отделить сторону стены, обращённую к комнате (лист «Отделка стен»; каждая сторона хранится " +
+        "своей комнатой — у смежных комнат стороны независимы). Покрытия: wallpaper, wallpaper_for_paint, " +
+        "paint_wall, walls_whitewash, wall_chalk_paint (PRO), wall_tile, wall_mosaic, wall_clinker (PRO), " +
+        "wall_stone (PRO), wall_wooden_panels, plastic_panels, wall_woodbatten (PRO), wall_sheet_panels (PRO), " +
+        "wall_tile_panels (PRO), decorative_plaster, venice_plaster. height_mm=0 — на всю высоту стены. " +
+        "После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        wall_id: z.string().min(1).describe("метка W<n> из model_get или id стены"),
+        type: z.string().min(1).describe("ключ отделки стены"),
+        height_from_floor_mm: mmInt.optional().describe("высота от пола до низа отделки, мм (по умолчанию 0)"),
+        height_mm: mmInt.optional().describe("высота отделки, мм (0 — на всю стену, по умолчанию 0)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_wall_set", (m) => setWallFinish(
+          m,
+          a["room_id"] as string,
+          resolveWall(m, a["wall_id"] as string).id,
+          a["type"] as never,
+          { heightFromFloorMm: a["height_from_floor_mm"] as number | undefined, heightMm: a["height_mm"] as number | undefined },
+        ));
+        return ok({ room_id: a["room_id"], wall_id: a["wall_id"], type: a["type"], sides: res.parts, hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_wall_remove: tool(
+      "Снять отделку стены в комнате (инструмент wall_cover_remove). Без wall_id — со всех сторон комнаты.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        wall_id: z.string().min(1).optional().describe("метка W<n> из model_get или id стены"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_wall_remove", (m) => removeWallFinish(
+          m,
+          a["room_id"] as string,
+          a["wall_id"] ? resolveWall(m, a["wall_id"] as string).id : undefined,
+        ));
+        return ok({ room_id: a["room_id"], wall_id: a["wall_id"] ?? null, sides: res.parts, hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_ceiling_set: tool(
+      "Задать комнате покрытие потолка (лист «Потолки», простые покрытия; многоуровневые потолки, " +
+        "короба и ниши — инструментами следующих этапов). Покрытия: paint_ceiling, whitewash_ceiling, " +
+        "gypsum_ceiling, stretch_ceiling, stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, " +
+        "plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. После правки вызывайте " +
+        "model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        material: z.string().min(1).describe("ключ покрытия потолка"),
+        level: z.number().finite().int().optional().describe("уровень потолка (по умолчанию 0)"),
+        profile: z.string().min(1).optional().describe("профиль (по умолчанию standard)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_ceiling_set", (m) => setCeilingFinish(m, a["room_id"] as string, a["material"] as never, {
+          level: a["level"] as number | undefined,
+          profile: a["profile"] as string | undefined,
+        }));
+        return ok({ room_id: a["room_id"], material: a["material"], ceiling_id: res.id, hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_ceiling_remove: tool(
+      "Снять покрытие потолка комнаты (инструмент ceiling_remove).",
+      { room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("finish_ceiling_remove", (m) => { removeCeilingFinish(m, a["room_id"] as string); return true; });
+        return ok({ room_id: a["room_id"], removed: "ceiling", hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_get: tool(
+      "Отделка комнат: покрытие пола (с параметрами раскладки), покрытие потолка и отделка сторон стен " +
+        "по комнатам (тип, слой, высота, высота от пола). wall — метка W<n>; side — сторона стены, " +
+        "обращённая к комнате. Без room_id — по всем комнатам.",
+      { room_id: z.string().min(1).optional().describe("метка R<n> из model_get или id комнаты") },
+      async (a) => {
+        const ws = wsOf();
+        return ok(finishList(ws.model, a["room_id"] as string | undefined));
       },
     ),
 

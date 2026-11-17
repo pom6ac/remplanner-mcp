@@ -122,6 +122,8 @@ led_strip_add / stripe_add / line_light_add  # освещение: лента, �
                           #  линейный свет (лист «Освещение», ломаные; светильники — item_add)
 item_add socket/light_switch + cable_add      # электрика: розетки и выключатели (листы «Розетки»/«Выключатели»,
                           #  предмет-группа socket_group) и связь «выключатель → светильник» (cables)
+finish_floor_set / finish_wall_set / finish_ceiling_set  # отделка: покрытия пола, стен (по сторонам
+                          #  комнат) и потолка (листы «Напольные покрытия»/«Отделка стен»/«Потолки»)
 floor_hole_add            # проем в полу (прямоугольник в комнате, level_holes)
 terrace_add               # терраса (замкнутое кольцо границ terrace_borders) + terrace_fence_add / terrace_column_add
 territory_add             # участок (замкнутое кольцо границ territory_borders)
