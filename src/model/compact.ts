@@ -1,4 +1,4 @@
-import type { Cable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip } from "./types.ts";
+import type { Cable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip, WarmFloor } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
 import type { RoomPolygon } from "./items.ts";
 import { roomPolygons } from "./items.ts";
@@ -184,6 +184,27 @@ export type CompactCable = {
   length_mm: number;
 };
 
+/** Контур тёплого пола (лист «Тёплые полы», этап 122). */
+export type CompactWarmFloor = {
+  id: string;
+  site_id: string;
+  /** Вид: warm_floor (кабельный) | warm_floor_ir | warm_floor_water. */
+  type: string;
+  /** Габариты контура, мм (по осям X/Y). */
+  width_mm: number;
+  depth_mm: number;
+  /** Площадь, м² (поле модели). */
+  area_m2: number;
+  /** Периметр, мм (длина поля модели — метры). */
+  perimeter_mm: number;
+  /** id комнаты. */
+  room: string | null;
+  /** Водяной: шаг укладки, мм. */
+  step_mm?: number;
+  /** Водяной: длина трубы, мм. */
+  length_pipes_mm?: number;
+};
+
 export type CompactFloorHole = {
   id: string;
   site_id: string;
@@ -221,6 +242,11 @@ export type CompactModel = {
   stripes_light: CompactLightStrip[];
   line_strips: CompactLightStrip[];
   cables: CompactCable[];
+  warm_floors: CompactWarmFloor[];
+  pipes_warm_floor: CompactPipe[];
+  pipes_conditioner: CompactPipe[];
+  pipes_heat: CompactPipe[];
+  pipes_ventilation: CompactPipe[];
   total_height_mm: number;
 };
 
@@ -484,6 +510,44 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       };
     });
 
+  // контуры тёплого пола (этап 122): метки WF
+  const compactWarmFloors = (src: Record<string, WarmFloor> | undefined): CompactWarmFloor[] =>
+    Object.values(src ?? {}).map((wf, i) => {
+      const xs = (wf.polygon ?? []).map((p) => p.x);
+      const ys = (wf.polygon ?? []).map((p) => p.y);
+      const w = xs.length > 0 ? Math.max(...xs) - Math.min(...xs) : 0;
+      const h = ys.length > 0 ? Math.max(...ys) - Math.min(...ys) : 0;
+      return {
+        id: `WF${i + 1}`,
+        site_id: wf.id,
+        type: wf.type,
+        width_mm: round0(cmToMm(w)),
+        depth_mm: round0(cmToMm(h)),
+        area_m2: wf.area ?? 0,
+        perimeter_mm: Math.round((wf.length ?? 0) * 1000),
+        room: wf.id_room ?? null,
+        ...(wf.step !== undefined ? { step_mm: round0(cmToMm(wf.step)) } : {}),
+        ...(wf.length_pipes !== undefined ? { length_pipes_mm: Math.round(wf.length_pipes * 1000) } : {}),
+      };
+    });
+
+  // трубы климата (этап 122): метки PW/PC/PH/PV
+  const compactClimatePipes = (src: Record<string, Pipe> | undefined, label: string): CompactPipe[] =>
+    Object.values(src ?? {}).map((pipe: Pipe, i) => {
+      const first = pipe.vertexes[0]?.point;
+      const last = pipe.vertexes[pipe.vertexes.length - 1]?.point;
+      return {
+        id: `${label}${i + 1}`,
+        site_id: pipe.id,
+        type: pipe.type,
+        from: [round0(cmToMm(first?.x ?? 0)), round0(cmToMm(first?.y ?? 0))],
+        to: [round0(cmToMm(last?.x ?? 0)), round0(cmToMm(last?.y ?? 0))],
+        vertexes: pipe.vertexes.length,
+        length_mm: Math.round((pipe.length ?? 0) * 1000),
+        connected: pipe.vertexes.filter((v) => v.type !== "node").map((v) => v.id),
+      };
+    });
+
   return {
     walls,
     rooms: compactRooms,
@@ -499,6 +563,11 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     stripes_light: compactLightStrips(model.stripes_light, "SL"),
     line_strips: compactLightStrips(model.line_strips, "LL"),
     cables: compactCables(model.cables),
+    warm_floors: compactWarmFloors(model.warm_floors),
+    pipes_warm_floor: compactClimatePipes(model.pipes_warm_floor, "PW"),
+    pipes_conditioner: compactClimatePipes(model.pipes_conditioner, "PC"),
+    pipes_heat: compactClimatePipes(model.pipes_heat, "PH"),
+    pipes_ventilation: compactClimatePipes(model.pipes_ventilation, "PV"),
     total_height_mm: round0(cmToMm(totalHeight)),
   };
 }

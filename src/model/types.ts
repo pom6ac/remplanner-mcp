@@ -386,6 +386,44 @@ export type Cable = {
 };
 
 /**
+ * Контур тёплого пола (лист «Тёплые полы», инструмент warm_floor/warm_floor_ir/
+ * warm_floor_water, model.warm_floors, этап 122, 2026-11-17). Класс GraphLines —
+ * тот же формат графа, что pipes/pipes_gas: vertexes — узлы type "node" (point в см,
+ * кольцо контура), matrix — кольцо N×N в обе стороны ({length:1}), items — карта
+ * id узла → "node". Плюс собственные поля: polygon — точки контура (см, Y вниз),
+ * type — "warm_floor"|"warm_floor_ir"|"warm_floor_water", length — периметр контура
+ * в метрах (2 знака), id_room — комната контура, props {id, name: type}, area —
+ * площадь в м² (2 знака). У водяного тёплого пола (warm_floor_water) ещё step — шаг
+ * укладки, см (10), type_water — "spiral", direction — "left"|"right", length_pipes —
+ * длина трубы контура, м (считает инструмент рисования; хранится как пользовательское
+ * свойство, редактор на restore не пересчитывает). Один контур на комнату: повторная
+ * протяжка в комнате заменяет контур (проба 122-climate-ui-click).
+ */
+export type WarmFloor = {
+  id: string;
+  polygon: Point[];
+  matrix: ({ length: number } | null)[][];
+  vertexes: GasLineVertex[];
+  items: Record<string, string>;
+  type: "warm_floor" | "warm_floor_ir" | "warm_floor_water" | (string & {});
+  /** Периметр контура, м (2 знака). */
+  length: number;
+  id_room: string | null;
+  props: { id: string; name: string };
+  /** Площадь контура, м² (2 знака). */
+  area: number;
+  /** Водяной тёплый пол: шаг укладки, см. */
+  step?: number;
+  /** Водяной тёплый пол: схема укладки ("spiral"). */
+  type_water?: string;
+  /** Водяной тёплый пол: направление укладки ("left"|"right"). */
+  direction?: string;
+  /** Водяной тёплый пол: длина трубы контура, м. */
+  length_pipes?: number;
+  [key: string]: unknown;
+};
+
+/**
  * Привязка конца размера (этап 113, ревью 117 R2): target_id/target_name —
  * пользовательские; item-target (target_name — имя предмета каталога) несёт
  * target_plan (план предмета), target_angle и point_delta — смещение конца от
@@ -490,6 +528,16 @@ export type Model = {
   line_strips?: Record<string, LineStrip>;
   /** Соединительные провода «выключатель → светильник» (лист «Выключатели» → cable); у старых моделей может отсутствовать. */
   cables?: Record<string, Cable>;
+  /** Контуры тёплого пола (лист «Тёплые полы» → warm_floor/warm_floor_ir/warm_floor_water); у старых моделей может отсутствовать. */
+  warm_floors?: Record<string, WarmFloor>;
+  /** Магистрали тёплого пола (лист «Тёплые полы» → warm_floor_pipe); у старых моделей может отсутствовать. */
+  pipes_warm_floor?: Record<string, Pipe>;
+  /** Дренаж кондиционеров (лист «Кондиционеры» → conditioner_drainage); у старых моделей может отсутствовать. */
+  pipes_conditioner?: Record<string, Pipe>;
+  /** Магистрали отопления (лист «Радиаторы» → heat_pipe_hot/heat_pipe_cold); у старых моделей может отсутствовать. */
+  pipes_heat?: Record<string, Pipe>;
+  /** Воздуховоды (лист «Вентиляция» → ventpipe_out/ventpipe_in); у старых моделей может отсутствовать. */
+  pipes_ventilation?: Record<string, Pipe>;
   /** Ручные размеры (кнопка «Добавить размер»); у старых моделей может отсутствовать. */
   rulers?: Record<string, RulerEntity>;
   /** Текстовые комментарии (кнопка «Текстовый комментарий», PRO в UI); может отсутствовать. */

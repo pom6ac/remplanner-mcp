@@ -1,0 +1,59 @@
+{
+ "_source": "клик по UI анонимного проекта (headless Chromium, ID проекта/плана обезличены), проба 122-climate-fixtures, model project.copy(\"server\"), без сохранения; id предмета/комнаты/стены обезличены (\"0\"); wall_line удалён; координаты — реальные точки листа",
+ "menu_title": "Вентилятор вытяжной потолочный",
+ "tool_id": "plannertool_fan",
+ "catalog_defaults_cm": {
+  "id": 42,
+  "title": "Вентилятор вытяжной потолочный",
+  "group": "furniture",
+  "width": 20,
+  "height": 20,
+  "self_height": 0,
+  "plan": {
+   "ventilation": 32
+  },
+  "anchor": "free",
+  "over_floor": false
+ },
+ "model_object": {
+  "name": "fan",
+  "pc": {
+   "x": 380,
+   "y": -150
+  },
+  "angle": 0,
+  "width": 20,
+  "height": 20,
+  "plan": {
+   "ventilation": 32
+  },
+  "id": "0",
+  "item_id": 42,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 380,
+   "y": -150
+  },
+  "center3d": {
+   "x": 380,
+   "y": -150
+  },
+  "id_room": "0",
+  "id_room_zone": "_fre9p"
+ }
+}

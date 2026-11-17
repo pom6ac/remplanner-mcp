@@ -1,0 +1,66 @@
+{
+ "_source": "клик по UI анонимного проекта (headless Chromium, ID проекта/плана обезличены), проба 122-climate-fixtures, model project.copy(\"server\"), без сохранения; id предмета/комнаты/стены обезличены (\"0\"); wall_line удалён; координаты — реальные точки листа",
+ "menu_title": "Тепловая завеса",
+ "tool_id": "plannertool_air_curtain",
+ "catalog_defaults_cm": {
+  "id": 1606,
+  "title": "Тепловая завеса",
+  "group": "furniture",
+  "width": 77,
+  "height": 13,
+  "self_height": 19,
+  "plan": {
+   "conditioners": 12
+  },
+  "anchor": "free",
+  "over_floor": {
+   "value": 250,
+   "display": false
+  }
+ },
+ "model_object": {
+  "name": "air_curtain",
+  "pc": {
+   "x": 60,
+   "y": -60
+  },
+  "angle": 0,
+  "width": 77,
+  "height": 13,
+  "plan": {
+   "conditioners": 12
+  },
+  "id": "0",
+  "item_id": 1606,
+  "over_floor": {
+   "value": 250,
+   "display": false
+  },
+  "self_height": 19,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 60,
+   "y": -55.19
+  },
+  "center3d": {
+   "x": 60,
+   "y": -55.19
+  },
+  "id_room": "0",
+  "id_room_zone": "_8rnlg"
+ }
+}

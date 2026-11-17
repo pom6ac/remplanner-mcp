@@ -9,7 +9,8 @@ import {
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
 import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../model/rigels.ts";
-import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind } from "../model/pipes.ts";
+import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, findPipe, type PipeKind, type ClimatePipeKind } from "../model/pipes.ts";
+import { addWarmFloor, updateWarmFloor, deleteWarmFloor, WARM_FLOOR_TYPE_BY_KIND } from "../model/climate.ts";
 import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, LIGHT_COLLECTION_BY_KIND, type LightKind } from "../model/lighting.ts";
 import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.ts";
 import {
@@ -138,17 +139,31 @@ function resolveGasLine(model: Model, ref: string): import("../model/types.ts").
   return throwNotFound(`газовая линия ${ref} не найдена (id сайта или метка G<n> из model_get)`);
 }
 
-/** Труба водоснабжения по site-id или метке TP1…TP_n (этап 78). */
-function resolvePipe(model: Model, ref: string): import("../model/types.ts").Pipe {
-  const pipes = model.pipes ?? {};
-  if (pipes[ref]) return pipes[ref]!;
-  const m = /^TP(\d+)$/.exec(ref);
+/** Труба (вода или климата) по site-id или метке TP/PW/PC/PH/PV<n> (этапы 78, 122). */
+function resolvePipe(model: Model, ref: string): { coll: string; id: string; pipe: import("../model/types.ts").Pipe } {
+  const found = findPipe(model, ref);
+  if (found) return { coll: found.coll, id: found.pipe.id, pipe: found.pipe };
+  const m = /^(TP|PW|PC|PH|PV)(\d+)$/.exec(ref);
   if (m) {
-    const list = Object.values(pipes);
-    const pipe = list[Number(m[1]) - 1];
-    if (pipe) return pipe;
+    const collKey = ({ TP: "pipes", PW: "pipes_warm_floor", PC: "pipes_conditioner", PH: "pipes_heat", PV: "pipes_ventilation" } as Record<string, string>)[m[1]!]!;
+    const list = Object.values((model as unknown as Record<string, Record<string, import("../model/types.ts").Pipe>>)[collKey] ?? {});
+    const pipe = list[Number(m[2]) - 1];
+    if (pipe) return { coll: collKey, id: pipe.id, pipe };
   }
-  return throwNotFound(`труба ${ref} не найдена (id сайта или метка TP<n> из model_get)`);
+  return throwNotFound(`труба ${ref} не найдена (id сайта или метка TP/PW/PC/PH/PV<n> из model_get)`);
+}
+
+/** Контур тёплого пола по site-id или метке WF<n> из model_get (этап 122). */
+function resolveWarmFloor(model: Model, ref: string): import("../model/types.ts").WarmFloor {
+  const wfs = model.warm_floors ?? {};
+  if (wfs[ref]) return wfs[ref]!;
+  const m = /^WF(\d+)$/.exec(ref);
+  if (m) {
+    const list = Object.values(wfs);
+    const wf = list[Number(m[1]) - 1];
+    if (wf) return wf;
+  }
+  return throwNotFound(`контур тёплого пола ${ref} не найден (id сайта или метка WF<n> из model_get)`);
 }
 
 /** Световая линия по site-id или метке LS/SL/LL1…_n из model_get (этап 84). */
@@ -698,7 +713,16 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "Меню «Терраса и участок»: диваны terrace-серии (sofa_pottery_barn_malibu_wicker, sofa_coup_detat_campanha, " +
         "armchair_solana_papasan) — предметы каталога (item_add, план furniture); сами терраса/ограждение/столб — " +
         "отдельные сущности (terrace_add, terrace_fence_add, terrace_column_add), «Террасная доска» terrace_board — " +
-        "покрытие листа «Полы» (MCP пока не покрывает).",
+        "покрытие листа «Полы» (MCP пока не покрывает). " +
+        "Климат (этап 122): терморегулятор socket_thermo (лист «Тёплые полы», у стены, высота 90 см из каталога), " +
+        "кондиционеры листа «Кондиционеры» — conditioner и conditioner_engine (внешний блок; оба у стены — against_wall; " +
+        "высоты 210/20 см из каталога), floor_conditioner (напольный) и air_curtain (тепловая завеса, 250 см) — свободно, " +
+        "радиаторы листа «Радиаторы» (radiator_bimetal, radiator_steel, radiator_iron, radiator_tubular_vert, " +
+        "radiator_tubular_horizontal, vertical_radiator, floor_convector, convector_on_floor, electro_convector — у стены), " +
+        "вентиляция листа «Вентиляция» — вентиляторы fan, fan_wall, fan_channel (свободно; решётки ventilation_gate*, " +
+        "диффузоры ventilation_diffusor*, приточно-вытяжная установка ventilation_system и др. — PRO-группа). " +
+        "Контуры тёплого пола и трубы климата — НЕ предметы: warm_floor/warm_floor_ir/warm_floor_water → warm_floor_add, " +
+        "warm_floor_pipe/conditioner_drainage/heat_pipe_hot/heat_pipe_cold/ventpipe_out/ventpipe_in → pipe_add.",
       {
         name: z.string().min(1).describe("точное имя позиции каталога"),
         position,
@@ -1000,19 +1024,25 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
     ),
 
-    // ---------- Трубы водоснабжения/канализации (лист «Водоснабжение», этап 78) ----------
+    // ---------- Трубы водоснабжения/канализации (лист «Водоснабжение», этап 78)
+    //            и трубы климата (этап 122: магистрали тёплого пола, дренаж кондиционеров,
+    //            магистрали отопления, воздуховоды) ----------
     pipe_add: tool(
-      "Провести трубу водоснабжения/канализации (лист «Водоснабжение» → «Труба ХВС/ГВС/Канализация»): " +
-        "kind=water (ХВС, water_pipe), kind=hot (ГВС, water_hot_pipe), kind=drainage (канализация, drainage_pipe). " +
-        "path — цепочка элементов по порядку: {x, y} (узел, мм) или {item_id} (подключение предмета: выводы воды " +
-        "waterspot_*, стояки water/water_column_hot/water_column_cold/drainage_column, ввод ceiling_water, коллектор " +
-        "waterspot_collector — какие выводы к какой трубе подключаются, проверяется как в редакторе). " +
-        "Соседние элементы пути соединяются ребром; у предметов ставится обратная ссылка pipes.<вид>_id. " +
-        "Длина в модели — в метрах, пересчитывается автоматически. Трубы водоснабжения/канализации — функция PRO-тарифа " +
-        "редактора (лист «Водоснабжение» в UI доступен только в PRO): на бесплатном тарифе трубы могут не сохраниться — " +
-        "поведение free не проверялось. После добавления вызывайте model_validate и project_save.",
+      "Провести трубу (листы «Водоснабжение», «Тёплые полы», «Кондиционеры», «Радиаторы», «Вентиляция»): " +
+        "kind=water (ХВС, water_pipe), hot (ГВС, water_hot_pipe), drainage (канализация, drainage_pipe) — " +
+        "с подключением выводов воды; климат-виды (PRO-инструменты редактора, только узлы): " +
+        "warm_floor (магистрали тёплого пола, warm_floor_pipe), conditioner_drainage (дренаж кондиционера), " +
+        "heat_hot/heat_cold (магистрали подачи/обратная отопления), vent_out/vent_in (воздуховод вытяжной/приточный). " +
+        "path — цепочка элементов по порядку: {x, y} (узел, мм) или {item_id} (подключение предмета — только для " +
+        "water/hot/drainage: выводы воды waterspot_*, стояки water/water_column_hot/water_column_cold/drainage_column, " +
+        "ввод ceiling_water, коллектор waterspot_collector; какие выводы к какой трубе подключаются, проверяется как " +
+        "в редакторе). Соседние элементы пути соединяются ребром; у предметов ставится обратная ссылка pipes.<вид>_id. " +
+        "Длина в модели — в метрах, пересчитывается автоматически. Все трубы — функции PRO-тарифа редактора: " +
+        "на бесплатном тарифе трубы могут не сохраниться — поведение free не проверялось. " +
+        "После добавления вызывайте model_validate и project_save.",
       {
-        kind: z.enum(["water", "hot", "drainage"]).describe("вид трубы: water — ХВС, hot — ГВС, drainage — канализация"),
+        kind: z.enum(["water", "hot", "drainage", "warm_floor", "conditioner_drainage", "heat_hot", "heat_cold", "vent_out", "vent_in"])
+          .describe("вид трубы: water — ХВС, hot — ГВС, drainage — канализация, warm_floor — магистрали тёплого пола, conditioner_drainage — дренаж кондиционера, heat_hot/heat_cold — магистрали отопления, vent_out/vent_in — воздуховоды"),
         path: z.array(z.union([
           mmPoint.describe("узел трубы, мм"),
           z.object({ item_id: z.string().min(1).describe("предмет-вершина (вывод воды, стояк, ввод) — метка I<n> или id сайта") }),
@@ -1021,13 +1051,13 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         const ws = wsOf();
         const pipe = ws.apply("pipe_add", (m) => addPipe(m, {
-          kind: a["kind"] as PipeKind,
+          kind: a["kind"] as PipeKind | ClimatePipeKind,
           path: (a["path"] as unknown[]).map((el) => {
             const e = el as Record<string, unknown>;
             return "item_id" in e ? { itemId: resolveItem(m, String(e["item_id"])).id } : { x: Number(e["x"]), y: Number(e["y"]) };
           }),
         }));
-        return ok(compactEntity(ws.model, (c) => c.pipes.find((p) => p.site_id === pipe.id) ?? null));
+        return ok(compactEntity(ws.model, (c) => [c.pipes, c.pipes_warm_floor, c.pipes_conditioner, c.pipes_heat, c.pipes_ventilation].flat().find((p) => p.site_id === pipe.id) ?? null));
       },
     ),
 
@@ -1051,14 +1081,14 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             vertex: p.vertex, x: p.x_mm, y: p.y_mm,
           })),
         }));
-        return ok(compactEntity(ws.model, (c) => c.pipes.find((p) => p.site_id === pipe.id) ?? null));
+        return ok(compactEntity(ws.model, (c) => [c.pipes, c.pipes_warm_floor, c.pipes_conditioner, c.pipes_heat, c.pipes_ventilation].flat().find((p) => p.site_id === pipe.id) ?? null));
       },
     ),
 
     pipe_delete: tool(
-      "Удалить трубу (PRO-функция редактора, как и весь лист «Водоснабжение»; метка TP<n> из model_get). Обратные ссылки подключённых предметов снимаются; " +
+      "Удалить трубу (PRO-функция редактора; метка TP/PW/PC/PH/PV<n> из model_get: трубы водоснабжения, магистрали тёплого пола, дренаж кондиционеров, магистрали отопления, воздуховоды). Обратные ссылки подключённых предметов снимаются; " +
         "сами предметы не удаляются.",
-      { pipe_id: z.string().min(1).describe("метка TP<n> из model_get или id сайта") },
+      { pipe_id: z.string().min(1).describe("метка TP<n>/PW<n>/PC<n>/PH<n>/PV<n> из model_get или id сайта") },
       async (a) => {
         const ws = wsOf();
         ws.apply("pipe_delete", (m) => {
@@ -1066,6 +1096,63 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           return true;
         });
         return ok({ deleted: a["pipe_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Тёплый пол: контуры (лист «Тёплые полы», этап 122) ----------
+    warm_floor_add: tool(
+      "Постелить контур тёплого пола (лист «Тёплые полы»): прямоугольник по двум углам corner1/corner2 " +
+        "(мм, оси; контур целиком внутри одной комнаты). kind=cable — кабельный (free), kind=infrared — " +
+        "инфракрасный (free), kind=water — водяной (PRO в UI; шаг 10 см, укладка спиралью, длина трубы " +
+        "считается по габаритам и шагу). В комнате уже есть контур — INVALID_ARGUMENT (в редакторе протяжка " +
+        "заменяет контур; здесь — сначала warm_floor_delete). Коллекция warm_floors — отдельная сущность, " +
+        "не item_add. После добавления вызывайте model_validate и project_save.",
+      {
+        kind: z.enum(["cable", "infrared", "water"]).describe("вид тёплого пола: cable — кабельный, infrared — инфракрасный, water — водяной"),
+        corner1: mmPoint.describe("первый угол контура, мм"),
+        corner2: mmPoint.describe("второй угол контура (противоположный), мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const wf = ws.apply("warm_floor_add", (m) => addWarmFloor(m, {
+          kind: a["kind"] as "cable" | "infrared" | "water",
+          corner1: a["corner1"] as MmPoint,
+          corner2: a["corner2"] as MmPoint,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.warm_floors.find((x) => x.site_id === wf.id) ?? null));
+      },
+    ),
+
+    warm_floor_update: tool(
+      "Изменить контур тёплого пола: новые углы corner1/corner2 (мм — только явно переданные; " +
+        "остальные остаются прежними). Контур должен остаться внутри одной комнаты. " +
+        "warm_floor_id — метка WF<n> из model_get или id сайта.",
+      {
+        warm_floor_id: z.string().min(1).describe("метка WF<n> из model_get или id сайта"),
+        corner1: mmPoint.optional().describe("новый первый угол контура, мм"),
+        corner2: mmPoint.optional().describe("новый второй угол контура, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const wf = ws.apply("warm_floor_update", (m) => updateWarmFloor(m, {
+          warmFloorId: resolveWarmFloor(m, a["warm_floor_id"] as string).id,
+          corner1: a["corner1"] as MmPoint | undefined,
+          corner2: a["corner2"] as MmPoint | undefined,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.warm_floors.find((x) => x.site_id === wf.id) ?? null));
+      },
+    ),
+
+    warm_floor_delete: tool(
+      "Удалить контур тёплого пола (метка WF<n> из model_get).",
+      { warm_floor_id: z.string().min(1).describe("метка WF<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("warm_floor_delete", (m) => {
+          deleteWarmFloor(m, resolveWarmFloor(m, a["warm_floor_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["warm_floor_id"], hint: SCENARIO_HINT });
       },
     ),
 
