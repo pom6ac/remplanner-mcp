@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { z } from "zod";
 import { STATE_PATH, STATE_ANON_PATH, CACHE_DIR } from "../config.ts";
+import { TOOL_COORD_LIMIT_MM } from "../limits.ts";
 import { McpError, errorToPayload } from "../errors.ts";
 import { loadSession, hasLiveCookies, type SessionState } from "../session.ts";
 import { createAnonProject, loadModel, renameProject, checkStatus, type LoadedModel } from "../api.ts";
@@ -280,16 +281,16 @@ export function errorResult(e: unknown): { isError: true; content: { type: "text
 export const SCENARIO_HINT =
   "Сценарий: правки → model_validate (инварианты) → render_plan (визуальная проверка) → project_save (запись на сервер). Мутации НЕ сохраняют на сервер сами.";
 
-/** Zod-примитивы (мм). */
-export const mmInt = z.number().finite().int().nonnegative().describe("мм, целое, ≥ 0");
+/** Zod-примитивы (мм). Диапазоны координат/размеров — src/limits.ts (B5, аудит 65). */
+export const mmInt = z.number().finite().int().nonnegative().max(TOOL_COORD_LIMIT_MM).describe("мм, целое, ≥ 0");
 // координаты узлов/точек могут быть отрицательными (ревью 85 №1: план не обязан
 // умещаться в положительный квадрант — как в mmPoint)
-export const mmIntSigned = z.number().finite().int().describe("мм, целое (может быть отрицательным)");
+export const mmIntSigned = z.number().finite().int().min(-TOOL_COORD_LIMIT_MM).max(TOOL_COORD_LIMIT_MM).describe("мм, целое (может быть отрицательным)");
 export const mm = z.number().finite().describe("мм");
 // координаты точек могут быть отрицательными (план не обязан умещаться в положительный квадрант)
 export const mmPoint = z.object({
-  x: z.number().finite().int().describe("мм, целое (может быть отрицательным), X вправо"),
-  y: z.number().finite().int().describe("мм, целое (может быть отрицательным), Y вниз"),
+  x: z.number().finite().int().min(-TOOL_COORD_LIMIT_MM).max(TOOL_COORD_LIMIT_MM).describe("мм, целое (может быть отрицательным), X вправо"),
+  y: z.number().finite().int().min(-TOOL_COORD_LIMIT_MM).max(TOOL_COORD_LIMIT_MM).describe("мм, целое (может быть отрицательным), Y вниз"),
 }).describe("точка плана в мм, X вправо, Y вниз");
 
 export function requireOpen(ctx: ServerContext): Workspace {

@@ -521,10 +521,18 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
  * по навигации — рисуются). setPlanName — запасной путь, когда навигации нет.
  */
 export function switchSheetInPage(name: string): "click" | "setPlanName" | null {
-  const nav = document.querySelector(`.groups_navi_item.plan_${name}`);
-  if (nav) {
-    (nav as HTMLElement).click();
-    return "click";
+  // B6 (аудит 65): имя листа не конкатенируется в CSS-селектор — перебираем
+  // элементы навигации и сравниваем ТОКЕН classList точно (classList.contains
+  // сопоставляет целый токен). Значение вида "x, #unrelated" не может добавить
+  // ветку селектора или выбрать чужой элемент; схема листа (SHEET_NAME_PATTERN)
+  // дополнительно отсекает такие значения на границе инструментов.
+  const wanted = `plan_${name}`;
+  const items = document.querySelectorAll(".groups_navi_item");
+  for (const el of items) {
+    if (el.classList.contains(wanted)) {
+      (el as HTMLElement).click();
+      return "click";
+    }
   }
   const w = window as unknown as { $Project?: { setPlanName?: (n: string) => void } };
   if (w.$Project && typeof w.$Project.setPlanName === "function") {
@@ -541,7 +549,7 @@ export function switchSheetInPage(name: string): "click" | "setPlanName" | null 
 async function switchSheet(page: Page, sheet: string): Promise<void> {
   const done = await page.evaluate(switchSheetInPage, sheet).catch(() => null);
   if (done === null && sheet !== "init") {
-    throw new McpError("INVALID_ARGUMENT", `лист плана «${sheet}» не найден (навигация .groups_navi_item.plan_${sheet})`);
+    throw new McpError("INVALID_ARGUMENT", `лист плана «${sheet}» не найден в навигации редактора`);
   }
 }
 

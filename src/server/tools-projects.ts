@@ -8,6 +8,8 @@ import { McpError } from "../errors.ts";
 import { inspectPath, writePrivateFile } from "../fs-safe.ts";
 import type { Model } from "../model/types.ts";
 import { clearEntityCollections, replaceEntityCollections, MODEL_ENTITY_COLLECTIONS } from "../model/collections.ts";
+import { MAX_PLAN_FILE_BYTES, MAX_SERVICE_COMMENT_CHARS } from "../limits.ts";
+import { parseModelImport } from "../model/import-schema.ts";
 
 // T18: инструменты сессии и проектов (design §7.1).
 
@@ -19,8 +21,11 @@ const NUMERIC_ID = /^\d+$/;
 const objectIdSchema = z.string().regex(NUMERIC_ID, "object_id — числовой id проекта (project_list/project_create)");
 const planIdSchema = z.string().regex(NUMERIC_ID, "plan_id — числовой id планировки");
 
-/** B3 (аудит 65): лимит размера файла плана при импорте (проверка до чтения). */
-export const MAX_PLAN_FILE_BYTES = 10 * 1024 * 1024;
+/**
+ * B3 (аудит 65): лимит размера файла плана при импорте (проверка до чтения).
+ * Значение — src/limits.ts (все лимиты входа в одном месте, B5).
+ */
+export { MAX_PLAN_FILE_BYTES };
 
 /** Поля, по которым опознаётся модель в .plan (для проверки формата при импорте). */
 const PLAN_MODEL_KEYS = new Set<string>([
@@ -60,6 +65,9 @@ function planFileError(e: unknown, p: string, kind: "import" | "export" = "impor
   }
   if (e instanceof SyntaxError) {
     return new McpError("INVALID_ARGUMENT", `файл не является JSON модели: ${shown}`);
+  }
+  if (e instanceof RangeError) {
+    return new McpError("INVALID_ARGUMENT", `JSON слишком глубоко вложен: ${shown}`);
   }
   return e as McpError;
 }
@@ -108,7 +116,10 @@ export function readPlanFile(p: string, options: { maxBytes?: number } = {}): Mo
   ) {
     throw new McpError("INVALID_ARGUMENT", `файл не является планом (JSON модели): ${shownPath(p)}`);
   }
-  return model as Model;
+  // B5 (аудит 65): структурная валидация модели (Zod-схема, лимиты сущностей,
+  // конечные числа/диапазоны, глубина) вместо TS-cast; неизвестные поля
+  // редактора сохраняются (passthrough). Ошибка — INVALID_ARGUMENT с путём поля.
+  return parseModelImport(model) as Model;
 }
 
 export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
@@ -173,7 +184,7 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
         "Ограничение сайта: не чаще одного сохранения в 5 секунд. Свежая модель на сервере после сохранения проверяется автоматически.",
       {
         force: z.boolean().optional().describe("принудительная запись при SAVE_CONFLICT (по умолчанию false)"),
-        comment: z.string().optional().describe("служебный комментарий (в бэкап-снимок)"),
+        comment: z.string().max(MAX_SERVICE_COMMENT_CHARS).optional().describe("служебный комментарий (в бэкап-снимок)"),
       },
       async (args) => {
         void args["comment"];
