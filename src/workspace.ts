@@ -8,7 +8,7 @@ import type { SessionState } from "./session.ts";
 import type { LoadedModel } from "./api.ts";
 import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, EditorRoom } from "./editor/adapter.ts";
 import type { Model, Point } from "./model/types.ts";
-import { MODEL_ENTITY_COLLECTIONS, entityCounts, hasEntities, type ModelEntityCollection } from "./model/collections.ts";
+import { MODEL_ENTITY_COLLECTIONS, PUBLIC_COLLECTION_KEYS, entityCounts, hasEntities, publicCollectionCounts, type ModelEntityCollection } from "./model/collections.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
 import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmatchedDanglingEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, assertNoNewWarmFloorCrossing, type WallAxisSegment, type DanglingEnd } from "./model/walls.ts";
@@ -142,9 +142,10 @@ export type SaveOutcome = {
   verified: boolean;
   rounds: number;
   /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено.
-   *  Специальные ключи walls/openings; остальные — по реестру MODEL_ENTITY_COLLECTIONS. */
+   *  Специальные ключи walls/openings; остальные — публичные ключи реестра
+   *  MODEL_ENTITY_COLLECTIONS (PUBLIC_COLLECTION_KEYS, газовые линии — gas_lines). */
   will_delete: { walls: number; openings: number } & {
-    [K in Exclude<ModelEntityCollection, "walls">]: number;
+    [K in Exclude<ModelEntityCollection, "walls"> as (typeof PUBLIC_COLLECTION_KEYS)[K]]: number;
   };
   /** Предупреждения (удаления объектов сервера). */
   warnings: string[];
@@ -187,22 +188,22 @@ export type WallMutation<T> = { result: T; warnings: string[] };
 /**
  * Счётчики объектов модели. Специальные ключи: walls (число стен) и openings
  * (число проёмов в стенах); остальные — по общему реестру коллекций
- * MODEL_ENTITY_COLLECTIONS (C1, аудит 65), чтобы новая сущность не выпадала
- * из счётчиков (раньше вручную отставали cables/rulers/comments).
+ * MODEL_ENTITY_COLLECTIONS (C1, аудит 65) под публичными ключами
+ * PUBLIC_COLLECTION_KEYS (как в compact model_get; газовые линии — gas_lines),
+ * чтобы новая сущность не выпадала из счётчиков (раньше вручную отставали
+ * cables/rulers/comments).
  */
 export type ModelCounts = { walls: number; openings: number } & {
-  [K in Exclude<ModelEntityCollection, "walls">]: number;
+  [K in Exclude<ModelEntityCollection, "walls"> as (typeof PUBLIC_COLLECTION_KEYS)[K]]: number;
 };
 
 export function modelCounts(model: Model | Record<string, unknown>): ModelCounts {
   const m = model as Model;
   const walls = m.walls ?? {};
-  const { walls: _w, ...rest } = entityCounts(m);
-  void _w;
   return {
+    ...publicCollectionCounts(entityCounts(m)),
     walls: Object.keys(walls).length,
     openings: Object.values(walls).reduce((n, w) => n + Object.keys(w.holes ?? {}).length, 0),
-    ...rest,
   };
 }
 
@@ -1883,7 +1884,7 @@ export class Workspace {
     willDelete.openings = deletedIds.openings.length;
     for (const key of MODEL_ENTITY_COLLECTIONS) {
       if (key === "walls") continue;
-      willDelete[key] = deletedIds[key].length;
+      willDelete[PUBLIC_COLLECTION_KEYS[key]] = deletedIds[key].length;
     }
     const warnings: string[] = [];
     const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
@@ -1892,8 +1893,9 @@ export class Workspace {
     if (willDelete.openings > 0) warnings.push(`будут удалены проёмы (${willDelete.openings}), которых нет в модели: ${idList(deletedIds.openings)}`);
     for (const key of MODEL_ENTITY_COLLECTIONS) {
       if (key === "walls") continue;
-      if (willDelete[key] > 0) {
-        warnings.push(`будут удалены ${ENTITY_DELETE_LABELS[key]} (${willDelete[key]}), которых нет в модели: ${idList(deletedIds[key])}`);
+      const pub = PUBLIC_COLLECTION_KEYS[key];
+      if (willDelete[pub] > 0) {
+        warnings.push(`будут удалены ${ENTITY_DELETE_LABELS[key]} (${willDelete[pub]}), которых нет в модели: ${idList(deletedIds[key])}`);
       }
     }
     if (fresh.save_id !== saveIdBefore) {
@@ -2412,9 +2414,10 @@ export class Workspace {
     if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
     // Счётчики «что видит редактор»: walls/openings/items/pillars/rigels — из
     // отчёта адаптера (after), остальные коллекции — из нормализованной модели,
-    // ключи — по общему реестру MODEL_ENTITY_COLLECTIONS (C1, аудит 65), чтобы
-    // новая сущность не выпадала из сверки рендера (раньше вручную отставали
-    // cables/rulers/comments и трубы климата).
+    // ключи — публичные ключи реестра MODEL_ENTITY_COLLECTIONS
+    // (PUBLIC_COLLECTION_KEYS, газовые линии — gas_lines), чтобы новая сущность
+    // не выпадала из сверки рендера (раньше вручную отставали cables/rulers/comments
+    // и трубы климата). Публичные ключи — те же, что в will_delete и counts.
     const normModel = norm.model as Record<string, unknown>;
     const normModelCount = (key: string): number =>
       Object.keys((normModel[key] as Record<string, unknown> | null | undefined) ?? {}).length;
@@ -2427,7 +2430,7 @@ export class Workspace {
     };
     for (const key of MODEL_ENTITY_COLLECTIONS) {
       if (key === "walls" || key === "items" || key === "pillars" || key === "rigels") continue;
-      seen[key] = normModelCount(key);
+      seen[PUBLIC_COLLECTION_KEYS[key]] = normModelCount(key);
     }
     // стены — по каноническому набору осевых отрезков (ревью v0.1.1-r2 R2-3):
     // слияние/разрез коллинеарных стен — допустимая нормализация, сдвиг и лишние
@@ -2441,7 +2444,8 @@ export class Workspace {
     if (seen.openings !== expected.openings) mismatch.push(`openings: в модели ${expected.openings}, в редакторе ${seen.openings}`);
     for (const key of MODEL_ENTITY_COLLECTIONS) {
       if (key === "walls") continue;
-      if (seen[key] !== expected[key]) mismatch.push(`${key}: в модели ${expected[key]}, в редакторе ${seen[key]}`);
+      const pub = PUBLIC_COLLECTION_KEYS[key];
+      if (seen[pub] !== expected[pub]) mismatch.push(`${pub}: в модели ${expected[pub]}, в редакторе ${seen[pub]}`);
     }
     if (mismatch.length > 0) {
       throw new McpError("RENDER_OUT_OF_SYNC", `редактор показывает не текущую модель (${mismatch.join(", ")}) — картинка не отдаётся`, {

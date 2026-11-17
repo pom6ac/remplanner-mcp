@@ -15,8 +15,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { MODEL_ENTITY_COLLECTIONS, MODEL_REQUIRED_COLLECTIONS, entityCounts, hasEntities } from "../../src/model/collections.ts";
+import { MODEL_ENTITY_COLLECTIONS, MODEL_REQUIRED_COLLECTIONS, PUBLIC_COLLECTION_KEYS, entityCounts, hasEntities } from "../../src/model/collections.ts";
 import { modelCounts, modelIsContentEmpty } from "../../src/workspace.ts";
+import { compactModel } from "../../src/model/compact.ts";
 import type { ModelEntityCollection } from "../../src/model/collections.ts";
 import type { Model, GasLine, LevelHole, LedStrip, LineStrip, Pipe, StripLight, WarmFloor, FixtureEnvelope } from "../../src/model/types.ts";
 
@@ -163,18 +164,31 @@ test("c1: entityCounts/hasEntities считают все коллекции ре
   assert.equal(modelIsContentEmpty(fixtureModel()), false);
 });
 
-test("c1: modelCounts — ключи по реестру + walls/openings", () => {
+test("c1: modelCounts — публичные ключи по compact model_get + walls/openings", () => {
   const c = modelCounts(fullPlanModel());
   assert.deepEqual(
     Object.keys(c).sort(),
-    [...MODEL_ENTITY_COLLECTIONS.filter((k) => k !== "walls"), "openings", "walls"].sort(),
+    [...MODEL_ENTITY_COLLECTIONS.filter((k) => k !== "walls").map((k) => PUBLIC_COLLECTION_KEYS[k]), "openings", "walls"].sort(),
   );
   assert.equal(c.walls, 1);
-  assert.equal(c.pipes_gas, 1, "pipes_gas считается");
+  assert.equal(c.gas_lines, 1, "gas_lines считается");
   assert.equal(c.cables, 1);
   assert.equal(c.rulers, 1);
   assert.equal(c.comments, 1);
   assert.equal(c.openings, 0);
+});
+
+test("c1: публичные ключи счётчиков — словарь compact model_get; gas_lines есть, pipes_gas нет", () => {
+  const model = fullPlanModel();
+  const c = modelCounts(model) as unknown as Record<string, number>;
+  const compactKeys = new Set(Object.keys(compactModel(model)));
+  for (const key of MODEL_ENTITY_COLLECTIONS) {
+    const pub = PUBLIC_COLLECTION_KEYS[key];
+    assert.ok(pub in c, `${pub} присутствует в counts`);
+    if (key === "walls" || key === "rulers" || key === "comments") continue; // walls — спецсчётчик, rulers/comments — аддитивные ключи
+    assert.ok(compactKeys.has(pub), `${pub} есть в compact model_get`);
+  }
+  assert.ok(!("pipes_gas" in c), "внутреннее имя pipes_gas в публичном выводе отсутствует");
 });
 
 test("c1: project_import_plan заменяет ВСЕ коллекции импортированными (включая ригель и газ)", async () => {

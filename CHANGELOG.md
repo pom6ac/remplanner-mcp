@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Изменено (API)
+
+- Ревью 175 PR #24 «Реестр коллекций сущностей» (major №1): публичные ответы снова
+  называют газовые линии `gas_lines`, как в compact `model_get` — ключи
+  `will_delete` в `project_save`, счётчики `details.server` при `SAVE_CONFLICT`,
+  `revision.editor`/`details.workspace`/`details.editor` в `render_plan`.
+  Внутреннее имя коллекции модели (`pipes_gas`) остаётся; отображение
+  «коллекция → публичный ключ» — одна таблица `PUBLIC_COLLECTION_KEYS`
+  в `src/model/collections.ts`.
+
+### Добавлено
+
+- Ревью 175 PR #24 (аддитивные ключи): в `will_delete` (`project_save`) появились
+  счётчики `cables` (соединительные провода), `rulers` (размеры) и `comments`
+  (текстовые комментарии) — раньше эти коллекции выпадали из предупреждения
+  об удалениях и молча удалялись при записи.
+
 ### Безопасность
 
 - Аудит 65 (B1+B2, этап 145): единая безопасная сериализация ошибок (`errorToPayload`

@@ -175,7 +175,10 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
     project_save: tool(
       "Сохранить открытый проект на сервер. Порядок: model_validate → project_save. " +
         "Перед записью делается снимок модели в ~/.remplanner-mcp/backups/. " +
-        "Ответ содержит will_delete — сколько объектов серверной версии (стены/проёмы/предметы) будет удалено — " +
+        "Ответ содержит will_delete — сколько объектов серверной версии будет удалено " +
+        "(walls, openings и по коллекции на каждый публичный ключ model_get: items, pillars, rigels, gas_lines, pipes, " +
+        "terrace_borders, territory_borders, level_holes, led_strips, stripes_light, line_strips, cables, rulers, comments, " +
+        "warm_floors, pipes_warm_floor, pipes_conditioner, pipes_heat, pipes_ventilation) — " +
         "и warnings; проверьте их, если модель открыта не с нуля. " +
         "Если save_id на сервере новее (правки в другой вкладке сайта) — ошибка SAVE_CONFLICT: " +
         "не форсируйте вслепую — сначала перечитайте проект (project_open) или спросите пользователя; " +
