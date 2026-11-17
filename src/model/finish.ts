@@ -37,6 +37,24 @@ export const CEILING_COVERS = [
 /** Раскладка покрытия пола (type_laying редактора): доска — 1/2 или 1/3, плитка — tile. */
 export const FLOOR_TYPE_LAYINGS = ["1/2", "1/3", "tile", "line"] as const;
 
+/** Покрытия-плитка: раскладка tile; доска/панель: 1/2, 1/3 (line — везде). */
+const TILE_FLOOR_COVERS = new Set(["floor_tile", "stoneware_wood", "stoneware_marble", "metlah", "mosaic", "hex_tile"]);
+const BOARD_FLOOR_COVERS = new Set([
+  "laminate", "laminate_corky", "laminate_vinyl", "laminate_quartz_vinyl", "laminate_spc", "laminate_pvh",
+  "parquet_board", "engineer_board", "wood_board", "parquet", "terrace_board",
+]);
+
+/** Профили потолка, известные из проб редактора (94-options-panel, эталон ui-ref-finish-ceiling). */
+export const CEILING_PROFILES = ["standard"] as const;
+
+/** Разумные пределы пользовательских параметров (ревью 95 R5): мм. */
+export const FINISH_LIMITS = {
+  plankMinMm: 1, plankMaxMm: 10_000,
+  stitchMaxMm: 100,
+  wallHeightMaxMm: 30_000,
+  ceilingLevelMax: 20,
+} as const;
+
 export type FloorCover = (typeof FLOOR_COVERS)[number];
 export type WallCover = (typeof WALL_COVERS)[number];
 export type CeilingCover = (typeof CEILING_COVERS)[number];
@@ -106,6 +124,23 @@ export function setFloorFinish(model: Model, roomRef: string, cover: FloorCover,
     if (!Number.isFinite(params.angleDeg)) throw new McpError("INVALID_ARGUMENT", "angle_deg должен быть конечным числом");
     extra.angle = params.angleDeg;
   }
+  for (const [key, v] of [["plank_length_mm", params.plankLengthMm], ["plank_width_mm", params.plankWidthMm]] as const) {
+    if (v === undefined) continue;
+    if (!Number.isFinite(v) || v < FINISH_LIMITS.plankMinMm || v > FINISH_LIMITS.plankMaxMm) {
+      throw new McpError("INVALID_ARGUMENT", `${key} должен быть числом от ${FINISH_LIMITS.plankMinMm} до ${FINISH_LIMITS.plankMaxMm} мм`);
+    }
+  }
+  if (params.stitchWidthMm !== undefined && (params.stitchWidthMm < 0 || params.stitchWidthMm > FINISH_LIMITS.stitchMaxMm)) {
+    throw new McpError("INVALID_ARGUMENT", `stitch_width_mm должен быть от 0 до ${FINISH_LIMITS.stitchMaxMm} мм`);
+  }
+  if (params.typeLaying !== undefined) {
+    if (params.typeLaying === "tile" && !TILE_FLOOR_COVERS.has(cover)) {
+      throw new McpError("INVALID_ARGUMENT", `раскладка tile применима только к плиточным покрытиям (${[...TILE_FLOOR_COVERS].join(", ")}), а не к ${cover}`);
+    }
+    if ((params.typeLaying === "1/2" || params.typeLaying === "1/3") && !BOARD_FLOOR_COVERS.has(cover)) {
+      throw new McpError("INVALID_ARGUMENT", `раскладка ${params.typeLaying} применима только к доске/панели, а не к ${cover}`);
+    }
+  }
   if (params.plankLengthMm !== undefined) extra.width = r2(params.plankLengthMm / 10);
   if (params.plankWidthMm !== undefined) extra.height = r2(params.plankWidthMm / 10);
   if (params.stitchWidthMm !== undefined) extra.stitch_width = r2(params.stitchWidthMm / 10);
@@ -141,6 +176,12 @@ export function setWallFinish(model: Model, roomRef: string, wallId: string, typ
   }
   const { room } = resolveRoom(model, roomRef);
   const edges = Array.isArray(room.edges) ? room.edges : [];
+  for (const [key, v] of [["height_mm", params.heightMm], ["height_from_floor_mm", params.heightFromFloorMm]] as const) {
+    if (v === undefined) continue;
+    if (!Number.isFinite(v) || v < 0 || v > FINISH_LIMITS.wallHeightMaxMm) {
+      throw new McpError("INVALID_ARGUMENT", `${key} должен быть числом от 0 до ${FINISH_LIMITS.wallHeightMaxMm} мм`);
+    }
+  }
   const targets = edges
     .map((e, index) => ({ e, index }))
     .filter(({ e }) => e.pid === wallId);
@@ -201,6 +242,12 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
     throw new McpError("INVALID_ARGUMENT", `неизвестное покрытие потолка «${material}» (допустимо: ${CEILING_COVERS.join(", ")})`);
   }
   const { id, room } = resolveRoom(model, roomRef);
+  if (params.level !== undefined && (!Number.isInteger(params.level) || params.level < 0 || params.level > FINISH_LIMITS.ceilingLevelMax)) {
+    throw new McpError("INVALID_ARGUMENT", `level должен быть целым числом от 0 до ${FINISH_LIMITS.ceilingLevelMax}`);
+  }
+  if (params.profile !== undefined && !(CEILING_PROFILES as readonly string[]).includes(params.profile)) {
+    throw new McpError("INVALID_ARGUMENT", `неизвестный профиль потолка «${params.profile}» (поддержано: ${CEILING_PROFILES.join(", ")})`);
+  }
   const polygon = room.polygon ?? room.points ?? [];
   const ceilings = Array.isArray(room.ceilings) ? [...room.ceilings] : [];
   while (ceilings.length < 1) ceilings.push({ exist: false });
@@ -227,6 +274,13 @@ export function removeCeilingFinish(model: Model, roomRef: string): void {
 }
 
 // ---------- семантическая сверка ----------
+// Ревью 95 (R1–R4): сопоставление комнат по геометрии контура (канонический полигон
+// без коллинеарных вершин, независимо от стартовой вершины и направления), ID — только
+// подсказка с проверкой геометрии; split/merge — правило отчёта 94 (пол/потолок остаётся
+// за комнатой-наследником по наибольшему перекрытию, отделка сторон — по рёбрам);
+// отделываемая область стороны сверяется целиком без процентного порога — допустимы
+// только сокращения, объяснимые геометрией (проёмы, подрезка UI ~5 см у концов, малый
+// абсолютный допуск); явно заданные пользовательские параметры обязательны.
 
 export type FinishSig = {
   floor?: { cover: string; width?: number; height?: number; stitch?: number; angle?: number; laying?: string };
@@ -234,14 +288,163 @@ export type FinishSig = {
   walls?: Array<{ pid?: string; line: [Point, Point]; type: string; layer: number; height: number; fromFloor: number }>;
 };
 
-const POLY_TOL = 1; // см: идентификация комнаты по геометрии
+/** Проём: то, что сверке нужно от wall.holes (край на оси или центр+ширина). */
+export type FinishWall = {
+  p1?: Point;
+  p2?: Point;
+  holes?: Record<string, { pc?: Point; width?: number; p1?: Point; p2?: Point }>;
+};
 
-function polyKey(poly: Point[] | undefined): string {
-  if (!poly || poly.length < 3) return "";
-  let sx = 0, sy = 0;
-  for (const p of poly) { sx += p.x; sy += p.y; }
-  return `${Math.round(sx / poly.length / POLY_TOL)},${Math.round(sy / poly.length / POLY_TOL)}`;
+// ---------- геометрия полигонов ----------
+
+const COORD_TOL = 0.5; // см: допуск сравнения вершин/границ
+const COLLINEAR_TOL = 0.5; // см: вершина на хорде ближе этого — коллинеарная
+const SPLIT_MIN = 0.3; // доля ожидаемой комнаты в комнате-кандидате при split
+const MERGE_MAX = 0.7; // доля ожидаемой комнаты в产品 объединённой комнате ниже — комната-наследник другая
+
+function signedArea(poly: Point[]): number {
+  let s = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]!, b = poly[(i + 1) % poly.length]!;
+    s += a.x * b.y - b.x * a.y;
+  }
+  return s / 2;
 }
+
+function distToChord(p: Point, a: Point, b: Point): number {
+  const abx = b.x - a.x, aby = b.y - a.y;
+  const len = Math.hypot(abx, aby);
+  if (len < 1e-9) return Math.hypot(p.x - a.x, p.y - a.y);
+  return Math.abs((p.x - a.x) * aby - (p.y - a.y) * abx) / len;
+}
+
+function removeCollinear(poly: Point[]): Point[] {
+  let pts = [...poly];
+  for (let pass = 0; pass < 2; pass++) {
+    const kept: Point[] = [];
+    const n = pts.length;
+    for (let i = 0; i < n; i++) {
+      const prev = pts[(i - 1 + n) % n]!, next = pts[(i + 1) % n]!;
+      if (distToChord(pts[i]!, prev, next) > COLLINEAR_TOL) kept.push(pts[i]!);
+    }
+    pts = kept;
+  }
+  return pts;
+}
+
+/**
+ * Каноническая форма контура: без дубликатов и коллинеарных вершин, против часовой
+ * стрелки, начиная с лексикографически минимальной вершины. Один и тот же контур
+ * с любым стартовым ребром, направлением и лишними точками на прямых даёт одну форму.
+ */
+function canonicalPolygon(poly: Point[] | undefined): Point[] | null {
+  if (!poly || poly.length < 3) return null;
+  let pts: Point[] = [];
+  for (const p of poly) {
+    const q = { x: r2(p.x), y: r2(p.y) };
+    const last = pts[pts.length - 1];
+    if (!last || Math.abs(last.x - q.x) > 1e-9 || Math.abs(last.y - q.y) > 1e-9) pts.push(q);
+  }
+  if (pts.length > 1) {
+    const first = pts[0]!, last = pts[pts.length - 1]!;
+    if (Math.abs(first.x - last.x) <= 1e-9 && Math.abs(first.y - last.y) <= 1e-9) pts.pop();
+  }
+  pts = removeCollinear(pts);
+  if (pts.length < 3) return null;
+  if (signedArea(pts) < 0) pts = [...pts].reverse();
+  let mi = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i]!, b = pts[mi]!;
+    if (a.x < b.x - 1e-9 || (Math.abs(a.x - b.x) <= 1e-9 && a.y < b.y - 1e-9)) mi = i;
+  }
+  return [...pts.slice(mi), ...pts.slice(0, mi)];
+}
+
+function polygonsEqual(a: Point[] | undefined, b: Point[] | undefined): boolean {
+  const ca = canonicalPolygon(a), cb = canonicalPolygon(b);
+  if (!ca || !cb || ca.length !== cb.length) return false;
+  return ca.every((p, i) => Math.abs(p.x - cb[i]!.x) <= COORD_TOL && Math.abs(p.y - cb[i]!.y) <= COORD_TOL);
+}
+
+function pointInPolygon(p: Point, poly: Point[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i]!, b = poly[j]!;
+    if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+
+function polygonArea(poly: Point[] | undefined): number {
+  if (!poly || poly.length < 3) return 0;
+  return Math.abs(signedArea(poly));
+}
+
+/**
+ * Доля площади inner, покрытая outer (сетка ~32×32 по bbox inner): сопоставление
+ * при split/merge, когда контуры не равны.
+ */
+function overlapShare(inner: Point[], outer: Point[]): number {
+  const area = polygonArea(inner);
+  if (area <= 1e-9) return 0;
+  const xs = inner.map((p) => p.x), ys = inner.map((p) => p.y);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const step = Math.max(Math.sqrt(area / 900), 1e-6);
+  let total = 0, hit = 0;
+  for (let x = x0 + step / 2; x < x1; x += step) {
+    for (let y = y0 + step / 2; y < y1; y += step) {
+      const p = { x, y };
+      if (!pointInPolygon(p, inner)) continue;
+      total++;
+      if (pointInPolygon(p, outer)) hit++;
+    }
+  }
+  return total === 0 ? 0 : hit / total;
+}
+
+// ---------- интервалы на прямой ----------
+
+type Span = [number, number];
+
+function mergeSpans(spans: Span[]): Span[] {
+  const s = [...spans].sort((a, b) => a[0] - b[0]);
+  const out: Span[] = [];
+  for (const [a, b] of s) {
+    const last = out[out.length - 1];
+    if (last && a <= last[1] + 1e-9) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  }
+  return out;
+}
+
+function subtractSpans(base: Span, cuts: Span[]): Span[] {
+  let rest: Span[] = [base];
+  for (const [a, b] of mergeSpans(cuts)) {
+    const next: Span[] = [];
+    for (const [s0, s1] of rest) {
+      if (b <= s0 || a >= s1) { next.push([s0, s1]); continue; }
+      if (a > s0) next.push([s0, Math.min(a, s1)]);
+      if (b < s1) next.push([Math.max(b, s0), s1]);
+    }
+    rest = next;
+  }
+  return rest;
+}
+
+/** Первый недопустимый зазор (см) или null: концы и разрешённые интервалы вычтены. */
+function firstBadGap(base: Span, got: Span[], allowed: Span[], lenCm: number, endTrimCm: number, gapTolCm: number): number | null {
+  const cuts = [...got, ...allowed, ...[
+    [base[0], Math.min(base[0] + endTrimCm / lenCm, base[1])] as Span,
+    [Math.max(base[1] - endTrimCm / lenCm, base[0]), base[1]] as Span,
+  ]];
+  const gaps = subtractSpans(base, cuts);
+  for (const [a, b] of gaps) {
+    if ((b - a) * lenCm > gapTolCm) return (b - a) * lenCm;
+  }
+  return null;
+}
+
+// ---------- сигнатуры ----------
 
 function num(v: unknown): number | undefined {
   return typeof v === "number" && Number.isFinite(v) ? v : undefined;
@@ -303,103 +506,322 @@ export function finishSignature(model: Model, roomId: string): FinishSig {
   return { floor: floorSig(room), ceiling: ceilingSig(room), walls: wallSigs(room, edges) };
 }
 
-function pointOnLineTol(p: Point, a: Point, b: Point, tol: number): boolean {
-  const abx = b.x - a.x, aby = b.y - a.y;
-  const apx = p.x - a.x, apy = p.y - a.y;
-  const len2 = abx * abx + aby * aby;
-  if (len2 < 1e-9) return Math.hypot(apx, apy) <= tol;
-  const t = (apx * abx + apy * aby) / len2;
-  if (t < -1e-9 || t > 1 + 1e-9) return false;
-  return Math.hypot(apx - abx * t, apy - aby * t) <= tol;
-}
+// ---------- сравнение значений (ревью 95 R4) ----------
 
-/**
- * Покрытие отрезка expected отрезком got: та же прямая (перпендикуляр ≤ tol) и проекция
- * expected покрыта got не короче чем на 90% (редактор поджимает концы отделки к проёмам
- * и смещает линию внутрь комнаты на половину шва при нанесении через UI).
- */
-function lineCovered(exp: [Point, Point], got: [Point, Point], tol = 6): boolean {
-  const abx = got[1].x - got[0].x, aby = got[1].y - got[0].y;
-  const len2 = abx * abx + aby * aby;
-  if (len2 < 1e-9) return false;
-  const proj = (p: Point): { t: number; d: number } => {
-    const apx = p.x - got[0].x, apy = p.y - got[0].y;
-    const t = (apx * abx + apy * aby) / len2;
-    return { t, d: Math.hypot(apx - abx * t, apy - aby * t) };
-  };
-  const a = proj(exp[0]);
-  const b = proj(exp[1]);
-  const covered = Math.min(Math.max(a.t, b.t), 1) - Math.max(Math.min(a.t, b.t), 0);
-  const expLen = Math.hypot(exp[1].x - exp[0].x, exp[1].y - exp[0].y);
-  if (a.d > tol || b.d > tol) return false;
-  return covered * Math.sqrt(len2) >= expLen * 0.9 - 0.5;
-}
-
-/** Сумма проекций отрезков got (на прямую exp) покрывает отрезок exp не короче чем на 90%. */
-function expSpanCovered(exp: [Point, Point], got: [Point, Point][], tol = 6): boolean {
-  const expLen = Math.hypot(exp[1].x - exp[0].x, exp[1].y - exp[0].y);
-  if (expLen < 1e-9) return true;
-  const ex = exp[1].x - exp[0].x, ey = exp[1].y - exp[0].y;
-  const spans: Array<[number, number]> = [];
-  for (const line of got) {
-    const p1 = { t: ((line[0].x - exp[0].x) * ex + (line[0].y - exp[0].y) * ey) / (expLen * expLen),
-      d: (() => { const t = ((line[0].x - exp[0].x) * ex + (line[0].y - exp[0].y) * ey) / (expLen * expLen);
-        return Math.hypot(line[0].x - exp[0].x - ex * t, line[0].y - exp[0].y - ey * t); })() };
-    const p2 = { t: ((line[1].x - exp[0].x) * ex + (line[1].y - exp[0].y) * ey) / (expLen * expLen),
-      d: (() => { const t = ((line[1].x - exp[0].x) * ex + (line[1].y - exp[0].y) * ey) / (expLen * expLen);
-        return Math.hypot(line[1].x - exp[0].x - ex * t, line[1].y - exp[0].y - ey * t); })() };
-    if (p1.d > tol || p2.d > tol) continue;
-    spans.push([Math.max(Math.min(p1.t, p2.t), 0), Math.min(Math.max(p1.t, p2.t), 1)]);
-  }
-  spans.sort((s1, s2) => s1[0] - s2[0]);
-  let reached = 0;
-  for (const [a, b] of spans) {
-    if (b <= reached) continue;
-    if (a > reached + 1e-6) return false;
-    reached = Math.max(reached, b);
-    if (reached * expLen >= expLen * 0.9 - 0.5) return true;
-  }
-  return reached * expLen >= expLen * 0.9 - 0.5;
+const NUM_TOL = 0.05; // см/градус: численный шум
+/** Умолчания редактора: отсутствующее поле эквивалентно такому значению (R4). */
+function sameOptional(exp: number | undefined, got: number | undefined, defaults: readonly number[]): boolean {
+  if (exp === undefined) return true;
+  if (got === undefined) return defaults.includes(exp);
+  return Math.abs(exp - got) <= NUM_TOL;
 }
 
 function sameFloor(exp: NonNullable<FinishSig["floor"]>, got: NonNullable<FinishSig["floor"]>): boolean {
-  // умолчания редактора: сравниваем только то, что задал пользователь; значения,
-  // появившиеся у редактора при нормализации (раскладка/швы по умолчанию), не блокируют
+  // пользовательские параметры обязательны: исчезновение явно заданного значения — расхождение;
+  // производные поля (polygons_layout, patch, f0offset) не сверяются
   if (exp.cover !== got.cover) return false;
-  for (const k of ["width", "height", "stitch"] as const) {
-    if (exp[k] !== undefined && got[k] !== undefined && Math.abs((exp[k] ?? 0) - (got[k] ?? 0)) > 0.05) return false;
-  }
-  if (exp.angle !== undefined && got.angle !== undefined && Math.abs(exp.angle - got.angle) > 0.05) return false;
-  if (exp.laying !== undefined && got.laying !== undefined && exp.laying !== got.laying) return false;
+  if (!sameOptional(exp.width, got.width, [])) return false;
+  if (!sameOptional(exp.height, got.height, [])) return false;
+  // шов 0 и угол 0 редактор может не записать (значения по умолчанию)
+  if (!sameOptional(exp.stitch, got.stitch, [0])) return false;
+  if (!sameOptional(exp.angle, got.angle, [0])) return false;
+  if (exp.laying !== undefined && got.laying !== exp.laying) return false;
   return true;
 }
 
 function sameCeiling(exp: NonNullable<FinishSig["ceiling"]>, got: NonNullable<FinishSig["ceiling"]>): boolean {
   if (exp.material !== got.material) return false;
-  if (exp.level !== undefined && got.level !== undefined && exp.level !== got.level) return false;
-  if (exp.profile !== undefined && got.profile !== undefined && exp.profile !== got.profile) return false;
+  // level 0 / profile standard — умолчания: их отсутствие эквивалентно значению
+  if (!sameOptional(exp.level, got.level, [0])) return false;
+  if (exp.profile !== undefined && got.profile !== exp.profile && !(exp.profile === "standard" && got.profile === undefined)) return false;
   return true;
+}
+
+// ---------- отделка сторон стен: покрытие области (ревью 95 R2/R3) ----------
+
+const PERP_TOL = 6; // см: штатный отступ линии UI внутрь комнаты (~5 см) + допуск
+const END_TRIM_TOL = 6; // см: штатная подрезка UI у концов (~5 см) + допуск
+const GAP_TOL = 0.6; // см: численный зазор
+const OPENING_TOL = 2; // см: разрыв вокруг проёма может быть уже проёма (наличник)
+
+function projT(p: Point, a: Point, b: Point): number {
+  const abx = b.x - a.x, aby = b.y - a.y;
+  const len2 = abx * abx + aby * aby;
+  if (len2 < 1e-9) return 0;
+  return ((p.x - a.x) * abx + (p.y - a.y) * aby) / len2;
+}
+
+function projD(p: Point, a: Point, b: Point): number {
+  const abx = b.x - a.x, aby = b.y - a.y;
+  const len2 = abx * abx + aby * aby;
+  if (len2 < 1e-9) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = projT(p, a, b);
+  return Math.hypot(p.x - a.x - abx * t, p.y - a.y - aby * t);
+}
+
+function lineLen(l: [Point, Point]): number {
+  return Math.hypot(l[1].x - l[0].x, l[1].y - l[0].y);
+}
+
+/** Проёмы стены, спроецированные на прямую (расширенные на OPENING_TOL). */
+function openingSpansOnLine(wall: FinishWall | undefined, a: Point, b: Point, lenCm: number): Span[] {
+  if (!wall?.holes) return [];
+  const wp1 = wall.p1, wp2 = wall.p2;
+  if (!wp1 || !wp2 || lineLen([wp1, wp2]) < 1e-9) return [];
+  const out: Span[] = [];
+  for (const h of Object.values(wall.holes)) {
+    let e1: Point | undefined, e2: Point | undefined;
+    if (h.p1 && h.p2) { e1 = h.p1; e2 = h.p2; }
+    else if (h.pc && h.width) {
+      const wpx = wp2.x - wp1.x, wpy = wp2.y - wp1.y;
+      const wlen = Math.hypot(wpx, wpy);
+      const c = projT(h.pc, wp1, wp2) * wlen;
+      const half = Math.min(h.width / 2, wlen / 2);
+      const t1 = Math.max((c - half) / wlen, 0), t2 = Math.min((c + half) / wlen, 1);
+      e1 = { x: wp1.x + wpx * t1, y: wp1.y + wpy * t1 };
+      e2 = { x: wp1.x + wpx * t2, y: wp1.y + wpy * t2 };
+    }
+    if (!e1 || !e2) continue;
+    const t1 = Math.min(projT(e1, a, b), projT(e2, a, b));
+    const t2 = Math.max(projT(e1, a, b), projT(e2, a, b));
+    if (t2 - t1 <= 0) continue;
+    const pad = OPENING_TOL / lenCm;
+    out.push([t1 - pad, t2 + pad]);
+  }
+  return out;
+}
+
+/**
+ * Ожидаемая отделываемая область (отрезок exp) покрыта частями got той же отделки:
+ * та же прямая (перпендикуляр ≤ tol), каждая часть покрывает свой интервал; допустимы
+ * только концевая подрезка UI, разрывы вокруг проёмов и малый численный зазор.
+ * Процентные пороги не используются (ревью 95 R2): любое необъяснимое сокращение —
+ * расхождение.
+ */
+function expectedAreaCovered(
+  exp: [Point, Point],
+  gotParts: Array<[Point, Point]>,
+  openings: Span[],
+): boolean {
+  const lenCm = lineLen(exp);
+  if (lenCm < 1e-9) return gotParts.length > 0;
+  const spans: Span[] = [];
+  for (const line of gotParts) {
+    const t1 = projT(line[0], exp[0], exp[1]), t2 = projT(line[1], exp[0], exp[1]);
+    const s: Span = [Math.max(Math.min(t1, t2), 0), Math.min(Math.max(t1, t2), 1)];
+    if (s[1] - s[0] > 1e-9) spans.push(s);
+  }
+  return firstBadGap([0, 1], spans, openings, lenCm, END_TRIM_TOL, GAP_TOL) === null;
+}
+
+/**
+ * Часть отделки стены принадлежит той же стороне: геометрия на ожидаемой линии
+ * (стена на месте) либо на оси той же стены после переноса (id совпадает, линия
+ * переехала вместе со стеной — отчёт 94: отделка переживает сдвиг стены).
+ */
+function gotPartNear(
+  w: { pid?: string; line: [Point, Point] },
+  g: { pid?: string; line: [Point, Point] },
+  gotWalls?: Record<string, FinishWall>,
+): "line" | "wall" | null {
+  if (w.pid && g.pid && w.pid === g.pid) {
+    const gw = gotWalls?.[g.pid];
+    if (gw?.p1 && gw?.p2) {
+      // линия части должна лежать на переносимой стене (любая сторона, с отступом UI)
+      if (projD(g.line[0], gw.p1, gw.p2) <= PERP_TOL + 12 && projD(g.line[1], gw.p1, gw.p2) <= PERP_TOL + 12) return "wall";
+    } else {
+      // ось стены недоступна (в сверку переданы только комнаты) — сопоставляем по линии
+      return "line";
+    }
+  }
+  const nearExp = projD(g.line[0], w.line[0], w.line[1]) <= PERP_TOL && projD(g.line[1], w.line[0], w.line[1]) <= PERP_TOL;
+  if (nearExp) return "line";
+  return null;
+}
+
+// ---------- сопоставление комнат (ревью 95 R1) ----------
+
+function roomPolygon(room: RoomRec): Point[] | undefined {
+  return (room.polygon ?? room.points) as Point[] | undefined;
+}
+
+function roomHasFloorCeiling(room: RoomRec): boolean {
+  return Boolean(floorSig(room) || ceilingSig(room));
+}
+
+/**
+ * Семантическая сверка отделки по комнатам (сопоставление по геометрии контура, не по id;
+ * ID — только подсказка с проверкой геометрии: тот же контур с новой нумерацией, лишней
+ * коллинеарной вершиной или после перестановки id совпадает; при split/merge пол/потолок
+ * ищется у комнаты-наследника по наибольшему перекрытию, отделка сторон — по рёбрам).
+ * Возвращает список расхождений (пусто — совпало).
+ */
+export function finishMismatches(
+  expectedRooms: Record<string, unknown> | undefined,
+  gotRooms: Record<string, unknown> | undefined,
+  expectedWalls?: Record<string, unknown>,
+  gotWalls?: Record<string, unknown>,
+): string[] {
+  const exp = (expectedRooms ?? {}) as RoomsMap;
+  const got = (gotRooms ?? {}) as RoomsMap;
+  const asFinishWalls = (walls: Record<string, unknown> | undefined): Record<string, FinishWall> =>
+    Object.fromEntries(Object.entries(walls ?? {}).map(([k, w]) => [k, (w ?? {}) as FinishWall]));
+  const expW = asFinishWalls(expectedWalls);
+  const gotW = asFinishWalls(gotWalls);
+  const problems: string[] = [];
+  const gotKeys = Object.keys(got);
+
+  // 1. точное сопоставление по каноническому контуру (id — подсказка, проверенная геометрией)
+  const exact = new Map<string, string>(); // expId → gotId
+  const claimed = new Set<string>();
+  for (const [rid, room] of Object.entries(exp)) {
+    const cand = got[rid];
+    if (cand && polygonsEqual(roomPolygon(room), roomPolygon(cand))) {
+      exact.set(rid, rid);
+      claimed.add(rid);
+    }
+  }
+  for (const [rid, room] of Object.entries(exp)) {
+    if (exact.has(rid)) continue;
+    const found = gotKeys.find((k) => !claimed.has(k) && polygonsEqual(roomPolygon(room), roomPolygon(got[k]!)));
+    if (found) {
+      exact.set(rid, found);
+      claimed.add(found);
+    }
+  }
+
+  // 2. пол/потолок
+  const unmatched = Object.entries(exp).filter(([rid]) => !exact.has(rid));
+  for (const [rid, room] of Object.entries(exp)) {
+    const gid = exact.get(rid);
+    const expFloor = floorSig(room);
+    const expCeil = ceilingSig(room);
+    if (!gid) {
+      if (!expFloor && !expCeil) continue; // только стены — сверяются глобально по рёбрам
+      // split/merge: ищем комнату-наследника по наибольшему перекрытию
+      const poly = roomPolygon(room);
+      let best: { key: string; shareExp: number; shareGot: number } | null = null;
+      for (const k of gotKeys) {
+        const shareExp = overlapShare(poly ?? [], roomPolygon(got[k]!) ?? []);
+        if (shareExp < SPLIT_MIN) continue;
+        const shareGot = polygonArea(roomPolygon(got[k]!)) > 1e-9 ? overlapShare(roomPolygon(got[k]!) ?? [], poly ?? []) : 0;
+        if (!best || shareExp > best.shareExp) best = { key: k, shareExp, shareGot };
+      }
+      let floorOk = !expFloor;
+      let ceilOk = !expCeil;
+      if (best) {
+        const heir = got[best.key]!;
+        const gotFloor = floorSig(heir);
+        const gotCeil = ceilingSig(heir);
+        // split: у части-наследника то же покрытие; merge: комната заметно больше
+        // ожидаемой (наследник — другая комната), потеря покрытия ожидаема (отчёт 94)
+        const mergeLike = best.shareGot <= MERGE_MAX;
+        if (expFloor) floorOk = (gotFloor !== undefined && sameFloor(expFloor, gotFloor)) || mergeLike;
+        if (expCeil) ceilOk = (gotCeil !== undefined && sameCeiling(expCeil, gotCeil)) || mergeLike;
+      }
+      if (!floorOk) problems.push(`room ${rid}: потеряно покрытие пола (${expFloor?.cover}) при split/merge`);
+      if (!ceilOk) problems.push(`room ${rid}: потеряно покрытие потолка (${expCeil?.material}) при split/merge`);
+      continue;
+    }
+    const match = got[gid]!;
+    if (expFloor) {
+      const gotFloor = floorSig(match);
+      if (!gotFloor) problems.push(`room ${rid}: потеряно покрытие пола (${expFloor.cover})`);
+      else if (!sameFloor(expFloor, gotFloor)) {
+        problems.push(`room ${rid}: покрытие пола не совпало (${JSON.stringify(expFloor)} → ${JSON.stringify(gotFloor)})`);
+      }
+    }
+    if (expCeil) {
+      const gotCeil = ceilingSig(match);
+      if (!gotCeil) problems.push(`room ${rid}: потеряно покрытие потолка (${expCeil.material})`);
+      else if (!sameCeiling(expCeil, gotCeil)) {
+        problems.push(`room ${rid}: покрытие потолка не совпало (${JSON.stringify(expCeil)} → ${JSON.stringify(gotCeil)})`);
+      }
+    }
+  }
+  void unmatched;
+
+  // 3. отделка сторон стен: каждая ожидаемая сторона должна быть покрыта частями got
+  // по рёбрам (сопоставление геометрией: стена разрезана — частей несколько; перенос
+  // стены — часть следует за стеной по id; потерян кусок — покрытие неполное)
+  const gotPartsAll: Array<{ pid?: string; line: [Point, Point]; type: string; layer: number; height: number; fromFloor: number; room: string }> = [];
+  for (const [gk, gr] of Object.entries(got)) {
+    for (const w of wallSigs(gr, Array.isArray(gr.edges) ? gr.edges : undefined)) {
+      gotPartsAll.push({ ...w, room: gk });
+    }
+  }
+  for (const [rid, room] of Object.entries(exp)) {
+    const expWalls = wallSigs(room, Array.isArray(room.edges) ? room.edges : undefined);
+    for (const w of expWalls) {
+      const sameParams = (g: { type: string; layer: number; height: number; fromFloor: number }): boolean =>
+        g.type === w.type && g.layer === w.layer &&
+        Math.abs(g.height - w.height) <= NUM_TOL && Math.abs(g.fromFloor - w.fromFloor) <= NUM_TOL;
+      const near: Array<"line" | "wall"> = [];
+      const onLine: Array<[Point, Point]> = [];
+      const onWall: Array<[Point, Point]> = [];
+      for (const g of gotPartsAll) {
+        if (!sameParams(g)) continue;
+        const how = gotPartNear(w, g, gotW);
+        if (!how) continue;
+        near.push(how);
+        (how === "wall" ? onWall : onLine).push(g.line);
+      }
+      const expWall = w.pid ? expW[w.pid] : undefined;
+      const gotWallForAxis = w.pid ? gotW[w.pid] : undefined;
+      // проёмы ожидаемой стены (и появившиеся при нормализации) в координатах
+      // ожидаемой линии и оси стены
+      const openingsLine = [
+        ...openingSpansOnLine(expWall, w.line[0], w.line[1], lineLen(w.line)),
+        ...openingSpansOnLine(gotWallForAxis, w.line[0], w.line[1], lineLen(w.line)),
+      ];
+      let covered = false;
+      if (onLine.length > 0) {
+        covered = expectedAreaCovered(w.line, onLine, openingsLine);
+      }
+      if (!covered && onWall.length > 0 && gotWallForAxis?.p1 && gotWallForAxis.p2) {
+        // перенос стены: сверяем в координатах новой оси той же стены
+        const axis: [Point, Point] = [gotWallForAxis.p1, gotWallForAxis.p2];
+        const axisLen = lineLen(axis);
+        const expSpan: Span = [
+          Math.min(projT(w.line[0], axis[0], axis[1]), projT(w.line[1], axis[0], axis[1])),
+          Math.max(projT(w.line[0], axis[0], axis[1]), projT(w.line[1], axis[0], axis[1])),
+        ];
+        const spans: Span[] = [];
+        for (const line of onWall) {
+          const t1 = projT(line[0], axis[0], axis[1]), t2 = projT(line[1], axis[0], axis[1]);
+          const s: Span = [Math.max(Math.min(t1, t2), expSpan[0]), Math.min(Math.max(t1, t2), expSpan[1])];
+          if (s[1] - s[0] > 1e-9) spans.push(s);
+        }
+        const openingsAxis = [
+          ...openingSpansOnLine(expWall, axis[0], axis[1], axisLen),
+          ...openingSpansOnLine(gotWallForAxis, axis[0], axis[1], axisLen),
+        ];
+        covered = firstBadGap(expSpan, spans, openingsAxis, axisLen, END_TRIM_TOL, GAP_TOL) === null;
+      }
+      if (!covered) {
+        problems.push(`room ${rid}: потеряна отделка стены ${w.pid ?? "?"} (${w.type}, слой ${w.layer})`);
+      }
+    }
+  }
+  return problems;
 }
 
 /** Список отделки для публичного ответа (finish_get): по одной или всем комнатам. */
 export function finishList(model: Model, roomRef?: string): Record<string, unknown>[] {
   const rooms = roomsOf(model);
+  const allKeys = Object.keys(rooms);
   const wallLabel = (pid: string | undefined, model2: Model): string | null => {
     if (!pid) return null;
     const walls = Object.values(model2.walls);
     const i = walls.findIndex((w) => w.id === pid);
     return i >= 0 ? `W${i + 1}` : null;
   };
-  const entries = Object.entries(rooms).filter(([rid]) => !roomRef || rid === roomRef || `R${Object.keys(rooms).indexOf(rid) + 1}` === roomRef);
-  if (roomRef && entries.length === 0) {
-    // по метке R<n>
-    const m = /^R(\d+)$/.exec(roomRef);
-    if (m) {
-      const found = Object.entries(rooms)[Number(m[1]) - 1];
-      if (found) entries.push(found);
-    }
-  }
-  return entries.map(([rid, room], index) => {
+  // метка R<n> — из полного списка комнат до фильтрации (ревью 95 R6), чтобы ссылка
+  // из ответа годилась для следующего finish_* вызова
+  const entries = allKeys
+    .map((rid, index) => ({ rid, label: `R${index + 1}`, room: rooms[rid]! }))
+    .filter(({ rid, label }) => !roomRef || rid === roomRef || label === roomRef);
+  return entries.map(({ rid, label, room }) => {
     const edges = Array.isArray(room.edges) ? room.edges : [];
     const walls: Record<string, unknown>[] = [];
     const decors = Array.isArray(room.decors) ? room.decors : [];
@@ -421,7 +843,7 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
     const floor = floorSig(room);
     const ceiling = ceilingSig(room);
     return {
-      id: `R${index + 1}`,
+      id: label,
       site_id: rid,
       ...(floor ? { floor: {
         cover: floor.cover,
@@ -435,63 +857,4 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
       walls,
     };
   });
-}
-
-/**
- * Семантическая сверка отделки по комнатам (сопоставление по геометрии, не по id:
- * при изменении количества граней редактор пересоздаёт комнаты и decors).
- * Возвращает список расхождений (пусто — совпало).
- */
-export function finishMismatches(
-  expectedRooms: Record<string, unknown> | undefined,
-  gotRooms: Record<string, unknown> | undefined,
-): string[] {
-  const exp = (expectedRooms ?? {}) as RoomsMap;
-  const got = (gotRooms ?? {}) as RoomsMap;
-  const problems: string[] = [];
-  const gotKeys = Object.keys(got);
-  for (const [rid, room] of Object.entries(exp)) {
-    const key = polyKey(room.polygon ?? room.points);
-    // сопоставление: по id, затем по центроиду полигона
-    let match = got[rid];
-    if (!match && key) {
-      match = gotKeys.map((k) => got[k]!).find((r) => polyKey(r.polygon ?? r.points) === key);
-    }
-    if (!match) {
-      const hasFinish = room.floors?.[0]?.exist || room.ceilings?.[0]?.exist || (room.decors ?? []).some((d) => d.exist);
-      if (hasFinish) problems.push(`room ${rid}: комната с отделкой исчезла`);
-      continue;
-    }
-    const expFloor = floorSig(room);
-    const gotFloor = floorSig(match);
-    if (expFloor && !gotFloor) problems.push(`room ${rid}: потеряно покрытие пола (${expFloor.cover})`);
-    if (expFloor && gotFloor && !sameFloor(expFloor, gotFloor)) {
-      problems.push(`room ${rid}: покрытие пола не совпало (${JSON.stringify(expFloor)} → ${JSON.stringify(gotFloor)})`);
-    }
-    const expCeil = ceilingSig(room);
-    const gotCeil = ceilingSig(match);
-    if (expCeil && !gotCeil) problems.push(`room ${rid}: потеряно покрытие потолка (${expCeil.material})`);
-    if (expCeil && gotCeil && !sameCeiling(expCeil, gotCeil)) {
-      problems.push(`room ${rid}: покрытие потолка не совпало (${JSON.stringify(expCeil)} → ${JSON.stringify(gotCeil)})`);
-    }
-    // отделка стен: каждая ожидаемая сторона должна найтись среди сторон got; сопоставление
-    // геометрией (стена могла быть разрезана/переименована): сумма частей должна покрывать
-    // ожидаемый отрезок (стена разрезана — частей несколько; потерян кусок — покрытие меньше)
-    const expWalls = wallSigs(room, Array.isArray(room.edges) ? room.edges : undefined);
-    const gotWalls = wallSigs(match, Array.isArray(match.edges) ? match.edges : undefined);
-    for (const w of expWalls) {
-      const sameParams = (g: { type: string; layer: number; height: number; fromFloor: number }): boolean =>
-        g.type === w.type && g.layer === w.layer &&
-        Math.abs(g.height - w.height) <= 0.05 && Math.abs(g.fromFloor - w.fromFloor) <= 0.05;
-      const onLine = (g: { pid?: string; line: [Point, Point]; type: string; layer: number; height: number; fromFloor: number }): boolean => {
-        if (w.pid && g.pid && w.pid === g.pid) return true;
-        return lineCovered(w.line, g.line) || lineCovered(g.line, w.line);
-      };
-      const parts = gotWalls.filter((g) => sameParams(g) && onLine(g));
-      if (!expSpanCovered(w.line, parts.map((g) => g.line))) {
-        problems.push(`room ${rid}: потеряна отделка стены ${w.pid ?? "?"} (${w.type}, слой ${w.layer})`);
-      }
-    }
-  }
-  return problems;
 }

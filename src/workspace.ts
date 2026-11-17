@@ -1444,11 +1444,14 @@ export class Workspace {
         this.modelInternal!.items as Record<string, SubsItemSig>,
         (norm.model as { items?: Record<string, unknown> }).items ?? {},
       );
-      // этап 94: отделка (пол/потолок/стены по комнатам) после нормализации не теряется;
-      // сопоставление комнат по геометрии (id комнат редактор может пересоздать)
+      // этап 94, ревью 95: отделка (пол/потолок/стены по комнатам) после нормализации
+      // не теряется; сопоставление комнат по геометрии (id комнат редактор может
+      // пересоздать), проёмы стен — для объяснимых разрывов отделки сторон
       const finishNorm = finishMismatches(
         (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined,
         ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+        this.modelInternal!["walls"] as Record<string, unknown> | undefined,
+        (norm.model as Record<string, unknown>)["walls"] as Record<string, unknown> | undefined,
       );
       if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.length > 0) {
         throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки или отделку — мутация отменена`, {
@@ -1783,10 +1786,12 @@ export class Workspace {
       this.modelInternal!.items as Record<string, SubsItemSig>,
       (norm.model as { items?: Record<string, unknown> }).items ?? {},
     );
-    // этап 94: отделка до записи сверяется с нормализованной моделью
+    // этап 94, ревью 95: отделка до записи сверяется с нормализованной моделью
     const finishNorm = finishMismatches(
       (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined,
       ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+      this.modelInternal!["walls"] as Record<string, unknown> | undefined,
+      (norm.model as Record<string, unknown>)["walls"] as Record<string, unknown> | undefined,
     );
     // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
     const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
@@ -1956,10 +1961,16 @@ export class Workspace {
         expectedWalls as unknown as Record<string, BalconyWallProps>,
         wallsAfterTyped as unknown as Record<string, BalconyWallProps>,
       );
-      // этап 94: отделка после save сверяется по GET — нормализованное ожидание против сервера
+      // этап 94, ревью 95: отделка после save сверяется по GET — нормализованное ожидание
+      // против сервера; стены — для проёмов и сопоставления отделки при переносе стен
       const expectedFinish = ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined;
       const gotFinish = ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {};
-      const finishAfter = finishMismatches(expectedFinish, gotFinish);
+      const finishAfter = finishMismatches(
+        expectedFinish,
+        gotFinish,
+        (norm.model as Record<string, unknown>)["walls"] as Record<string, unknown> | undefined,
+        after.model["walls"] as Record<string, unknown> | undefined,
+      );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
       if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && !roomsLost) {
         verified = true;
