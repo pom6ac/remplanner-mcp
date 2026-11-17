@@ -1,0 +1,19 @@
+{
+ "_source": "UI-методы редактора в анонимном проекте на синтетической базе «коридор + 3 комнаты» (проба scripts/probes/113-dims-fixtures2.ts, этап 113, 2026-11-17, без сохранения): протяжка «Добавить размер» на листе furniture, конец p2 магнитится к грани дивана (sofa 90×80, центр 150,-150) — p2_target {target_id, target_name, target_plan, target_angle, point_delta}; id размера и предмета обезличены (0), координаты — синтетическая база.",
+ "id": "0",
+ "p1": { "x": 150, "y": -320 },
+ "p2": { "x": 150, "y": -190 },
+ "offset": { "val": 0, "side": "a" },
+ "plan": "furniture",
+ "plan_": 0,
+ "prs": { "room": 0, "mode": 1 },
+ "p2_target": {
+  "target_id": "0",
+  "target_name": "sofa",
+  "target_plan": { "furniture": 6 },
+  "target_angle": 0,
+  "point_delta_x": 0,
+  "point_delta_y": 40
+ },
+ "color": "#ed143d"
+}

@@ -385,6 +385,76 @@ export type Cable = {
   [key: string]: unknown;
 };
 
+/**
+ * Привязка конца ручного размера к предмету (класс Ruler, бандл app.3.0):
+ * target_name — имя предмета каталога, target_plan — его план (лист),
+ * point_delta — смещение конца от центра предмета (см) на момент привязки.
+ * target_name "ruler" — привязка к другому размеру (цепочка).
+ */
+export type RulerTarget = {
+  target_id: string;
+  target_name: string;
+  target_plan: Record<string, number>;
+  target_angle: number;
+  point_delta_x: number;
+  point_delta_y: number;
+};
+
+/**
+ * Ручной размер (model.rulers, кнопка «Добавить размер», этап 113, 2026-11-17):
+ * эталоны tests/fixtures/ui-ref-dims-*.json. p1/p2 — концы в см (ось Y вниз),
+ * offset {val, side} — отступ размерной линии (см; side "a" — авто, "l"/"r" —
+ * сторона), plan — лист ("a" — исходный план, "furniture" — лист мебели),
+ * plan_ 0, prs {room:0, mode:1}, p1_target/p2_target — привязки к предметам или
+ * другим размерам, show_everywhere — «показать на всех листах», color — цвет
+ * (палитра UI, по умолчанию #ed143d). К стенам/проёмам концы магнитятся только
+ * координатно (без target): при переносе стены размер не следует (проба 113).
+ */
+export type RulerEntity = {
+  id: string;
+  p1: Point;
+  p2: Point;
+  offset: { val: number; side: string };
+  plan: string;
+  plan_: number;
+  prs: { room: number; mode: number };
+  p1_target?: RulerTarget | null;
+  p2_target?: RulerTarget | null;
+  show_everywhere?: number;
+  color: string;
+  [key: string]: unknown;
+};
+
+/**
+ * Текстовый комментарий (model.comments, кнопка «Текстовый комментарий» в нижней
+ * панели, PRO в UI; этап 113): points — точки-указатели (одна или несколько),
+ * pc — центр пузыря, text (≤ 600 символов), label "free"|"item"|"niche",
+ * font_size 8..30 (умолчание defs.comments.defaultFontSize = 10), framed — рамка
+ * и указатель (по умолчанию true), color (палитра UI, по умолчанию #000000),
+ * url — прикреплённая ссылка, id_item/name_item — привязка к предмету
+ * (label "item"; такой комментарий перемещается вместе с предметом),
+ * show_everywhere — «показать на всех листах».
+ */
+export type CommentEntity = {
+  id: string;
+  pc: Point;
+  points: Point[];
+  text: string;
+  label: string;
+  plan: string;
+  plan_: number;
+  prs: { room: number; mode: number };
+  name_item?: string;
+  id_item?: string;
+  color?: string;
+  url?: string;
+  font_size: number;
+  framed?: boolean | number;
+  show_everywhere?: number;
+  id_shield?: string;
+  [key: string]: unknown;
+};
+
 export type Model = {
   v: number;
   id: string;
@@ -417,8 +487,10 @@ export type Model = {
   line_strips?: Record<string, LineStrip>;
   /** Соединительные провода «выключатель → светильник» (лист «Выключатели» → cable); у старых моделей может отсутствовать. */
   cables?: Record<string, Cable>;
-  rulers: Record<string, unknown>;
-  comments: Record<string, unknown>;
+  /** Ручные размеры (кнопка «Добавить размер»); у старых моделей может отсутствовать. */
+  rulers?: Record<string, RulerEntity>;
+  /** Текстовые комментарии (кнопка «Текстовый комментарий», PRO в UI); может отсутствовать. */
+  comments?: Record<string, CommentEntity>;
   total_height: number;
   final: boolean;
   rooms1?: Record<string, unknown>;
