@@ -1,0 +1,22 @@
+{
+ "_source": "синтетический эталон (этап 171): у коллекции pipes_ventilation не было позитивного эталона — формат графа GraphLines взят из эталона ui-ref-plumb-pipe (этап 78) и документации src/model/pipes.ts (этап 122, проба 122-dev-*: serialize без plan, длина в метрах по рёбрам, у воздуховодов дописывается spots {}); тип и коллекция по CLIMATE_PIPE_KINDS (ventpipe_out); вершины — узлы type node, id/координаты обезличены (см)",
+ "menu_title": "Воздуховод (вытяжка)",
+ "tool_id": "plannertool_ventpipe_out",
+ "model_object": {
+  "id": "0",
+  "matrix": [
+   [null, { "length": 1 }, null],
+   [{ "length": 1 }, null, { "length": 1 }],
+   [null, { "length": 1 }, null]
+  ],
+  "vertexes": [
+   { "id": "n1", "point": { "x": 100, "y": 100 }, "type": "node" },
+   { "id": "n2", "point": { "x": 200, "y": 100 }, "type": "node" },
+   { "id": "n3", "point": { "x": 300, "y": 100 }, "type": "node" }
+  ],
+  "items": { "n1": "node", "n2": "node", "n3": "node" },
+  "type": "ventpipe_out",
+  "length": 2,
+  "spots": {}
+ }
+}

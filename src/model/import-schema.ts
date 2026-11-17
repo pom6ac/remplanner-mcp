@@ -36,11 +36,27 @@ const wallLink = z.looseObject({
   pos: shortStr.optional(),
 });
 
+// Ревью 170 №1: у ригеля своя связь конца — RigelLink {ot, id, z1} из
+// src/model/types.ts (эталон ui-ref-rigel-wall.json: ot wall/pillar/rigel,
+// id и сторона грани z1; ct/z0/pos ригель не пишет).
+const rigelLink = z.looseObject({
+  ot: shortStr,
+  id: idStr,
+  z1: shortStr,
+});
+
 const wallNode = z.looseObject({
   x: cmCoord,
   y: cmCoord,
   // link: связь конца или 0 (нет связи) — 0 встречается у ригелей (RigelEndpoint)
   link: z.union([wallLink, z.literal(0)]).optional(),
+});
+
+const rigelNode = z.looseObject({
+  x: cmCoord,
+  y: cmCoord,
+  // связь конца ригеля (RigelLink) или 0 (RigelEndpoint, ui-ref-rigel-*)
+  link: z.union([rigelLink, z.literal(0)]).optional(),
 });
 
 const hole = z.looseObject({
@@ -61,7 +77,9 @@ const wall = z.looseObject({
   plan: idStr.optional(),
   role: shortStr.optional(),
   depth: cmSize,
-  height: cmSize,
+  // Ревью 170 №2: ограждение террасы (role terrace_fence) и прочие ограждения
+  // редактора рисуются без height (эталон ui-ref-terrace-fence.json) — optional.
+  height: cmSize.optional(),
   p1: wallNode,
   p2: wallNode,
   holes: collection(hole, MAX_IMPORT_HOLES_PER_WALL).optional(),
@@ -93,8 +111,8 @@ const pillar = z.looseObject({
 
 const rigel = z.looseObject({
   id: idStr,
-  p1: wallNode,
-  p2: wallNode,
+  p1: rigelNode,
+  p2: rigelNode,
   depth: cmSize,
   height: cmSize,
   ceiling_type: shortStr.optional(),
