@@ -212,6 +212,13 @@ export type AddOpeningParams = WindowParams & {
   casing?: boolean;
   /** Устаревшее имя casements (число створок). */
   leaves?: number;
+  /**
+   * Замена исходного проёма (этап 103): новый проём пишется с plan:"c" и position:"c"
+   * на том же месте, а исходный получает hasReplacement:1 (эталон ui-ref-replan-replacement).
+   * Демонтированный проём и уже заменённый — INVALID_ARGUMENT (проба 103-replan-extra:
+   * UI doorway поверх демонтированной двери проём не ставит).
+   */
+  replacesHoleId?: string;
 };
 
 /** MCP-имена параметров для текстов ошибок валидатора. */
@@ -422,7 +429,7 @@ export function holeOffsetCm(wall: Wall, hole: Hole): number {
   return t * len - hole.width / 2;
 }
 
-function checkPlacement(wall: Wall, at: number, width: number, ignoreHoleId?: string): void {
+function checkPlacement(wall: Wall, at: number, width: number, ignoreHoleId?: string, ignoreHoleId2?: string): void {
   const len = axisLength(wall);
   const margin = wall.depth / 2;
   if (at < margin - 1e-6 || at + width > len - margin + 1e-6) {
@@ -430,8 +437,8 @@ function checkPlacement(wall: Wall, at: number, width: number, ignoreHoleId?: st
       details: { kind: "opening_outside_wall", wall_id: wall.id, at_cm: r2(at), width_cm: width, wall_len_cm: r2(len) },
     });
   }
-  for (const other of Object.values(wall.holes)) {
-    if (other.id === ignoreHoleId) continue;
+  for (const other of Object.values(wall.holes ?? {})) {
+    if (other.id === ignoreHoleId || other.id === ignoreHoleId2) continue;
     const [o1, o2] = holeRange(wall, other);
     if (at < o2 - 1e-6 && o1 < at + width) {
       throw new McpError("GEOMETRY_CONFLICT", "проём пересекает другой проём", {
@@ -557,6 +564,31 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
       details: { kind: "opening_on_balcony", wall_id: wall.id },
     });
   }
+  // замена исходного проёма (этап 103): проверки до мутации
+  let replaced: Hole | null = null;
+  if (params.replacesHoleId !== undefined) {
+    replaced = wall.holes[params.replacesHoleId] ?? null;
+    if (!replaced) {
+      throw new McpError("NOT_FOUND", `проём ${params.replacesHoleId} не найден на стене ${wall.id}`, {
+        details: { kind: "hole_not_found", wall_id: wall.id, hole_id: params.replacesHoleId },
+      });
+    }
+    if (replaced.plan === "c") {
+      throw new McpError("INVALID_ARGUMENT", `проём ${replaced.id} — уже проём листа «Перегородки» (plan:c), заменять можно только исходные проёмы`, {
+        details: { kind: "replace_plan_c", wall_id: wall.id, hole_id: replaced.id },
+      });
+    }
+    if (replaced.hasReplacement) {
+      throw new McpError("INVALID_ARGUMENT", `проём ${replaced.id} уже заменён — снимите прежнюю замену (opening_delete нового проёма)`, {
+        details: { kind: "already_replaced", wall_id: wall.id, hole_id: replaced.id },
+      });
+    }
+    if (replaced.demount === 1) {
+      throw new McpError("INVALID_ARGUMENT", `проём ${replaced.id} демонтирован — заменять демонтированный проём нельзя (как в UI); сначала отмените демонтаж (demolish_cancel)`, {
+        details: { kind: "replace_demounted", wall_id: wall.id, hole_id: replaced.id },
+      });
+    }
+  }
   const kind = OPENING_KINDS[params.type];
   if (!kind) {
     throw new McpError("INVALID_ARGUMENT", `неизвестный тип проёма: ${params.type}`, {
@@ -578,10 +610,30 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
     // tEdge — координата угла внутренней грани вдоль оси (№9 ревью)
     const tEdge = offsetFrom === "inner" ? innerEdgeOffsetCm(model, wall, fromEnd ? "end" : "start") : fromEnd ? len : 0;
     at = fromEnd ? tEdge - mmToCm(params.offsetMm) - widthCm : tEdge + mmToCm(params.offsetMm);
+  } else if (replaced) {
+    // замена без смещения — по центру исходного (ревью 105 R3): диапазон через
+    // holeRange/holeOffsetCm — работает и для UI-проёмов без служебного at (прежняя
+    // проекция pc использовала центр как расстояние до края и сдвигала замену)
+    const repCenter = holeOffsetCm(wall, replaced) + replaced.width / 2;
+    at = repCenter - widthCm / 2;
   } else {
     at = mmToCm(0);
   }
-  checkPlacement(wall, at, widthCm);
+  // ревью 105 R3: при replaces положение замены задаётся исходным проёмом — центр
+  // замены совпадает с центром исходного; явно переданный offset/center, уводящий
+  // замену с места исходного, — INVALID_ARGUMENT
+  if (replaced && (params.centerMm !== undefined || params.offsetMm !== undefined)) {
+    const repCenter = holeOffsetCm(wall, replaced) + replaced.width / 2;
+    const newCenter = at + widthCm / 2;
+    if (Math.abs(newCenter - repCenter) > 0.5) {
+      throw new McpError("INVALID_ARGUMENT",
+        `замена проёма ${replaced.id} ставится по центру исходного (смещение центра ${Math.round((newCenter - repCenter) * 10)} мм) — при replaces положение не задаётся`, {
+          hint: "не передавайте offset_mm/center_mm вместе с replaces: замена встаёт по центру исходного проёма",
+          details: { kind: "replacement_position_conflict", wall_id: wall.id, hole_id: replaced.id, shift_mm: Math.round((newCenter - repCenter) * 10) },
+        });
+    }
+  }
+  checkPlacement(wall, at, widthCm, replaced?.id);
 
   const pc = pointAtLength(wallAxis(wall), at + widthCm / 2);
   const holeId = newId(10);
@@ -615,7 +667,24 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
   }
 
   setHolePoints(wall, hole);
+  if (replaced) {
+    // замена исходного проёма (эталон ui-ref-replan-replacement): проём листа «c»
+    // по центру исходного, у исходного — hasReplacement:1. Без полей parent/
+    // parent_depth/offset/dls_prs/pcb/p1b/p2b редактор падает на restore
+    // (проба 103-norm-check, этап replacement)
+    hole.plan = "c";
+    hole.position = "c";
+    hole.parent = wall.id;
+    hole.parent_depth = wall.depth;
+    hole.dls_prs = {};
+    hole.offset = 0;
+    hole.pcb = { x: r2(hole.pc.x), y: r2(hole.pc.y) };
+    hole.p1b = { x: r2(hole.p1!.x), y: r2(hole.p1!.y) };
+    hole.p2b = { x: r2(hole.p2!.x), y: r2(hole.p2!.y) };
+    replaced.hasReplacement = 1;
+  }
   assertHoleInvariants(hole); // все инварианты кандидата — до записи в модель (ревью 28, R3/R4)
+  wall.holes ??= {};
   wall.holes[holeId] = hole;
   return hole;
 }
@@ -866,7 +935,11 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
     // положение не меняем: at из поля или проекции прежнего pc, а не середина стены (№6 ревью)
     at = holeOffsetCm(wall, hole);
   }
-  checkPlacement(wall, at, width, hole.id); // до мутации: при ошибке модель не меняется
+  // ревью 108 R4: партнёр по паре замены исключается из проверки пересечений
+  // (высота/размеры одного участника не должны блокироваться вторым), а перенос,
+  // меняющий центр, переносится согласованно на второго участника
+  const pair = replacementPairOf(wall, hole);
+  checkPlacement(wall, at, width, hole.id, pair?.id); // до мутации: при ошибке модель не меняется
 
   if (windoor) applyWindoorPartsFrom(candidate, windoor);
   // Миграция legacy-высоты (ревью 32, N3): блок, созданный прежней версией MCP (d107f87),
@@ -914,16 +987,106 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   candidate.at = r2(at);
   refreshHole(wall, candidate);
   assertHoleInvariants(candidate); // финальные инварианты — тоже до изменения модели (R3/R4)
+  // согласованный перенос пары (ревью 108 R4): центр сместился — второй участник
+  // следует за первым. Проверка на копии стены до любой мутации: не помещается —
+  // атомарный отказ с подсказкой (выбор поведения: перенос, а не разъезд пары)
+  if (pair) {
+    const newCenter = at + width / 2;
+    const pairCenter = holeOffsetCm(wall, pair) + pair.width / 2;
+    if (Math.abs(newCenter - pairCenter) > 0.005) {
+      const scratch = structuredClone(wall);
+      assignHole(scratch.holes[hole.id]!, candidate);
+      const sp = scratch.holes[pair.id]!;
+      if (sp.at !== undefined) {
+        sp.at = r2(newCenter - sp.width / 2);
+        refreshHole(scratch, sp);
+      } else {
+        // UI-проём без служебного at: позиция задаётся центром pc
+        const pc = pointAtLength(wallAxis(scratch), newCenter);
+        sp.pc = { x: r2(pc.x), y: r2(pc.y) };
+        setHolePoints(scratch, sp);
+      }
+      try {
+        checkPlacement(scratch, holeOffsetCm(scratch, sp), sp.width, sp.id, hole.id);
+      } catch (cause) {
+        const code = cause instanceof McpError ? cause.code : "GEOMETRY_CONFLICT";
+        throw new McpError(code,
+          `перенос проёма ${hole.id} уводит с места пару замены: второй участник ${pair.id} (${hole.plan === "c" ? "исходный" : "замена"}) не помещается на стене после переноса`, {
+            hint: "пара замены переносится согласованно; перенесите пару в пределы стены или удалите замену (opening_delete) перед переносом",
+            details: { kind: "replacement_pair_transfer_conflict", wall_id: wall.id, hole_id: hole.id, pair_id: pair.id },
+          });
+      }
+      assignHole(pair, scratch.holes[pair.id]!);
+    }
+  }
   assignHole(hole, candidate);
   return hole;
 }
 
-/** opening_delete. */
-export function deleteOpening(model: Model, wallId: string, holeId: string): void {
+/**
+ * opening_delete (ревью 105 R4, 108 R4 — жизненный цикл пары замены):
+ * - удаление замены (plan:c с parent = id стены) снимает hasReplacement у исходного —
+ *   иначе повторная замена навсегда запрещена;
+ * - удаление исходного (hasReplacement) удаляет и замену — висячая замена не нужна
+ *   (выбор поведения описан в отчёте 106; отказ альтернативой); ревью 108 R11:
+ *   возвращает все удалённые ID — инструмент показывает каскад в ответе.
+ * Пара сопоставляется по связи (parent/hasReplacement), центр — только
+ * для выбора между несколькими парами на стене (replacementPairOf).
+ */
+export function deleteOpening(model: Model, wallId: string, holeId: string): { deleted: string[] } {
   const wall = model.walls[wallId];
   if (!wall) throw new McpError("NOT_FOUND", `стена ${wallId} не найдена`);
-  if (!wall.holes[holeId]) throw new McpError("NOT_FOUND", `проём ${holeId} не найден`);
+  const hole = wall.holes[holeId];
+  if (!hole) throw new McpError("NOT_FOUND", `проём ${holeId} не найден`);
+  const deleted: string[] = [holeId];
+  if (hole.hasReplacement) {
+    // исходный: замену ищем по связи (plan:c, parent = эта стена)
+    const rep = replacementPairOf(wall, hole);
+    if (rep) {
+      delete wall.holes[rep.id];
+      deleted.push(rep.id);
+    }
+  } else if (hole.parent === wallId && hole.plan === "c") {
+    // замена: исходный — проём этой стены с hasReplacement (связь по флагу)
+    const original = replacementPairOf(wall, hole);
+    if (original) delete original.hasReplacement;
+  }
   delete wall.holes[holeId];
+  return { deleted };
+}
+
+/**
+ * Пара замены (ревью 108 R4): связь определяется структурой, а не центром —
+ * у замены plan:"c" с parent = id стены, у исходного hasReplacement на той же стене.
+ * Центр используется только, чтобы выбрать между несколькими парами на одной стене;
+ * согласованный перенос в updateOpening держит центры пары совпадающими.
+ * Единая точка поиска пары для update/delete и сверки демонтажа (replacementOf).
+ * ревью 110 R4: обычный проём — не замена (нет plan:"c" с parent на стене) и сам
+ * не имеет hasReplacement — ни в какой паре не состоит, возвращается null. Иначе
+ * поиск по структуре подсовывает чужую замену и согласованный перенос двигает её
+ * вслед за обычным проёмом (порча чужой пары без запроса).
+ */
+export function replacementPairOf(wall: Wall, hole: Hole): Hole | null {
+  const holeIsReplacement = hole.plan === "c" && hole.parent === wall.id;
+  if (!holeIsReplacement && !hole.hasReplacement) return null;
+  const candidates = Object.values(wall.holes ?? {}).filter((other) => {
+    if (other.id === hole.id) return false;
+    if (holeIsReplacement) return Boolean(other.hasReplacement);
+    return other.plan === "c" && other.parent === wall.id;
+  });
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0]!;
+  const center = holeOffsetCm(wall, hole) + hole.width / 2;
+  let best = candidates[0]!;
+  let bestDist = Infinity;
+  for (const other of candidates) {
+    const d = Math.abs(holeOffsetCm(wall, other) + other.width / 2 - center);
+    if (d < bestDist) {
+      best = other;
+      bestDist = d;
+    }
+  }
+  return best;
 }
 
 /**

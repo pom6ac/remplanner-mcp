@@ -8,6 +8,8 @@ import {
 } from "../model/walls.ts";
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
+import { demolish, demolishCancel, PARTITION_MATERIALS, PARTITION_PRO_MATERIALS, partitionMaterialKey } from "../model/demolition.ts";
+import { McpError } from "../errors.ts";
 import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../model/rigels.ts";
 import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, findPipe, type PipeKind, type ClimatePipeKind } from "../model/pipes.ts";
 import { addWarmFloor, updateWarmFloor, deleteWarmFloor, WARM_FLOOR_TYPE_BY_KIND } from "../model/climate.ts";
@@ -243,6 +245,46 @@ const position = z.union([
 export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   const wsOf = () => ctx.workspace();
 
+  // Тарифный гейт PRO-материалов перегородок (этап 103): анонимный проект равен
+  // бесплатному тарифу (design §4), неизвестный тариф трактуется как бесплатный.
+  const assertProMaterialAllowed = async (): Promise<void> => {
+    const ws = wsOf();
+    if (ws.project?.anon) {
+      throw new McpError("NOT_AVAILABLE_ON_TARIFF", "стеклянная и реечная перегородки — PRO-инструменты; в анонимном проекте они недоступны", {
+        hint: "откройте проект PRO-аккаунта (project_open после входа) или используйте pgb/foam_block/brick/gypsum",
+        details: { tool: "wall_add", key: "wall_create_glass|wall_create_bar" },
+      });
+    }
+    const st = await ctx.authStatus();
+    if (st.tariff !== "pro") {
+      throw new McpError("NOT_AVAILABLE_ON_TARIFF", "стеклянная и реечная перегородки — только в PRO-версии (неизвестный или бесплатный тариф)", {
+        details: { tool: "wall_add", key: "wall_create_glass|wall_create_bar", tariff: st.tariff },
+      });
+    }
+  };
+
+  /**
+   * Выбор материала и плана по kind (ревью 129 C7a — одна функция вместо копипасты
+   * в wall_add/walls_add_polyline/wall_update). kind=partition: нормализация к
+   * публичному ключу (строгий enum, ревью 105 R6) и флаг PRO-гейта — c_glass проходит
+   * тот же гейт, что и glass. kind=initial: материал c_* перегородок отклоняется
+   * (ревью 129 C4 — обход PRO-гейта c_glass/c_bar).
+   */
+  const resolveWallMaterial = (kind: "initial" | "partition" | undefined, material: string | undefined): { plan: "a" | "c"; material: string; pro: boolean } => {
+    if (kind === "partition") {
+      const key = partitionMaterialKey(material ?? "pgb");
+      return { plan: "c", material: PARTITION_MATERIALS[key], pro: PARTITION_PRO_MATERIALS.has(key) };
+    }
+    const mat = material ?? "a_block";
+    if (/^c_/.test(mat)) {
+      throw new McpError("INVALID_ARGUMENT", `материал «${mat}» — материал перегородок листа «Перегородки», у исходных стен (plan:"a") свои материалы`, {
+        hint: "для исходных стен используйте a_block и другие a_*; перегородка — wall_add с kind=partition",
+        details: { kind: "initial_material_invalid", material: mat },
+      });
+    }
+    return { plan: "a", material: mat, pro: false };
+  };
+
   const compactEntity = (model: Model, predicate: (c: ReturnType<typeof compactModel>) => unknown) => {
     // комнаты — из кеша workspace (нормализованная модель), если в model.rooms2 их ещё нет
     const compact = compactModel(model, wsOf().rooms());
@@ -253,23 +295,28 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     // ---------- Стены и помещения (§7.2) ----------
     wall_add: tool(
       "Добавить стену по осевой линии (координаты в мм; X вправо, Y вниз; толщина по умолчанию 200). " +
-        "Для отдельной перегородки используйте kind=partition (тонкая, plan:c). Концы стен должны совпадать с концами соседних стен — " +
+        "Для отдельной перегородки используйте kind=partition (тонкая, план «Перегородки»; толщина по умолчанию 100, " +
+        "материал pgb|foam_block|brick|gypsum — коды c_*; стеклянная (glass) и реечная (bar) — только PRO). " +
+        "Концы стен должны совпадать с концами соседних стен — " +
         "примыкание узла к середине стены не поддерживается (UNSUPPORTED_JUNCTION; используйте wall_split). " +
         SCENARIO_HINT,
       {
         start: mmPoint, end: mmPoint,
         thickness_mm: mmInt.optional(),
-        material: z.string().optional().describe("a_block (по умолчанию), кирпич и др."),
+        material: z.string().optional().describe("исходные стены: a_block (по умолчанию) и др.; для kind=partition: pgb (по умолчанию), foam_block, brick, gypsum, glass (PRO), bar (PRO)"),
         kind: z.enum(["initial", "partition"]).optional(),
         role: z.enum(["wall", "balcony"]).optional(),
       },
       async (a) => {
         const ws = wsOf();
+        const isPartition = a["kind"] === "partition";
+        const resolved = resolveWallMaterial(a["kind"] as "initial" | "partition" | undefined, a["material"] as string | undefined);
+        if (resolved.pro) await assertProMaterialAllowed();
         const { result: wall, warnings } = await ws.applyWalls("wall_add", (m) => addWall(m, {
           start: a["start"] as MmPoint, end: a["end"] as MmPoint,
-          thicknessMm: a["thickness_mm"] as number | undefined,
-          material: (a["material"] as string | undefined) ?? "a_block",
-          plan: a["kind"] === "partition" ? "c" : "a",
+          thicknessMm: (a["thickness_mm"] as number | undefined) ?? (isPartition ? 100 : undefined),
+          material: resolved.material,
+          plan: resolved.plan,
           role: a["role"] as "wall" | "balcony" | undefined,
         }));
         return ok({ ...compactEntity(ws.model, (c) => c.walls.find((w) => w.site_id === wall.id) ?? null), ...(warnings.length ? { warnings } : {}) });
@@ -277,7 +324,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     walls_add_polyline: tool(
-      "Добавить ломаную из связанных стен (и замкнутый контур при closed: true). Точки в мм, узлы связываются автоматически.",
+      "Добавить ломаную из связанных стен (и замкнутый контур при closed: true). Точки в мм, узлы связываются автоматически. " +
+        "Для перегородок — kind=partition (толщина по умолчанию 100, материалы как у wall_add).",
       {
         points: z.array(mmPoint).min(2),
         closed: z.boolean().optional(),
@@ -287,12 +335,15 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        const isPartition = a["kind"] === "partition";
+        const resolved = resolveWallMaterial(a["kind"] as "initial" | "partition" | undefined, a["material"] as string | undefined);
+        if (resolved.pro) await assertProMaterialAllowed();
         const { result: walls, warnings } = await ws.applyWalls("walls_add_polyline", (m) => addPolyline(m, {
           points: a["points"] as MmPoint[],
           closed: a["closed"] as boolean | undefined,
-          thicknessMm: a["thickness_mm"] as number | undefined,
-          material: (a["material"] as string | undefined) ?? "a_block",
-          plan: a["kind"] === "partition" ? "c" : "a",
+          thicknessMm: (a["thickness_mm"] as number | undefined) ?? (isPartition ? 100 : undefined),
+          material: resolved.material,
+          plan: resolved.plan,
         }));
         return ok({ ...compactEntity(ws.model, (c) => c.walls.filter((w) => walls.some((x) => x.id === w.site_id))), ...(warnings.length ? { warnings } : {}) });
       },
@@ -366,13 +417,26 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // ревью 105 R6: материал перегородки (plan:c) — тот же строгий enum и PRO-гейт,
+        // что у wall_add; ревью 129 C4/C7a: материал c_* на исходной стене отклоняется
+        const targetPlan = resolveWall(ws.model, a["wall_id"] as string).plan;
+        let material = a["material"] as string | undefined;
+        if (material !== undefined) {
+          if (targetPlan === "c") {
+            const resolved = resolveWallMaterial("partition", material);
+            if (resolved.pro) await assertProMaterialAllowed();
+            material = resolved.material;
+          } else {
+            resolveWallMaterial("initial", material);
+          }
+        }
         const { result: wall, warnings } = await ws.applyWalls("wall_update", (m) => updateWall(m, {
           wallId: resolveWall(m, a["wall_id"] as string).id,
           lengthMm: a["length_mm"] as number | undefined,
           anchor: a["anchor"] as "start" | "end" | undefined,
           thicknessMm: a["thickness_mm"] as number | undefined,
           side: a["side"] as "both" | "left" | "right" | undefined,
-          material: a["material"] as string | undefined,
+          material,
           start: a["start"] as MmPoint | undefined,
           end: a["end"] as MmPoint | undefined,
         }));
@@ -413,6 +477,53 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const ws = wsOf();
         const { result: res, warnings } = await ws.applyWalls("wall_delete", (m) => deleteWall(m, resolveWall(m, a["wall_id"] as string).id));
         return ok({ ...res, hint: SCENARIO_HINT, ...(warnings.length ? { warnings } : {}) });
+      },
+    ),
+
+    // ---------- Перепланировка: демонтаж (этап 103) ----------
+    demolish: tool(
+      "Пометка демонтажа (лист «Демонтаж», план «до/после») — стена и проёмы остаются в модели с флагами, " +
+        "комнаты «после» редактор перестраивает сам. target=wall: без range — стена целиком " +
+        "(demount=1, участки сбрасываются); с range {from: start|end, offset_mm, length_mm} — участок стены " +
+        "(sectors); range не должен пересекать проёмы и другие участки. target=opening: id проёма — " +
+        "пометка demount на проёме (заменённый hasReplacement и проём листа «Перегородок» plan:c не демонтируются). " +
+        "Перегородки (plan:c) и ограждения (balcony/terrace_fence) не демонтируются. " +
+        "Отмена — demolish_cancel. После правок: model_validate → render_plan break_walls → project_save.",
+      {
+        target: z.enum(["wall", "opening"]),
+        id: z.string().min(1).describe("id стены (W<n>/site_id) или проёма (site_id из model_get)"),
+        range: z.object({
+          from: z.enum(["start", "end"]).optional(),
+          offset_mm: mmInt.describe("отступ участка от края стены, мм"),
+          length_mm: mmInt.describe("длина участка, мм"),
+        }).optional().describe("только target=wall: демонтаж участка вместо всей стены"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const { result, warnings } = await ws.applyWalls("demolish", (m) => {
+          const id = a["target"] === "wall" ? resolveWall(m, a["id"] as string).id : (a["id"] as string);
+          return demolish(m, { target: a["target"] as "wall" | "opening", id, range: a["range"] as { from: "start" | "end"; offset_mm: number; length_mm: number } | undefined });
+        });
+        return ok({ ...result, hint: SCENARIO_HINT, ...(warnings.length ? { warnings } : {}) });
+      },
+    ),
+
+    demolish_cancel: tool(
+      "Отменить пометку демонтажа: стены целиком (target=wall, без sector_id — вместе со всеми участками), " +
+        "одного участка (target=wall + sector_id) или проёма (target=opening). " +
+        "Не демонтированный объект — INVALID_ARGUMENT (нечего отменять).",
+      {
+        target: z.enum(["wall", "opening"]),
+        id: z.string().min(1).describe("id стены (W<n>/site_id) или проёма"),
+        sector_id: z.string().optional().describe("только target=wall: отменить один участок демонтажа"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const { result, warnings } = await ws.applyWalls("demolish_cancel", (m) => {
+          const id = a["target"] === "wall" ? resolveWall(m, a["id"] as string).id : (a["id"] as string);
+          return demolishCancel(m, { target: a["target"] as "wall" | "opening", id, sector_id: a["sector_id"] as string | undefined });
+        });
+        return ok({ ...result, hint: SCENARIO_HINT, ...(warnings.length ? { warnings } : {}) });
       },
     ),
 
@@ -488,6 +599,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         door_position: z.enum(["left", "right"]).optional()
           .describe("только балконный блок: сторона двери; поддерживается только left — right вернёт INVALID_ARGUMENT"),
         impost_height_mm: mmInt.optional().describe("только балконная дверь (window_door): высота импоста от пола, в пределах высоты двери"),
+        replaces: z.string().optional().describe("замена исходного проёма (лист «Перегородки»): id исходного проёма (plan:a) на той же стене; новый проём пишется plan:c по центру исходного, исходный получает hasReplacement. Демонтированный и уже заменённый проём — INVALID_ARGUMENT"),
       },
       async (a) => {
         const ws = wsOf();
@@ -513,6 +625,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           doorHeightMm: a["door_height_mm"] as number | undefined,
           doorPosition: a["door_position"] as "left" | "right" | undefined,
           impostHeightMm: a["impost_height_mm"] as number | undefined,
+          replacesHoleId: a["replaces"] as string | undefined,
         }));
         return ok(compactEntity(ws.model, (c) =>
           c.walls.flatMap((w) => w.openings).find((o) => o.id === hole.id) ?? { id: hole.id, type: hole.type }));
@@ -597,18 +710,25 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     opening_delete: tool(
-      "Удалить проём (дверь/окно) со стены.",
+      "Удалить проём (дверь/окно) со стены. Если проём — исходный, у которого есть замена " +
+        "(проём листа «Перегородки», plan:c), замена удаляется вместе с ним (каскад): ответ " +
+        "возвращает все удалённые ID (deleted) и предупреждение (warning). Удаление замены " +
+        "снимает у исходного флаг hasReplacement — повторная замена снова возможна.",
       { opening_id: z.string().min(1) },
       async (a) => {
         const ws = wsOf();
         const openingId = a["opening_id"] as string;
-        ws.apply("opening_delete", (m) => {
+        const result = ws.apply("opening_delete", (m) => {
           const found = Object.values(m.walls).find((w) => (w.holes ?? {})[openingId]);
           if (!found) throwNotFound(`проём ${openingId} не найден`);
-          deleteOpening(m, found.id, openingId);
-          return true;
+          return deleteOpening(m, found.id, openingId);
         });
-        return ok({ deleted: openingId, hint: SCENARIO_HINT });
+        const cascade = result.deleted.length > 1;
+        return ok({
+          deleted: result.deleted,
+          ...(cascade ? { warning: `вместе с проёмом ${openingId} удалена его замена (каскад): ${result.deleted.filter((id: string) => id !== openingId).join(", ")}` } : {}),
+          hint: SCENARIO_HINT,
+        });
       },
     ),
 
@@ -841,16 +961,21 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     // ---------- Колонны (пункт меню «Несущая колонна», этап 41) ----------
     pillar_add: tool(
-      "Поставить несущую колонну (пункт меню «Несущая колонна»): прямоугольник 20×20 см по умолчанию, " +
-        "центр в мм. Колонна ставится внутри комнаты или вплотную к грани стены (как в UI); " +
+      "Поставить колонну или ГКЛ-короб. kind=column (по умолчанию) — несущая колонна исходного плана " +
+        "(пункт меню «Несущая колонна»): прямоугольник 20×20 см по умолчанию, центр в мм. Колонна ставится внутри комнаты или вплотную к грани стены (как в UI); " +
         "пересекать стены и другие колонны нельзя (касание грани стены разрешено; если колонна в 30 мм " +
         "от грани стены — прижимается к ней, как в UI). " +
         "Габариты 100..20000 × 100..6000 мм (лимиты панели редактора). Колонна вырезает площадь из комнаты " +
-        "редактора (комната пересчитается при сохранении; имя и отделка комнат переживают сохранение — живая проба 43). После добавления вызывайте model_validate и project_save.",
+        "редактора (комната пересчитается при сохранении; имя и отделка комнат переживают сохранение — живая проба 43). " +
+        "kind=gypsum_box — гипсокартонный короб листа «Перегородки» (этап 103): plan:c, роль gypsum, " +
+        "габариты по умолчанию 700×200 мм, ставится внутри комнаты; примыкание к граням стен разрешено " +
+        "(короб может стоять в углу), пересечение с телом стены — INVALID_GEOMETRY. " +
+        "После добавления вызывайте model_validate и project_save.",
       {
-        center: mmPoint.describe("центр колонны, мм"),
-        width_mm: mmInt.optional().describe("габарит по X (по умолчанию 200)"),
-        height_mm: mmInt.optional().describe("габарит по Y (по умолчанию 200)"),
+        kind: z.enum(["column", "gypsum_box"]).optional().describe("column (по умолчанию) — несущая колонна; gypsum_box — ГКЛ-короб листа «Перегородки»"),
+        center: mmPoint.describe("центр колонны/короба, мм"),
+        width_mm: mmInt.optional().describe("габарит по X (колонна: по умолчанию 200; короб: 700)"),
+        height_mm: mmInt.optional().describe("габарит по Y (колонна: по умолчанию 200; короб: 200)"),
         angle_deg: mm.optional().describe("поворот в градусах, по часовой стрелке (по умолчанию 0)"),
       },
       async (a) => {
@@ -860,6 +985,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           widthMm: a["width_mm"] as number | undefined,
           heightMm: a["height_mm"] as number | undefined,
           angleDeg: a["angle_deg"] as number | undefined,
+          kind: a["kind"] as "column" | "gypsum_box" | undefined,
         }, ws.rooms()));
         return ok(compactEntity(ws.model, (c) => c.pillars.find((p) => p.site_id === pillar.id) ?? null));
       },

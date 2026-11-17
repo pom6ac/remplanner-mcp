@@ -3,7 +3,7 @@ import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
 import { McpError } from "../errors.ts";
-import { pointInPolygon, polygonInsidePolygon } from "./geometry.ts";
+import { pointInPolygon, polygonInsidePolygon, segmentsCross } from "./geometry.ts";
 import { roomPolygons } from "./items.ts";
 
 /**
@@ -258,6 +258,31 @@ export function deleteWarmFloor(model: Model, warmFloorId: string): void {
 }
 
 /**
+ * Ревью 133 N1 (живая проба p135-n1c, анонимный проект): перегородка, ось которой
+ * проходит через контур тёплого пола, при сохранении удаляет контур молча
+ * (rooms2 редактор пересчитывает только при save, поэтому до записи потеря не видна).
+ * Отказ до записи с понятным hint; контур вне оси перегородки редактор сохраняет и
+ * сам переназначает id_room (эталон ui-ref-replan-partition-warmfloor).
+ */
+export function assertNoWarmFloorCrossing(model: Model, p1: Point, p2: Point): void {
+  for (const wf of Object.values(model.warm_floors ?? {})) {
+    const poly = wf.polygon ?? [];
+    if (poly.length < 3) continue;
+    const endpointsInside = pointInPolygon(poly, p1) || pointInPolygon(poly, p2);
+    const edgeCross = poly.some((a, i) => {
+      const b = poly[(i + 1) % poly.length]!;
+      return segmentsCross({ p1, p2 }, { p1: a, p2: b });
+    });
+    if (endpointsInside || edgeCross) {
+      throw new McpError("INVALID_GEOMETRY", `перегородка пройдёт через контур тёплого пола ${wf.id} — редактор удалит контур при сохранении`, {
+        hint: "сдвиньте перегородку за пределы контура или измените/удалите контур (warm_floor_update, warm_floor_delete)",
+        details: { kind: "partition_crosses_warm_floor", warm_floor_id: wf.id, room: wf.id_room ?? null },
+      });
+    }
+  }
+}
+
+/**
  * Двусторонняя сверка контуров тёплого пола: идентичности в обе стороны, polygon
  * (вершины с допуском), кольцевая матрица (наличие рёбер), узлы (тип/точка/ID —
  * ревью 124 R3: полный состав vertexes, сопоставление по геометрии, согласованность
@@ -363,9 +388,14 @@ export function warmFloorMismatches(
       }
     }
     if ((g.type ?? "") !== (w0.type ?? "")) out.push(`${id}: тип изменился (на сервере «${g.type ?? ""}»; ожидалось «${w0.type ?? ""}»)`);
-    // ревью 124 R1: привязка к комнате — двухрежимно. save — строго; normalize —
-    // ID комнат штатно регенерируется при пересчёте (split/merge/перенос стены),
-    // сверяем геометрию: id_room указывает на комнату, чей полигон содержит контур.
+    // ревью 124 R1: привязка к комнате — двухрежимно. normalize — ID комнат штатно
+    // регенерируется при пересчёте (split/merge/перенос стены), сверяем геометрию:
+    // id_room указывает на комнату, чей полигон содержит контур. save — id_room
+    // редактор вправе переназначить при штатной перестройке комнат (ревью 133 N1,
+    // эталон ui-ref-replan-partition-warmfloor: перегородка plan:"c" делит комнату
+    // при save, редактор сам указывает id_room на новую комнату, содержащую контур):
+    // изменение допустимо, если контур лежит в комнате, на которую теперь указывает
+    // id_room (контур сам сверяется строго — polygon/matrix/площадь выше).
     if (opts.mode === "normalize") {
       const expRoom = roomPolygonOf(opts.roomsExpected, w0.id_room);
       const gotRoom = roomPolygonOf(opts.roomsGot, g.id_room);
@@ -379,7 +409,10 @@ export function warmFloorMismatches(
         out.push(`${id}: привязка рабочей копии не подтверждается геометрией (комната ${w0.id_room ?? "нет"})`);
       }
     } else if ((g.id_room ?? null) !== (w0.id_room ?? null)) {
-      out.push(`${id}: id_room изменился (на сервере «${g.id_room ?? null}»; ожидалось «${w0.id_room ?? null}»)`);
+      const gotRoom = roomPolygonOf(opts.roomsGot, g.id_room);
+      if (!gotRoom || !polygonInsidePolygon(g.polygon ?? [], gotRoom)) {
+        out.push(`${id}: id_room изменился (на сервере «${g.id_room ?? null}»; ожидалось «${w0.id_room ?? null}»)`);
+      }
     }
     if (!near(g.length, w0.length, WARM_FLOOR_TOL)) out.push(`${id}: периметр изменился (на сервере ${g.length}; ожидалось ${w0.length})`);
     if (!near(g.area, w0.area, WARM_FLOOR_TOL)) out.push(`${id}: площадь изменилась (на сервере ${g.area}; ожидалось ${w0.area})`);

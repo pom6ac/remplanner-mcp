@@ -20,6 +20,8 @@ const EXPECTED_TOOLS = [
   // §7.2
   "wall_add", "walls_add_polyline", "room_add_rect", "room_add_polygon", "wall_update",
   "wall_move", "wall_split", "wall_delete", "rooms_list", "project_set_height",
+  // §7.2b — демонтаж (лист «Демонтаж», этап 103)
+  "demolish", "demolish_cancel",
   // §7.3
   "opening_add", "opening_update", "opening_delete",
   // §7.4

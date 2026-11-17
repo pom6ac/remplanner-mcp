@@ -9,7 +9,7 @@ import { McpError } from "../errors.ts";
  * кнопка «Добавить размер») и текстовые комментарии (model.comments, кнопка
  * «Текстовый комментарий», PRO в UI). Форматы — по эталонам
  * tests/fixtures/ui-ref-dims-*.json (пробы 113-dims-*, раздел docs
- * «remplanner-features.md §7.8»):
+ * «remplanner-features.md §7.9»):
  * - линейка: p1/p2 (см), offset {val, side} (отступ размерной линии, side
  *   "a"|"l"|"r"), plan — лист ("a" — исходный, "furniture" — мебель), prs
  *   {room:0, mode:1}, color (палитра UI, дефолт #ed143d), show_everywhere;
