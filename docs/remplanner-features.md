@@ -830,3 +830,55 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
   `shields` — следующий PR. Выводы проводов (группа `wires`: wire, wire_light,
   wire_oven, wire_stove, wire_conditioner, wire_lowcurrent, floor_wire, ceiling_wire)
   — предметы-группы того же формата на листе «Розетки» — следующий PR.
+
+### 7.7. Отделка: покрытия пола, стен и потолка [код + пробы 94-finish-*/94-live-check, 2026-11-17]
+
+Отделка хранится не отдельными коллекциями, а в комнатах (`rooms2`, на листе init —
+`rooms1`): `floors[0]` — покрытие пола комнаты, `ceilings[0]` — покрытие потолка,
+`decors[i]` — отделка стороны стены по ребру `i` (decors выровнен по `edges` комнаты,
+у ребра `pid` — id стены; стороны смежных комнат независимы). Листы UI:
+«Напольные покрытия» (`plan_floor`), «Отделка стен» (`plan_walls`), «Потолки»
+(`plan_ceiling`). Инструмент применяется кликом: покрытие пола/потолка — клик в
+комнате; отделка стены — клик в комнате рядом с её стороной (порог ~40 см от ребра).
+Цвет — из настроек инструмента (в модели не хранится), рисунок — из `tools[cover]`.
+
+- **Пол** (`floors[0]`): `{exist, id, polygon, cover, angle, pc, width, height,
+  stitch_width, f0offset, type_laying, polygons_layout, polygons_layout_points}`;
+  `cover` — ключ покрытия (laminate, parquet_board, floor_tile, linoleum и др.),
+  width/height — планка/плитка (см, «Длина/Ширина» панели), stitch_width — шов,
+  type_laying — раскладка ("1/2"/"1/3" у доски, "tile" у плитки), angle — угол.
+  Умолчания редактор берёт из каталога инструментов (laminate 120×18, шов 0.2,
+  "1/2"; floor_tile 40×40, шов 1, "tile"). PRO: stoneware_wood, stoneware_marble,
+  metlah, mosaic, hex_tile. Снятие — инструмент remove_flooring.
+- **Потолок** (`ceilings[0]`): `{exist, id, polygon, pc, edges, edges_new, level,
+  material, polygon_new, profile, area_niches, complex, area_childs, polygons_layout,
+  polygons_layout_points, niches, width, height}`; `material` — ключ покрытия
+  (paint_ceiling, whitewash_ceiling, gypsum_ceiling, stretch_ceiling,
+  stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, plastic_panels_ceiling,
+  armstrong_ceiling, grillato_ceiling). Снятие — инструмент ceiling_remove.
+  Многоуровневые потолки (complex_ceiling), ниши (ceiling_niche, PRO), короба
+  (gypsum_box), потолочный плинтус (molding, PRO) и проём в потолке
+  (ceiling_hole) — следующий PR.
+- **Стены** (`decors[i].parts`): часть отделки `{id, type, layer, line, line_wall,
+  distance, height, height_from_floor, patch, floor_offset, line_decor}`;
+  `type` — ключ отделки (wallpaper, wallpaper_for_paint, paint_wall, walls_whitewash,
+  wall_tile, wall_mosaic, wall_wooden_panels, plastic_panels, decorative_plaster,
+  venice_plaster; PRO: wall_chalk_paint, wall_clinker, wall_stone, wall_woodbatten,
+  wall_sheet_panels, wall_tile_panels); `height` 0 — на всю высоту стены,
+  `height_from_floor` — отступ от пола. Снятие — инструмент wall_cover_remove.
+  Двухслойные пункты (painting_tile = плитка+краска, wallpaper_tiles = плитка+обои,
+  wall_apron — фартук) пишут два слоя и — следующий PR. Плинтусы (floor_molding_*,
+  PRO) и настенные профили/ниши (wall_profile/wall_molding/wall_niche) — следующий PR.
+- **Переживание операций со стенами**: покрытие пола/потолка остаётся за комнатой
+  (при split комнате-наследнику отделка не копируется — у новой комнаты её нет),
+  отделка сторон при разрезании/слиянии/переносе стен переезжает по рёбрам; редактор
+  восстанавливает отделку по геометрии рёбер (restoreDecorsByType), при изменении
+  количества граней — пересопоставляет (console.warn «Восстанавливаем … при изменении
+  количества граней»). Живая проба 94-finish-split: split/merge/сдвиг стены сохраняют
+  пол и отделку стены комнаты.
+- **MCP**: finish_floor_set/finish_floor_remove, finish_wall_set/finish_wall_remove,
+  finish_ceiling_set/finish_ceiling_remove (запись канонической формы в rooms2,
+  редактор досчитывает производное: polygons_layout, умолчания планок), finish_get
+  (отделка по комнатам; пол/потолок видны и в model_get). Сверка при нормализации и
+  после save — finishMismatches (сопоставление комнат по геометрии, отделка стен по
+  покрытию оси с допуском; производные поля раскладки не блокируют).
