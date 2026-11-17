@@ -1,6 +1,7 @@
 import type { Model, Wall, Hole, Point } from "./types.ts";
 import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
+import { holeRange, holeOffsetCm } from "./openings.ts";
 import { McpError } from "../errors.ts";
 
 // Раздел «Перепланировка» (этап 103): демонтаж — лист break_walls редактора.
@@ -30,12 +31,22 @@ export type PartitionMaterial = keyof typeof PARTITION_MATERIALS;
 
 export const PARTITION_PRO_MATERIALS: ReadonlySet<string> = new Set(["glass", "bar"]);
 
-/** Код материала для kind=partition; material может быть ключом или уже кодом c_*. */
-export function partitionMaterialCode(material: string | undefined): string {
-  if (material === undefined) return PARTITION_MATERIALS.pgb;
-  const key = material as PartitionMaterial;
-  if (key in PARTITION_MATERIALS) return PARTITION_MATERIALS[key];
-  if (/^c_[a-z]+$/.test(material)) return material;
+/** Обратная карта: канонический код c_* → публичный ключ (ревью 105 R6). */
+const CODE_TO_KEY: Record<string, PartitionMaterial> = Object.fromEntries(
+  Object.entries(PARTITION_MATERIALS).map(([key, code]) => [code, key as PartitionMaterial]),
+);
+
+/**
+ * Нормализация материала перегородки к публичному ключу (ревью 105 R6): строгий
+ * whitelist СВОИХ ключей (pgb, foam_block, …) и канонических кодов (c_pgb, …) —
+ * только собственные свойства (Object.hasOwn, «constructor» не проходит), без
+ * приёма произвольных c_*-строк. PRO-гейт в инструментах проверяется по
+ * нормализованному ключу: c_glass проходит тот же гейт, что и glass.
+ */
+export function partitionMaterialKey(material: string | undefined): PartitionMaterial {
+  if (material === undefined) return "pgb";
+  if (Object.hasOwn(PARTITION_MATERIALS, material)) return material as PartitionMaterial;
+  if (Object.hasOwn(CODE_TO_KEY, material)) return CODE_TO_KEY[material]!;
   if (/^a_/.test(material)) {
     throw new McpError("INVALID_ARGUMENT", `материал «${material}» — материал исходных стен, у перегородок листа «Перегородки» свои материалы`, {
       hint: `для kind=partition используйте: ${Object.keys(PARTITION_MATERIALS).join(", ")} (или код c_*)`,
@@ -46,6 +57,11 @@ export function partitionMaterialCode(material: string | undefined): string {
     hint: `доступны: ${Object.keys(PARTITION_MATERIALS).join(", ")}`,
     details: { kind: "partition_material_invalid", material },
   });
+}
+
+/** Код материала для kind=partition; material — публичный ключ или канонический код c_* (строгий enum). */
+export function partitionMaterialCode(material: string | undefined): string {
+  return PARTITION_MATERIALS[partitionMaterialKey(material)];
 }
 
 export type DemolishParams = {
@@ -117,9 +133,10 @@ function busyIntervals(wall: Wall): Array<[number, number]> {
     out.push([Math.max(0, t - s.width / 2), Math.min(len, t + s.width / 2)]);
   }
   for (const h of Object.values(wall.holes ?? {})) {
-    if (typeof h.at === "number" && typeof h.width === "number") {
-      out.push([h.at, h.at + h.width]);
-    }
+    // ревью 105 R7: holeRange для всех проёмов — и с at, и без (UI-модель держит
+    // только pc; прежняя ветка с проверкой typeof h.at пропускала такие проёмы)
+    const [lo, hi] = holeRange(wall, h);
+    out.push([lo, hi]);
   }
   return out;
 }
@@ -251,14 +268,49 @@ export function demolishCancel(model: Model, params: DemolishCancelParams): { wa
   });
 }
 
+export type DemolitionHoleSig = {
+  demount: number | undefined;
+  /** Ревью 105 R5: семантика пары замены входит в сверку. */
+  hasReplacement: number | undefined;
+  /** Свойства замены — проём plan:c с parent = id этой стены и тем же центром. */
+  replacement?: { type: string; width: number; height: number | undefined; center: number };
+};
+
 export type DemolitionSig = {
   demount: number | undefined;
   p1_demount: number | undefined;
   p2_demount: number | undefined;
   /** Участки {центр на оси, ширина}, см, отсортированы по центру — id сектора редактор может пересоздать. */
   sectors: Array<{ t: number; width: number }>;
-  holes: Record<string, { demount: number | undefined }>;
+  holes: Record<string, DemolitionHoleSig>;
 };
+
+const REPLACEMENT_CENTER_TOL_CM = 1;
+
+/**
+ * Замена проёма hole: проём plan:c на той же стене с parent = id стены и центром,
+ * совпадающим с центром исходного (замена создаётся по центру, см. addOpening).
+ */
+export function replacementOf(wall: Wall, hole: Hole): Hole | null {
+  const axisLen = Math.hypot(wall.p2.x - wall.p1.x, wall.p2.y - wall.p1.y) || 1;
+  const ux = (wall.p2.x - wall.p1.x) / axisLen;
+  const uy = (wall.p2.y - wall.p1.y) / axisLen;
+  const center = (h: Hole): number =>
+    (h.pc.x - wall.p1.x) * ux + (h.pc.y - wall.p1.y) * uy;
+  const holeCenter = holeOffsetCm(wall, hole) + hole.width / 2;
+  let best: Hole | null = null;
+  let bestDist = Infinity;
+  for (const other of Object.values(wall.holes ?? {})) {
+    if (other.id === hole.id) continue;
+    if (other.parent !== wall.id || other.plan !== "c") continue;
+    const d = Math.abs(holeOffsetCm(wall, other) + other.width / 2 - holeCenter);
+    if (d <= REPLACEMENT_CENTER_TOL_CM && d < bestDist) {
+      best = other;
+      bestDist = d;
+    }
+  }
+  return best;
+}
 
 /** Семантический снимок демонтажа стены (id секторов исключены — редактор их пересоздаёт). */
 export function demolitionSignature(wall: Wall): DemolitionSig {
@@ -271,9 +323,25 @@ export function demolitionSignature(wall: Wall): DemolitionSig {
       width: s.width,
     }))
     .sort((a, b) => a.t - b.t || a.width - b.width);
-  const holes: Record<string, { demount: number | undefined }> = {};
+  const holes: Record<string, DemolitionHoleSig> = {};
   for (const [hid, h] of Object.entries(wall.holes ?? {})) {
-    holes[hid] = { demount: h.demount === 1 ? 1 : undefined };
+    const sig: DemolitionHoleSig = {
+      demount: h.demount === 1 ? 1 : undefined,
+      hasReplacement: h.hasReplacement ? 1 : undefined,
+    };
+    // ревью 105 R5: ключевые свойства замены (type, размеры, позиция) — часть сверки
+    if (h.hasReplacement) {
+      const rep = replacementOf(wall, h);
+      if (rep) {
+        sig.replacement = {
+          type: rep.type,
+          width: rep.width,
+          height: rep.height,
+          center: holeOffsetCm(wall, rep) + rep.width / 2,
+        };
+      }
+    }
+    holes[hid] = sig;
   }
   return {
     demount: wall.demount === 1 ? 1 : undefined,
@@ -311,9 +379,9 @@ export function demolitionMismatches(
       if (sigB.p1_demount !== sigA.p1_demount || sigB.p2_demount !== sigA.p2_demount) {
         problems.push(`wall ${id}: p1/p2.demount потеряны при демонтаже целиком`);
       }
-      continue; // у демонтированной целиком стены участки редактор сбрасывает сам (setDemount)
-    }
-    if (sigB.sectors.length !== sigA.sectors.length) {
+      // ревью 105 R5: при демонтаже целиком участки редактор сбрасывает сам (setDemount),
+      // но пометки demount проёмов сверяются как обычно — continue только для участков
+    } else if (sigB.sectors.length !== sigA.sectors.length) {
       problems.push(`wall ${id}: участков демонтажа ${sigB.sectors.length} → ${sigA.sectors.length}`);
     } else {
       for (let i = 0; i < sigB.sectors.length; i++) {
@@ -325,9 +393,30 @@ export function demolitionMismatches(
       }
     }
     for (const [hid, h] of Object.entries(sigB.holes)) {
-      if (a[id]?.holes[hid] === undefined) continue;
+      // ревью 105 R5: отсутствующий ожидаемый проём — расхождение, а не пропуск
+      if (a[id]?.holes[hid] === undefined) {
+        problems.push(`wall ${id}: проём ${hid} отсутствует после операции`);
+        continue;
+      }
       if ((h.demount ?? 0) !== (sigA.holes[hid]?.demount ?? 0)) {
         problems.push(`wall ${id}: проём ${hid}: demount ${h.demount ?? 0} → ${sigA.holes[hid]?.demount ?? 0}`);
+      }
+      if ((h.hasReplacement ?? 0) !== (sigA.holes[hid]?.hasReplacement ?? 0)) {
+        problems.push(`wall ${id}: проём ${hid}: hasReplacement ${h.hasReplacement ?? 0} → ${sigA.holes[hid]?.hasReplacement ?? 0}`);
+      }
+      if (h.replacement || sigA.holes[hid]?.replacement) {
+        const rep1 = h.replacement;
+        const rep2 = sigA.holes[hid]?.replacement;
+        if (!rep1 || !rep2) {
+          problems.push(`wall ${id}: проём ${hid}: замена ${rep1 ? "потеряна на сервере" : "появилась при операции"}`);
+        } else if (
+          rep1.type !== rep2.type ||
+          Math.abs(rep1.width - rep2.width) > TOL_CM ||
+          ((rep1.height ?? undefined) !== (rep2.height ?? undefined) && Math.abs((rep1.height ?? 0) - (rep2.height ?? 0)) > TOL_CM) ||
+          Math.abs(rep1.center - rep2.center) > TOL_CM
+        ) {
+          problems.push(`wall ${id}: проём ${hid}: свойства замены изменились (type ${rep1.type} → ${rep2.type}, ширина ${Math.round(rep1.width * 10)} → ${Math.round(rep2.width * 10)} мм, центр ${Math.round(rep1.center * 10)} → ${Math.round(rep2.center * 10)} мм)`);
+        }
       }
     }
   }

@@ -112,7 +112,7 @@ tool_timeout_sec = 120
 project_create            # анонимный проект (или project_open для проекта аккаунта)
 room_add_rect             # комната 4000×3000
 opening_add               # 20 типов дверей и все 7 типов окон (включая балконный блок);
-                          #  замена проёма — replaces_hole_id (план «Перегородки», план «до/после»)
+                          #  замена проёма — replaces (план «Перегородки», план «до/после»)
 wall_add kind=partition   # перегородки листа «Перегородки» (pgb|foam_block|brick|gypsum, PRO: glass, bar)
 demolish / demolish_cancel  # пометки демонтажа стены, участка или проёма (лист «Демонтаж»)
 pillar_add kind=gypsum_box  # ГКЛ-короб листа «Перегородки» (700×200 мм)

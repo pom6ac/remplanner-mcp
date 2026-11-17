@@ -362,12 +362,34 @@ function mergeCollinear(model: Model): void {
         else if (dist(a.p1, b.p1) <= NODE_TOL_CM) { p1 = b.p2; p2 = a.p2; }
         else if (dist(a.p1, b.p2) <= NODE_TOL_CM) { p1 = b.p1; p2 = a.p2; }
         if (!p1 || !p2 || dist(p1, p2) < wallLen(a)) continue; // только удлинение
+        // ревью 105 R2: ось a меняется (в т.ч. разворачивается в ветках 3/4) —
+        // сектора a и b переносятся на новую ось; не помещающиеся — атомарный отказ
+        const aOld = { p1: { ...a.p1 }, p2: { ...a.p2 } };
         a.p1 = { x: r2(p1.x), y: r2(p1.y) };
         a.p2 = { x: r2(p2.x), y: r2(p2.y) };
         for (const hole of Object.values(b.holes)) {
           a.holes[hole.id] = hole;
         }
+        const bSectors = sectorsOfWall(b);
+        const aSectors = sectorsOfWall(a) ?? {};
+        const mergedDir = sub(a.p2, a.p1);
+        const mergedLen = Math.hypot(mergedDir.x, mergedDir.y);
+        const mergedU = mergedLen > 1e-9 ? scale(mergedDir, 1 / mergedLen) : { x: 1, y: 0 };
+        for (const s of Object.values(bSectors ?? {})) {
+          const t = (s.pc.x - a.p1.x) * mergedU.x + (s.pc.y - a.p1.y) * mergedU.y;
+          if (t - s.width / 2 < -0.05 || t + s.width / 2 > mergedLen + 0.05) {
+            throw new McpError("INVALID_ARGUMENT", `участок демонтажа стены ${b.id} не помещается в объединённую стену ${a.id}`, {
+              hint: "отмените демонтаж участка (demolish_cancel) перед объединением стен",
+              details: { kind: "sector_outside_wall", wall_id: a.id, sector_id: s.id },
+            });
+          }
+          const pc = add(a.p1, scale(mergedU, t));
+          aSectors[s.id] = { ...s, pc: { x: r2(pc.x), y: r2(pc.y) } };
+        }
+        if (Object.keys(aSectors).length > 0) a.sectors = aSectors;
         delete model.walls[b.id];
+        // ревью 105 R2: собственные сектора a — на новую ось (t от прежнего p1)
+        syncSectors(model, new Map([[a.id, aOld]]));
         // ссылки соседей на поглощённую стену → на оставшуюся; связи будут
         // пересчитаны редактором при ближайшей нормализации
         for (const w of Object.values(model.walls)) {
@@ -569,6 +591,62 @@ export function addRoomPolygon(model: Model, params: AddRoomPolygonParams): Wall
 
 // ---------- перемещение и изменение (правило 5) ----------
 
+// ---------- сектора демонтажа при изменении геометрии (ревью 105 R2) ----------
+
+type WallSector = { id: string; pc: Point; width: number };
+
+function sectorsOfWall(wall: Wall): Record<string, WallSector> | null {
+  return (wall.sectors as Record<string, WallSector> | undefined) ?? null;
+}
+
+/** Снимок осей всех стен до мутации (для syncSectors). */
+function snapshotAxes(model: Model): Map<string, { p1: Point; p2: Point }> {
+  const out = new Map<string, { p1: Point; p2: Point }>();
+  for (const w of Object.values(model.walls)) out.set(w.id, { p1: { ...w.p1 }, p2: { ...w.p2 } });
+  return out;
+}
+
+/**
+ * Ревью 105 R2: сектора демонтажа переносятся вместе с геометрией стены. Для каждой
+ * стены, чьи концы изменились, позиция участка на СТАРОЙ оси (t от p1 и перпендикулярное
+ * смещение) переносится на новую ось; принадлежность центру оси и пределы интервала
+ * [t−width/2, t+width/2] проверяются, а не только проекция. Участок, не помещающийся
+ * в новую геометрию, — атомарный отказ (INVALID_ARGUMENT с подсказкой): молча обрезать
+ * или выбрасывать пометку демонтажа нельзя. Вызывается внутри atomic(): бросок
+ * откатывает всю мутацию.
+ */
+function syncSectors(model: Model, oldAxes: Map<string, { p1: Point; p2: Point }>): void {
+  for (const wall of Object.values(model.walls)) {
+    const snap = oldAxes.get(wall.id);
+    if (!snap) continue;
+    if (dist(snap.p1, wall.p1) <= 0.005 && dist(snap.p2, wall.p2) <= 0.005) continue;
+    const sectors = sectorsOfWall(wall);
+    if (!sectors || Object.keys(sectors).length === 0) continue;
+    const oldDir = sub(snap.p2, snap.p1);
+    const oldLen = Math.hypot(oldDir.x, oldDir.y);
+    const oldU = oldLen > 1e-9 ? scale(oldDir, 1 / oldLen) : { x: 1, y: 0 };
+    const oldN = leftNormal(oldU.x, oldU.y);
+    const newDir = sub(wall.p2, wall.p1);
+    const newLen = Math.hypot(newDir.x, newDir.y);
+    const newU = newLen > 1e-9 ? scale(newDir, 1 / newLen) : oldU;
+    const newN = leftNormal(newU.x, newU.y);
+    for (const s of Object.values(sectors)) {
+      const rel = sub(s.pc, snap.p1);
+      const t = rel.x * oldU.x + rel.y * oldU.y;
+      const perp = rel.x * oldN.x + rel.y * oldN.y;
+      if (t - s.width / 2 < -0.05 || t + s.width / 2 > newLen + 0.05) {
+        throw new McpError("INVALID_ARGUMENT",
+          `участок демонтажа (${Math.round(t * 10 - s.width * 5)}…${Math.round(t * 10 + s.width * 5)} мм на оси) выходит за пределы стены ${wall.id} длиной ${Math.round(newLen * 10)} мм после изменения геометрии`, {
+            hint: "сократите изменение или отмените демонтаж участка (demolish_cancel, sector_id из model_get)",
+            details: { kind: "sector_outside_wall", wall_id: wall.id, sector_id: s.id, center_mm: Math.round(t * 10), width_mm: Math.round(s.width * 10), wall_len_mm: Math.round(newLen * 10) },
+          });
+      }
+      const pc = add(add(wall.p1, scale(newU, t)), scale(newN, perp));
+      s.pc = { x: r2(pc.x), y: r2(pc.y) };
+    }
+  }
+}
+
 type EndAttach = {
   wall: Wall;
   node: "p1" | "p2";
@@ -642,6 +720,7 @@ export function moveWall(model: Model, params: MoveWallParams): Wall {
   const wall = model.walls[params.wallId];
   if (!wall) throw new Error(`стена ${params.wallId} не найдена`);
   return atomic(model, () => {
+    const oldAxes = snapshotAxes(model);
     const dir = sub(wall.p2, wall.p1);
     const len = Math.hypot(dir.x, dir.y);
     if (len < 1e-6) throw new Error("стена нулевой длины");
@@ -684,6 +763,8 @@ export function moveWall(model: Model, params: MoveWallParams): Wall {
     }
     refreshWallHolesSafe(wall);
     for (const w of touches) refreshWallHolesSafe(w);
+    // ревью 105 R2: сектора демонтажа стены и соседей переезжают вместе с геометрией
+    syncSectors(model, oldAxes);
     return wall;
   });
 }
@@ -694,6 +775,7 @@ export function updateWall(model: Model, params: UpdateWallParams): Wall {
   const wall = model.walls[params.wallId];
   if (!wall) throw new Error(`стена ${params.wallId} не найдена`);
   return atomic(model, () => {
+    const oldAxes = snapshotAxes(model);
     if (params.start || params.end) {
       if (params.start) moveEnd(model, wall, "p1", cm(params.start));
       if (params.end) moveEnd(model, wall, "p2", cm(params.end));
@@ -731,6 +813,9 @@ export function updateWall(model: Model, params: UpdateWallParams): Wall {
     }
 
     if (params.material) wall.material = params.material;
+    // ревью 105 R2: сектора демонтажа стены и соседей следуют за геометрией; участок,
+    // вышедший за пределы после сокращения, — атомарный отказ
+    syncSectors(model, oldAxes);
     return wall;
   });
 }
@@ -793,6 +878,17 @@ export function splitWall(model: Model, wallId: string, atMm: number): { first: 
         });
       }
     }
+    // ревью 105 R2: разрез через участок демонтажа тоже запрещён — участок не режется,
+    // а целиком остаётся на своей половине (по положению центра, offset)
+    for (const s of Object.values(sectorsOfWall(wall) ?? {})) {
+      const t = (s.pc.x - wall.p1.x) * (dir.x / len) + (s.pc.y - wall.p1.y) * (dir.y / len);
+      if (at > t - s.width / 2 + 1e-6 && at < t + s.width / 2 - 1e-6) {
+        throw new McpError("GEOMETRY_CONFLICT", `разрез ${atMm} мм проходит через участок демонтажа (${Math.round((t - s.width / 2) * 10)}…${Math.round((t + s.width / 2) * 10)} мм на оси)`, {
+          hint: "выберите точку разреза вне участков демонтажа стены или отмените демонтаж участка (demolish_cancel)",
+          details: { kind: "split_through_sector", wall_id: wall.id, sector_id: s.id },
+        });
+      }
+    }
 
     const second: Wall = {
       ...structuredClone(wall),
@@ -809,8 +905,31 @@ export function splitWall(model: Model, wallId: string, atMm: number): { first: 
       if (holeDist > at) {
         delete wall.holes[hole.id];
         hole.at = r2((hole.at ?? holeDist - hole.width / 2) - at);
+        // ревью 105 R4: замена (parent = id стены) переезжает вместе с парой —
+        // висячий parent после split недопустим
+        if (hole.parent === wall.id) hole.parent = second.id;
         second.holes[hole.id] = hole;
       }
+    }
+    // ревью 105 R2: сектора демонтажа раздаются по положению центра (offset):
+    // центр правее разреза — во вторую стену с пересчётом pc от её начала.
+    // Клон секторов в second (spread стены) сбрасывается: у второй части остаются
+    // только переназначенные участки.
+    delete second.sectors;
+    const sectors = sectorsOfWall(wall);
+    if (sectors) {
+      const secondSectors: Record<string, WallSector> = {};
+      for (const [sid, s] of Object.entries(sectors)) {
+        const t = (s.pc.x - wall.p1.x) * u.x + (s.pc.y - wall.p1.y) * u.y;
+        if (t > at) {
+          delete sectors[sid];
+          const pc = add(second.p1, scale(u, t - at));
+          secondSectors[sid] = { ...s, pc: { x: r2(pc.x), y: r2(pc.y) } };
+        }
+      }
+      if (Object.keys(sectors).length === 0) delete wall.sectors;
+      else wall.sectors = sectors;
+      if (Object.keys(secondSectors).length > 0) second.sectors = secondSectors;
     }
     wall.p2 = { x: r2(mid.x), y: r2(mid.y) };
     delete wall.p2.link;

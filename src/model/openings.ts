@@ -611,12 +611,27 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
     const tEdge = offsetFrom === "inner" ? innerEdgeOffsetCm(model, wall, fromEnd ? "end" : "start") : fromEnd ? len : 0;
     at = fromEnd ? tEdge - mmToCm(params.offsetMm) - widthCm : tEdge + mmToCm(params.offsetMm);
   } else if (replaced) {
-    // замена без смещения — по центру исходного проёма
-    const axis = wallAxis(wall);
-    const repT = replaced.at ?? projectionLength({ p1: axis.p1, p2: replaced.pc }, replaced.pc);
-    at = repT - (widthCm - replaced.width) / 2;
+    // замена без смещения — по центру исходного (ревью 105 R3): диапазон через
+    // holeRange/holeOffsetCm — работает и для UI-проёмов без служебного at (прежняя
+    // проекция pc использовала центр как расстояние до края и сдвигала замену)
+    const repCenter = holeOffsetCm(wall, replaced) + replaced.width / 2;
+    at = repCenter - widthCm / 2;
   } else {
     at = mmToCm(0);
+  }
+  // ревью 105 R3: при replaces положение замены задаётся исходным проёмом — центр
+  // замены совпадает с центром исходного; явно переданный offset/center, уводящий
+  // замену с места исходного, — INVALID_ARGUMENT
+  if (replaced && (params.centerMm !== undefined || params.offsetMm !== undefined)) {
+    const repCenter = holeOffsetCm(wall, replaced) + replaced.width / 2;
+    const newCenter = at + widthCm / 2;
+    if (Math.abs(newCenter - repCenter) > 0.5) {
+      throw new McpError("INVALID_ARGUMENT",
+        `замена проёма ${replaced.id} ставится по центру исходного (смещение центра ${Math.round((newCenter - repCenter) * 10)} мм) — при replaces положение не задаётся`, {
+          hint: "не передавайте offset_mm/center_mm вместе с replaces: замена встаёт по центру исходного проёма",
+          details: { kind: "replacement_position_conflict", wall_id: wall.id, hole_id: replaced.id, shift_mm: Math.round((newCenter - repCenter) * 10) },
+        });
+    }
   }
   checkPlacement(wall, at, widthCm, replaced?.id);
 
@@ -972,12 +987,65 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   return hole;
 }
 
-/** opening_delete. */
+/**
+ * opening_delete (ревью 105 R4 — жизненный цикл пары замены):
+ * - удаление замены (plan:c с parent = id стены) снимает hasReplacement у исходного —
+ *   иначе повторная замена навсегда запрещена;
+ * - удаление исходного (hasReplacement) удаляет и замену — висячая замена не нужна
+ *   (выбор поведения описан в отчёте 106; отказ альтернативой).
+ * Пара сопоставляется по стене (parent) и центру: замена создаётся по центру исходного.
+ */
 export function deleteOpening(model: Model, wallId: string, holeId: string): void {
   const wall = model.walls[wallId];
   if (!wall) throw new McpError("NOT_FOUND", `стена ${wallId} не найдена`);
-  if (!wall.holes[holeId]) throw new McpError("NOT_FOUND", `проём ${holeId} не найден`);
+  const hole = wall.holes[holeId];
+  if (!hole) throw new McpError("NOT_FOUND", `проём ${holeId} не найден`);
+  if (hole.hasReplacement) {
+    // исходный: замену ищем среди plan:c с parent = этой стеной и тем же центром
+    const rep = findReplacement(wall, hole);
+    if (rep) delete wall.holes[rep.id];
+  } else if (hole.parent === wallId && hole.plan === "c") {
+    // замена: исходный — проём этой стены с hasReplacement и совпадающим центром
+    const original = findOriginal(wall, hole);
+    if (original) delete original.hasReplacement;
+  }
   delete wall.holes[holeId];
+}
+
+const PAIR_CENTER_TOL_CM = 1;
+
+/** Замена исходного проёма: plan:c на той же стене с parent = id стены и тем же центром. */
+function findReplacement(wall: Wall, original: Hole): Hole | null {
+  const center = holeOffsetCm(wall, original) + original.width / 2;
+  let best: Hole | null = null;
+  let bestDist = Infinity;
+  for (const other of Object.values(wall.holes)) {
+    if (other.id === original.id) continue;
+    if (other.parent !== wall.id || other.plan !== "c") continue;
+    const d = Math.abs(holeOffsetCm(wall, other) + other.width / 2 - center);
+    if (d <= PAIR_CENTER_TOL_CM && d < bestDist) {
+      best = other;
+      bestDist = d;
+    }
+  }
+  return best;
+}
+
+/** Исходный проёма-замены: hasReplacement на той же стене с совпадающим центром. */
+function findOriginal(wall: Wall, replacement: Hole): Hole | null {
+  const center = holeOffsetCm(wall, replacement) + replacement.width / 2;
+  let best: Hole | null = null;
+  let bestDist = Infinity;
+  for (const other of Object.values(wall.holes)) {
+    if (other.id === replacement.id) continue;
+    if (!other.hasReplacement) continue;
+    const d = Math.abs(holeOffsetCm(wall, other) + other.width / 2 - center);
+    if (d <= PAIR_CENTER_TOL_CM && d < bestDist) {
+      best = other;
+      bestDist = d;
+    }
+  }
+  return best;
 }
 
 /**

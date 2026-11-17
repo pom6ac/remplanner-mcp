@@ -25,7 +25,7 @@ export type CompactWall = {
   /** Пометка демонтажа стены целиком (лист «Демонтаж», этап 103). */
   demount?: boolean;
   /** Участки демонтажа: отступ от начала оси и длина, мм. */
-  sectors?: Array<{ offset_mm: number; width_mm: number }>;
+  sectors?: Array<{ sector_id: string; offset_mm: number; width_mm: number }>;
   /** Роль не-wall стен: balcony (ограждение балкона), terrace_fence (ограждение террасы). */
   role?: string;
   openings: CompactOpening[];
@@ -306,7 +306,11 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     const axisLen = Math.hypot(wall.p2.x - wall.p1.x, wall.p2.y - wall.p1.y) || 1;
     const ux = (wall.p2.x - wall.p1.x) / axisLen;
     const uy = (wall.p2.y - wall.p1.y) / axisLen;
-    const sectorList = Object.values(sectors ?? {}).map((s) => ({
+    // ревью 105 R8: актуальный sector_id в ответе — отменить отдельный участок
+    // (demolish_cancel sector_id) иначе нечем: id, возвращённый demolish, нормализатор
+    // может пересоздать, а компактная model_get без id не позволяет выбрать участок
+    const sectorList = Object.entries(sectors ?? {}).map(([sid, s]) => ({
+      sector_id: (s as { id?: string }).id ?? sid,
       offset_mm: round0(cmToMm((s.pc.x - wall.p1.x) * ux + (s.pc.y - wall.p1.y) * uy - s.width / 2)),
       width_mm: round0(cmToMm(s.width)),
     })).sort((a, b) => a.offset_mm - b.offset_mm);

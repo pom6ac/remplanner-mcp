@@ -281,7 +281,7 @@ test("103: компакт — план, материал, демонтаж и з
   assert.equal(topC.plan, "a");
   assert.equal(topC.material, "a_block");
   assert.equal(topC.demount, undefined);
-  assert.deepEqual(topC.sectors, [{ offset_mm: 500, width_mm: 1000 }]);
+  assert.deepEqual(topC.sectors, [{ sector_id: Object.keys(top.sectors ?? {})[0], offset_mm: 500, width_mm: 1000 }]);
   const partC = c.walls.find((w) => w.site_id === part.id)!;
   assert.equal(partC.plan, "c");
   assert.equal(partC.material, "c_gypsum");

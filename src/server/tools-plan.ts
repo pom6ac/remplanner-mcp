@@ -8,7 +8,7 @@ import {
 } from "../model/walls.ts";
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
-import { demolish, demolishCancel, PARTITION_MATERIALS, PARTITION_PRO_MATERIALS, partitionMaterialCode } from "../model/demolition.ts";
+import { demolish, demolishCancel, PARTITION_MATERIALS, PARTITION_PRO_MATERIALS, partitionMaterialKey } from "../model/demolition.ts";
 import { McpError } from "../errors.ts";
 import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../model/rigels.ts";
 import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind } from "../model/pipes.ts";
@@ -235,9 +235,12 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const isPartition = a["kind"] === "partition";
         let material: string;
         if (isPartition) {
-          const key = (a["material"] as string | undefined) ?? "pgb";
+          // ревью 105 R6: сначала нормализация к публичному ключу (строгий enum —
+          // c_nonsense/constructor → INVALID_ARGUMENT), затем PRO-гейт по ключу —
+          // c_glass проходит тот же гейт, что и glass
+          const key = partitionMaterialKey((a["material"] as string | undefined) ?? "pgb");
           if (PARTITION_PRO_MATERIALS.has(key)) await assertProMaterialAllowed();
-          material = partitionMaterialCode(key);
+          material = PARTITION_MATERIALS[key];
         } else {
           material = (a["material"] as string | undefined) ?? "a_block";
         }
@@ -267,9 +270,12 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const isPartition = a["kind"] === "partition";
         let material: string;
         if (isPartition) {
-          const key = (a["material"] as string | undefined) ?? "pgb";
+          // ревью 105 R6: сначала нормализация к публичному ключу (строгий enum —
+          // c_nonsense/constructor → INVALID_ARGUMENT), затем PRO-гейт по ключу —
+          // c_glass проходит тот же гейт, что и glass
+          const key = partitionMaterialKey((a["material"] as string | undefined) ?? "pgb");
           if (PARTITION_PRO_MATERIALS.has(key)) await assertProMaterialAllowed();
-          material = partitionMaterialCode(key);
+          material = PARTITION_MATERIALS[key];
         } else {
           material = (a["material"] as string | undefined) ?? "a_block";
         }
@@ -352,13 +358,21 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // ревью 105 R6: материал перегородки (plan:c) — тот же строгий enum и PRO-гейт,
+        // что у wall_add; материал исходных стен не трогается
+        let material = a["material"] as string | undefined;
+        if (material !== undefined && resolveWall(ws.model, a["wall_id"] as string).plan === "c") {
+          const key = partitionMaterialKey(material);
+          if (PARTITION_PRO_MATERIALS.has(key)) await assertProMaterialAllowed();
+          material = PARTITION_MATERIALS[key];
+        }
         const { result: wall, warnings } = await ws.applyWalls("wall_update", (m) => updateWall(m, {
           wallId: resolveWall(m, a["wall_id"] as string).id,
           lengthMm: a["length_mm"] as number | undefined,
           anchor: a["anchor"] as "start" | "end" | undefined,
           thicknessMm: a["thickness_mm"] as number | undefined,
           side: a["side"] as "both" | "left" | "right" | undefined,
-          material: a["material"] as string | undefined,
+          material,
           start: a["start"] as MmPoint | undefined,
           end: a["end"] as MmPoint | undefined,
         }));

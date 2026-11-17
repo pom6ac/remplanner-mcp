@@ -1461,9 +1461,11 @@ export class Workspace {
       warnings.push(...finishNorm.warnings);
       // этап 103: флаги демонтажа (demount, p1/p2.demount, sectors, holes[].demount)
       // после нормализации не теряются; id секторов редактор может пересоздать —
-      // участки сверяются по геометрии (демонтажу, а не id)
+      // участки сверяются по геометрии (демонтажу, а не id).
+      // Ревью 105 R1: сверка идёт с кандидатом (клоном ПОСЛЕ операции), а не с исходной
+      // моделью — намеренное добавление/снятие демонтажа не «потеря данных».
       const demolitionNorm = demolitionMismatches(
-        this.modelInternal!.walls as Record<string, never>,
+        clone.walls as Record<string, never>,
         (norm.model as Record<string, unknown>)["walls"] as Record<string, never>,
       );
       if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0) {

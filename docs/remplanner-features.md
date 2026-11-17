@@ -903,12 +903,23 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
   толщина 10 см, материалы — коды `c_*`: pgb→`c_pgb` (по умолчанию), foam_block→
   `c_block`, brick→`c_brick`, gypsum→`c_gypsum`; PRO: glass→`c_glass`, bar→`c_bar`
   (на бесплатном тарифе — `NOT_AVAILABLE_ON_TARIFF`). MCP: `wall_add`/
-  `walls_add_polyline` с `kind=partition` (мм на входе, коды модели на выходе).
+  `walls_add_polyline` с `kind=partition` (мм на входе; материал — публичный ключ
+  pgb|foam_block|brick|gypsum или канонический код c_*, прочие значения —
+  INVALID_ARGUMENT; PRO-гейт по нормализованному ключу, c_glass = glass).
+  Сектора демонтажа следуют за геометрией стены: переносятся при wall_move/wall_update,
+  при wall_split раздаются по положению центра (разрез через участок —
+  GEOMETRY_CONFLICT), сократившаяся стена с участком за концом — атомарный
+  INVALID_ARGUMENT. `model_get` возвращает `sectors[].sector_id` для demolish_cancel.
 - **Замена проёма**: на исходном проёме исходных стен ставится проём листа «c»
   (`type:"doorway"`, `position:"c"`) по центру исходного, у исходного —
   `hasReplacement:1`. Обязательные поля нового проёма: `parent` (id стены),
   `parent_depth`, `offset`, `dls_prs:{}`, `pcb`/`p1b`/`p2b` (центр и края на оси,
-  см) — без них редактор падает на restore. MCP: `opening_add` с `replaces_hole_id`.
+  см) — без них редактор падает на restore. MCP: `opening_add` с `replaces`
+  (положение не задаётся: центр замены = центр исходного; явный offset, уводящий
+  замену с места, — INVALID_ARGUMENT). Жизненный цикл пары (ревью 105 R4):
+  удаление замены снимает `hasReplacement` у исходного (повторная замена снова
+  возможна), удаление исходного удаляет и замену, wall_split переносит пару в одну
+  половину с обновлением `parent`.
 - **ГКЛ-короб** (лист «Перегородки»): элемент `pillars[]` с `role:"gypsum"`,
   `plan:"c"`, `id_room` (комната размещения), умолчания 700×200 мм,
   `total_height` = высота потолка; прямоугольник p1…p4, `edges` с `no_wall:1`.
