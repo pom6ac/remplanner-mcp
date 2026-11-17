@@ -193,14 +193,13 @@ test("110 R10: перенос изолированной стены с геом�
   assert.equal(ws.model.walls[isolated.id]!.p1.y, -620);
 });
 
-test("110 R10: операция, создающая действительно новый висячий конец, — INVALID_GEOMETRY", async () => {
+test("142: новый висячий конец проходит с предупреждением wall_free_ends, унаследованные не дублируются", async () => {
   const { ws } = wsWithIsolatedWall(tweakedEditor({}));
   await ws.open("123", "1");
-  await assert.rejects(
-    ws.applyWalls("wall_add", (mm) => addWall(mm, { start: { x: 0, y: 10000 }, end: { x: 3000, y: 10000 } })),
-    (e: unknown) => {
-      const err = e as { code?: string; details?: { unattached?: unknown[] } };
-      return err.code === "INVALID_GEOMETRY" && Array.isArray(err.details?.unattached) && (err.details.unattached as unknown[]).length === 2;
-    },
-  );
+  const { warnings } = await ws.applyWalls("wall_add", (mm) => addWall(mm, { start: { x: 0, y: 10000 }, end: { x: 3000, y: 10000 } }));
+  const free = warnings.filter((w) => w.startsWith("wall_free_ends"));
+  assert.equal(free.length, 1, `одно предупреждение wall_free_ends: ${JSON.stringify(warnings)}`);
+  assert.match(free[0]!, /\(0; 10000\)/);
+  assert.match(free[0]!, /\(3000; 10000\)/);
+  assert.match(free[0]!, /унаследованные до операции: 2/, "унаследованные концы посчитаны отдельно");
 });

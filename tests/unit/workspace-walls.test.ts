@@ -125,9 +125,10 @@ test("T28: наложение после нормализации → INVALID_GE
   assert.equal(normalizeCalls(), 1);
 });
 
-test("T28: потерянная связь конца → INVALID_GEOMETRY (§12.4)", async () => {
+test("T28/142: намеренно свободная стена (свободна уже в кандидате) → предупреждение wall_free_ends, мутация применяется", async () => {
   const server = { model: corridorModel() };
-  // редактор вернул стены БЕЗ связей (например, оторванный T-конец) — проверка §12.4
+  // стена свободна геометрически уже в clone (пользователь нарисовал свободную стену) —
+  // нормализатор её не ломал; стены без связей — как у реального редактора после draw
   const { editor } = mockEditor({
     walls: (model) => {
       const out = normalizeWalls(model as unknown as Model);
@@ -137,16 +138,40 @@ test("T28: потерянная связь конца → INVALID_GEOMETRY (§12
   });
   const ws = new Workspace(deps(editor, server));
   await ws.open("123", "1");
+  const { warnings } = await ws.applyWalls("wall_add", (m) => addWall(m, { start: { x: 1000, y: 7000 }, end: { x: 3000, y: 7000 } }));
+  const free = warnings.find((w) => w.startsWith("wall_free_ends"));
+  assert.ok(free, `wall_free_ends в warnings: ${JSON.stringify(warnings)}`);
+  // ревью 144 M2: публичные имена — метка стены W<n> и конец start/end, не p1/p2
+  assert.match(free!, /W\d+\.start \(1000; 7000\)/, `метка стены и start: ${free}`);
+  assert.match(free!, /W\d+\.end \(3000; 7000\)/, `метка стены и end: ${free}`);
+  assert.doesNotMatch(free!, /\.p[12]\b/, "внутренних имён узлов p1/p2 нет");
+});
+
+test("T28/144: нормализатор оторвал соединённый конец → INVALID_GEOMETRY, модель не изменилась", async () => {
+  const server = { model: corridorModel() };
+  // mock normalize сдвигает конец, соединённый в clone (стык у (0,-300)) на 0,2 см —
+  // дефект нормализатора (баг 111); конец свободен только ПОСЛЕ normalize
+  const { editor } = mockEditor({
+    walls: (model) => {
+      const out = normalizeWalls(model as unknown as Model);
+      const top = out.find((w) => w.p1.y === -300 && w.p2.x === 600);
+      if (top) top.p1.x += 0.2;
+      return out;
+    },
+  });
+  const ws = new Workspace(deps(editor, server));
+  await ws.open("123", "1");
   const before = JSON.stringify(ws.model);
   await assert.rejects(
-    ws.applyWalls("wall_add", (m) => addWall(m, { start: { x: 1000, y: 7000 }, end: { x: 3000, y: 7000 } })),
+    ws.applyWalls("wall_add", (m) => addWall(m, { start: { x: 10000, y: 7000 }, end: { x: 12000, y: 7000 } })),
     (e: unknown) => {
       assert.equal((e as { code?: string }).code, "INVALID_GEOMETRY");
-      assert.match((e as Error).message, /несоединённ/);
+      assert.match((e as Error).message, /оторвал соединённый конец/, (e as Error).message);
       return true;
     },
   );
-  assert.equal(JSON.stringify(ws.model), before);
+  assert.equal(JSON.stringify(ws.model), before, "модель не изменилась после отката");
+  assert.equal(ws.project!.dirty, false);
 });
 
 test("T28: рост счётчиков ошибок редактора → INVALID_GEOMETRY", async () => {
