@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { McpError } from "./errors.ts";
+import { McpError, errorToPayload } from "./errors.ts";
 import { STATE_PATH } from "./config.ts";
 import { loadSession } from "./session.ts";
 import { login } from "./login.ts";
@@ -60,10 +60,11 @@ export async function main(argv: string[]): Promise<void> {
   } catch (e) {
     if (e instanceof McpError) {
       printJson(e.toJSON());
-      process.exitCode = 1;
     } else {
-      throw e;
+      // неожиданные исключения (Playwright, fs) — нейтральное сообщение, оригинал замаскированным в stderr
+      printJson(errorToPayload(e));
     }
+    process.exitCode = 1;
   }
 }
 

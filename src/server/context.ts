@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { z } from "zod";
 import { STATE_PATH, STATE_ANON_PATH, CACHE_DIR } from "../config.ts";
-import { McpError, type ErrorCode } from "../errors.ts";
+import { McpError, errorToPayload } from "../errors.ts";
 import { loadSession, hasLiveCookies, type SessionState } from "../session.ts";
 import { createAnonProject, loadModel, renameProject, checkStatus, type LoadedModel } from "../api.ts";
 import { openEditor, type EditorHandle } from "../editor/adapter.ts";
@@ -270,13 +270,10 @@ export function jsonText(value: unknown): string {
   return JSON.stringify(value, null, 1);
 }
 
-/** Единый формат ошибки: isError + JSON {code, message, hint?, details?} (design §8). */
+/** Единый формат ошибки: isError + JSON {code, message, hint?, details?} (design §8).
+ * Сериализация — общая с toolkit (этап 145, B2): неожиданные исключения не отдают e.message. */
 export function errorResult(e: unknown): { isError: true; content: { type: "text"; text: string }[] } {
-  if (e instanceof McpError) {
-    return { isError: true, content: [{ type: "text", text: jsonText(e.toJSON()) }] };
-  }
-  const message = e instanceof Error ? e.message : String(e);
-  return { isError: true, content: [{ type: "text", text: jsonText({ code: "INTERNAL" satisfies ErrorCode, message }) }] };
+  return { isError: true, content: [{ type: "text", text: jsonText(errorToPayload(e)) }] };
 }
 
 /** Общий сценарий работы с планом — вставляется в описания мутирующих инструментов. */

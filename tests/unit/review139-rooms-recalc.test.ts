@@ -63,9 +63,11 @@ test("139 m1/m2: исключение в copyRooms1 — restorePlan+restore в f
   const calls: Calls = [];
   const page = mockPage(globals(calls, { failCopyRooms1: true }));
   const res = await page.evaluate<RecalcResult>(PAGE.restoreDrawCopy);
-  // m2: сбой не откатывается молча — краткий код в результате normalize
-  assert.ok(res.roomsRebuild !== "ok" && res.roomsRebuild.includes("copyRooms1 broken"),
+  // m2: сбой не откатывается молча — краткий код (имя исключения, ревью 147 №4)
+  assert.ok(res.roomsRebuild !== "ok" && res.roomsRebuild.includes("Error"),
     `roomsRebuild=${res.roomsRebuild}`);
+  assert.ok(!res.roomsRebuild.includes("copyRooms1 broken"),
+    "текст исключения не должен выходить (ревью 147 №4)");
   // m1: лист редактора возвращается в исходный при любом исключении
   assert.equal(calls.filter((c) => c === "restorePlan").length, 1, `calls: ${calls.join(",")}`);
   assert.equal(calls[calls.length - 2], "restore", `хвост вызовов: ${calls.join(",")}`);
