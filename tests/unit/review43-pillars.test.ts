@@ -242,9 +242,11 @@ test("№2 комнаты 1→0 после save — SITE_ERROR (молча те�
   });
 });
 
-test("№2 комнаты исчезли при нормализации, сервер их сохранил — предупреждение в результате save", async () => {
+test("№2/этап 126: комнаты исчезли при нормализации при неизменных стенах — NORMALIZATION_DROPPED до записи", async () => {
   const server: SaveServer = { saveId: "s1", model: pillarModel() as unknown as Record<string, unknown> };
-  // редактор отдаёт копию без rooms2, но на сервере комнаты остаются (save не пишет нормализацию)
+  // редактор отдаёт копию без rooms2 (комнаты потеряны), стены не менялись:
+  // штатной топологией это не объяснить — блокировка до записи (этап 126)
+  let saves = 0;
   const editor: EditorLike = {
     objectId: "0", planId: "1",
     async normalize(model) {
@@ -254,6 +256,7 @@ test("№2 комнаты исчезли при нормализации, сер
       return { model: copy, rooms: [], before: { walls, holes: 0, items: 0 }, after: { walls, holes: 0, items: 0 } };
     },
     async save() {
+      saves++;
       return { ok: true, saveId: "s2", conflict: false };
     },
     async renderPng() { return Buffer.from(""); },
@@ -268,9 +271,16 @@ test("№2 комнаты исчезли при нормализации, сер
     async openEditor() { return editor; },
   };
   const ws = new Workspace(deps);
+  (ws as unknown as { writeBackup: () => string }).writeBackup = () => "/mock/no-write";
   await ws.open("0", "1");
-  const res = await ws.save();
-  assert.ok(res.warnings.some((w) => w.includes("комнат")), JSON.stringify(res.warnings));
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "NORMALIZATION_DROPPED");
+    const details = (e as E & { details?: { room_mismatches?: string[] } }).details;
+    assert.ok((details?.room_mismatches ?? []).some((x) => x.includes("исчезла")), JSON.stringify(details));
+    return true;
+  });
+  assert.equal(saves, 0, "до записи дело не дошло");
 });
 
 // ---------- №3: общий предикат контакта ----------
