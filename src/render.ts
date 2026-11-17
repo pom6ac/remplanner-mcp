@@ -1,6 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RENDERS_DIR } from "./config.ts";
+import { ensurePrivateDir, writePrivateFile } from "./fs-safe.ts";
 import { McpError } from "./errors.ts";
 import type { RenderOptions } from "./editor/adapter.ts";
 
@@ -64,9 +64,10 @@ export async function renderPlanToFile(
     throw new McpError("SITE_ERROR", "скриншот холста не похож на PNG", { details: { bytes: png.length } });
   }
   const dir = options.dir ?? RENDERS_DIR;
-  mkdirSync(dir, { recursive: true });
+  ensurePrivateDir(dir);
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const path = join(dir, `${sanitize(editor.objectId)}-${stamp}.png`);
-  writeFileSync(path, png);
+  // B4 (аудит 65): PNG содержит план жилья — атомарная запись с правами 0600.
+  writePrivateFile(path, png);
   return { path, base64: png.toString("base64"), mimeType: "image/png", widthPx, sheet, bytes: png.length };
 }

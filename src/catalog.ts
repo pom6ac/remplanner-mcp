@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BASE_URL, CACHE_DIR, HTTP_TIMEOUT_MS, USER_AGENT } from "./config.ts";
 import { globalLimiter } from "./http.ts";
+import { ensurePrivateDir, writePrivateFile } from "./fs-safe.ts";
 import { McpError } from "./errors.ts";
 
 // Позиция каталога (window.global_tools) — только нужные поля, размеры в см.
@@ -179,8 +180,9 @@ export function loadCachedTools(globalVersion: string): ToolsBundle | null {
 }
 
 export function saveCachedTools(globalVersion: string, tools: ToolsBundle): void {
-  mkdirSync(CACHE_DIR, { recursive: true });
-  writeFileSync(cachePath(globalVersion), JSON.stringify(tools), { mode: 0o600 });
+  // B4 (аудит 65): кэш каталога — атомарная запись, каталог 0700, файл 0600.
+  ensurePrivateDir(CACHE_DIR);
+  writePrivateFile(cachePath(globalVersion), JSON.stringify(tools));
 }
 
 /** GET бандла каталога (кэш по global_version). */

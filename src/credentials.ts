@@ -1,4 +1,6 @@
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { hasWideMode, inspectPath } from "./fs-safe.ts";
 import { McpError } from "./errors.ts";
 
 export type Credentials = {
@@ -32,10 +34,51 @@ export function parseEnvFile(text: string): Record<string, string> {
 
 /** Права файла: true, если только владелец (0600). */
 export function isPrivateMode(filePath: string): boolean {
-  return (statSync(filePath).mode & 0o777) === 0o600;
+  return (inspectPath(filePath).mode & 0o777) === 0o600;
+}
+
+/**
+ * B4 (аудит 65): права файла и каталога проверяются ДО чтения. Широкие права
+ * (group/other) — отказ с подсказкой chmod; содержимое файла в ошибку не
+ * попадает. Symlink-файл тоже отклоняется (указывает не туда, куда рассчитывал
+ * пользователь).
+ */
+function assertPrivateStorage(filePath: string): void {
+  let fileStat;
+  try {
+    fileStat = inspectPath(filePath);
+  } catch {
+    throw new McpError("AUTH_REQUIRED", `нет файла учётных данных ${filePath}`, {
+      hint: "создайте файл с REMPLANNER_LOGIN и REMPLANNER_PASSWORD (права 0600)",
+    });
+  }
+  if (fileStat.symlink) {
+    throw new McpError("AUTH_REQUIRED", `${filePath}: файл учётных данных — символическая ссылка, отказ`, {
+      hint: `положите обычный файл с правами 0600 (chmod 600 ${filePath})`,
+    });
+  }
+  if (hasWideMode(fileStat.mode)) {
+    const mode = (fileStat.mode & 0o777).toString(8);
+    throw new McpError("AUTH_REQUIRED", `${filePath}: права файла шире 0600 (${mode}), доступ группы/других — отказ`, {
+      hint: `chmod 600 ${filePath}`,
+    });
+  }
+  let dirStat;
+  try {
+    dirStat = inspectPath(dirname(filePath));
+  } catch {
+    return; // каталог исчез между проверками — ошибка чтения ниже
+  }
+  if (hasWideMode(dirStat.mode)) {
+    const mode = (dirStat.mode & 0o777).toString(8);
+    throw new McpError("AUTH_REQUIRED", `каталог ${dirname(filePath)} имеет права шире 0700 (${mode}) — отказ`, {
+      hint: `chmod 700 ${dirname(filePath)}`,
+    });
+  }
 }
 
 export function readCredentials(filePath: string): Credentials {
+  assertPrivateStorage(filePath);
   let text: string;
   try {
     text = readFileSync(filePath, "utf8");
@@ -43,9 +86,6 @@ export function readCredentials(filePath: string): Credentials {
     throw new McpError("AUTH_REQUIRED", `нет файла учётных данных ${filePath}`, {
       hint: "создайте файл с REMPLANNER_LOGIN и REMPLANNER_PASSWORD (права 0600)",
     });
-  }
-  if (!isPrivateMode(filePath)) {
-    process.emitWarning(`${filePath}: права шире 0600 — сузьте (chmod 600)`);
   }
   const env = parseEnvFile(text);
   const login = env["REMPLANNER_LOGIN"] ?? "";
