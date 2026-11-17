@@ -157,20 +157,24 @@ const REDOS_CASES = [
   ["mixed kv junk", "a.b-c_d=e.f:g; ".repeat(7_000)],
 ] as const;
 
-test("ревью 152 M4: ReDoS — 100 КБ быстрее 50 мс", () => {
-  // минимальное время из трёх прогонов: шум параллельных тестов не должен
-  // маскировать сложность алгоритма (квадратичный вариант давал секунды)
+test("ревью 152 M4: ReDoS — 100 КБ быстрее 200 мс (медиана 5 прогонов после прогрева)", () => {
+  // устойчивость к шуму параллельных тестов (169-b5b6): прогрев JIT, медиана
+  // 5 прогонов и порог с запасом против квадратичного случая — тот занимал
+  // секунды на этих же входах, линейный вариант проходит за единицы мс
   const t = (str: string): number => {
-    let best = Infinity;
-    for (let i = 0; i < 3; i++) {
+    const times: number[] = [];
+    for (let i = 0; i < 6; i++) {
       const t0 = performance.now();
       maskSecrets(str);
-      best = Math.min(best, performance.now() - t0);
+      times.push(performance.now() - t0);
     }
-    return best;
+    times.sort((a, b) => a - b);
+    return (times[2]! + times[3]!) / 2;
   };
+  // прогрев на первом (самом дешёвом) входе
+  t(REDOS_CASES[0]![1].slice(0, 1000));
   for (const [nm, str] of REDOS_CASES) {
     const ms = t(str);
-    assert.ok(ms < 50, `${nm}: maskSecrets на ${str.length} байтах занял ${ms.toFixed(1)} мс`);
+    assert.ok(ms < 200, `${nm}: maskSecrets на ${str.length} байтах занял ${ms.toFixed(1)} мс`);
   }
 });

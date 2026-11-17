@@ -23,6 +23,15 @@ import { cmToMm } from "../model/units.ts";
 import type { LedStrip, StripLight, LineStrip } from "../model/types.ts";
 import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
 import {
+  MAX_POLYLINE_POINTS,
+  MAX_POLYGON_VERTICES,
+  MAX_RENDER_WIDTH_PX,
+  MAX_NAME_CHARS,
+  MAX_KEY_CHARS,
+  MAX_QUERY_CHARS,
+  SHEET_NAME_PATTERN,
+} from "../limits.ts";
+import {
   setFloorFinish, removeFloorFinish, setWallFinish, removeWallFinish, setCeilingFinish, removeCeilingFinish,
   resolveRoom as resolveRoomFinish, finishList,
 } from "../model/finish.ts";
@@ -305,7 +314,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       {
         start: mmPoint, end: mmPoint,
         thickness_mm: mmInt.optional(),
-        material: z.string().optional().describe("исходные стены: a_block (по умолчанию) и др.; для kind=partition: pgb (по умолчанию), foam_block, brick, gypsum, glass (PRO), bar (PRO)"),
+        material: z.string().max(MAX_KEY_CHARS).optional().describe("исходные стены: a_block (по умолчанию) и др.; для kind=partition: pgb (по умолчанию), foam_block, brick, gypsum, glass (PRO), bar (PRO)"),
         kind: z.enum(["initial", "partition"]).optional(),
         role: z.enum(["wall", "balcony"]).optional(),
       },
@@ -331,10 +340,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "Свободные (несоединённые) концы допустимы, как в редакторе: ответ содержит предупреждение wall_free_ends (список концов в мм); " +
         "помещение образует только замкнутый контур (closed: true).",
       {
-        points: z.array(mmPoint).min(2),
+        points: z.array(mmPoint).min(2).max(MAX_POLYLINE_POINTS),
         closed: z.boolean().optional(),
         thickness_mm: mmInt.optional(),
-        material: z.string().optional(),
+        material: z.string().max(MAX_KEY_CHARS).optional(),
         kind: z.enum(["initial", "partition"]).optional(),
       },
       async (a) => {
@@ -364,7 +373,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         depth: mmInt.describe("мм по Y"),
         wall_thickness: thickness.optional(),
         dimensions: z.enum(["inner", "axis"]).optional(),
-        name: z.string().optional().describe("имя помещения (фаза 2 — сейчас игнорируется)"),
+        name: z.string().max(MAX_NAME_CHARS).optional().describe("имя помещения (фаза 2 — сейчас игнорируется)"),
       },
       async (a) => {
         const ws = wsOf();
@@ -386,10 +395,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     room_add_polygon: tool(
       "Добавить комнату-полигон: точки внутреннего контура по часовой стрелке (мм). Для Г- и П-образных комнат.",
       {
-        points: z.array(mmPoint).min(3).describe("обход по часовой стрелке, Y вниз"),
+        points: z.array(mmPoint).min(3).max(MAX_POLYGON_VERTICES).describe("обход по часовой стрелке, Y вниз"),
         wall_thickness: mmInt.optional(),
         dimensions: z.enum(["inner", "axis"]).optional(),
-        name: z.string().optional(),
+        name: z.string().max(MAX_NAME_CHARS).optional(),
       },
       async (a) => {
         const ws = wsOf();
@@ -415,7 +424,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         anchor: z.enum(["start", "end"]).optional(),
         thickness_mm: mmInt.optional(),
         side: z.enum(["both", "left", "right"]).optional(),
-        material: z.string().optional(),
+        material: z.string().max(MAX_KEY_CHARS).optional(),
         start: mmPoint.optional(),
         end: mmPoint.optional(),
       },
@@ -757,9 +766,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "ограждение и опорный столб — отдельные сущности (terrace_add, terrace_fence_add, terrace_column_add, territory_add); " +
         "«Террасная доска» — покрытие листа «Полы» (не предмет).",
       {
-        query: z.string().min(1),
-        group: z.string().optional().describe("furniture, santeh_furniture, lights, stairs, sockets, …"),
-        sheet: z.string().optional().describe("лист: furniture, santeh, …"),
+        query: z.string().min(1).max(MAX_QUERY_CHARS),
+        group: z.string().max(MAX_KEY_CHARS).optional().describe("furniture, santeh_furniture, lights, stairs, sockets, …"),
+        sheet: z.string().regex(SHEET_NAME_PATTERN).optional().describe("лист: furniture, santeh, …"),
         limit: mmInt.optional().describe("сколько позиций (по умолчанию 20)"),
       },
       async (a) => {
@@ -780,7 +789,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     catalog_get: tool(
       "Все параметры позиции каталога по точному name (из catalog_search).",
-      { name: z.string().min(1) },
+      { name: z.string().min(1).max(MAX_NAME_CHARS) },
       async (a) => {
         const entry = await ctx.toolEntry(a["name"] as string);
         return ok({
@@ -848,7 +857,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "Контуры тёплого пола и трубы климата — НЕ предметы: warm_floor/warm_floor_ir/warm_floor_water → warm_floor_add, " +
         "warm_floor_pipe/conditioner_drainage/heat_pipe_hot/heat_pipe_cold/ventpipe_out/ventpipe_in → pipe_add.",
       {
-        name: z.string().min(1).describe("точное имя позиции каталога"),
+        name: z.string().min(1).max(MAX_NAME_CHARS).describe("точное имя позиции каталога"),
         position,
         angle_deg: mm.optional().describe("поворот в градусах, по часовой стрелке"),
         width_mm: mmInt.optional(),
@@ -1682,7 +1691,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "сторона, лежащая на ограждении террасы, отклоняется — проведите там terrace_fence_add " +
         "(редактор удаляет такие границы). Площадь террасы редактор считает сам. " +
         "После добавления вызывайте model_validate и project_save.",
-      { points: z.array(mmPoint).min(3).max(64).describe("вершины замкнутого контура, мм") },
+      { points: z.array(mmPoint).min(3).max(MAX_POLYGON_VERTICES).describe("вершины замкнутого контура, мм") },
       async (a) => {
         const ws = wsOf();
         const borders = ws.apply("terrace_add", (m) => addBorderRing(m, "terrace_borders", "терраса", { points: a["points"] as MmPoint[] }));
@@ -1753,11 +1762,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "Проёмы на ограждения ставить нельзя (opening_add отклонит с INVALID_ARGUMENT). Контур без самопересечений; " +
         "отказ любого сегмента отменяет весь балкон. После добавления вызывайте model_validate и project_save.",
       {
-        points: z.array(mmPoint).min(2).max(64).describe("осевые точки ограждения, мм"),
+        points: z.array(mmPoint).min(2).max(MAX_POLYGON_VERTICES).describe("осевые точки ограждения, мм"),
         closed: z.boolean().optional().describe("замкнуть контур (обычно нет — балкон замыкается наружной стеной)"),
         thickness_mm: mmInt.optional().describe("толщина, мм (по умолчанию 100, лимиты 40..1000)"),
         height_mm: mmInt.optional().describe("высота ограждения, мм (по умолчанию 1000)"),
-        material: z.string().optional().describe("материал (по умолчанию a_block)"),
+        material: z.string().max(MAX_KEY_CHARS).optional().describe("материал (по умолчанию a_block)"),
       },
       async (a) => {
         const ws = wsOf();
@@ -1886,7 +1895,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       "Нарисовать участок (пункт меню «Терраса и участок» → «Нарисовать участок»): замкнутый контур " +
         "из отрезков-границ (мм, минимум 3 вершины) — зона двора вокруг дома. Правила те же, что у " +
         "террасы: без самопересечений. После добавления вызывайте model_validate и project_save.",
-      { points: z.array(mmPoint).min(3).max(64).describe("вершины замкнутого контура, мм") },
+      { points: z.array(mmPoint).min(3).max(MAX_POLYGON_VERTICES).describe("вершины замкнутого контура, мм") },
       async (a) => {
         const ws = wsOf();
         const borders = ws.apply("territory_add", (m) => addBorderRing(m, "territory_borders", "участок", { points: a["points"] as MmPoint[] }));
@@ -2195,8 +2204,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "(model_hash, счётчики стен/проёмов/предметов в модели и у редактора). " +
         "Листы: init (по умолчанию — общий чертёж), rooms, furniture, santeh. Используйте после правок для визуальной проверки.",
       {
-        sheet: z.string().optional().describe("лист плана (по умолчанию init)"),
-        width_px: mmInt.optional().describe("ширина PNG (по умолчанию 1600)"),
+        // B6 (аудит 65): имя листа — узкий паттерн (буквы/цифры/_/-): значение
+        // с запятой/пробелом/#/]/кавычкой отсекается схемой и не доходит до
+        // CSS-селектора адаптера.
+        sheet: z.string().regex(SHEET_NAME_PATTERN).optional().describe("лист плана (по умолчанию init)"),
+        width_px: z.number().finite().int().min(1).max(MAX_RENDER_WIDTH_PX).optional().describe("ширина PNG (по умолчанию 1600)"),
         dimensions: z.boolean().optional().describe("размеры на плане (по умолчанию true)"),
       },
       async (a) => {

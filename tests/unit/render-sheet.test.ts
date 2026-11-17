@@ -7,18 +7,22 @@ import assert from "node:assert/strict";
 import { renderPlan, switchSheetInPage } from "../../src/editor/adapter.ts";
 
 /** Подменяет document/window на время вызова switchSheetInPage (функция для страницы). */
-function withFakeDom(opts: { nav: boolean; setPlanName?: () => void }, fn: () => void): { clicks: number; setPlanCalls: number } {
+function withFakeDom(opts: { nav: boolean; setPlanName?: () => void; navClasses?: string[] }, fn: () => void): { clicks: number; setPlanCalls: number } {
   const state = { clicks: 0, setPlanCalls: 0 };
   const g = globalThis as unknown as { document?: unknown; window?: unknown; HTMLElement?: unknown };
   const prevDocument = g.document;
   const prevWindow = g.window;
   const prevHTMLElement = g.HTMLElement;
+  const navElements = (opts.navClasses ?? (opts.nav ? ["plan_furniture"] : [])).map((cls) => ({
+    classList: {
+      contains: (t: string) => cls.split(/\s+/).includes(t),
+    },
+    click: () => { state.clicks++; },
+  }));
   g.document = {
-    querySelector: (sel: string) => {
-      if (opts.nav && String(sel).startsWith(".groups_navi_item.plan_")) {
-        return { click: () => { state.clicks++; } };
-      }
-      return null;
+    querySelectorAll: (sel: string) => {
+      if (String(sel) === ".groups_navi_item") return navElements;
+      return [];
     },
   };
   g.window = {
@@ -76,4 +80,30 @@ test("render-sheet: нет ни навигации, ни setPlanName → null, r
       return true;
     },
   );
+});
+
+// ---------- B6 (аудит 65): CSS-инъекция через имя листа ----------
+
+test("render-sheet: инъекция в имени листа — click не вызывается ни на одном элементе", () => {
+  // элементы навигации, которые «угадывает» инъекция: вторая ветка селектора
+  // старого вида `.groups_navi_item.plan_x, #unrelated` выбрала бы #unrelated
+  const navClasses = ["plan_furniture", "plan_init"];
+  for (const sheet of ["x, #unrelated", "x, .groups_navi_item", "a b", "#furniture", "furniture]", "furniture'", 'furniture"', "x,.plan_init"]) {
+    const state = withFakeDom({ nav: true, navClasses, setPlanName() {} }, () => {
+      switchSheetInPage(sheet);
+    });
+    assert.equal(state.clicks, 0, `click не вызывается для листа ${JSON.stringify(sheet)}`);
+  }
+});
+
+test("render-sheet: точное совпадение токена класса — plan_furniture_extra не кликается для furniture", () => {
+  const navClasses = ["plan_furniture_extra", "groups_navi_item plan_init"];
+  const state = withFakeDom({ nav: true, navClasses }, () => {
+    assert.equal(switchSheetInPage("furniture"), null);
+  });
+  assert.equal(state.clicks, 0, "частичное совпадение префикса не кликается");
+  const state2 = withFakeDom({ nav: true, navClasses: ["groups_navi_item plan_furniture"] }, () => {
+    assert.equal(switchSheetInPage("furniture"), "click");
+  });
+  assert.equal(state2.clicks, 1, "точный токен plan_furniture кликается");
 });
