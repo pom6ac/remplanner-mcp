@@ -29,12 +29,16 @@ function shownPath(p: string): string {
  * найден, нет доступа, это каталог, битый JSON, не тот формат — McpError с
  * понятным текстом, а не нейтральное «внутренняя ошибка: Error (ERR-…)».
  * Прочие ошибки пробрасываются как есть (неожиданные, сериализует errorToPayload).
+ * Для export (m10 ревью 152) ENOENT/ENOTDIR — это отсутствующий каталог назначения,
+ * а не файл: «путь не найден».
  */
-function planFileError(e: unknown, p: string): McpError {
+function planFileError(e: unknown, p: string, kind: "import" | "export" = "import"): McpError {
   const shown = shownPath(p);
   const code = e instanceof Error ? (e as NodeJS.ErrnoException).code : undefined;
   if (code === "ENOENT" || code === "ENOTDIR") {
-    return new McpError("NOT_FOUND", `файл не найден: ${shown}`);
+    return kind === "export"
+      ? new McpError("NOT_FOUND", `путь не найден: ${shown}`)
+      : new McpError("NOT_FOUND", `файл не найден: ${shown}`);
   }
   if (code === "EACCES" || code === "EPERM") {
     return new McpError("INVALID_ARGUMENT", `нет доступа к файлу: ${shown}`);
@@ -175,7 +179,7 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
         try {
           writeFileSync(args["path"] as string, JSON.stringify(payload, null, 1));
         } catch (e) {
-          throw planFileError(e, args["path"] as string);
+          throw planFileError(e, args["path"] as string, "export");
         }
         return ok({ path: args["path"], scope, bytes: JSON.stringify(payload).length });
       },

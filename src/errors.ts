@@ -65,29 +65,60 @@ const SECRET_KEY_SOURCE =
 /**
  * true, если имя ключа/параметра — секретное. Совпадение «по вхождению с
  * границей слова»: access_token, x-auth-token, PHPSESSID, client_secret
- * ловятся так же, как точные имена (находка №2 ревью 147). Граница учитывает
- * и переход регистра: accessToken, authToken, clientSecret, sessionId —
- * camelCase-составные ключи (M1 ревью 150).
+ * ловятся так же, как точные имена (находка №2 ревью 147). Границы: слева —
+ * не цифра и не буква (иначе «relogin:» маскируется как «login»); справа —
+ * не строчная буква, т.е. цифра тоже граница: token2, password1, authkey2,
+ * accessToken1 (M4 ревью 152).
  */
-const IS_SECRET_KEY_RE = new RegExp(`(?:^|[^a-z0-9])(?:${SECRET_KEY_SOURCE})(?:$|[^a-z0-9])`, "i");
+const IS_SECRET_KEY_RE = new RegExp(`(?:^|[^a-z0-9])(?:${SECRET_KEY_SOURCE})(?:$|[^a-z])`, "i");
+
+/**
+ * То же для camelCase-ключей после разбиения на слова. Отличие: «_», появившийся
+ * от разбиения camelCase, — не граница справа, если продолжение не ключ-секрет и
+ * не id/key/token/secret (m8 ревью 152: tokenCount, authMode, loginAttempts —
+ * не секреты). Настоящий «_» из snake_case проверяется IS_SECRET_KEY_RE по
+ * сырому имени (password_confirmation — секрет).
+ */
+const IS_SECRET_KEY_CAMEL_RE = new RegExp(
+  `(?:^|[^a-z0-9])(?:${SECRET_KEY_SOURCE})(?:$|[^a-z_]|_(?:id|key|token|secret)(?:$|[^a-z]))`,
+  "i",
+);
 
 /** true, если имя ключа/параметра — секретное. */
 export function isSecretKey(name: string): boolean {
-  // camelCase разбивается на слова до нижнего регистра (M1 ревью 150):
-  // accessToken → access_token, authToken → auth_token, clientSecret → client_secret
-  const norm = name.trim().replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
-  return IS_SECRET_KEY_RE.test(norm);
+  const raw = name.trim();
+  if (!raw) return false;
+  // 1) по сырому имени (без разбиения): настоящие разделители (_ - .), цифры,
+  //    начало/конец — границы; составные из этих же слов ловятся по конечному
+  //    слову (accessToken → …token, APIKey → apikey, SessionID → sessionid).
+  if (IS_SECRET_KEY_RE.test(raw.toLowerCase())) return true;
+  // 2) camelCase (M1 ревью 150): разбиение на слова с границами из п.1,
+  //    но «_» от перехода регистра — граница справа только перед продолжением
+  //    id/key/token/secret (m7: APIToken → api_token — по конечному token).
+  const norm = raw
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .toLowerCase();
+  return IS_SECRET_KEY_CAMEL_RE.test(norm);
 }
 
 // Левая граница слова: не буквенно-цифровая (ревью 147 №6 — иначе «relogin:» маскируется как «login»).
 const LEFT = "(?<![A-Za-z0-9])";
 
 // key=value / key: value (query, form-тела, заголовки, плоский текст).
-// Значение — до разделителя (&, пробел, кавычка, ;, скобки); кавычкованное — целиком.
-const KV_SECRETS_RE = new RegExp(
-  `(${LEFT}(?:${SECRET_KEY_SOURCE})["']?\\s*[:=]\\s*)("[^"\\r\\n]*"|'[^'\\r\\n]*'|[^\\s&"',;})\\r\\n\\]]+)`,
-  "gi",
-);
+// Кандидат пары: ключ целиком + разделитель; секретность ключа проверяется
+// isSecretKey (единый источник с JSON-правилом и details, M4 ревью 152):
+// ключи с суффиксом после секретного слова (session_id=, SECRET_KEY=,
+// x-session-id:) и с цифрой (token2=) маскируются так же, как ключи с
+// секретным словом прямо перед «=». Значение — до разделителя (&, пробел,
+// кавычка, ;, скобки); кавычкованное — целиком; у секретного ключа значение
+// жадное (включая «=» и «:» — как до M4).
+const KV_KEY_SEP_RE = /(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)(["']?)(\s*[:=]\s*)/g;
+const KV_VALUE_RE = /"[^"\r\n]*"|'[^'\r\n]*'|[^\s&"',;})\r\n\]]+/y;
+// Дешёвый предфильтр кандидатов kv-правила: секретный ключ обязательно содержит
+// одно из секретных слов (isSecretKey ищет их с границами), поэтому кандидата
+// без вхождения можно пропустить без полной проверки (ReDoS-сторож).
+const SECRET_HINT_RE = new RegExp(SECRET_KEY_SOURCE, "i");
 // Authorization — любая схема (Bearer/Basic/Token/Digest/…): значение целиком до конца
 // строки, включая свёрнутые продолжения (obs-fold: строки с отступа, m2 ревью 150).
 // Стоит ДО kv-правила.
@@ -109,17 +140,6 @@ const SAFE_COOKIE_ATTR_RE = /^(?:path|domain|expires|max-age|samesite|secure|htt
 // единый источник с camelCase-поддержкой (M1 ревью 150). Стоит ДО kv-правила,
 // иначе хвост после \" остаётся открытым.
 const JSON_SECRET_RE = /"([A-Za-z0-9_-]+)"(\s*:\s*)("(?:\\.|[^"\\])*")/g;
-// camelCase-ключи в тексте (M1 ревью 150): accessToken=…, userPassword=…, sessionId=…
-// Регистрозависимо (граница camelCase — это сам переход регистра), поэтому
-// whiskey/monkey/«sessions: 3» не задеваются (фикс №6 ревью 147 остаётся).
-const CAMEL_TAIL_SOURCE = "Token|Password|Passwd|Secret|Key|Auth|Session|Cookie|Jwt";
-const KV_CAMEL_RE = new RegExp(
-  // левая граница ключа обязательна: без неё движок с каждой позиции длинной
-  // буквенной последовательности заново сканирует хвост — квадратичный рост
-  `(?<![A-Za-z0-9_-])([A-Za-z0-9_-]*(?:${CAMEL_TAIL_SOURCE})|(?:${SECRET_KEY_SOURCE})(?=[A-Z])[A-Za-z0-9]*)["']?(\\s*[:=]\\s*)` +
-    `("[^"\\r\\n]*"|'[^'\\r\\n]*'|[^\\s&"',;})\\r\\n\\]]+)`,
-  "g",
-);
 // [value="…"] в Playwright-селекторах (input[name=password][value="…"]).
 const SELECTOR_VALUE_RE = /(\[\s*value\s*=\s*)("[^"]*"|'[^']*')(\s*\])/g;
 // «token <значение>» — секрет после имени через пробел (токеноподобное значение,
@@ -135,12 +155,45 @@ function repeatableSecretValue(v: string): boolean {
   return v.length >= 8 && !/^(?:\d+(?:\.\d+)?|true|false|null)$/i.test(v);
 }
 
+/**
+ * Секретные kv-пары (M4 ревью 152): ключ матчится целиком и проверяется
+ * isSecretKey. Кандидат с не-секретным ключом не «съедает» своё значение:
+ * сканирование продолжается со значения, чтобы вложенная секретная пара
+ * (например «details: password<равно>…» или «{"error":"authkey<равно>…"}») была найдена.
+ * Значение читается только после проверки ключа: не-секретные пары не стоят
+ * жадного сканирования значения, поэтому цепочки «a=a=a=…» обрабатываются
+ * за линейное время.
+ */
+function* kvSecretPairs(text: string): Generator<{ index: number; valueStart: number; end: number; value: string }> {
+  const keys = new RegExp(KV_KEY_SEP_RE.source, "g");
+  const valueRe = new RegExp(KV_VALUE_RE.source, "y");
+  for (let m = keys.exec(text); m !== null; ) {
+    const key = m[1]!;
+    if (!SECRET_HINT_RE.test(key) || !isSecretKey(key)) {
+      m = keys.exec(text); // продолжаем со значения: вложенные пары не должны «съедаться»
+      continue;
+    }
+    valueRe.lastIndex = m.index + m[0].length;
+    const vm = valueRe.exec(text);
+    if (vm === null) {
+      m = keys.exec(text); // разделитель без значения — не пара
+      continue;
+    }
+    const valueStart = m.index + m[0].length;
+    yield { index: m.index, valueStart, end: valueStart + vm[0].length, value: vm[0] };
+    keys.lastIndex = valueStart + vm[0].length; // перепрыгиваем замаскированное значение
+    m = keys.exec(text);
+  }
+}
+
 function collectSecretValues(text: string, into: Set<string>): void {
   // значения, найденные после секретных ключей, маскируются во всём тексте:
-  // секрет часто встречается повторно без ключа (находка №2 ревью 147)
-  for (const m of text.matchAll(KV_SECRETS_RE)) {
-    const v = m[2] ?? "";
-    const clean = v.length > 1 && (v.startsWith('"') || v.startsWith("'")) ? v.slice(1, -1) : v;
+  // секрет часто встречается повторно без ключа (находка №2 ревью 147);
+  // одно kv-правило на все формы ключей — значения camelCase-ключей собираются
+  // тоже (m9 ревью 152)
+  for (const p of kvSecretPairs(text)) {
+    const raw = p.value;
+    const clean = raw.length > 1 && (raw.startsWith('"') || raw.startsWith("'")) ? raw.slice(1, -1) : raw;
     if (repeatableSecretValue(clean)) into.add(clean);
   }
   for (const m of text.matchAll(JSON_SECRET_RE)) {
@@ -149,6 +202,16 @@ function collectSecretValues(text: string, into: Set<string>): void {
     const v = raw.length > 1 && (raw.startsWith('"') || raw.startsWith("'")) ? raw.slice(1, -1) : raw;
     if (repeatableSecretValue(v)) into.add(v);
   }
+}
+
+function replaceKvSecrets(text: string): string {
+  let out = "";
+  let last = 0;
+  for (const p of kvSecretPairs(text)) {
+    out += text.slice(last, p.valueStart) + "***";
+    last = p.end;
+  }
+  return out + text.slice(last);
 }
 
 function applySecretRules(text: string): string {
@@ -162,10 +225,9 @@ function applySecretRules(text: string): string {
   });
   out = out.replace(JSON_SECRET_RE, (m, key: string, sep: string) =>
     isSecretKey(key) ? `"${key}"${sep}"***"` : m);
-  out = out.replace(KV_CAMEL_RE, "$1$2***");
+  out = replaceKvSecrets(out);
   out = out.replace(SELECTOR_VALUE_RE, "$1***$3");
   out = out.replace(TOKEN_SPACE_RE, "$1$2***");
-  out = out.replace(KV_SECRETS_RE, "$1***");
   for (const v of values) out = out.split(v).join("***");
   return out;
 }
