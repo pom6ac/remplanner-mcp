@@ -162,4 +162,55 @@ test("contract: топология из геометрии — коридор + 
   }
 });
 
+// Этап 137: normalize несёт ПЕРЕСТРОЕННЫЕ комнаты (тот же пересчёт, что делает save:
+// план "a" → copyRooms1 → план "c" → draw). До фикса копия имела старые комнаты,
+// и каждый save с делением/слиянием/переносом комнаты давал ложный SITE_ERROR.
+test("contract: normalize повторяет пересчёт комнат сохранения — деление комнаты в копии", { timeout: 240_000 }, async () => {
+  const session = await anonSession();
+  const created = await createAnonProject(session);
+  const D = 20;
+  const h = D / 2;
+  const specs: [{ x: number; y: number }, { x: number; y: number }][] = [
+    [{ x: 0, y: -300 }, { x: 600, y: -300 }],
+    [{ x: 600, y: -300 }, { x: 600, y: 120 }],
+    [{ x: 600, y: 120 }, { x: 0, y: 120 }],
+    [{ x: 0, y: 120 }, { x: 0, y: -300 }],
+    [{ x: 0 + h, y: 0 }, { x: 600 - h, y: 0 }],
+    [{ x: 300, y: -300 + h }, { x: 300, y: 0 - h }],
+    [{ x: 500, y: -300 + h }, { x: 500, y: 0 - h }],
+  ];
+  const model: Model = {
+    v: 3, id: created.object_id, plan_id: "0",
+    walls: {}, items: {}, pillars: {}, rulers: {}, comments: {},
+    total_height: 270, final: false,
+  };
+  for (const [i, [p1, p2]] of specs.entries()) {
+    model.walls[`w${i + 1}`] = {
+      id: `w${i + 1}`, plan: "a", role: "wall", child: 0, archive: 0, demount: 0,
+      depth: D, height: 270, p1: { ...p1 }, p2: { ...p2 }, p1st: 0, p2st: 0,
+      material: "a_block", color: 0, level: "1", show_dls: true, holes: {},
+    } as never;
+  }
+  // делим комнату (x 10..290, y -290..-10) стеной y=-150 — как в эталоне
+  // ui-ref-rooms-save-split.json
+  model.walls["w8"] = {
+    id: "w8", plan: "a", role: "wall", child: 0, archive: 0, demount: 0,
+    depth: 10, height: 270, p1: { x: 10, y: -150 }, p2: { x: 290, y: -150 }, p1st: 0, p2st: 0,
+    material: "c_pgb", color: 0, level: "1", show_dls: true, holes: {},
+  } as never;
+  prepareForRestore(model);
+
+  const editor = await openEditor(session, created.object_id, created.plan_id || "1", 30_000, { anonymous: true });
+  try {
+    const norm = await editor.normalize(structuredClone(model) as unknown as Record<string, unknown>, 1200);
+    const rooms2 = ((norm.model as Record<string, unknown>)["rooms2"] ?? {}) as Record<string, { area?: number }>;
+    const areas = Object.values(rooms2).map((r) => r.area ?? 0).sort((a, b) => b - a);
+    assert.equal(Object.keys(rooms2).length, 5, "в копии normalize уже перестроенные комнаты (5)");
+    assert.deepEqual(areas.map((x) => Math.round(x * 100) / 100), [5.8, 5.04, 3.78, 3.78, 2.24],
+      `площади в копии: ${JSON.stringify(areas)} — деление 7,84 → 2×3,78`);
+  } finally {
+    await editor.close();
+  }
+});
+
 mkdirSync(join(ROOT, "screenshots"), { recursive: true });

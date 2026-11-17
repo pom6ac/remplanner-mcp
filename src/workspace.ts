@@ -1271,7 +1271,7 @@ export class Workspace {
   private historyIndex = -1;
   private editorInternal: EditorLike | null = null;
   /** Комнаты последней нормализации (кеш workspace, design §12.5): выручает, когда в
-   *  канонической копии rooms2 ещё пусто (редактор кладёт полигоны после save → reload). */
+   *  канонической копии rooms2 ещё нет (офлайн-режим, пустой проект до нормализации). */
   private roomsCache: EditorRoom[] = [];
   /** Офлайн-режим: стены меняются без нормализации (REMPLANNER_OFFLINE_FIXTURE). */
   offline = false;
@@ -1584,9 +1584,10 @@ export class Workspace {
       // последний успешный save) с политикой локальных изменений стен: исчезновение
       // затронутой комнаты и новая комната из изменённых стен — предупреждение,
       // потеря незатронутой комнаты — атомарный отказ операции.
-      // T24: редактор кладёт полигоны комнат в копию после save → reload; если в
-      // нормализованной копии rooms2 ещё пуст, а редактор отчитался списком комнат
-      // (norm.rooms), контурную сверку откладываем до верификации после записи.
+      // T24: комнаты редактор пересчитывает при штатном сохранении (план "c" → draw).
+      // Этап 137: normalize повторяет этот пересчёт, поэтому в копии уже перестроенные
+      // комнаты. Страховка: если rooms2 в копии пусто, а редактор отчитался списком
+      // комнат (norm.rooms), контурную сверку откладываем до верификации после записи.
       const normRoomsMap = ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined;
       const roomsPendingInCopy = (normRoomsMap === undefined || Object.keys(normRoomsMap).length === 0) && (norm.rooms?.length ?? 0) > 0;
       const roomsNormCheck = roomsPendingInCopy

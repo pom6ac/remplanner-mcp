@@ -93,8 +93,10 @@ export const PAGE = {
         try { return JSON.parse(JSON.stringify(w.project.copy('server'))); } catch (e) { return null; }
       };
       const collect = (copy) => {
-        // комнаты: ROOMS2 (зоны с именами), при пустом — ROOMS1 (points без area)
-        const roomSource = w.ROOMS2 && Object.keys(w.ROOMS2).length > 0 ? w.ROOMS2 : w.ROOMS1;
+        // комнаты списка: из итоговой копии (перестроенные rooms2), при пустой —
+        // живые ROOMS2 (зоны с именами), при пустых — ROOMS1 (points без area)
+        const copyRooms = (copy || {}).rooms2 && Object.keys(copy.rooms2).length > 0 ? copy.rooms2 : null;
+        const roomSource = copyRooms || (w.ROOMS2 && Object.keys(w.ROOMS2).length > 0 ? w.ROOMS2 : w.ROOMS1);
         const rooms = Object.entries(roomSource || {}).map(([id, r]) => {
           const poly = r && Array.isArray(r.polygon) ? r.polygon : (r && Array.isArray(r.points) ? r.points : []);
           let areaCm2 = null;
@@ -145,7 +147,34 @@ export const PAGE = {
         const want = Object.keys(wallsNow).length;
         const got = copy ? Object.keys(copy.walls || {}).length : -1;
         if (want === 0 || (got === want && got >= 0) || tries >= 20) {
-          collect(copy || {});
+          // Пересчёт комнат, который делает штатное сохранение: редактор перестраивает rooms2
+          // только внутри save-пайплайна (план "a" → copyRooms1 → план "c" → draw),
+          // поэтому copy('server') после простого draw несёт СТАРЫЕ комнаты (проба 137:
+          // split/merge/перенос стены — сервер после save имел другие комнаты, копия — старые,
+          // строгая сверка после save давала ложный SITE_ERROR). Повторяем ТУ ЖЕ
+          // последовательность ТЕХ ЖЕ функций редактора, что в начале штатного сохранения
+          // (probe 137 p137-page4: копия получает перестроенные комнаты, идущие на сервер).
+          let finalCopy = copy || {};
+          try {
+            w.$Project.backupPlan();
+            w.$Project.setPlanName('a'); w.plan_ = 0; w.$Project.draw({ for3d: 1, rooms: 1 });
+            w.$Project.copyRooms1();
+            w.$Project.setPlanName('c'); w.plan_ = 0; w.$Project.draw({ for3d: 1, rooms: 1 });
+            const rebuilt = copyOf();
+            w.$Project.restorePlan();
+            // страница возвращается в то же состояние, что до пересчёта: та же модель,
+            // тот же restore, который и так делает следующий круг normalize.
+            // Замечание: подготовка плана "c" может резать стены по проёмам
+            // (split_by_holes) — число стен копии может отличаться от живых WALLS,
+            // это ровно то, что редактор отправляет на save (проверки потерь —
+            // в адаптере normalize: эквивалентность осей, счётчики, ошибки).
+            w.$Project.restore(model, { reset: 1 });
+            w.$Project.draw({ rooms: 1 });
+            if (rebuilt && rebuilt.walls && Object.keys(rebuilt.walls).length > 0) {
+              finalCopy = rebuilt;
+            }
+          } catch (e) { /* старое поведение: копия с какими есть комнатами */ }
+          collect(finalCopy);
           return;
         }
         setTimeout(poll, 400);
