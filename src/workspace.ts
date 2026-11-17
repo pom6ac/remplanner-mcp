@@ -1429,9 +1429,12 @@ export class Workspace {
         });
       }
       // §12.4: конец, который Node ставил на грань или в узел, остался без связи.
-      // ревью 108 R10: отклоняются только НОВЫЕ несоединённые концы — унаследованные
-      // (присутствовали в модели до операции) штатные демонтаж/перенос не блокируют;
-      // защита новых дефектов сохранена полностью.
+      // 142: свободные концы — штатная механика редактора (стандарт remplanner, отчёт
+      // 132 часть 1: свободностоящие перегородки plan:"c" и стены plan:"a" со свободными
+      // концами save сохраняет без потерь и предупреждений; FAQ 2.1 описывает свободный
+      // конец как штатное состояние). Новые несоединённые концы больше не отклонение —
+      // предупреждение wall_free_ends со списком концов в мм; помещение из свободной
+      // стены не образуется (это ограничение редактора, не ошибка).
       // ревью 110 R10: унаследованные концы сопоставляются геометрически (точка конца
       // с допуском, с учётом ожидаемого переноса/разреза/слияния стены операцией —
       // expectedDanglingEndPoints), а не по `wallId.node`: нормализатор редактора
@@ -1445,9 +1448,13 @@ export class Workspace {
       const expectedEnds = expectedDanglingEndPoints(beforeDangling, Object.values(clone.walls));
       const dangling = unmatchedDanglingEnds(danglingAll, expectedEnds);
       if (dangling.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации появились новые несоединённые концы стен (${dangling.slice(0, 5).map((d) => `${d.wallId}.${d.node}`).join(", ")}) — мутация отменена`, {
-          details: { unattached: dangling, unattached_inherited: [...beforeDanglingKeys] },
-        });
+        const endsMm = dangling
+          .map((d) => `${d.wallId}.${d.node} (${Math.round(d.point.x * 10)}; ${Math.round(d.point.y * 10)})`)
+          .join(", ");
+        warnings.push(
+          `wall_free_ends: новые несоединённые концы стен, мм: ${endsMm} — редактор допускает свободные концы (штатно), ` +
+            `помещение из свободной стены не образуется; унаследованные до операции: ${beforeDanglingKeys.size}`,
+        );
       }
       // §12.4: выросли счётчики ошибок редактора
       const grown = errorGrowth(this.lastErrors ?? (this.modelInternal!["errors"] as Record<string, number> | undefined) ?? null, norm.errors ?? null);

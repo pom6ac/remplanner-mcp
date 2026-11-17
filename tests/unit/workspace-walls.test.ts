@@ -125,9 +125,9 @@ test("T28: наложение после нормализации → INVALID_GE
   assert.equal(normalizeCalls(), 1);
 });
 
-test("T28: потерянная связь конца → INVALID_GEOMETRY (§12.4)", async () => {
+test("T28/142: потерянная связь конца → предупреждение wall_free_ends, мутация применяется (§12.4)", async () => {
   const server = { model: corridorModel() };
-  // редактор вернул стены БЕЗ связей (например, оторванный T-конец) — проверка §12.4
+  // редактор вернул стены БЕЗ связей (например, оторванный T-конец) — свободные концы
   const { editor } = mockEditor({
     walls: (model) => {
       const out = normalizeWalls(model as unknown as Model);
@@ -137,16 +137,9 @@ test("T28: потерянная связь конца → INVALID_GEOMETRY (§12
   });
   const ws = new Workspace(deps(editor, server));
   await ws.open("123", "1");
-  const before = JSON.stringify(ws.model);
-  await assert.rejects(
-    ws.applyWalls("wall_add", (m) => addWall(m, { start: { x: 1000, y: 7000 }, end: { x: 3000, y: 7000 } })),
-    (e: unknown) => {
-      assert.equal((e as { code?: string }).code, "INVALID_GEOMETRY");
-      assert.match((e as Error).message, /несоединённ/);
-      return true;
-    },
-  );
-  assert.equal(JSON.stringify(ws.model), before);
+  const { warnings } = await ws.applyWalls("wall_add", (m) => addWall(m, { start: { x: 1000, y: 7000 }, end: { x: 3000, y: 7000 } }));
+  assert.ok(warnings.some((w) => w.startsWith("wall_free_ends")), `wall_free_ends в warnings: ${JSON.stringify(warnings)}`);
+  assert.ok(warnings.some((w) => /\(1000; 7000\)/.test(w) && /\(3000; 7000\)/.test(w)), "концы в мм в предупреждении");
 });
 
 test("T28: рост счётчиков ошибок редактора → INVALID_GEOMETRY", async () => {
