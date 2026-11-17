@@ -161,6 +161,9 @@ comment_add / comments_list  # текстовые комментарии с ук
 model_validate            # проверка геометрии перед сохранением
 render_plan               # PNG плана
 project_save              # сохранение с бэкапом и сверкой
+                          # (в ответе will_delete — число удаляемых объектов сервера
+                          # по каждой коллекции model_get: walls, openings, items,
+                          # pillars, rigels, gas_lines, pipes, …; warnings — где)
 ```
 
 Типовые ошибки и их расшифровка — в таблице ниже.
