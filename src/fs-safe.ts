@@ -15,10 +15,10 @@ export const PRIVATE_FILE_MODE = 0o600;
 
 /** Владелец пути — текущий пользователь (на платформах без uid — true). */
 export function ownedByCurrentUser(path: string): boolean {
-  const getuid = (process as { getuid?: () => number }).getuid;
-  if (typeof getuid !== "function") return true;
+  const uid = fsOwnerCalls.getuid();
+  if (uid === undefined) return true;
   try {
-    return statSync(path).uid === getuid.call(process);
+    return statSync(path).uid === uid;
   } catch {
     return false;
   }
@@ -69,14 +69,20 @@ export function hasWideMode(mode: number): boolean {
 }
 
 /**
- * Точки инъекции сбоев для тестов атомарной записи (ревью 164 m10): ESM-namespace
- * node:fs не патчится, поэтому тесты подменяют реализации здесь. Продовый код
- * эти поля не трогает; по умолчанию — системные функции.
+ * Точки инъекции сбоев для тестов (ревью 164 m10, 166 n3): ESM-namespace
+ * node:fs/node:process не патчится, поэтому тесты подменяют реализации здесь.
+ * Продовый код эти поля не трогает; по умолчанию — системные функции.
  */
 export const fsWriteCalls: {
+  openSync: typeof openSync;
   writeSync: typeof writeSync;
   renameSync: typeof renameSync;
-} = { writeSync, renameSync };
+} = { openSync, writeSync, renameSync };
+
+/** uid текущего процесса (undefined — платформа без uid); подменяется в тестах. */
+export const fsOwnerCalls: { getuid: () => number | undefined } = {
+  getuid: () => (process as { getuid?: () => number }).getuid?.call(process),
+};
 
 /**
  * Атомарная приватная запись: отказ при цели-symlink или не-обычном файле,
@@ -106,7 +112,7 @@ export function writePrivateFile(path: string, data: string | Buffer): void {
   let fd: number | null = null;
   let created = false;
   try {
-    fd = openSync(tmp, "wx", PRIVATE_FILE_MODE);
+    fd = fsWriteCalls.openSync(tmp, "wx", PRIVATE_FILE_MODE);
     created = true;
     let offset = 0;
     while (offset < buf.length) {

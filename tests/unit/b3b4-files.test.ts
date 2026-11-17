@@ -17,7 +17,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensurePrivateDir, writePrivateFile, inspectPath, fsWriteCalls } from "../../src/fs-safe.ts";
+import { ensurePrivateDir, writePrivateFile, inspectPath, fsWriteCalls, fsOwnerCalls, tmpFilePrefix } from "../../src/fs-safe.ts";
 import { readCredentials } from "../../src/credentials.ts";
 import { readPlanFile, MAX_PLAN_FILE_BYTES } from "../../src/server/tools-projects.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
@@ -102,7 +102,7 @@ test("writePrivateFile: отказ на каталог-цель; запись в
 
 // Ревью 164 m10: удаление tmp при сбое записи/rename — инъекция ошибки через
 // fsWriteCalls (ESM-namespace node:fs не патчится).
-function inject<K extends "writeSync" | "renameSync">(
+function inject<K extends "openSync" | "writeSync" | "renameSync">(
   name: K,
   impl: (typeof fsWriteCalls)[K],
 ): (typeof fsWriteCalls)[K] {
@@ -150,6 +150,34 @@ test("writePrivateFile: tmp удаляется при сбое записи (и�
   }
 });
 
+// Ревью 166 n3б: openSync не удался (EEXIST) — файл на пути tmp создан не нами
+// (например, подставлен посторонним между randomBytes и openSync) и не удаляется.
+// Мутант `if (created)` → `if (true)` краснеет: чужой файл был бы unlink'нут.
+test("writePrivateFile: чужой файл на пути tmp (EEXIST) не удаляется (инъекция)", () => {
+  const dir = join(ROOT, "w6");
+  ensurePrivateDir(dir);
+  const file = join(dir, "plan.json");
+  let foreignPath = "";
+  const original = inject("openSync", (p: unknown) => {
+    foreignPath = String(p);
+    writeFileSync(foreignPath, "not-mine"); // как будто файл создал кто-то другой
+    const e = new Error("EEXIST (инъекция)") as NodeJS.ErrnoException;
+    e.code = "EEXIST";
+    throw e;
+  });
+  try {
+    assert.throws(
+      () => writePrivateFile(file, "x"),
+      (e: NodeJS.ErrnoException) => e.code === "EEXIST",
+    );
+    assert.ok(foreignPath.startsWith(join(dir, tmpFilePrefix("plan.json"))), "tmp был в каталоге записи");
+    assert.equal(readFileSync(foreignPath, "utf8"), "not-mine", "чужой файл не удалён");
+  } finally {
+    fsWriteCalls.openSync = original;
+    if (foreignPath !== "") rmSync(foreignPath, { force: true });
+  }
+});
+
 // ---------- credentials: широкие права — отказ ДО чтения ----------
 
 test("credentials: права файла 0644 → отказ с chmod-подсказкой, без значений секретов", () => {
@@ -178,6 +206,28 @@ test("credentials: широкий каталог текущего пользов
   const creds = readCredentials(file);
   assert.equal(creds.login, "u@x");
   assert.equal(mode(dir), 0o700, "каталог починен chmod 700");
+});
+
+// Ревью 166 n3а: каталог чужого владельца — отказ, а не починка. Без root чужой
+// uid не воспроизвести — uid подменяется через шов fsOwnerCalls.
+test("credentials: каталог чужого владельца → отказ, каталог не чинится (uid подменён)", () => {
+  const dir = join(ROOT, "cred5");
+  mkdirSync(dir, { recursive: true, mode: 0o755 });
+  const file = join(dir, "credentials.env");
+  writeFileSync(file, "REMPLANNER_LOGIN=u@x\nREMPLANNER_PASSWORD=p\n");
+  chmodSync(file, 0o600);
+  const original = fsOwnerCalls.getuid;
+  fsOwnerCalls.getuid = () => 99999; // заведомо не uid владельца каталога
+  try {
+    assert.throws(() => readCredentials(file), (e: McpError) => {
+      assert.equal(e.code, "AUTH_REQUIRED");
+      assert.match(e.message, /другому пользователю/);
+      return true;
+    });
+  } finally {
+    fsOwnerCalls.getuid = original;
+  }
+  assert.equal(mode(dir), 0o755, "чужой каталог не чинился");
 });
 
 // Ревью 164 m1: каталог по realpath — symlink-каталог 0700 не отказ.
@@ -308,9 +358,12 @@ test("backupPath: objectId с ../ не выходит за BACKUPS_DIR, файл
 });
 
 // Ревью 164 m3: BACKUPS_DIR-symlink — запись отменяется, цель ссылки не трогается.
-test("writeBackup: BACKUPS_DIR-symlink → отказ, в цель ссылки ничего не записано", async () => {
+// Ревью 166 n1: отказ ДО ensurePrivateDir — chmod цели ссылки не выполняется
+// (прежний порядок успевал сделать chmod 700 цели через chmodSync по symlink).
+test("writeBackup: BACKUPS_DIR-symlink → отказ, права цели ссылки не меняются", async () => {
   const outside = join(ROOT, "outside-backups");
-  ensurePrivateDir(outside);
+  mkdirSync(outside, { recursive: true, mode: 0o755 });
+  assert.equal(mode(outside), 0o755);
   rmSync(BACKUPS_DIR, { recursive: true, force: true });
   symlinkSync(outside, BACKUPS_DIR);
   try {
@@ -318,8 +371,10 @@ test("writeBackup: BACKUPS_DIR-symlink → отказ, в цель ссылки 
     await ws.open("123", "1");
     assert.throws(() => (ws as unknown as { writeBackup(): string }).writeBackup(), (e: McpError) => {
       assert.equal(e.code, "INTERNAL");
+      assert.match(e.message, /символическая ссылка/);
       return true;
     });
+    assert.equal(mode(outside), 0o755, "цель ссылки не получила chmod 700");
     assert.deepEqual(readdirSync(outside), [], "в цель ссылки ничего не записано");
   } finally {
     rmSync(BACKUPS_DIR, { force: true });

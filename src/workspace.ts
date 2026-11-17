@@ -1794,14 +1794,15 @@ export class Workspace {
   /** Снимок модели в backups/ перед каждым сохранением. */
   writeBackup(): string {
     const path = this.backupPath();
-    ensurePrivateDir(BACKUPS_DIR);
-    // B3 (аудит 65, ревью 164 m3): BACKUPS_DIR не должен быть symlink наружу.
-    // Дальше защита — безопасный basename в backupPath (sanitize) и числовой id
-    // на входе; текстовая containment-проверка здесь была тавтологией и убрана.
-    const rootStat = lstatSync(BACKUPS_DIR);
-    if (rootStat.isSymbolicLink()) {
+    // B3 (аудит 65, ревью 164 m3; ревью 166 n1): BACKUPS_DIR не должен быть
+    // symlink наружу. lstat-проверка ДО ensurePrivateDir: chmodSync следует
+    // по symlink, и при прежнем порядке цель ссылки успевала получить chmod 700
+    // до отказа. Несуществующий каталог — не symlink, создаётся обычным путём.
+    const rootStat = lstatSync(BACKUPS_DIR, { throwIfNoEntry: false });
+    if (rootStat?.isSymbolicLink()) {
       throw new McpError("INTERNAL", "каталог резервных копий — символическая ссылка — запись отменена");
     }
+    ensurePrivateDir(BACKUPS_DIR);
     writePrivateFile(
       path,
       JSON.stringify({ object_id: this.project!.objectId, plan_id: this.project!.planId, save_id: this.project!.saveId, saved_at: new Date().toISOString(), model: this.modelInternal }, null, 1),
