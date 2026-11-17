@@ -225,6 +225,76 @@ test("98 N2: обе стороны на месте — совпадение", ()
   assert.deepEqual(finishCompare(exp, got, walls, walls, "normalize").problems, []);
 });
 
+// ---------- 100 N4: перенос стены — не split: строгая проверка отделки ----------
+
+test("100 N4: эталон wall-move — сокращение каждой линии отделки до 10% в normalize — расхождение", () => {
+  const t = loadTopo("wall-move");
+  for (const r of Object.values(t.after.rooms)) {
+    for (const ps of Object.values(r.decor)) {
+      for (const p of ps) {
+        p.line[1] = [
+          p.line[0]![0]! + (p.line[1]![0]! - p.line[0]![0]!) * 0.1,
+          p.line[0]![1]! + (p.line[1]![1]! - p.line[0]![1]!) * 0.1,
+        ];
+      }
+    }
+  }
+  const res = finishCompare(
+    buildRooms(t.before.rooms), buildRooms(t.after.rooms),
+    buildWalls(t.walls_before), buildWalls(t.walls_after), "normalize",
+  );
+  assert.ok(
+    res.problems.some((p) => p.includes("потеряна отделка стены w7")),
+    `перенос стены — не split: укорачивание отделки должно обнаруживаться: ${JSON.stringify(res)}`,
+  );
+});
+
+// ---------- 100 N5: расширение одной комнаты — не merge ----------
+
+/** Комната 200×300 с обоями на стене w1; стены/комнаты — по одному варианту расширения. */
+function expandRoomScene(decorAfter: "full" | "gone"): { exp: Record<string, unknown>; got: Record<string, unknown>; walls: Record<string, unknown> } {
+  const line = (x1: number, x2: number) => ({ p1: { x: x1, y: 300 }, p2: { x: x2, y: 300 } });
+  const exp = {
+    r1: {
+      polygon: [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 300 }, { x: 0, y: 300 }],
+      edges: [{ pid: "w1", p1: { x: 0, y: 300 }, p2: { x: 200, y: 300 }, length: 200 }],
+      decors: [{ exist: true, parts: { p: { id: "p", type: "wallpaper", layer: 1, ...(() => { const l = line(0, 200); return { line: l, line_wall: structuredClone(l), distance: 200 }; })(), height: 0, height_from_floor: 0 } } }],
+      floors: [{ exist: true, cover: "laminate" }],
+      ceilings: [{ exist: false }],
+    },
+  };
+  const got = {
+    r1: {
+      polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }],
+      edges: [{ pid: "w1", p1: { x: 0, y: 300 }, p2: { x: 400, y: 300 }, length: 400 }],
+      decors: [decorAfter === "gone" ? { exist: false } : { exist: true, parts: { p: { id: "p", type: "wallpaper", layer: 1, ...(() => { const l = line(0, 400); return { line: l, line_wall: structuredClone(l), distance: 400 }; })(), height: 0, height_from_floor: 0 } } }],
+      floors: [{ exist: true, cover: "laminate" }],
+      ceilings: [{ exist: false }],
+    },
+  };
+  return { exp, got, walls: { w1: { p1: { x: 0, y: 300 }, p2: { x: 400, y: 300 } } } };
+}
+
+test("100 N5: одна комната 200×300 → 400×300 без второго источника — не merge: удалённая отделка — расхождение", () => {
+  const { exp, got, walls } = expandRoomScene("gone");
+  const res = finishCompare(exp, got, walls, walls, "normalize");
+  assert.ok(
+    res.problems.some((p) => p.includes("потеряна отделка стены w1")),
+    `расширение одной комнаты — не merge: потеря отделки должна обнаруживаться: ${JSON.stringify(res)}`,
+  );
+  assert.deepEqual(
+    res.warnings, [],
+    "расширение одной комнаты — не merge: послабления «при merge не сверяется» быть не должно",
+  );
+});
+
+test("100 N5: та же комната после расширения — отделка и пол сохранены на новой геометрии — verified", () => {
+  const { exp, got, walls } = expandRoomScene("full");
+  const res = finishCompare(exp, got, walls, walls, "normalize");
+  assert.deepEqual(res.problems, [], JSON.stringify(res));
+  assert.deepEqual(res.warnings, []);
+});
+
 // ---------- N3 fallback: merge с отделкой сторон — предупреждение, не блокировка ----------
 
 test("98 N3: merge комнат с отделкой сторон — предупреждение finish_topology_changed, не расхождение", () => {

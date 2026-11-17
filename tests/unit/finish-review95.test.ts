@@ -550,6 +550,97 @@ test("96 R5: через inputSchema+handler MCP — недопустимые п�
   }
 });
 
+// ---------- 100 N4: перенос стены (эталон 98 wall-move) через Workspace.save ----------
+
+type TopoRoom = {
+  poly: [number, number][];
+  edges: Array<[string, number, number, number, number]>;
+  floor: Record<string, unknown> | null;
+  ceiling: Record<string, unknown> | null;
+  decor: Record<string, Array<{ type: string; line: [[number, number], [number, number]] }>>;
+};
+
+/** Комнаты эталона топологии в формате модели редактора. */
+function topoRooms(rooms: Record<string, TopoRoom>): AnyRooms {
+  const out: AnyRooms = {};
+  for (const [label, r] of Object.entries(rooms)) {
+    const edges = r.edges.map(([pid, x1, y1, x2, y2]) => ({
+      pid, p1: { x: x1, y: y1 }, p2: { x: x2, y: y2 }, length: Math.hypot(x2 - x1, y2 - y1),
+    }));
+    const decors = edges.map((_e, i) => {
+      const parts = r.decor[String(i)];
+      if (!parts) return { exist: false };
+      const built: Record<string, unknown> = {};
+      parts.forEach((p, j) => {
+        const line = { p1: { x: p.line[0]![0], y: p.line[0]![1] }, p2: { x: p.line[1]![0], y: p.line[1]![1] } };
+        built[`part${j}`] = {
+          id: `part${j}`, type: p.type, layer: 1, line, line_wall: structuredClone(line),
+          distance: Math.hypot(line.p2.x - line.p1.x, line.p2.y - line.p1.y),
+          height: 0, height_from_floor: 0,
+        };
+      });
+      return { exist: true, parts: built };
+    });
+    out[label] = {
+      polygon: r.poly.map(([x, y]) => ({ x, y })),
+      edges, decors,
+      floors: r.floor ? [{ exist: true, ...r.floor }] : [{ exist: false }],
+      ceilings: r.ceiling ? [{ exist: true, ...r.ceiling }] : [{ exist: false }],
+    };
+  }
+  return out;
+}
+
+/** Модель после переноса стены w7 (эталон wall-move): стены уже на новой оси,
+ *  комнаты ещё не пересчитаны редактором (report 100: воспроизведение N4). */
+function wallMoveModel(): { m: Model; after: AnyRooms } {
+  const t = JSON.parse(readFileSync("tests/fixtures/ui-ref-finish-topo-wall-move.json", "utf8")) as {
+    walls_after: Record<string, [number, number, number, number]>;
+    before: { rooms: Record<string, TopoRoom> };
+    after: { rooms: Record<string, TopoRoom> };
+  };
+  const m = baseModel();
+  const walls = m.walls as unknown as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>;
+  for (const [id, [x1, y1, x2, y2]] of Object.entries(t.walls_after)) {
+    walls[id]!.p1 = { x: x1, y: y1 };
+    walls[id]!.p2 = { x: x2, y: y2 };
+  }
+  (m as unknown as Record<string, unknown>)["rooms2"] = topoRooms(t.before.rooms);
+  return { m, after: topoRooms(t.after.rooms) };
+}
+
+test("100 N4: эталон wall-move через Workspace.save — verified", async () => {
+  const { m, after } = wallMoveModel();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    norm["rooms2"] = structuredClone(after);
+  });
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+});
+
+test("100 N4: wall-move — нормализация сократила отделку до 10% — NORMALIZATION_DROPPED, записи нет", async () => {
+  const { m, after } = wallMoveModel();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  let wrote = false;
+  const ws = saveMock(server, () => { wrote = true; }, (norm) => {
+    const rooms = normRooms(norm);
+    for (const rec of Object.values(rooms)) {
+      const decors = rec["decors"] as Array<Record<string, unknown>>;
+      for (const d of decors) {
+        for (const p of Object.values((d["parts"] ?? {}) as Record<string, Record<string, unknown>>)) {
+          const line = p["line"] as { p1: { x: number; y: number }; p2: { x: number; y: number } };
+          line.p2 = { x: line.p1.x + (line.p2.x - line.p1.x) * 0.1, y: line.p1.y + (line.p2.y - line.p1.y) * 0.1 };
+        }
+      }
+    }
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => e instanceof McpError && e.code === "NORMALIZATION_DROPPED");
+  assert.equal(wrote, false, "модель с потерянной отделкой не должна записываться на сервер");
+});
+
 // ---------- R6: метки R<n> из полного списка до фильтрации ----------
 
 test("96 R6: finish_get с фильтром сохраняет метку R<n> из полного списка; метка годится для следующего вызова", () => {

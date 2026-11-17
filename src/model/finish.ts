@@ -284,12 +284,18 @@ export function removeCeilingFinish(model: Model, roomRef: string): void {
 // Ревью 98 — сверка в два режима (эталоны редактора tests/fixtures/ui-ref-finish-topo-*.json,
 // сняты настоящим headless-нормализатором пробой scripts/probes/98-finish-topo.ts):
 // - режим «normalize» (до записи, локальная модель против результата normalize):
-//   топологические операции редактора разрешены только при реально изменившейся
-//   топологии (есть комнаты без сопоставления по контуру), и только по правилам,
-//   снятым с редактора: split — пол/потолок наследует КАЖДАЯ часть, отделка сторон
-//   переживает разрез в комнате-наследнике; merge — объединённая комната сохраняет
-//   покрытие одного из источников; отделка сторон при merge не сверяется
-//   (эталона нет — предупреждение finish_topology_changed);
+//   послабления топологии — ТОЛЬКО при доказанной топологической операции (классификация
+//   по площадям, ревью 100 N4/N5; «контур изменён» ≠ «топология изменена»):
+//   split — одна исходная комната → несколько комнат результата (части в основном лежат
+//   внутри исходной); merge — несколько исходных комнат → одна; иначе (перенос стены,
+//   деформация или расширение одной комнаты) — ТА ЖЕ комната с новой геометрией:
+//   строгая проверка, как при неизменном контуре — покрытие интервалов своей стороны
+//   по новой оси стены (допуски R2/R3: штатный отступ, проёмы, изменение длины стены),
+//   пол/потолок/параметры обязательны. Правила доказанных операций — по эталонам:
+//   split — пол/потолок наследует КАЖДАЯ часть, отделка сторон переживает разрез
+//   в комнате-наследнике; merge — объединённая комната сохраняет покрытие одного из
+//   источников; отделка сторон при merge не сверяется (эталона нет — предупреждение
+//   finish_topology_changed);
 // - режим «save» (после записи, GET против нормализованной модели): СТРОГО — каждая
 //   комната (по каноническому контуру) и каждая сторона стены (ориентированно, часть
 //   принадлежит своей комнате) сохраняет отделку и параметры; никаких merge/split-
@@ -312,8 +318,7 @@ export type FinishWall = {
 
 const COORD_TOL = 0.5; // см: допуск сравнения вершин/границ
 const COLLINEAR_TOL = 0.5; // см: вершина на хорде ближе этого — коллинеарная
-const SPLIT_MIN = 0.3; // доля ожидаемой комнаты в комнате-кандидате при split
-const MERGE_MAX = 0.7; // доля ожидаемой комнаты в объединённой комнате ниже — комната-наследник другая
+const SPLIT_MIN = 0.3; // доля ожидаемой комнаты в комнате-кандидате при split/merge
 const PART_SHARE_MIN = 0.5; // доля части внутри ожидаемой комнаты: комната-«часть» split (эталон 98)
 
 function signedArea(poly: Point[]): number {
@@ -715,35 +720,48 @@ export function finishCompare(
   }
   const unmatchedExp = Object.keys(exp).filter((rid) => !exact.has(rid));
 
-  // 2. наследники при изменившейся топологии (только режим normalize): комната-наследник
-  //    по наибольшему перекрытию; split/merge — по доле наследника в ожидаемой комнате
-  type HeirInfo = { key: string; mergeLike: boolean; partKeys: string[] } | null;
+  // 2. наследники при изменившейся топологии (только режим normalize). Изменение
+  //    контура — ещё не смена топологии (ревью 100 N4/N5): классификация по площадям.
+  //    split доказан несколькими комнатами результата, merge — несколькими реальными
+  //    источниками; иначе (перенос стены, деформация, расширение одной комнаты) —
+  //    та же комната с новой геометрией, строгая проверка без послаблений.
+  type HeirInfo = { key: string; kind: "split" | "merge" | "same"; partKeys: string[] } | null;
   const heirOf = new Map<string, HeirInfo>();
   if (mode === "normalize") {
     for (const rid of unmatchedExp) {
       const room = exp[rid]!;
       const poly = roomPolygon(room);
-      let best: { key: string; shareExp: number; shareGot: number } | null = null;
+      let best: { key: string; shareExp: number } | null = null;
       for (const k of gotKeys) {
         const shareExp = overlapShare(poly ?? [], roomPolygon(got[k]!) ?? []);
         if (shareExp < SPLIT_MIN) continue;
-        const gp = roomPolygon(got[k]!) ?? [];
-        const shareGot = polygonArea(gp) > 1e-9 ? overlapShare(gp, poly ?? []) : 0;
-        if (!best || shareExp > best.shareExp) best = { key: k, shareExp, shareGot };
+        if (!best || shareExp > best.shareExp) best = { key: k, shareExp };
       }
       if (!best) { heirOf.set(rid, null); continue; }
-      const mergeLike = best.shareGot <= MERGE_MAX;
-      const partKeys = mergeLike ? [] : Object.keys(got).filter((k) => {
+      // комнаты результата, в основном лежащие внутри исходной (эталон 98: split)
+      const partKeys = Object.keys(got).filter((k) => {
         const gp = roomPolygon(got[k]!) ?? [];
         return polygonArea(gp) > 1e-9 && overlapShare(gp, poly ?? []) >= PART_SHARE_MIN;
       });
-      heirOf.set(rid, { key: best.key, mergeLike, partKeys });
+      if (partKeys.length >= 2) {
+        heirOf.set(rid, { key: best.key, kind: "split", partKeys });
+        continue;
+      }
+      const sources = unmatchedExp.filter((s) =>
+        overlapShare(roomPolygon(exp[s]!) ?? [], roomPolygon(got[best.key]!) ?? []) >= SPLIT_MIN,
+      );
+      heirOf.set(rid, { key: best.key, kind: sources.length >= 2 ? "merge" : "same", partKeys: [] });
     }
   }
+  /** Наследник без смены топологии: сверять строго, как совпадающую комнату. */
+  const sameMatch = (rid: string): string | undefined => {
+    const h = heirOf.get(rid);
+    return h && h.kind === "same" ? h.key : undefined;
+  };
 
   // 3. пол/потолок
   for (const [rid, room] of Object.entries(exp)) {
-    const gid = exact.get(rid);
+    const gid = exact.get(rid) ?? sameMatch(rid);
     const expFloor = floorSig(room);
     const expCeil = ceilingSig(room);
     if (!gid) {
@@ -761,7 +779,7 @@ export function finishCompare(
         continue;
       }
       const heirRoom = got[heir.key]!;
-      if (!heir.mergeLike) {
+      if (heir.kind === "split") {
         // split: пол/потолок наследует КАЖДАЯ часть (эталон 98: split-unequal, split-3)
         for (const k of heir.partKeys) {
           const part = got[k]!;
@@ -833,7 +851,7 @@ export function finishCompare(
     const sameParams = (w: WallPartSig) => (g: { type: string; layer: number; height: number; fromFloor: number }): boolean =>
       g.type === w.type && g.layer === w.layer &&
       Math.abs(g.height - w.height) <= NUM_TOL && Math.abs(g.fromFloor - w.fromFloor) <= NUM_TOL;
-    const gid = exact.get(rid);
+    const gid = exact.get(rid) ?? sameMatch(rid);
     if (!gid) {
       if (mode === "save") {
         for (const sig of expWallsList) {
@@ -848,7 +866,7 @@ export function finishCompare(
         }
         continue;
       }
-      if (heir.mergeLike) {
+      if (heir.kind === "merge") {
         // merge: эталона наследования отделки сторон нет — не блокируем, предупреждение
         warnings.push(`finish_topology_changed: room ${rid}: отделка сторон (${expWallsList.length}) при merge не сверяется — проверьте finish_get после сохранения`);
         continue;
