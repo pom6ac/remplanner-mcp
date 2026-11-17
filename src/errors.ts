@@ -60,7 +60,7 @@ export class McpError extends Error {
 const SECRET_KEY_SOURCE =
   "authkey|auth_key|authorization|auth|password|passwd|pwd|pass|token|access_token|refresh_token|" +
   "id_token|jwt|secret|client_secret|api_key|api-key|apikey|x-api-key|access_key|cookie|set_cookie|" +
-  "set-cookie|session|sessionid|phpsessid|sessid|sid|csrf|xsrf|login";
+  "set-cookie|session|sessionid|phpsessid|sessid|sid|csrf|xsrf|login|private_key|privatekey";
 
 /**
  * true, если имя ключа/параметра — секретное. Совпадение «по вхождению с
@@ -73,14 +73,27 @@ const SECRET_KEY_SOURCE =
 const IS_SECRET_KEY_RE = new RegExp(`(?:^|[^a-z0-9])(?:${SECRET_KEY_SOURCE})(?:$|[^a-z])`, "i");
 
 /**
+ * Явный короткий список НЕсекретных продолжений после секретного слова в
+ * camelCase-ключе (m11 ревью 154, инверсия логики m8 ревью 152): продолжение
+ * после секретного слова секретно по умолчанию (fail-closed), несекретное —
+ * только если следующий после «_» шаг — одно из этих слов до границы
+ * (конец или «_»): tokenCount, authMode, loginAttempts, passCount,
+ * isSessionValid. Всё остальное (passwordHash, tokenValue, authHeader,
+ * privateKey) — секрет.
+ */
+const NON_SECRET_CONTINUATION =
+  "count|type|mode|attempts|status|expires|required|url|taken|name|enabled|valid|len|length|ttl|at|point";
+
+/**
  * То же для camelCase-ключей после разбиения на слова. Отличие: «_», появившийся
- * от разбиения camelCase, — не граница справа, если продолжение не ключ-секрет и
- * не id/key/token/secret (m8 ревью 152: tokenCount, authMode, loginAttempts —
- * не секреты). Настоящий «_» из snake_case проверяется IS_SECRET_KEY_RE по
- * сырому имени (password_confirmation — секрет).
+ * от разбиения camelCase, — не граница справа, если продолжение — слово из
+ * явного несекретного списка (m11 ревью 154: tokenCount, authMode,
+ * loginAttempts — не секреты; passwordHash, tokenValue, authHeader — секреты).
+ * Настоящий «_» из snake_case проверяется IS_SECRET_KEY_RE по сырому имени
+ * (password_confirmation — секрет).
  */
 const IS_SECRET_KEY_CAMEL_RE = new RegExp(
-  `(?:^|[^a-z0-9])(?:${SECRET_KEY_SOURCE})(?:$|[^a-z_]|_(?:id|key|token|secret)(?:$|[^a-z]))`,
+  `(?:^|[^a-z0-9])(?:${SECRET_KEY_SOURCE})(?:$|[^a-z_]|_(?!(?:${NON_SECRET_CONTINUATION})(?:$|[^a-z_])))`,
   "i",
 );
 
@@ -92,12 +105,14 @@ export function isSecretKey(name: string): boolean {
   //    начало/конец — границы; составные из этих же слов ловятся по конечному
   //    слову (accessToken → …token, APIKey → apikey, SessionID → sessionid).
   if (IS_SECRET_KEY_RE.test(raw.toLowerCase())) return true;
-  // 2) camelCase (M1 ревью 150): разбиение на слова с границами из п.1,
-  //    но «_» от перехода регистра — граница справа только перед продолжением
-  //    id/key/token/secret (m7: APIToken → api_token — по конечному token).
+  // 2) camelCase (M1 ревью 150): разбиение на слова с границами из п.1;
+  //    аббревиатуры разбиваются lookahead'ом — однобуквенное совпадение без
+  //    отката, серия заглавных обрабатывается линейно (M5 ревью 154);
+  //    «_» от перехода регистра — граница справа, только если продолжение не
+  //    из несекретного списка (m11 ревью 154: fail-closed).
   const norm = raw
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+    .replace(/([A-Z])(?=[A-Z][a-z])/g, "$1_")
     .toLowerCase();
   return IS_SECRET_KEY_CAMEL_RE.test(norm);
 }
@@ -115,10 +130,6 @@ const LEFT = "(?<![A-Za-z0-9])";
 // жадное (включая «=» и «:» — как до M4).
 const KV_KEY_SEP_RE = /(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)(["']?)(\s*[:=]\s*)/g;
 const KV_VALUE_RE = /"[^"\r\n]*"|'[^'\r\n]*'|[^\s&"',;})\r\n\]]+/y;
-// Дешёвый предфильтр кандидатов kv-правила: секретный ключ обязательно содержит
-// одно из секретных слов (isSecretKey ищет их с границами), поэтому кандидата
-// без вхождения можно пропустить без полной проверки (ReDoS-сторож).
-const SECRET_HINT_RE = new RegExp(SECRET_KEY_SOURCE, "i");
 // Authorization — любая схема (Bearer/Basic/Token/Digest/…): значение целиком до конца
 // строки, включая свёрнутые продолжения (obs-fold: строки с отступа, m2 ревью 150).
 // Стоит ДО kv-правила.
@@ -169,7 +180,11 @@ function* kvSecretPairs(text: string): Generator<{ index: number; valueStart: nu
   const valueRe = new RegExp(KV_VALUE_RE.source, "y");
   for (let m = keys.exec(text); m !== null; ) {
     const key = m[1]!;
-    if (!SECRET_HINT_RE.test(key) || !isSecretKey(key)) {
+    // секретность решает только isSecretKey: предфильтра по сырому ключу нет
+    // (M6 ревью 154 — accessKey= и подобные после camel-разбиения); после
+    // фикса M5 isSecretKey линеен, полной проверки не страшно звать на
+    // каждого кандидата
+    if (!isSecretKey(key)) {
       m = keys.exec(text); // продолжаем со значения: вложенные пары не должны «съедаться»
       continue;
     }
