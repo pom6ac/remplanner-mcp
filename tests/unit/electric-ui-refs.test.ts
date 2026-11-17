@@ -10,7 +10,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Model, ItemProps, Cable } from "../../src/model/types.ts";
-import { addRoomRect } from "../../src/model/walls.ts";
+import { addRoomRect, moveWall, deleteWall } from "../../src/model/walls.ts";
 import { addItem, updateItem, deleteItem } from "../../src/model/items.ts";
 import {
   addCable, deleteCable, cablesReferencingItem, refreshSocketGroupSubs,
@@ -510,15 +510,10 @@ test("90 R1: mock save — сервер потерял под-розетку п�
   });
 });
 
-test("90 R1: mock save — смена типа/смещение/смена высоты под-розетки → NORMALIZATION_DROPPED", async () => {
+test("90 R1: mock save — смена типа/смена высоты под-розетки → NORMALIZATION_DROPPED", async () => {
   const cases: Array<(it: ItemProps) => void> = [
     // смена типа под-розетки
     (it) => { (it.socket_group as Array<{ name: string }>)[0]!.name = "socket_usb"; },
-    // смещение координат
-    (it) => {
-      const s = (it.socket_group as Array<{ center: { x: number; y: number }; real_center: { x: number; y: number } }>)[0]!;
-      s.center.x += 5; s.real_center.x += 5;
-    },
     // смена высоты установки группы
     (it) => { (it.over_floor as { value: number }).value = 999; },
   ];
@@ -541,6 +536,134 @@ test("90 R1: mock save — смена типа/смещение/смена вы�
       }
       return ok;
     }, `кейс ${n}`);
+  }
+});
+
+// ---------- ревью 92 R1a: производная геометрия под-розеток не блокирует save ----------
+
+test("92 R1a: mock save — нормализатор пересчитал center/real_center/vd → verified=true, rounds=1", async () => {
+  const { m, sw, lamp } = switchLampScenario();
+  addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    // сценарий ревьюера R1-derived-recalc: пересчёт производных полей при нормализации
+    const it = Object.values(norm.items as Record<string, ItemProps>).find((i) => i.name === "socket_group")!;
+    (it.socket_group as Array<{ center: { x: number; y: number }; real_center: { x: number; y: number } }>)[0]!.center = { ...it.pc! };
+    (it.socket_group as Array<{ real_center: { x: number; y: number } }>)[0]!.real_center = { ...it.pc! };
+    (it.over_floor as { vd: number }).vd = 95;
+    it.id_wall = "0";
+  });
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+  assert.equal(res.rounds, 1);
+});
+
+test("92 R1a: mock save — moveWall + refreshSocketGroupSubs при нормализации → verified=true, rounds=1", async () => {
+  const { m, sw, lamp } = switchLampScenario();
+  addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+  const wid = topWall(m);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    // редактор при нормализации пересчитал под-розетки вслед за перенесённой стеной
+    const it = Object.values(norm.items as Record<string, ItemProps>).find((i) => i.name === "socket_group")!;
+    refreshSocketGroupSubs(norm as unknown as Model, it);
+  });
+  await ws.open("0", "1");
+  ws.apply("move-wall", (mm) => { moveWall(mm, { wallId: wid, offsetMm: 100 }); });
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+  assert.equal(res.rounds, 1);
+});
+
+test("92 R1a: mock save — deleteWall + refreshSocketGroupSubs при нормализации → verified=true, rounds=1", async () => {
+  const { m, sw, lamp } = switchLampScenario();
+  addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+  const wid = topWall(m);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    const it = Object.values(norm.items as Record<string, ItemProps>).find((i) => i.name === "socket_group")!;
+    refreshSocketGroupSubs(norm as unknown as Model, it);
+  });
+  await ws.open("0", "1");
+  ws.apply("delete-wall", (mm) => { deleteWall(mm, wid); });
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+  assert.equal(res.rounds, 1);
+});
+
+test("92 R1a: mock save — у модели нет real_center, совпадающее отсутствие не расхождение → verified=true", async () => {
+  const { m, sw, lamp } = switchLampScenario();
+  addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+  delete (sw.socket_group as Array<{ real_center?: unknown }>)[0]!.real_center;
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {});
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+  assert.equal(res.rounds, 1);
+});
+
+test("92 R1a: mock save — группа без cables, нормализатор пересчитал производные → verified=true, rounds=1", async () => {
+  const m = baseModel();
+  addItemByName(m, "socket", { againstWall: { wallId: topWall(m), offsetMm: 1000 } });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    const it = Object.values(norm.items as Record<string, ItemProps>).find((i) => i.name === "socket_group")!;
+    (it.socket_group as Array<{ center: { x: number; y: number } }>)[0]!.center = { x: it.pc!.x, y: it.pc!.y + 3 };
+    (it.over_floor as { vd: number }).vd = 35;
+  });
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+  assert.equal(res.rounds, 1);
+});
+
+// ---------- ревью 92 R1b: потеря over_floor.value не проходит молча ----------
+
+const OVER_FLOOR_LOSS: Array<[string, (it: ItemProps) => void]> = [
+  ["удаление over_floor", (it) => { delete it.over_floor; }],
+  ["удаление value", (it) => { delete (it.over_floor as { value?: unknown }).value; }],
+  ["замена нечисловым", (it) => { (it.over_floor as { value?: unknown }).value = "90"; }],
+];
+
+test("92 R1b: mock save — over_floor.value потерян при нормализации → NORMALIZATION_DROPPED", async () => {
+  for (const [label, mutate] of OVER_FLOOR_LOSS) {
+    const { m, sw, lamp } = switchLampScenario();
+    addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+    const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, () => {}, (norm) => {
+      mutate(Object.values(norm.items as Record<string, ItemProps>).find((i) => i.name === "socket_group")!);
+    });
+    await ws.open("0", "1");
+    await assert.rejects(() => ws.save(), (e: unknown) => {
+      const ok = e instanceof McpError && (e as McpError).code === "NORMALIZATION_DROPPED";
+      if (ok) {
+        const det = (e as McpError).details as Record<string, unknown>;
+        assert.ok(Array.isArray(det["socket_group_mismatches"]) && (det["socket_group_mismatches"] as string[]).some((s) => s.includes("over_floor.value")), `${label}: подробность`);
+      }
+      return ok;
+    }, label);
+  }
+});
+
+test("92 R1b: mock save — over_floor.value потерян только на сервере после save → SITE_ERROR", async () => {
+  for (const [label, mutate] of OVER_FLOOR_LOSS) {
+    const { m, sw, lamp } = switchLampScenario();
+    addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+    const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, (srv) => {
+      mutate(Object.values((srv.model as { items: Record<string, ItemProps> }).items).find((i) => i.name === "socket_group")!);
+    });
+    await ws.open("0", "1");
+    await assert.rejects(() => ws.save(), (e: unknown) => {
+      const ok = e instanceof McpError && (e as McpError).code === "SITE_ERROR";
+      if (ok) {
+        const det = (e as McpError).details as Record<string, unknown>;
+        assert.ok(Array.isArray(det["socket_group_mismatches"]) && (det["socket_group_mismatches"] as string[]).some((s) => s.includes("over_floor.value")), `${label}: подробность`);
+      }
+      return ok;
+    }, label);
   }
 });
 

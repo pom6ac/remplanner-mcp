@@ -374,26 +374,25 @@ function cableLinkFormMismatches(
 }
 
 /**
- * Состав под-розеток socket_group (ревью 90 R1): id, тип (name), координаты center/
- * real_center и высота установки группы (over_floor.value, см). Потеря под-розетки,
- * смена типа, смещение или смена высоты — расхождение; производные поля — допуск
- * 0,1 см. Проверка не зависит от связей: неподключённые группы тоже сверяются.
+ * Состав и пользовательские свойства под-розеток socket_group (ревью 90 R1,
+ * 92 R1a/R1b): число под-розеток, id, тип (name) и высота установки группы
+ * (over_floor.value, см). Производная геометрия (center, real_center, vd,
+ * id_wall) до save НЕ сверяется: редактор легитимно пересчитывает её при
+ * нормализации (магнит к стене, перенос/удаление стены). Если ожидается
+ * числовой over_floor.value — его наличие и равенство обязательны (R1b);
+ * совпадающее отсутствие необязательного поля на обеих сторонах — не расхождение.
  */
 type SubsItemSig = {
-  socket_group?: Array<{ name?: string; id?: string; center?: { x?: number; y?: number }; real_center?: { x?: number; y?: number } }>;
+  socket_group?: Array<{ name?: string; id?: string }>;
   over_floor?: unknown;
 };
 
-function socketGroupSubsMismatches(
+export function socketGroupSubsUserMismatches(
   expected: Record<string, SubsItemSig>,
   got: Record<string, unknown>,
 ): string[] {
   const out: string[] = [];
-  const near = (a: number | undefined, b: number | undefined): boolean =>
-    a !== undefined && b !== undefined && Math.abs(a - b) <= 0.1;
-  const ptEq = (e: { x?: number; y?: number } | undefined, g: { x?: number; y?: number } | undefined): boolean =>
-    near(e?.x, g?.x) && near(e?.y, g?.y);
-  const overFloorOf = (it: SubsItemSig | undefined): number | undefined => {
+  const overFloorValueOf = (it: SubsItemSig | undefined): number | undefined => {
     const of = it?.over_floor;
     return of && typeof of === "object" && typeof (of as { value?: unknown }).value === "number"
       ? (of as { value: number }).value
@@ -418,13 +417,53 @@ function socketGroupSubsMismatches(
       const label = `${itemId}/${s.id ?? i}`;
       if ((s.id ?? "") !== (gs.id ?? "")) out.push(`${label}: id под-розетки изменился (на сервере «${gs.id ?? ""}»)`);
       if ((s.name ?? "") !== (gs.name ?? "")) out.push(`${label}: тип изменился (на сервере «${gs.name ?? ""}»; ожидалось «${s.name ?? ""}»)`);
+    }
+    const h = overFloorValueOf(it);
+    if (h !== undefined) {
+      const gh = overFloorValueOf(g);
+      if (gh === undefined) out.push(`${itemId}: высота установки (over_floor.value) потеряна после сохранения`);
+      else if (Math.abs(h - gh) > 0.1) out.push(`${itemId}: высота установки изменилась (на сервере ${gh}; ожидалось ${h})`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Производная геометрия под-розеток после save (ревью 92 R1a/R1b): center,
+ * real_center и over_floor.vd сверяются только против нормализованного ожидания
+ * (того, что ушло на save) с допуском 0,1 см; совпадающее отсутствие
+ * необязательного поля на обеих сторонах — не расхождение.
+ */
+export function socketGroupSubsDerivedMismatches(
+  expected: Record<string, SubsItemSig>,
+  got: Record<string, unknown>,
+): string[] {
+  const out: string[] = [];
+  const near = (a: number | undefined, b: number | undefined): boolean =>
+    a !== undefined && b !== undefined && Math.abs(a - b) <= 0.1;
+  const ptEq = (e: { x?: number; y?: number } | undefined, g: { x?: number; y?: number } | undefined): boolean =>
+    // совпадающее отсутствие необязательного поля — не расхождение (92 R1a)
+    (e === undefined && g === undefined) || (near(e?.x, g?.x) && near(e?.y, g?.y));
+  const num = (v: unknown): number | undefined => (typeof v === "number" ? v : undefined);
+  const overFloorOf = (it: SubsItemSig | undefined): { value?: unknown; vd?: unknown } | undefined =>
+    it?.over_floor && typeof it.over_floor === "object" ? (it.over_floor as { value?: unknown; vd?: unknown }) : undefined;
+  for (const [itemId, it] of Object.entries(expected)) {
+    const subs = it.socket_group;
+    if (!Array.isArray(subs)) continue;
+    const g = got[itemId] as SubsItemSig | undefined;
+    const gSubs = g?.socket_group;
+    if (!Array.isArray(gSubs)) continue; // состав ловит user-проверка
+    for (let i = 0; i < Math.min(subs.length, gSubs.length); i++) {
+      const s = subs[i]! as { id?: string; center?: { x?: number; y?: number }; real_center?: { x?: number; y?: number } };
+      const gs = gSubs[i]! as { center?: { x?: number; y?: number }; real_center?: { x?: number; y?: number } };
+      const label = `${itemId}/${s.id ?? i}`;
       if (!ptEq(s.center, gs.center)) out.push(`${label}: center сместился (на сервере ${gs.center?.x},${gs.center?.y}; ожидалось ${s.center?.x},${s.center?.y})`);
       if (!ptEq(s.real_center, gs.real_center)) out.push(`${label}: real_center сместился (на сервере ${gs.real_center?.x},${gs.real_center?.y}; ожидалось ${s.real_center?.x},${s.real_center?.y})`);
     }
-    const h = overFloorOf(it);
-    const gh = overFloorOf(g);
-    if (h !== undefined && gh !== undefined && Math.abs(h - gh) > 0.1) {
-      out.push(`${itemId}: высота установки изменилась (на сервере ${gh}; ожидалось ${h})`);
+    const vdE = num(overFloorOf(it)?.vd);
+    const vdG = num(overFloorOf(g)?.vd);
+    if (vdE !== undefined && vdG !== undefined && Math.abs(vdE - vdG) > 0.1) {
+      out.push(`${itemId}: производная высота (over_floor.vd) изменилась (на сервере ${vdG}; ожидалось ${vdE})`);
     }
   }
   return out;
@@ -1397,9 +1436,10 @@ export class Workspace {
         wsLinesNorm,
         normLinesNorm,
       );
-      // ревью 90 R1: состав под-розеток socket_group (id/тип/координаты/высота)
-      // сверяется при нормализации независимо от связей
-      const subsNorm = socketGroupSubsMismatches(
+      // ревью 90 R1, 92 R1a: состав и пользовательские свойства под-розеток
+      // сверяются при нормализации независимо от связей; производная геометрия
+      // (center/real_center/vd) не сверяется — редактор легитимно пересчитывает её
+      const subsNorm = socketGroupSubsUserMismatches(
         this.modelInternal!.items as Record<string, SubsItemSig>,
         (norm.model as { items?: Record<string, unknown> }).items ?? {},
       );
@@ -1730,8 +1770,9 @@ export class Workspace {
         line_strips: ((norm.model as Record<string, unknown>).line_strips ?? {}) as Record<string, unknown>,
       },
     );
-    // ревью 90 R1: состав под-розеток socket_group сверяется до записи
-    const subsNorm = socketGroupSubsMismatches(
+    // ревью 90 R1, 92 R1a: состав и пользовательские свойства под-розеток сверяются
+    // до записи; производная геометрия — только после save против нормализованного ожидания
+    const subsNorm = socketGroupSubsUserMismatches(
       this.modelInternal!.items as Record<string, SubsItemSig>,
       (norm.model as { items?: Record<string, unknown> }).items ?? {},
     );
@@ -1882,8 +1923,14 @@ export class Workspace {
         expectedItems as Record<string, CableLinkItem>,
         itemsAfter,
       );
-      // ревью 90 R1: состав под-розеток socket_group после save
-      const subsAfter = socketGroupSubsMismatches(
+      // ревью 90 R1, 92 R1a/R1b: состав и пользовательские свойства под-розеток
+      // после save; производная геометрия (center/real_center/vd) — против
+      // нормализованного ожидания с допуском
+      const subsAfter = socketGroupSubsUserMismatches(
+        expectedItems as Record<string, SubsItemSig>,
+        itemsAfter,
+      );
+      const subsDerivedAfter = socketGroupSubsDerivedMismatches(
         expectedItems as Record<string, SubsItemSig>,
         itemsAfter,
       );
@@ -1897,7 +1944,7 @@ export class Workspace {
         wallsAfterTyped as unknown as Record<string, BalconyWallProps>,
       );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -1923,6 +1970,7 @@ export class Workspace {
             cables_connection_mismatches: cablesConnAfter,
             cables_link_form_mismatches: cableFormAfter,
             socket_group_mismatches: subsAfter,
+            socket_group_derived_mismatches: subsDerivedAfter,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });
