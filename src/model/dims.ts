@@ -176,22 +176,70 @@ export function rulerLengthCm(r: { p1: Point; p2: Point }): number {
 }
 
 /**
+ * Транзитивный пересчёт цепочек размеров (Ruler.checkLinkedRulers, проба
+ * 113-ruler-src-full): конец прицепленного (p2_target.target_name "ruler")
+ * следует за p1 источника; перенос p2 звена с привязкой p2_target→ruler двигает
+ * p1 источника (общий конец цепочки «Разделить на участки»). Распространение —
+ * до неподвижной точки с лимитом итераций (откат при несходимости — как у
+ * транзитивных пересчётов этапа 47).
+ */
+function propagateLinkedRulers(model: Model, dirty: Array<{ rulerId: string; end: "p1" | "p2" }>): void {
+  const rulers = rulerCollection(model);
+  const queue = [...dirty];
+  let guard = 0;
+  while (queue.length > 0) {
+    if (++guard > 1000) {
+      throw new McpError("INVALID_GEOMETRY", "цепочка размеров не сходится (цикл привязок ruler→ruler) — мутация отменена");
+    }
+    const d = queue.shift()!;
+    const x = rulers[d.rulerId];
+    if (!x) continue;
+    if (d.end === "p1") {
+      for (const o of Object.values(rulers)) {
+        if (o.p2_target && o.p2_target.target_name === "ruler" && o.p2_target.target_id === d.rulerId) {
+          const np = { ...x.p1 };
+          if (!pointEq(o.p2, np, 0)) {
+            o.p2 = np;
+            queue.push({ rulerId: o.id, end: "p2" });
+          }
+        }
+      }
+    } else {
+      const t = x.p2_target;
+      const y = t && t.target_name === "ruler" ? rulers[t.target_id] : undefined;
+      if (y) {
+        const np = { ...x.p2 };
+        if (!pointEq(y.p1, np, 0)) {
+          y.p1 = np;
+          queue.push({ rulerId: y.id, end: "p1" });
+        }
+      }
+    }
+  }
+}
+
+/**
  * dim_update: перенос концов, привязки, отступ, цвет, «показать на всех листах».
  * attach1/attach2: null — отвязать конец, id — привязать к предмету. Как в
  * редакторе, перенос конца с сохранённой привязкой к предмету обновляет её
- * смещение (point_delta/target_angle — от текущего центра предмета).
+ * смещение (point_delta/target_angle — от текущего центра предмета). Перенос
+ * концов транзитивно пересчитывает цепочку размеров (p2_target→ruler).
  */
 export function updateRuler(model: Model, params: UpdateRulerParams): RulerEntity {
   const ruler = rulerCollection(model)[params.rulerId];
   if (!ruler) throw new McpError("NOT_FOUND", `размер ${params.rulerId} не найден в rulers`);
+  const dirty: Array<{ rulerId: string; end: "p1" | "p2" }> = [];
   if (params.p1) {
     requireFinitePoint("p1", params.p1);
     ruler.p1 = cmPoint(params.p1);
+    dirty.push({ rulerId: ruler.id, end: "p1" });
   }
   if (params.p2) {
     requireFinitePoint("p2", params.p2);
     ruler.p2 = cmPoint(params.p2);
+    dirty.push({ rulerId: ruler.id, end: "p2" });
   }
+  propagateLinkedRulers(model, dirty);
   for (const [key, attach] of [["p1_target", params.attach1], ["p2_target", params.attach2]] as const) {
     if (attach === undefined) {
       // перенос конца с сохранённой привязкой к предмету — смещение привязки обновляется
@@ -281,9 +329,8 @@ export function detachRulerItemTargets(model: Model, itemId: string): string[] {
 export function refreshRulersForItem(model: Model, itemId: string): void {
   const item = model.items[itemId];
   if (!item) return;
+  const dirty: Array<{ rulerId: string; end: "p1" | "p2" }> = [];
   for (const ruler of Object.values(rulerCollection(model))) {
-    let movedP1 = false;
-    let movedP2 = false;
     for (const key of ["p1_target", "p2_target"] as const) {
       const t = ruler[key];
       if (!t || t.target_id !== itemId || t.target_name === "ruler") continue;
@@ -298,17 +345,11 @@ export function refreshRulersForItem(model: Model, itemId: string): void {
       t.point_delta_x = r2(item.pc.x - np.x);
       t.point_delta_y = r2(item.pc.y - np.y);
       t.target_plan = structuredClone((item.plan ?? {}) as Record<string, number>);
-      if (key === "p1_target") movedP1 = true;
-      else movedP2 = true;
+      dirty.push({ rulerId: ruler.id, end: key === "p1_target" ? "p1" : "p2" });
     }
-    // Ruler.update_linked_ruler / checkLinkedRulers: конец цепочки следует за p1
-    if (movedP1) {
-      for (const other of Object.values(rulerCollection(model))) {
-        if (other.p2_target?.target_id === ruler.id && other.p2_target.target_name === "ruler") other.p2 = { ...ruler.p1 };
-      }
-    }
-    void movedP2;
   }
+  // Ruler.update_linked_ruler / checkLinkedRulers: цепочки следуют за перенесёнными концами
+  propagateLinkedRulers(model, dirty);
 }
 
 export type AddCommentParams = {
@@ -334,6 +375,18 @@ export function escapeCommentText(text: string): string {
  *  двойные кавычки редактор восстанавливает с потерей — факт раздела). */
 export function unescapeCommentText(text: string): string {
   return text.replace(/`/g, "'");
+}
+
+/**
+ * Канонизация входного текста (этап 116, ревью 115 R1): редактор при restore
+ * сводит обратный апостроф к апострофу, а двойные кавычки (он же ``) — к двум
+ * апострофам (проба 113-dims-escape). Вход канонизируется к виду, который
+ * редактор покажет после restore: ` → ', " → ''. Записанный текст совпадает с
+ * отображаемым, остаётся стабильным при copy/restore и не меняется сервером;
+ * несовпадение с вводом инструмент возвращает warning'ом.
+ */
+export function canonicalCommentText(text: string): string {
+  return text.replace(/`/g, "'").replace(/"/g, "''");
 }
 
 /**
@@ -364,7 +417,7 @@ export function addComment(model: Model, params: AddCommentParams): CommentEntit
     id: `_${newId(5)}`,
     pc,
     points: [point],
-    text: escapeCommentText(text),
+    text: escapeCommentText(canonicalCommentText(text)),
     label: "free",
     plan: sheet,
     plan_: 0,
@@ -434,7 +487,7 @@ export function updateComment(model: Model, params: UpdateCommentParams): Commen
     if (params.text.length === 0 || params.text.length > COMMENT_TEXT_MAX) {
       throw new McpError("INVALID_ARGUMENT", `текст комментария должен быть от 1 до ${COMMENT_TEXT_MAX} символов`, { details: { kind: "text_length" } });
     }
-    comment.text = escapeCommentText(params.text);
+    comment.text = escapeCommentText(canonicalCommentText(params.text));
   }
   if (params.point) {
     requireFinitePoint("point", params.point);
@@ -604,7 +657,10 @@ export function commentMismatches(expected: Record<string, CommentEntity>, got: 
       out.push(`${label} ${id}: точки-указатели изменились (${JSON.stringify(ePoints)} → ${JSON.stringify(gPoints)})`);
     }
     if (!pointEq(e.pc, g.pc)) out.push(`${label} ${id}: центр пузыря изменился (${JSON.stringify(e.pc)} → ${JSON.stringify(g.pc)})`);
-    if ((e.text ?? "") !== (g.text ?? "")) out.push(`${label} ${id}: текст изменился («${e.text}» → «${g.text}»)`);
+    // сверка текста — по отображаемой (unescape) форме (этап 116, ревью 115 R1):
+    // изменение текста сервером → расхождение, вариация байтов канонического
+    // кодирования (' vs `) штатный save не блокирует
+    if (unescapeCommentText(e.text ?? "") !== unescapeCommentText(g.text ?? "")) out.push(`${label} ${id}: текст изменился («${e.text}» → «${g.text}»)`);
     if ((e.label ?? "") !== (g.label ?? "")) out.push(`${label} ${id}: label изменился (${e.label} → ${g.label})`);
     if ((e.plan ?? "") !== (g.plan ?? "")) out.push(`${label} ${id}: лист изменился (${e.plan} → ${g.plan})`);
     if (Math.abs((e.font_size ?? COMMENT_FONT_DEFAULT) - (g.font_size ?? COMMENT_FONT_DEFAULT)) > 0.01) {

@@ -14,7 +14,7 @@ import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, L
 import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.ts";
 import {
   addRuler, updateRuler, deleteRuler, addComment, updateComment, deleteComment,
-  dimsList, commentsList, resolveRuler, resolveComment, DIM_SHEETS, type DimSheet,
+  dimsList, commentsList, resolveRuler, resolveComment, unescapeCommentText, type DimSheet,
 } from "../model/dims.ts";
 import { cmToMm } from "../model/units.ts";
 import type { LedStrip, StripLight, LineStrip } from "../model/types.ts";
@@ -166,6 +166,41 @@ function resolveLightLine(model: Model, kind: LightKind, ref: string): LedStrip 
 }
 
 const wallRef = z.string().min(1).describe("id стены сайта или метка W<n> из model_get");
+
+// ---------- Публичные enum раздела «Размеры и комментарии» (этап 116, ревью 115 R4) ----------
+// Без формата редактора: offset_side auto|left|right (внутри a|l|r), sheet
+// plan|furniture (внутри a|furniture); тип привязки комментария free|item —
+// семантика сайта. Преобразование только на границе API.
+
+const dimOffsetSide = z.enum(["auto", "left", "right"]).optional().describe("сторона отступа: auto — авто (по умолчанию), left/right — слева/справа по ходу p1→p2");
+const dimSheet = z.enum(["plan", "furniture"]).optional().describe("лист: plan (исходный план, по умолчанию) или furniture (мебель)");
+
+const OFFSET_SIDE_INTERNAL = { auto: "a", left: "l", right: "r" } as const;
+
+function offsetSideInternal(v: string | undefined): "a" | "l" | "r" | undefined {
+  return v === undefined ? undefined : OFFSET_SIDE_INTERNAL[v as keyof typeof OFFSET_SIDE_INTERNAL];
+}
+
+function offsetSidePublic(v: string | undefined): string {
+  return v === "l" ? "left" : v === "r" ? "right" : "auto";
+}
+
+function sheetInternal(v: string | undefined): DimSheet | undefined {
+  return v === undefined ? undefined : v === "furniture" ? "furniture" : "a";
+}
+
+function sheetPublic(v: string | undefined): string {
+  return v === "furniture" ? "furniture" : "plan";
+}
+
+/** Канонизация текста комментария (этап 116, ревью 115 R1): ввод с " и `
+ *  канонизируется к виду редактора после restore; отличие от ввода — warning. */
+function commentTextWarnings(input: string | undefined, stored: string): string[] {
+  const shown = unescapeCommentText(stored);
+  return input !== undefined && shown !== input
+    ? [`текст канонизирован под формат редактора (обратный апостроф «\`» → «'», двойные кавычки «"» → «''»): «${shown}»`]
+    : [];
+}
 
 const thickness = z.union([mmInt, z.object({
   top: mmInt, right: mmInt, bottom: mmInt, left: mmInt,
@@ -1675,14 +1710,15 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     // ---------- Размеры и комментарии (нижняя панель, этап 113) ----------
+
     dim_add: tool(
       "Добавить ручной размер (кнопка «Добавить размер» в нижней панели): отрезок p1–p2 (мм) " +
         "с подписью расстояния. Длина 50..50000 мм (лимит меню «Задать длину» редактора). " +
         "attach1/attach2 — привязать конец к предмету (I<n> из model_get): привязанный конец " +
         "следует за предметом при item_update. К стенам и проёмам концы магнитятся в UI только " +
         "координатно — при переносе стены размер остаётся на месте (привязки к стенам в " +
-        "редакторе нет). sheet — лист: a (исходный план, по умолчанию) или furniture. " +
-        "offset_mm/offset_side — отступ размерной линии (side a|l|r; при отступе больше нуля нужна сторона l|r). Цвет — из палитры UI. " +
+        "редакторе нет). sheet — лист: plan (исходный план, по умолчанию) или furniture (мебель). " +
+        "offset_mm/offset_side — отступ размерной линии (side auto|left|right; при отступе больше нуля нужна сторона left|right). Цвет — из палитры UI. " +
         "После добавления вызывайте model_validate и project_save.",
       {
         p1: mmPoint.describe("начало, мм"),
@@ -1690,8 +1726,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         attach1: z.string().min(1).optional().describe("привязать начало к предмету (метка I<n> из model_get или id сайта)"),
         attach2: z.string().min(1).optional().describe("привязать конец к предмету"),
         offset_mm: mm.optional().describe("отступ размерной линии, мм (по умолчанию 0)"),
-        offset_side: z.enum(["a", "l", "r"]).optional().describe("сторона отступа: a — авто (по умолчанию), l/r — слева/справа по ходу p1→p2"),
-        sheet: z.enum(DIM_SHEETS).optional().describe("лист: a (исходный план, по умолчанию) или furniture"),
+        offset_side: dimOffsetSide,
+        sheet: dimSheet,
         show_everywhere: z.boolean().optional().describe("показать на всех листах"),
         color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe("цвет из палитры UI (по умолчанию #ed143d)"),
       },
@@ -1703,8 +1739,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           attach1: a["attach1"] ? resolveItem(m, a["attach1"] as string).id : undefined,
           attach2: a["attach2"] ? resolveItem(m, a["attach2"] as string).id : undefined,
           offsetMm: a["offset_mm"] as number | undefined,
-          offsetSide: a["offset_side"] as "a" | "l" | "r" | undefined,
-          sheet: a["sheet"] as DimSheet | undefined,
+          offsetSide: offsetSideInternal(a["offset_side"] as string | undefined),
+          sheet: sheetInternal(a["sheet"] as string | undefined),
           showEverywhere: a["show_everywhere"] as boolean | undefined,
           color: a["color"] as string | undefined,
         }));
@@ -1715,7 +1751,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     dim_update: tool(
       "Изменить ручной размер: перенос концов (p1/p2, мм), привязки (attach1/attach2: id предмета — " +
         "привязать, null — отвязать), отступ (offset_mm/offset_side), цвет, «показать на всех листах». " +
-        "dim_id — id из dims_list. Перенос конца с сохранённой привязкой обновляет смещение привязки.",
+        "dim_id — id из dims_list. Перенос конца с сохранённой привязкой обновляет смещение привязки; " +
+        "концы цепочки («Разделить на участки») пересчитываются следом за изменённым размером.",
       {
         dim_id: z.string().min(1).describe("id размера из dims_list"),
         p1: mmPoint.optional().describe("новое начало, мм"),
@@ -1723,7 +1760,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         attach1: z.union([z.string().min(1), z.null()]).optional().describe("привязка начала: id предмета или null (отвязать)"),
         attach2: z.union([z.string().min(1), z.null()]).optional().describe("привязка конца: id предмета или null (отвязать)"),
         offset_mm: mm.optional().describe("отступ размерной линии, мм"),
-        offset_side: z.enum(["a", "l", "r"]).optional(),
+        offset_side: dimOffsetSide,
         show_everywhere: z.boolean().optional(),
         color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
       },
@@ -1736,7 +1773,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           attach1: a["attach1"] === undefined ? undefined : a["attach1"] === null ? null : resolveItem(m, a["attach1"] as string).id,
           attach2: a["attach2"] === undefined ? undefined : a["attach2"] === null ? null : resolveItem(m, a["attach2"] as string).id,
           offsetMm: a["offset_mm"] as number | undefined,
-          offsetSide: a["offset_side"] as "a" | "l" | "r" | undefined,
+          offsetSide: offsetSideInternal(a["offset_side"] as string | undefined),
           showEverywhere: a["show_everywhere"] as boolean | undefined,
           color: a["color"] as string | undefined,
         }));
@@ -1770,8 +1807,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           p2_mm: [cmToMm(r.p2.x), cmToMm(r.p2.y)],
           length_mm: r.length_mm,
           offset_mm: Math.round((r.offset?.val ?? 0) * 10),
-          offset_side: r.offset?.side ?? "a",
-          sheet: r.plan,
+          offset_side: offsetSidePublic(r.offset?.side),
+          sheet: sheetPublic(r.plan),
           color: r.color,
           show_everywhere: !!r.show_everywhere,
           attach1: r.p1_target && r.p1_target.target_name !== "ruler" ? r.p1_target.target_id : null,
@@ -1783,9 +1820,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     comment_add: tool(
       "Добавить текстовый комментарий с указателем на план (кнопка «Текстовый комментарий» в " +
         "нижней панели — **PRO в UI**: на бесплатном тарифе поведение не проверено). Текст 1..600 " +
-        "символов, шрифт 8..30 (по умолчанию 10), рамка и указатель — по умолчанию включены, " +
+        "символов (символы «\"» и «\`» канонизируются под формат редактора: \" → '', \` → ', " +
+        "в ответе — итоговый текст и warning), шрифт 8..30 (по умолчанию 10), рамка и указатель — " +
+        "по умолчанию включены, " +
         "цвет из палитры UI (по умолчанию #000000), url — ссылка http(s)://. attach_item — привязать " +
-        "к предмету (следует за ним; у предмета один такой комментарий). point — точка-указатель, " +
+        "к предмету (label item, следует за ним; у предмета один такой комментарий). point — точка-указатель, " +
         "pc — центр пузыря (по умолчанию в точке указателя). После добавления вызывайте " +
         "model_validate и project_save.",
       {
@@ -1798,7 +1837,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe("цвет (палитра UI, по умолчанию #000000)"),
         url: z.string().max(2000).optional().describe("прикреплённая ссылка http(s)://"),
         show_everywhere: z.boolean().optional().describe("показать на всех листах"),
-        sheet: z.enum(DIM_SHEETS).optional().describe("лист: a (исходный план, по умолчанию) или furniture"),
+        sheet: dimSheet,
       },
       async (a) => {
         const ws = wsOf();
@@ -1812,14 +1851,22 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           color: a["color"] as string | undefined,
           url: a["url"] as string | undefined,
           showEverywhere: a["show_everywhere"] as boolean | undefined,
-          sheet: a["sheet"] as DimSheet | undefined,
+          sheet: sheetInternal(a["sheet"] as string | undefined),
         }));
-        return ok({ id: comment.id, label: comment.label, hint: SCENARIO_HINT });
+        const warnings = commentTextWarnings(a["text"] as string, comment.text);
+        return ok({
+          id: comment.id,
+          text: unescapeCommentText(comment.text),
+          label: comment.label,
+          ...(warnings.length ? { warnings } : {}),
+          hint: SCENARIO_HINT,
+        });
       },
     ),
 
     comment_update: tool(
-      "Изменить комментарий (id из comments_list): текст, точку-указатель (point), пузырь (pc), " +
+      "Изменить комментарий (id из comments_list): текст (символы «\"» и «\`» канонизируются под " +
+        "формат редактора, в ответе — итоговый текст и warning), точку-указатель (point), пузырь (pc), " +
         "шрифт, рамку, цвет, ссылку (url или null — снять), «показать на всех листах».",
       {
         comment_id: z.string().min(1).describe("id комментария из comments_list"),
@@ -1842,10 +1889,16 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           fontSize: a["font_size"] as number | undefined,
           framed: a["framed"] as boolean | undefined,
           color: a["color"] as string | undefined,
-          url: (a["url"] as string | null | undefined) ?? undefined,
+          url: a["url"] as string | null | undefined,
           showEverywhere: a["show_everywhere"] as boolean | undefined,
         }));
-        return ok({ id: comment.id, hint: SCENARIO_HINT });
+        const warnings = commentTextWarnings(a["text"] as string | undefined, comment.text);
+        return ok({
+          id: comment.id,
+          ...(a["text"] !== undefined ? { text: unescapeCommentText(comment.text) } : {}),
+          ...(warnings.length ? { warnings } : {}),
+          hint: SCENARIO_HINT,
+        });
       },
     ),
 
@@ -1880,7 +1933,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           url: c.url ?? null,
           attach_item: c.id_item ?? null,
           label: c.label,
-          sheet: c.plan,
+          sheet: sheetPublic(c.plan),
           show_everywhere: !!c.show_everywhere,
         })));
       },
