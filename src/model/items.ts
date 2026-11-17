@@ -9,6 +9,7 @@ import type { MmPoint } from "./walls.ts";
 import type { ToolEntry } from "../catalog.ts";
 import { McpError } from "../errors.ts";
 import { pipesReferencingItem, refreshPipeForItem } from "./pipes.ts";
+import { detachRulerItemTargets, itemComments, deleteComment, refreshRulersForItem, refreshItemComments } from "./dims.ts";
 import {
   CABLE_LAMP_ITEMS, cablesReferencingItem, refreshCablesForItem, refreshSocketGroupSubs,
   STANDALONE_SOCKETS, SWITCH_ITEMS, type SocketGroupSub,
@@ -435,11 +436,17 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   if (params.center !== undefined || params.angleDeg !== undefined) {
     refreshCablesForItem(model, params.itemId);
   }
+  // этап 113: транзитивный пересчёт затронутых привязок размеров (формула
+  // Ruler.update редактора) и комментариев, привязанных к предмету
+  if (params.center !== undefined || params.angleDeg !== undefined) {
+    refreshRulersForItem(model, params.itemId);
+    refreshItemComments(model, params.itemId);
+  }
   return props;
 }
 
 /** item_delete: предмет, подключённый к трубе или связи, удаляется только после них. */
-export function deleteItem(model: Model, itemId: string): void {
+export function deleteItem(model: Model, itemId: string): { detached_rulers: string[]; deleted_comments: string[] } {
   if (!model.items[itemId]) throw new McpError("NOT_FOUND", `предмет ${itemId} не найден`);
   const linked = pipesReferencingItem(model, itemId);
   if (linked.length > 0) {
@@ -460,6 +467,13 @@ export function deleteItem(model: Model, itemId: string): void {
     );
   }
   delete model.items[itemId];
+  // этап 113: привязки размеров к предмету снимаются (геометрия размеров
+  // сохраняется; редактор оставил бы висячую привязку — проба 113-fixtures),
+  // комментарий предмета (label "item") удаляется каскадно
+  const detached = detachRulerItemTargets(model, itemId);
+  const comments = itemComments(model, itemId);
+  for (const c of comments) deleteComment(model, c.id);
+  return { detached_rulers: detached, deleted_comments: comments.map((c) => c.id) };
 }
 
 /** items_list (опционально по комнате-точке). */

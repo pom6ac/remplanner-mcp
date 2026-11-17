@@ -12,6 +12,11 @@ import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../mode
 import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind } from "../model/pipes.ts";
 import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, LIGHT_COLLECTION_BY_KIND, type LightKind } from "../model/lighting.ts";
 import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.ts";
+import {
+  addRuler, updateRuler, deleteRuler, addComment, updateComment, deleteComment,
+  dimsList, commentsList, resolveRuler, resolveComment, unescapeCommentText, type DimSheet,
+} from "../model/dims.ts";
+import { cmToMm } from "../model/units.ts";
 import type { LedStrip, StripLight, LineStrip } from "../model/types.ts";
 import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
 import {
@@ -161,6 +166,41 @@ function resolveLightLine(model: Model, kind: LightKind, ref: string): LedStrip 
 }
 
 const wallRef = z.string().min(1).describe("id стены сайта или метка W<n> из model_get");
+
+// ---------- Публичные enum раздела «Размеры и комментарии» (этап 116, ревью 115 R4) ----------
+// Без формата редактора: offset_side auto|left|right (внутри a|l|r), sheet
+// plan|furniture (внутри a|furniture); тип привязки комментария free|item —
+// семантика сайта. Преобразование только на границе API.
+
+const dimOffsetSide = z.enum(["auto", "left", "right"]).optional().describe("сторона отступа: auto — авто (по умолчанию), left/right — слева/справа по ходу p1→p2");
+const dimSheet = z.enum(["plan", "furniture"]).optional().describe("лист: plan (исходный план, по умолчанию) или furniture (мебель)");
+
+const OFFSET_SIDE_INTERNAL = { auto: "a", left: "l", right: "r" } as const;
+
+function offsetSideInternal(v: string | undefined): "a" | "l" | "r" | undefined {
+  return v === undefined ? undefined : OFFSET_SIDE_INTERNAL[v as keyof typeof OFFSET_SIDE_INTERNAL];
+}
+
+function offsetSidePublic(v: string | undefined): string {
+  return v === "l" ? "left" : v === "r" ? "right" : "auto";
+}
+
+function sheetInternal(v: string | undefined): DimSheet | undefined {
+  return v === undefined ? undefined : v === "furniture" ? "furniture" : "a";
+}
+
+function sheetPublic(v: string | undefined): string {
+  return v === "furniture" ? "furniture" : "plan";
+}
+
+/** Канонизация текста комментария (этап 116, ревью 115 R1): ввод с " и `
+ *  канонизируется к виду редактора после restore; отличие от ввода — warning. */
+function commentTextWarnings(input: string | undefined, stored: string): string[] {
+  const shown = unescapeCommentText(stored);
+  return input !== undefined && shown !== input
+    ? [`текст канонизирован под формат редактора (обратный апостроф «\`» → «'», двойные кавычки «"» → «''»): «${shown}»`]
+    : [];
+}
 
 const thickness = z.union([mmInt, z.object({
   top: mmInt, right: mmInt, bottom: mmInt, left: mmInt,
@@ -686,7 +726,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     item_update: tool(
-      "Изменить предмет: переместить (center или against_wall), повернуть (angle_deg), изменить размеры.",
+      "Изменить предмет: переместить (center или against_wall), повернуть (angle_deg), изменить размеры. " +
+        "При переносе/повороте привязанные размеры (dim_add attach) и комментарии предмета следуют за ним.",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
         position: z.union([
@@ -746,16 +787,16 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     item_delete: tool(
-      "Удалить предмет (метка I<n> из model_get).",
+      "Удалить предмет (метка I<n> из model_get). Привязанные к предмету размеры (dim_add attach) " +
+        "сохраняются с отвязкой концов, комментарий предмета удаляется; в ответе — detached_rulers/deleted_comments.",
       { item_id: z.string().min(1) },
       async (a) => {
         const ws = wsOf();
-        ws.apply("item_delete", (m) => {
+        const res = ws.apply("item_delete", (m) => {
           const target = resolveItem(m, a["item_id"] as string);
-          deleteItem(m, target.id);
-          return true;
+          return deleteItem(m, target.id);
         });
-        return ok({ deleted: a["item_id"], hint: SCENARIO_HINT });
+        return ok({ deleted: a["item_id"], ...res, hint: SCENARIO_HINT });
       },
     ),
 
@@ -1665,6 +1706,236 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           return true;
         });
         return ok({ deleted: a["territory_border_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Размеры и комментарии (нижняя панель, этап 113) ----------
+
+    dim_add: tool(
+      "Добавить ручной размер (кнопка «Добавить размер» в нижней панели): отрезок p1–p2 (мм) " +
+        "с подписью расстояния. Длина 50..50000 мм (лимит меню «Задать длину» редактора). " +
+        "attach1/attach2 — привязать конец к предмету (I<n> из model_get): привязанный конец " +
+        "следует за предметом при item_update. К стенам и проёмам концы магнитятся в UI только " +
+        "координатно — при переносе стены размер остаётся на месте (привязки к стенам в " +
+        "редакторе нет). sheet — лист: plan (исходный план, по умолчанию) или furniture (мебель). " +
+        "offset_mm/offset_side — отступ размерной линии (side auto|left|right; при отступе больше нуля нужна сторона left|right). Цвет — из палитры UI. " +
+        "После добавления вызывайте model_validate и project_save.",
+      {
+        p1: mmPoint.describe("начало, мм"),
+        p2: mmPoint.describe("конец, мм"),
+        attach1: z.string().min(1).optional().describe("привязать начало к предмету (метка I<n> из model_get или id сайта)"),
+        attach2: z.string().min(1).optional().describe("привязать конец к предмету"),
+        offset_mm: mm.optional().describe("отступ размерной линии, мм (по умолчанию 0)"),
+        offset_side: dimOffsetSide,
+        sheet: dimSheet,
+        show_everywhere: z.boolean().optional().describe("показать на всех листах"),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe("цвет из палитры UI (по умолчанию #ed143d)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const ruler = ws.apply("dim_add", (m) => addRuler(m, {
+          p1: a["p1"] as MmPoint,
+          p2: a["p2"] as MmPoint,
+          attach1: a["attach1"] ? resolveItem(m, a["attach1"] as string).id : undefined,
+          attach2: a["attach2"] ? resolveItem(m, a["attach2"] as string).id : undefined,
+          offsetMm: a["offset_mm"] as number | undefined,
+          offsetSide: offsetSideInternal(a["offset_side"] as string | undefined),
+          sheet: sheetInternal(a["sheet"] as string | undefined),
+          showEverywhere: a["show_everywhere"] as boolean | undefined,
+          color: a["color"] as string | undefined,
+        }));
+        return ok({ id: ruler.id, length_mm: Math.round(Math.hypot(ruler.p2.x - ruler.p1.x, ruler.p2.y - ruler.p1.y) * 10), hint: SCENARIO_HINT });
+      },
+    ),
+
+    dim_update: tool(
+      "Изменить ручной размер: перенос концов (p1/p2, мм), привязки (attach1/attach2: id предмета — " +
+        "привязать, null — отвязать), отступ (offset_mm/offset_side), цвет, «показать на всех листах». " +
+        "dim_id — id из dims_list. Перенос конца с сохранённой привязкой обновляет смещение привязки; " +
+        "концы цепочки («Разделить на участки») пересчитываются следом за изменённым размером.",
+      {
+        dim_id: z.string().min(1).describe("id размера из dims_list"),
+        p1: mmPoint.optional().describe("новое начало, мм"),
+        p2: mmPoint.optional().describe("новый конец, мм"),
+        attach1: z.union([z.string().min(1), z.null()]).optional().describe("привязка начала: id предмета или null (отвязать)"),
+        attach2: z.union([z.string().min(1), z.null()]).optional().describe("привязка конца: id предмета или null (отвязать)"),
+        offset_mm: mm.optional().describe("отступ размерной линии, мм"),
+        offset_side: dimOffsetSide,
+        show_everywhere: z.boolean().optional(),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const ruler = ws.apply("dim_update", (m) => updateRuler(m, {
+          rulerId: resolveRuler(m, a["dim_id"] as string).id,
+          p1: a["p1"] as MmPoint | undefined,
+          p2: a["p2"] as MmPoint | undefined,
+          attach1: a["attach1"] === undefined ? undefined : a["attach1"] === null ? null : resolveItem(m, a["attach1"] as string).id,
+          attach2: a["attach2"] === undefined ? undefined : a["attach2"] === null ? null : resolveItem(m, a["attach2"] as string).id,
+          offsetMm: a["offset_mm"] as number | undefined,
+          offsetSide: offsetSideInternal(a["offset_side"] as string | undefined),
+          showEverywhere: a["show_everywhere"] as boolean | undefined,
+          color: a["color"] as string | undefined,
+        }));
+        return ok({ id: ruler.id, length_mm: Math.round(Math.hypot(ruler.p2.x - ruler.p1.x, ruler.p2.y - ruler.p1.y) * 10), hint: SCENARIO_HINT });
+      },
+    ),
+
+    dim_delete: tool(
+      "Удалить ручной размер (id из dims_list). Привязки других размеров, прицепленных к нему " +
+        "цепочкой («Разделить на участки»), снимаются автоматически.",
+      { dim_id: z.string().min(1).describe("id размера из dims_list") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("dim_delete", (m) => {
+          deleteRuler(m, resolveRuler(m, a["dim_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["dim_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    dims_list: tool(
+      "Ручные размеры плана: концы (мм), длина, отступ, лист, цвет, привязки к предметам " +
+        "(attach1/attach2) и «показать на всех листах».",
+      {},
+      async () => {
+        const ws = wsOf();
+        return ok(dimsList(ws.model).map((r) => ({
+          id: r.id,
+          p1_mm: [cmToMm(r.p1.x), cmToMm(r.p1.y)],
+          p2_mm: [cmToMm(r.p2.x), cmToMm(r.p2.y)],
+          length_mm: r.length_mm,
+          offset_mm: Math.round((r.offset?.val ?? 0) * 10),
+          offset_side: offsetSidePublic(r.offset?.side),
+          sheet: sheetPublic(r.plan),
+          color: r.color,
+          show_everywhere: !!r.show_everywhere,
+          attach1: r.p1_target && r.p1_target.target_name !== "ruler" ? r.p1_target.target_id : null,
+          attach2: r.p2_target && r.p2_target.target_name !== "ruler" ? r.p2_target.target_id : null,
+        })));
+      },
+    ),
+
+    comment_add: tool(
+      "Добавить текстовый комментарий с указателем на план (кнопка «Текстовый комментарий» в " +
+        "нижней панели — **PRO в UI**: на бесплатном тарифе поведение не проверено). Текст 1..600 " +
+        "символов (символы «\"» и «\`» канонизируются под формат редактора: \" → '', \` → ', " +
+        "в ответе — итоговый текст и warning), шрифт 8..30 (по умолчанию 10), рамка и указатель — " +
+        "по умолчанию включены, " +
+        "цвет из палитры UI (по умолчанию #000000), url — ссылка http(s)://. attach_item — привязать " +
+        "к предмету (label item, следует за ним; у предмета один такой комментарий). point — точка-указатель, " +
+        "pc — центр пузыря (по умолчанию в точке указателя). После добавления вызывайте " +
+        "model_validate и project_save.",
+      {
+        point: mmPoint.describe("точка-указатель, мм"),
+        text: z.string().min(1).max(600).describe("текст комментария, до 600 символов"),
+        pc: mmPoint.optional().describe("центр пузыря, мм (по умолчанию — точка указателя)"),
+        attach_item: z.string().min(1).optional().describe("привязать к предмету (метка I<n> из model_get или id сайта)"),
+        font_size: z.number().finite().int().min(8).max(30).optional().describe("размер шрифта 8..30 (по умолчанию 10)"),
+        framed: z.boolean().optional().describe("рамка и указатель (по умолчанию true)"),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe("цвет (палитра UI, по умолчанию #000000)"),
+        url: z.string().max(2000).optional().describe("прикреплённая ссылка http(s)://"),
+        show_everywhere: z.boolean().optional().describe("показать на всех листах"),
+        sheet: dimSheet,
+      },
+      async (a) => {
+        const ws = wsOf();
+        const comment = ws.apply("comment_add", (m) => addComment(m, {
+          point: a["point"] as MmPoint,
+          text: a["text"] as string,
+          pc: a["pc"] as MmPoint | undefined,
+          attachItem: a["attach_item"] ? resolveItem(m, a["attach_item"] as string).id : undefined,
+          fontSize: a["font_size"] as number | undefined,
+          framed: a["framed"] as boolean | undefined,
+          color: a["color"] as string | undefined,
+          url: a["url"] as string | undefined,
+          showEverywhere: a["show_everywhere"] as boolean | undefined,
+          sheet: sheetInternal(a["sheet"] as string | undefined),
+        }));
+        const warnings = commentTextWarnings(a["text"] as string, comment.text);
+        return ok({
+          id: comment.id,
+          text: unescapeCommentText(comment.text),
+          label: comment.label,
+          ...(warnings.length ? { warnings } : {}),
+          hint: SCENARIO_HINT,
+        });
+      },
+    ),
+
+    comment_update: tool(
+      "Изменить комментарий (id из comments_list): текст (символы «\"» и «\`» канонизируются под " +
+        "формат редактора, в ответе — итоговый текст и warning), точку-указатель (point), пузырь (pc), " +
+        "шрифт, рамку, цвет, ссылку (url или null — снять), «показать на всех листах».",
+      {
+        comment_id: z.string().min(1).describe("id комментария из comments_list"),
+        text: z.string().min(1).max(600).optional(),
+        point: mmPoint.optional().describe("новая точка-указатель, мм"),
+        pc: mmPoint.optional().describe("новый центр пузыря, мм"),
+        font_size: z.number().finite().int().min(8).max(30).optional(),
+        framed: z.boolean().optional(),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+        url: z.union([z.string().max(2000), z.null()]).optional().describe("ссылка http(s):// или null (снять)"),
+        show_everywhere: z.boolean().optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const comment = ws.apply("comment_update", (m) => updateComment(m, {
+          commentId: resolveComment(m, a["comment_id"] as string).id,
+          text: a["text"] as string | undefined,
+          point: a["point"] as MmPoint | undefined,
+          pc: a["pc"] as MmPoint | undefined,
+          fontSize: a["font_size"] as number | undefined,
+          framed: a["framed"] as boolean | undefined,
+          color: a["color"] as string | undefined,
+          url: a["url"] as string | null | undefined,
+          showEverywhere: a["show_everywhere"] as boolean | undefined,
+        }));
+        const warnings = commentTextWarnings(a["text"] as string | undefined, comment.text);
+        return ok({
+          id: comment.id,
+          ...(a["text"] !== undefined ? { text: unescapeCommentText(comment.text) } : {}),
+          ...(warnings.length ? { warnings } : {}),
+          hint: SCENARIO_HINT,
+        });
+      },
+    ),
+
+    comment_delete: tool(
+      "Удалить комментарий (id из comments_list). Комментарий предмета (label item) снимает " +
+        "обратную ссылку предмета автоматически.",
+      { comment_id: z.string().min(1).describe("id комментария из comments_list") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("comment_delete", (m) => {
+          deleteComment(m, resolveComment(m, a["comment_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["comment_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    comments_list: tool(
+      "Текстовые комментарии плана: текст, точка-указатель (points_mm), пузырь (pc_mm), шрифт, " +
+        "рамка, цвет, ссылка, привязка к предмету (attach_item), лист.",
+      {},
+      async () => {
+        const ws = wsOf();
+        return ok(commentsList(ws.model).map((c) => ({
+          id: c.id,
+          text: c.text,
+          points_mm: (c.points ?? []).map((p) => [cmToMm(p.x), cmToMm(p.y)]),
+          pc_mm: c.pc ? [cmToMm(c.pc.x), cmToMm(c.pc.y)] : null,
+          font_size: c.font_size,
+          framed: !!c.framed,
+          color: c.color ?? "#000000",
+          url: c.url ?? null,
+          attach_item: c.id_item ?? null,
+          label: c.label,
+          sheet: sheetPublic(c.plan),
+          show_everywhere: !!c.show_everywhere,
+        })));
       },
     ),
 

@@ -128,6 +128,10 @@ floor_hole_add            # проем в полу (прямоугольник �
 terrace_add               # терраса (замкнутое кольцо границ terrace_borders) + terrace_fence_add / terrace_column_add
 territory_add             # участок (замкнутое кольцо границ territory_borders)
 balcony_add               # балкон (зелёные ограждения role «balcony», U-примыкание к наружной стене)
+dim_add / dims_list       # ручные размеры (нижняя панель «Добавить размер»): отрезок в мм,
+                          #  привязка концов к предметам (attach1/attach2), отступ, цвет
+comment_add / comments_list  # текстовые комментарии с указателем (кнопка в UI — PRO):
+                          #  текст до 600 символов, шрифт 8..30, привязка к предмету, url
 model_validate            # проверка геометрии перед сохранением
 render_plan               # PNG плана
 project_save              # сохранение с бэкапом и сверкой

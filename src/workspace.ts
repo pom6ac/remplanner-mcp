@@ -16,6 +16,7 @@ import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./rend
 import { borderMismatches } from "./model/terraces.ts";
 import { levelHoleMismatches } from "./model/floorhole.ts";
 import { finishCompare } from "./model/finish.ts";
+import { dimsMismatches } from "./model/dims.ts";
 import type { Model as TerracesModel } from "./model/types.ts";
 
 /** Потеря/изменение границ террас и участка (сверка семантики, этап 64). */
@@ -1458,9 +1459,11 @@ export class Workspace {
         "normalize",
       );
       warnings.push(...finishNorm.warnings);
-      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки или отделку — мутация отменена`, {
-          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems },
+      // этап 113: размеры и комментарии после нормализации не теряются и не искажаются
+      const dimsNorm = dimsMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || dimsNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку или размеры/комментарии — мутация отменена`, {
+          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, dims_mismatches: dimsNorm },
         });
       }
       // нормализованная копия становится канонической
@@ -1800,6 +1803,8 @@ export class Workspace {
       (norm.model as Record<string, unknown>)["walls"] as Record<string, unknown> | undefined,
       "normalize",
     );
+    // этап 113: размеры и комментарии до записи сверяются с нормализованной моделью
+    const dimsNorm = dimsMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
     // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
     const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
     const rolesNorm = wallRoleMismatches(this.modelInternal!.walls as unknown as Record<string, { role?: string; p1: Point; p2: Point }>, expectedWalls);
@@ -1822,7 +1827,8 @@ export class Workspace {
       lostLedStrips.length > 0 || lostStripesLight.length > 0 || lostLineStrips.length > 0 ||
       lostCables.length > 0 ||
       ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0 ||
-      cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0
+      cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 ||
+      dimsNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -1856,6 +1862,7 @@ export class Workspace {
           cables_connection_mismatches: cablesConnNorm,
           socket_group_mismatches: subsNorm,
           finish_mismatches: finishNorm.problems,
+          dims_mismatches: dimsNorm,
         },
       });
     }
@@ -1981,8 +1988,11 @@ export class Workspace {
         after.model["walls"] as Record<string, unknown> | undefined,
         "save",
       ).problems;
+      // этап 113: размеры и комментарии после save сверяются по GET — нормализованное
+      // ожидание против сервера (строго: текст, точки, привязки, отступ, цвет)
+      const dimsAfter = dimsMismatches(norm.model as Model, after.model as Record<string, unknown>);
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && dimsAfter.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -2011,6 +2021,7 @@ export class Workspace {
             socket_group_derived_mismatches: subsDerivedAfter,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
             finish_mismatches: finishAfter,
+            dims_mismatches: dimsAfter,
           },
         });
       }
