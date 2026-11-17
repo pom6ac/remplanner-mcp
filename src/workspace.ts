@@ -1578,6 +1578,11 @@ export class Workspace {
         itemsGot: (norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {},
       });
       warnings.push(...finishNorm.warnings);
+      // ревью 139 m2: сбой пересчёта комнат в normalize не откатывается молча —
+      // диагностическое предупреждение в результате мутации (код без данных пользователя)
+      if (norm.roomsRebuild && norm.roomsRebuild !== "ok") {
+        warnings.push(`rooms_recalc_failed: ${norm.roomsRebuild}`);
+      }
       // этап 113: размеры и комментарии после нормализации не теряются и не искажаются
       const dimsNorm = dimsMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
       // этап 128 (ревью 127 R1/R2/R4): комнаты до записи сверяются с базой (сервер /
@@ -1811,6 +1816,11 @@ export class Workspace {
     prepareForRestore(prepared);
     const norm = await editor.normalize(prepared as unknown as Record<string, unknown>);
     if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
+    // ревью 139 m2: сбой пересчёта комнат в normalize перед save — диагностическое
+    // предупреждение в результате save (код без данных пользователя)
+    if (norm.roomsRebuild && norm.roomsRebuild !== "ok") {
+      warnings.push(`rooms_recalc_failed: ${norm.roomsRebuild}`);
+    }
     // потеря проёмов/предметов — по id в копии редактора (ревью v0.1.1 №4)
     const localOpeningIds = openingIds(this.modelInternal!);
     const localItemIds = new Set(Object.keys(this.modelInternal!.items ?? {}));

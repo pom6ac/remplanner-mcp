@@ -165,7 +165,10 @@ test("contract: топология из геометрии — коридор + 
 // Этап 137: normalize несёт ПЕРЕСТРОЕННЫЕ комнаты (тот же пересчёт, что делает save:
 // план "a" → copyRooms1 → план "c" → draw). До фикса копия имела старые комнаты,
 // и каждый save с делением/слиянием/переносом комнаты давал ложный SITE_ERROR.
-test("contract: normalize повторяет пересчёт комнат сохранения — деление комнаты в копии", { timeout: 240_000 }, async () => {
+// Ревью 139 m3: на делящейся стене — дверь (split_by_holes), у исходной комнаты имя:
+// имя наследуют обе части (эталон ui-ref-rooms-save-split-hole.json), проём переживает
+// пересчёт; двойной normalize даёт тот же результат.
+test("contract: normalize повторяет пересчёт комнат сохранения — деление с дверью и именем, двойной normalize", { timeout: 240_000 }, async () => {
   const session = await anonSession();
   const created = await createAnonProject(session);
   const D = 20;
@@ -191,23 +194,70 @@ test("contract: normalize повторяет пересчёт комнат со�
       material: "a_block", color: 0, level: "1", show_dls: true, holes: {},
     } as never;
   }
-  // делим комнату (x 10..290, y -290..-10) стеной y=-150 — как в эталоне
-  // ui-ref-rooms-save-split.json
-  model.walls["w8"] = {
-    id: "w8", plan: "a", role: "wall", child: 0, archive: 0, demount: 0,
-    depth: 10, height: 270, p1: { x: 10, y: -150 }, p2: { x: 290, y: -150 }, p1st: 0, p2st: 0,
-    material: "c_pgb", color: 0, level: "1", show_dls: true, holes: {},
-  } as never;
   prepareForRestore(model);
 
   const editor = await openEditor(session, created.object_id, created.plan_id || "1", 30_000, { anonymous: true });
   try {
-    const norm = await editor.normalize(structuredClone(model) as unknown as Record<string, unknown>, 1200);
-    const rooms2 = ((norm.model as Record<string, unknown>)["rooms2"] ?? {}) as Record<string, { area?: number }>;
+    // шаг 1: база — 4 комнаты, имя у исходной (7,84 м²) через zones[0].name существующей зоны
+    const norm1 = await editor.normalize(structuredClone(model) as unknown as Record<string, unknown>, 1200);
+    const rooms1 = (norm1.model as { rooms2?: Record<string, { area?: number; zones?: Array<{ name?: string }> }> }).rooms2 ?? {};
+    assert.equal(Object.keys(rooms1).length, 4, "база: 4 комнаты");
+    const src = Object.entries(rooms1).find(([, r]) => Math.abs((r.area ?? 0) - 7.84) < 0.02);
+    assert.ok(src, "исходная комната 7,84 найдена");
+    src[1]!.zones![0]!.name = "Гостиная";
+    const named = await editor.normalize(structuredClone(norm1.model) as unknown as Record<string, unknown>, 1200);
+    const namedRooms = (named.model as { rooms2?: Record<string, { zones?: Array<{ name?: string }> }> }).rooms2 ?? {};
+    assert.equal(namedRooms[src[0]!]?.zones?.[0]?.name, "Гостиная", "имя пережило повторный normalize");
+
+    // шаг 2: деление стеной y=-150 с дверью 80 см по центру (длина стены 280 → pc.x=140)
+    const withSplitter = structuredClone(named.model) as unknown as Model;
+    (withSplitter as { walls: Record<string, { holes?: Record<string, unknown> }> }).walls["w8"] = {
+      id: "w8", plan: "a", role: "wall", child: 0, archive: 0, demount: 0,
+      depth: 10, height: 270, p1: { x: 10, y: -150 }, p2: { x: 290, y: -150 }, p1st: 0, p2st: 0,
+      material: "c_pgb", color: 0, level: "1", show_dls: true,
+      holes: { h_door1: { id: "h_door1", plan: "a", type: "single", group: "doors", pc: { x: 140, y: 0 }, width: 80, height: 200, depth: 4, opening: "r-l" } },
+    } as never;
+    prepareForRestore(withSplitter);
+    const norm = await editor.normalize(withSplitter as unknown as Record<string, unknown>, 1200);
+    // ревью 139 m2: сбой пересчёта комнат не откатывается молча
+    assert.equal(norm.roomsRebuild, "ok", `roomsRebuild=${norm.roomsRebuild}`);
+    const copy = norm.model as { walls?: Record<string, { holes?: Record<string, unknown> }>; rooms2?: Record<string, { area?: number; zones?: Array<{ name?: string }> }> };
+    const copyWalls = copy.walls ?? {};
+    const copyHoles = Object.values(copyWalls).reduce((n, w) => n + Object.keys(w.holes ?? {}).length, 0);
+    // ревью 138 m3: число стен/проёмов копии = вход (8 стен, 1 дверь)
+    assert.equal(Object.keys(copyWalls).length, 8, "число стен копии = вход (8)");
+    assert.equal(copyHoles, 1, "дверь пережила пересчёт комнат в копии");
+    const rooms2 = copy.rooms2 ?? {};
     const areas = Object.values(rooms2).map((r) => r.area ?? 0).sort((a, b) => b - a);
     assert.equal(Object.keys(rooms2).length, 5, "в копии normalize уже перестроенные комнаты (5)");
     assert.deepEqual(areas.map((x) => Math.round(x * 100) / 100), [5.8, 5.04, 3.78, 3.78, 2.24],
       `площади в копии: ${JSON.stringify(areas)} — деление 7,84 → 2×3,78`);
+    // имя у исходной комнаты: наследуют обе части (эталон 139)
+    const namedParts = Object.values(rooms2).filter((r) => r.zones?.[0]?.name === "Гостиная");
+    assert.equal(namedParts.length, 2, "обе части деления унаследовали имя «Гостиная»");
+
+    // двойной normalize даёт тот же результат (спецификация этапа 139)
+    const again = await editor.normalize(structuredClone(norm.model) as unknown as Record<string, unknown>, 1200);
+    const againRooms = (again.model as { rooms2?: Record<string, { area?: number }> }).rooms2 ?? {};
+    const againAreas = Object.values(againRooms).map((r) => r.area ?? 0).sort((a, b) => b - a);
+    assert.equal(again.roomsRebuild, "ok", `повторный roomsRebuild=${again.roomsRebuild}`);
+    assert.deepEqual(againAreas.map((x) => Math.round(x * 100) / 100), areas.map((x) => Math.round(x * 100) / 100),
+      "двойной normalize: площади комнат совпадают");
+    const againHoles = Object.values(again.model.walls ?? {}).reduce((n: number, w: { holes?: Record<string, unknown> }) => n + Object.keys(w.holes ?? {}).length, 0);
+    assert.equal(againHoles, 1, "двойной normalize: дверь на месте");
+
+    // save → GET: дверь и имена пережили save → GET
+    const saveRes = await editor.save();
+    assert.ok(saveRes.ok, `сохранение не прошло: ${JSON.stringify(saveRes)}`);
+    const reloaded = await loadModel(session, editor.objectId, editor.planId);
+    const wallsAfter = reloaded.model["walls"] as Record<string, { holes?: Record<string, unknown> }>;
+    assert.equal(Object.keys(wallsAfter).length, 8, "8 стен пережили save → GET");
+    const holesAfter = Object.values(wallsAfter).reduce((n, w) => n + Object.keys(w.holes ?? {}).length, 0);
+    assert.equal(holesAfter, 1, "дверь пережила save → GET");
+    const roomsAfter = (reloaded.model["rooms2"] ?? {}) as Record<string, { area?: number; zones?: Array<{ name?: string }> }>;
+    assert.equal(Object.keys(roomsAfter).length, 5, "5 комнат после save → GET");
+    const namedAfter = Object.values(roomsAfter).filter((r) => r.zones?.[0]?.name === "Гостиная");
+    assert.equal(namedAfter.length, 2, "имя «Гостиная» на обеих частях после save → GET");
   } finally {
     await editor.close();
   }

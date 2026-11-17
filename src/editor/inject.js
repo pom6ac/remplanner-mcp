@@ -92,7 +92,7 @@ export const PAGE = {
       const copyOf = () => {
         try { return JSON.parse(JSON.stringify(w.project.copy('server'))); } catch (e) { return null; }
       };
-      const collect = (copy) => {
+      const collect = (copy, rebuildError) => {
         // комнаты списка: из итоговой копии (перестроенные rooms2), при пустой —
         // живые ROOMS2 (зоны с именами), при пустых — ROOMS1 (points без area)
         const copyRooms = (copy || {}).rooms2 && Object.keys(copy.rooms2).length > 0 ? copy.rooms2 : null;
@@ -135,7 +135,7 @@ export const PAGE = {
           link2: linkOf(x.p2.link),
           overWall: typeof x.isOverWall === 'function' ? (() => { try { return Boolean(x.isOverWall()); } catch (e) { return null; } })() : null,
         }));
-        resolve({ copy: copy || {}, rooms, before, after, walls: wallsOut, errors: (copy || {}).errors || null });
+        resolve({ copy: copy || {}, rooms, before, after, walls: wallsOut, errors: (copy || {}).errors || null, roomsRebuild: rebuildError || "ok" });
       };
       // Сразу после draw copy('server') может отставать от живых WALLS (редактор
       // достраивает стены/комнаты асинхронно) — опрашиваем до совпадения (≤ 8 с).
@@ -155,26 +155,40 @@ export const PAGE = {
           // последовательность ТЕХ ЖЕ функций редактора, что в начале штатного сохранения
           // (probe 137 p137-page4: копия получает перестроенные комнаты, идущие на сервер).
           let finalCopy = copy || {};
+          let rebuildError = null;
+          let backedUp = false;
           try {
             w.$Project.backupPlan();
+            backedUp = true;
             w.$Project.setPlanName('a'); w.plan_ = 0; w.$Project.draw({ for3d: 1, rooms: 1 });
             w.$Project.copyRooms1();
             w.$Project.setPlanName('c'); w.plan_ = 0; w.$Project.draw({ for3d: 1, rooms: 1 });
             const rebuilt = copyOf();
-            w.$Project.restorePlan();
             // страница возвращается в то же состояние, что до пересчёта: та же модель,
             // тот же restore, который и так делает следующий круг normalize.
             // Замечание: подготовка плана "c" может резать стены по проёмам
             // (split_by_holes) — число стен копии может отличаться от живых WALLS,
             // это ровно то, что редактор отправляет на save (проверки потерь —
             // в адаптере normalize: эквивалентность осей, счётчики, ошибки).
-            w.$Project.restore(model, { reset: 1 });
-            w.$Project.draw({ rooms: 1 });
             if (rebuilt && rebuilt.walls && Object.keys(rebuilt.walls).length > 0) {
               finalCopy = rebuilt;
             }
-          } catch (e) { /* старое поведение: копия с какими есть комнатами */ }
-          collect(finalCopy);
+          } catch (e) {
+            // ревью 139 m2: сбой пересчёта не откатывается молча — краткий код
+            // ошибки (без пользовательских данных) идёт в результат normalize
+            rebuildError = String(e && e.message ? e.message : e).slice(0, 200);
+          } finally {
+            // ревью 139 m1: при любом исключении лист редактора возвращается
+            // в исходный (restorePlan), модель — в состояние до пересчёта
+            if (backedUp) {
+              try { w.$Project.restorePlan(); } catch (e) { /* лист уже исходный */ }
+            }
+            try {
+              w.$Project.restore(model, { reset: 1 });
+              w.$Project.draw({ rooms: 1 });
+            } catch (e) { /* восстановление не должно маскировать причину сбоя */ }
+          }
+          collect(finalCopy, rebuildError);
           return;
         }
         setTimeout(poll, 400);
