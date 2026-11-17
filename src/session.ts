@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { ensurePrivateDir, writePrivateFile } from "./fs-safe.ts";
 import { McpError } from "./errors.ts";
 
 export type SessionCookie = {
@@ -54,9 +55,9 @@ export function isExpired(state: SessionState, now: Date = new Date()): boolean 
 }
 
 export function saveSession(filePath: string, state: SessionState): void {
-  mkdirSync(dirname(filePath), { recursive: true });
-  writeFileSync(filePath, JSON.stringify(state, null, 2) + "\n", { mode: 0o600 });
-  chmodSync(filePath, 0o600);
+  // B4 (аудит 65): каталог 0700, файл атомарно, 0600 (права существующего чинятся).
+  ensurePrivateDir(dirname(filePath));
+  writePrivateFile(filePath, JSON.stringify(state, null, 2) + "\n");
 }
 
 /** Cookie для Cookie-заголовка по домену (суффикс-совпадение). */
