@@ -11,7 +11,8 @@ import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
 import { prepareForRestore, findUnattachedEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
 import { dist, closestPoint, pointInPolygon, segmentsCross, type Polygon as GeoPolygon } from "./model/geometry.ts";
-import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey } from "./model/pipes.ts";
+import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey, PIPE_COLLECTIONS } from "./model/pipes.ts";
+import { warmFloorMismatches } from "./model/climate.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { borderMismatches } from "./model/terraces.ts";
 import { levelHoleMismatches } from "./model/floorhole.ts";
@@ -97,7 +98,7 @@ export type SaveOutcome = {
   verified: boolean;
   rounds: number;
   /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено. */
-  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number; led_strips: number; stripes_light: number; line_strips: number };
+  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number; led_strips: number; stripes_light: number; line_strips: number; warm_floors: number; pipes_warm_floor: number; pipes_conditioner: number; pipes_heat: number; pipes_ventilation: number };
   /** Предупреждения (удаления объектов сервера). */
   warnings: string[];
 };
@@ -109,8 +110,8 @@ export const MAX_HISTORY = 50;
 /** Результат мутации стен: полезное значение + предупреждения (офлайн-режим). */
 export type WallMutation<T> = { result: T; warnings: string[] };
 
-/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии, трубы воды, границы террас/участка, проёмы пола, световые линии. */
-export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number; led_strips: number; stripes_light: number; line_strips: number } {
+/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии, трубы воды, границы террас/участка, проёмы пола, световые линии, тёплый пол и трубы климата (этап 122). */
+export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number; led_strips: number; stripes_light: number; line_strips: number; warm_floors: number; pipes_warm_floor: number; pipes_conditioner: number; pipes_heat: number; pipes_ventilation: number } {
   const m = model as Model;
   const walls = m.walls ?? {};
   return {
@@ -127,6 +128,11 @@ export function modelCounts(model: Model | Record<string, unknown>): { walls: nu
     led_strips: Object.keys(m.led_strips ?? {}).length,
     stripes_light: Object.keys(m.stripes_light ?? {}).length,
     line_strips: Object.keys(m.line_strips ?? {}).length,
+    warm_floors: Object.keys(m.warm_floors ?? {}).length,
+    pipes_warm_floor: Object.keys(m.pipes_warm_floor ?? {}).length,
+    pipes_conditioner: Object.keys(m.pipes_conditioner ?? {}).length,
+    pipes_heat: Object.keys(m.pipes_heat ?? {}).length,
+    pipes_ventilation: Object.keys(m.pipes_ventilation ?? {}).length,
   };
 }
 
@@ -155,6 +161,7 @@ export function modelIsContentEmpty(model: Model): boolean {
   if (nonEmpty(model.pipes)) return false;
   if (nonEmpty(model.terrace_borders) || nonEmpty(model.territory_borders) || nonEmpty(model.level_holes)) return false;
   if (nonEmpty(model.led_strips) || nonEmpty(model.stripes_light) || nonEmpty(model.line_strips)) return false;
+  if (nonEmpty(model.warm_floors) || nonEmpty(model.pipes_warm_floor) || nonEmpty(model.pipes_conditioner) || nonEmpty(model.pipes_heat) || nonEmpty(model.pipes_ventilation)) return false;
   if (nonEmpty(model.rooms2) || nonEmpty(model.rooms1)) return false;
   return true;
 }
@@ -1178,6 +1185,35 @@ export function itemIdsForSheet(model: Model, sheet: string): string[] {
     .map(([key, it]) => it.id ?? key);
 }
 
+/**
+ * Сверка сущностей климата (этап 122): контуры тёплого пола (model.warm_floors —
+ * семантика контура: polygon, кольцо, узлы, площадь) и трубы климата
+ * (pipes_warm_floor/pipes_conditioner/pipes_heat/pipes_ventilation — общий слой
+ * газовых графов). Возвращает список человекочитаемых расхождений. Аргументы —
+ * модели или их фрагменты (ожидание после save — фрагмент нормализованной модели).
+ */
+function climateGraphMismatches(local: Model, norm: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const wfLost = missingIds(new Set(Object.keys(local.warm_floors ?? {})), new Set(Object.keys((norm as { warm_floors?: Record<string, unknown> }).warm_floors ?? {})));
+  const wfMism = warmFloorMismatches(
+    structuredClone(local.warm_floors ?? {}) as Record<string, import("./model/types.ts").WarmFloor>,
+    (norm as { warm_floors?: Record<string, unknown> }).warm_floors ?? {},
+  );
+  if (wfLost.length > 0 || wfMism.length > 0) {
+    out.push(`контуры тёплого пола: потеряны ${JSON.stringify(wfLost)}; расхождения ${JSON.stringify(wfMism)}`);
+  }
+  for (const coll of ["pipes_warm_floor", "pipes_conditioner", "pipes_heat", "pipes_ventilation"] as const) {
+    const ws = structuredClone((local as Record<string, unknown>)[coll] ?? {}) as Record<string, GasLineSig>;
+    const normColl = ((norm as Record<string, unknown>)[coll] ?? {}) as Record<string, unknown>;
+    const lost = missingIds(new Set(Object.keys(ws)), new Set(Object.keys(normColl)));
+    const graphNorm = gasLineGraphMismatches(structuredClone(ws), normColl, "труба климата");
+    if (lost.length > 0 || graphNorm.length > 0) {
+      out.push(`${coll}: потеряны ${JSON.stringify(lost)}; расхождения ${JSON.stringify(graphNorm)}`);
+    }
+  }
+  return out;
+}
+
 export class Workspace {
   readonly deps: WorkspaceDeps;
   project: OpenProject | null = null;
@@ -1458,12 +1494,15 @@ export class Workspace {
         (norm.model as Record<string, unknown>)["walls"] as Record<string, unknown> | undefined,
         "normalize",
       );
+      // этап 122: контуры тёплого пола и трубы климата после нормализации не теряются
+      // (общий слой графов — семантическая сверка; у контуров — polygon/кольцо/площадь)
+      const climateNorm = climateGraphMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
       warnings.push(...finishNorm.warnings);
       // этап 113: размеры и комментарии после нормализации не теряются и не искажаются
       const dimsNorm = dimsMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
-      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || dimsNorm.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку или размеры/комментарии — мутация отменена`, {
-          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, dims_mismatches: dimsNorm },
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, размеры/комментарии или сущности климата — мутация отменена`, {
+          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, dims_mismatches: dimsNorm, climate_mismatches: climateNorm },
         });
       }
       // нормализованная копия становится канонической
@@ -1590,6 +1629,11 @@ export class Workspace {
       led_strips: missingIds(new Set(Object.keys(serverModel.led_strips ?? {})), new Set(Object.keys(this.modelInternal!.led_strips ?? {}))),
       stripes_light: missingIds(new Set(Object.keys(serverModel.stripes_light ?? {})), new Set(Object.keys(this.modelInternal!.stripes_light ?? {}))),
       line_strips: missingIds(new Set(Object.keys(serverModel.line_strips ?? {})), new Set(Object.keys(this.modelInternal!.line_strips ?? {}))),
+      warm_floors: missingIds(new Set(Object.keys(serverModel.warm_floors ?? {})), new Set(Object.keys(this.modelInternal!.warm_floors ?? {}))),
+      pipes_warm_floor: missingIds(new Set(Object.keys(serverModel.pipes_warm_floor ?? {})), new Set(Object.keys(this.modelInternal!.pipes_warm_floor ?? {}))),
+      pipes_conditioner: missingIds(new Set(Object.keys(serverModel.pipes_conditioner ?? {})), new Set(Object.keys(this.modelInternal!.pipes_conditioner ?? {}))),
+      pipes_heat: missingIds(new Set(Object.keys(serverModel.pipes_heat ?? {})), new Set(Object.keys(this.modelInternal!.pipes_heat ?? {}))),
+      pipes_ventilation: missingIds(new Set(Object.keys(serverModel.pipes_ventilation ?? {})), new Set(Object.keys(this.modelInternal!.pipes_ventilation ?? {}))),
     };
     const willDelete = {
       walls: deletedIds.walls.length,
@@ -1605,6 +1649,11 @@ export class Workspace {
       led_strips: deletedIds.led_strips.length,
       stripes_light: deletedIds.stripes_light.length,
       line_strips: deletedIds.line_strips.length,
+      warm_floors: deletedIds.warm_floors.length,
+      pipes_warm_floor: deletedIds.pipes_warm_floor.length,
+      pipes_conditioner: deletedIds.pipes_conditioner.length,
+      pipes_heat: deletedIds.pipes_heat.length,
+      pipes_ventilation: deletedIds.pipes_ventilation.length,
     };
     const warnings: string[] = [];
     const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
@@ -1622,6 +1671,11 @@ export class Workspace {
     if (willDelete.led_strips > 0) warnings.push(`будут удалены светодиодные ленты (${willDelete.led_strips}), которых нет в модели: ${idList(deletedIds.led_strips)}`);
     if (willDelete.stripes_light > 0) warnings.push(`будут удалены трековые шины (${willDelete.stripes_light}), которых нет в модели: ${idList(deletedIds.stripes_light)}`);
     if (willDelete.line_strips > 0) warnings.push(`будет удалено линейное освещение (${willDelete.line_strips}), которого нет в модели: ${idList(deletedIds.line_strips)}`);
+    if (willDelete.warm_floors > 0) warnings.push(`будут удалены контуры тёплого пола (${willDelete.warm_floors}), которых нет в модели: ${idList(deletedIds.warm_floors)}`);
+    if (willDelete.pipes_warm_floor > 0) warnings.push(`будут удалены магистрали тёплого пола (${willDelete.pipes_warm_floor}), которых нет в модели: ${idList(deletedIds.pipes_warm_floor)}`);
+    if (willDelete.pipes_conditioner > 0) warnings.push(`будет удалён дренаж кондиционеров (${willDelete.pipes_conditioner}), которого нет в модели: ${idList(deletedIds.pipes_conditioner)}`);
+    if (willDelete.pipes_heat > 0) warnings.push(`будут удалены магистрали отопления (${willDelete.pipes_heat}), которых нет в модели: ${idList(deletedIds.pipes_heat)}`);
+    if (willDelete.pipes_ventilation > 0) warnings.push(`будут удалены воздуховоды (${willDelete.pipes_ventilation}), которых нет в модели: ${idList(deletedIds.pipes_ventilation)}`);
     if (fresh.save_id !== saveIdBefore) {
       if (!this.editorInternal && !options.force) {
         throw new McpError(
@@ -1805,6 +1859,8 @@ export class Workspace {
     );
     // этап 113: размеры и комментарии до записи сверяются с нормализованной моделью
     const dimsNorm = dimsMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
+    // этап 122: сущности климата до записи сверяются с нормализованной моделью
+    const climateNorm = climateGraphMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
     // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
     const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
     const rolesNorm = wallRoleMismatches(this.modelInternal!.walls as unknown as Record<string, { role?: string; p1: Point; p2: Point }>, expectedWalls);
@@ -1828,7 +1884,7 @@ export class Workspace {
       lostCables.length > 0 ||
       ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0 ||
       cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 ||
-      dimsNorm.length > 0
+      dimsNorm.length > 0 || climateNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -1863,6 +1919,7 @@ export class Workspace {
           socket_group_mismatches: subsNorm,
           finish_mismatches: finishNorm.problems,
           dims_mismatches: dimsNorm,
+          climate_mismatches: climateNorm,
         },
       });
     }
@@ -1991,8 +2048,20 @@ export class Workspace {
       // этап 113: размеры и комментарии после save сверяются по GET — нормализованное
       // ожидание против сервера (строго: текст, точки, привязки, отступ, цвет)
       const dimsAfter = dimsMismatches(norm.model as Model, after.model as Record<string, unknown>);
+      // этап 122: сущности климата после save — нормализованное ожидание против сервера
+      const climateExpected = {
+        warm_floors: structuredClone((norm.model as Record<string, unknown>)["warm_floors"] ?? {}),
+        pipes_warm_floor: structuredClone((norm.model as Record<string, unknown>)["pipes_warm_floor"] ?? {}),
+        pipes_conditioner: structuredClone((norm.model as Record<string, unknown>)["pipes_conditioner"] ?? {}),
+        pipes_heat: structuredClone((norm.model as Record<string, unknown>)["pipes_heat"] ?? {}),
+        pipes_ventilation: structuredClone((norm.model as Record<string, unknown>)["pipes_ventilation"] ?? {}),
+      };
+      const climateAfter = climateGraphMismatches(
+        climateExpected as unknown as Model,
+        after.model as Record<string, unknown>,
+      );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && dimsAfter.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -2022,6 +2091,7 @@ export class Workspace {
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
             finish_mismatches: finishAfter,
             dims_mismatches: dimsAfter,
+            climate_mismatches: climateAfter,
           },
         });
       }

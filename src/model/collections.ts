@@ -7,7 +7,8 @@ import type { Model } from "./types.ts";
 /**
  * Коллекции объектов планировки в модели (значение — Record<id, объект>).
  * walls/items/pillars/rulers/comments есть всегда; rigels/pipes_gas/pipes/terrace_borders/
- * territory_borders/level_holes/led_strips/stripes_light/line_strips — у старых моделей
+ * territory_borders/level_holes/led_strips/stripes_light/line_strips/warm_floors/
+ * pipes_warm_floor/pipes_conditioner/pipes_heat/pipes_ventilation — у старых моделей
  * могут отсутствовать.
  */
 export const MODEL_ENTITY_COLLECTIONS = [
@@ -26,6 +27,11 @@ export const MODEL_ENTITY_COLLECTIONS = [
   "cables",
   "rulers",
   "comments",
+  "warm_floors",
+  "pipes_warm_floor",
+  "pipes_conditioner",
+  "pipes_heat",
+  "pipes_ventilation",
 ] as const;
 
 export type ModelEntityCollection = (typeof MODEL_ENTITY_COLLECTIONS)[number];

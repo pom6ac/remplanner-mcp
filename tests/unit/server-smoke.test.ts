@@ -48,6 +48,8 @@ const EXPECTED_TOOLS = [
   // §7.4h — размеры и комментарии (нижняя панель, этап 113)
   "dim_add", "dim_update", "dim_delete", "dims_list",
   "comment_add", "comment_update", "comment_delete", "comments_list",
+  // §7.4i — тёплый пол, кондиционеры, вентиляция (этап 122)
+  "warm_floor_add", "warm_floor_update", "warm_floor_delete",
   // §7.6
   "model_get", "model_validate", "render_plan",
 ];

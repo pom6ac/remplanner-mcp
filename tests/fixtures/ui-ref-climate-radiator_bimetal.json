@@ -1,0 +1,73 @@
+{
+ "_source": "клик по UI анонимного проекта (headless Chromium, ID проекта/плана обезличены), проба 122-climate-fixtures, model project.copy(\"server\"), без сохранения; id предмета/комнаты/стены обезличены (\"0\"); wall_line удалён; координаты — реальные точки листа",
+ "menu_title": "Радиатор биметаллический",
+ "tool_id": "plannertool_radiator_bimetal",
+ "catalog_defaults_cm": {
+  "id": 184,
+  "title": "Радиатор биметаллический",
+  "group": "furniture",
+  "width": 70,
+  "height": 12,
+  "self_height": 56,
+  "plan": {
+   "radiators": 26
+  },
+  "anchor": "free",
+  "over_floor": {
+   "value": 10,
+   "display": false
+  }
+ },
+ "model_object": {
+  "name": "radiator_bimetal",
+  "pc": {
+   "x": 150,
+   "y": -284
+  },
+  "angle": 180,
+  "projection": {
+   "x": 150,
+   "y": -290
+  },
+  "width": 70,
+  "height": 12,
+  "plan": {
+   "radiators": 26
+  },
+  "id": "0",
+  "item_id": 184,
+  "over_floor": {
+   "value": 10,
+   "display": false
+  },
+  "self_height": 56,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 150,
+   "y": -284
+  },
+  "center3d": {
+   "x": 150,
+   "y": -284
+  },
+  "id_room": "0",
+  "id_room_zone": "_8rnlg",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r"
+ }
+}

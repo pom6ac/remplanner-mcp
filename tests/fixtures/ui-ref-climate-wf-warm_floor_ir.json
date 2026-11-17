@@ -1,0 +1,129 @@
+{
+ "_source": "клик по UI анонимного проекта (headless Chromium, ID проекта/плана обезличены), проба 122-climate-fixtures, model project.copy(\"server\"), без сохранения; id предмета/комнаты/стены обезличены (\"0\"); wall_line удалён; координаты — реальные точки листа",
+ "menu_title": "Инфракрасный теплый пол",
+ "tool_id": "plannertool_warm_floor_ir",
+ "catalog_defaults_cm": {
+  "id": 1019,
+  "title": "Инфракрасный теплый пол",
+  "group": "floor_parts",
+  "width": 0,
+  "height": 0,
+  "self_height": 0,
+  "plan": {
+   "warm_floor": 11
+  },
+  "anchor": "free",
+  "over_floor": false
+ },
+ "model_object": {
+  "id": "0",
+  "polygon": [
+   {
+    "x": 60,
+    "y": -240
+   },
+   {
+    "x": 240,
+    "y": -240
+   },
+   {
+    "x": 240,
+    "y": -60
+   },
+   {
+    "x": 60,
+    "y": -60
+   }
+  ],
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    },
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null,
+    {
+     "length": 1
+    },
+    null
+   ],
+   [
+    null,
+    {
+     "length": 1
+    },
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null,
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "_tdxd5",
+    "point": {
+     "x": 60,
+     "y": -240
+    },
+    "type": "node"
+   },
+   {
+    "id": "_6evr2",
+    "point": {
+     "x": 240,
+     "y": -240
+    },
+    "type": "node"
+   },
+   {
+    "id": "_4hi0e",
+    "point": {
+     "x": 240,
+     "y": -60
+    },
+    "type": "node"
+   },
+   {
+    "id": "_39xjy",
+    "point": {
+     "x": 60,
+     "y": -60
+    },
+    "type": "node"
+   }
+  ],
+  "items": {
+   "_tdxd5": "node",
+   "_6evr2": "node",
+   "_4hi0e": "node",
+   "_39xjy": "node"
+  },
+  "type": "warm_floor_ir",
+  "length": 7.2,
+  "id_room": "0",
+  "props": {
+   "id": "_vfqhf",
+   "name": "warm_floor_ir"
+  },
+  "area": 3.24
+ }
+}

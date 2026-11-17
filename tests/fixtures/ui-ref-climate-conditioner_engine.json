@@ -1,0 +1,74 @@
+{
+ "_source": "клик по UI анонимного проекта (headless Chromium, ID проекта/плана обезличены), проба 122-climate-fixtures, model project.copy(\"server\"), без сохранения; id предмета/комнаты/стены обезличены (\"0\"); wall_line удалён; координаты — реальные точки листа",
+ "menu_title": "Внешн. блок сплит-системы",
+ "tool_id": "plannertool_conditioner_engine",
+ "catalog_defaults_cm": {
+  "id": 41,
+  "title": "Внешн. блок сплит-системы",
+  "group": "furniture",
+  "width": 60,
+  "height": 25,
+  "self_height": 40,
+  "plan": {
+   "conditioners": 12
+  },
+  "anchor": "wall",
+  "over_floor": {
+   "value": 20,
+   "display": false
+  }
+ },
+ "model_object": {
+  "name": "conditioner_engine",
+  "pc": {
+   "x": 260,
+   "y": -277.5
+  },
+  "angle": 180,
+  "projection": {
+   "x": 260,
+   "y": -290
+  },
+  "id_room": "0",
+  "width": 60,
+  "height": 25,
+  "plan": {
+   "conditioners": 12
+  },
+  "id": "0",
+  "item_id": 41,
+  "over_floor": {
+   "value": 20,
+   "display": false
+  },
+  "self_height": 40,
+  "comment": {
+   "id": "_t0gqz"
+  },
+  "dimensions": {
+   "display": 0,
+   "default_value_set": 1
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 260,
+   "y": -277.5
+  },
+  "center3d": {
+   "x": 260,
+   "y": -277.5
+  },
+  "id_room_zone": "_8rnlg",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r"
+ }
+}
