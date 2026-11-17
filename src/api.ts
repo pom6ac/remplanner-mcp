@@ -235,6 +235,11 @@ export type AnonProjectCreated = {
   plan_id: string;
 };
 
+/** Безопасная сводка о нечитаемом ответе: без фрагментов тела. */
+export function unknownBodySummary(status: number, contentType: string | null, bytes: number): Record<string, unknown> {
+  return { status, content_type: contentType ?? "unknown", bytes };
+}
+
 /** Разбор ответа POST /planner/create/ (без входа; проект привязан к cookie visitor_id). */
 export function parseCreateResponse(body: unknown): AnonProjectCreated {
   if (typeof body === "object" && body !== null) {
@@ -245,7 +250,8 @@ export function parseCreateResponse(body: unknown): AnonProjectCreated {
       return { object_id: String(objectId), plan_id: planId !== undefined && planId !== null ? String(planId) : "" };
     }
   }
-  throw new McpError("SITE_ERROR", "не удалось разобрать ответ создания проекта", { details: body });
+  // сырое тело наружу не идёт (этап 145, B1); сводку добавляет createAnonProject
+  throw new McpError("SITE_ERROR", "не удалось разобрать ответ создания проекта");
 }
 
 export async function createAnonProject(session: SessionState): Promise<AnonProjectCreated> {
@@ -270,7 +276,17 @@ export async function createAnonProject(session: SessionState): Promise<AnonProj
   try {
     body = JSON.parse(text);
   } catch {
-    throw new McpError("SITE_ERROR", "не-JSON ответ на создание проекта", { details: text.slice(0, 200) });
+    // сырое тело (может содержать секреты/ПДн) наружу не идёт — только сводка (этап 145, B1)
+    throw new McpError("SITE_ERROR", "не-JSON ответ на создание проекта", {
+      details: unknownBodySummary(res.status, res.headers.get("content-type"), text.length),
+    });
   }
-  return parseCreateResponse(body);
+  try {
+    return parseCreateResponse(body);
+  } catch (e) {
+    if (e instanceof McpError && e.details === undefined) {
+      throw new McpError(e.code, e.message, { hint: e.hint, details: unknownBodySummary(res.status, res.headers.get("content-type"), text.length) });
+    }
+    throw e;
+  }
 }

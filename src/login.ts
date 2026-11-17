@@ -35,12 +35,21 @@ export async function loginViaPage(page: Page, credentials: Credentials, timeout
   if ((await emailInput.count()) === 0 || (await passwordInput.count()) === 0) {
     throw new McpError("AUTH_FAILED", "на /client/ не найдена форма входа (изменилась страница сайта)");
   }
-  await emailInput.fill(credentials.login);
-  await passwordInput.fill(credentials.password);
-  await page.locator("form.pre_form input[name=auth_trigger]").evaluate((el) => {
-    (el as HTMLInputElement).value = "1";
-  });
-  await page.locator("form.pre_form a.pre_button").first().click();
+  try {
+    await emailInput.fill(credentials.login);
+    await passwordInput.fill(credentials.password);
+    await page.locator("form.pre_form input[name=auth_trigger]").evaluate((el) => {
+      (el as HTMLInputElement).value = "1";
+    });
+    await page.locator("form.pre_form a.pre_button").first().click();
+  } catch (e) {
+    // исключения Playwright (fill/click) не отдаем наружу — нейтральное сообщение (этап 145, B2)
+    if (e instanceof McpError) throw e;
+    const kind = e instanceof Error ? e.name : "Error";
+    throw new McpError("AUTH_FAILED", `не удалось заполнить форму входа (${kind})`, {
+      hint: "попробуйте npm run login --headed и войдите вручную",
+    });
+  }
 
   try {
     await page.waitForSelector("#clientline.is_logged", { timeout: timeoutMs });

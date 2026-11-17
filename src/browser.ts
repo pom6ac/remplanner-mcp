@@ -61,7 +61,8 @@ async function launchBrowser(options?: { headed?: boolean }): Promise<Browser> {
   }
   throw new McpError("INTERNAL", "не найден Chrome (системный и кэш Playwright)", {
     hint: "укажите путь через REMPLANNER_BROWSER или выполните npx playwright install chromium",
-    details: lastError instanceof Error ? lastError.message : String(lastError),
+    // сообщение исключения запуска содержит пути — наружу только сводка (этап 145, B2)
+    details: { kind: "chrome_launch_failed", attempts: candidates.length + 1 },
   });
 }
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { McpError, type ErrorCode } from "../errors.ts";
+import { errorToPayload, type ErrorCode } from "../errors.ts";
 import { jsonText } from "./context.ts";
 
 // Общие помощники MCP-инструментов: формат ответа и обработка ошибок (design §8).
@@ -19,15 +19,9 @@ export function ok(value: unknown, extra?: Content[]): ToolResult {
   return { content: extra ? [...extra, ...content] : content };
 }
 
+/** Единая безопасная сериализация (этап 145, B2): McpError — как есть (маскируется), неожиданные исключения — нейтральные. */
 export function jsonError(e: unknown): ToolResult {
-  if (e instanceof McpError) {
-    return { isError: true, content: [{ type: "text", text: jsonText(e.toJSON()) }] };
-  }
-  const code = (e as { code?: string }).code;
-  if (code === "NOT_FOUND" || code === "INVALID_ARGUMENT") {
-    return { isError: true, content: [{ type: "text", text: jsonText({ code: code as ErrorCode, message: (e as Error).message }) }] };
-  }
-  return { isError: true, content: [{ type: "text", text: jsonText({ code: "INTERNAL" satisfies ErrorCode, message: e instanceof Error ? e.message : String(e) }) }] };
+  return { isError: true, content: [{ type: "text", text: jsonText(errorToPayload(e)) }] };
 }
 
 /** Обёртка: описание + zod-схема + обработчик с единым маппингом ошибок. */

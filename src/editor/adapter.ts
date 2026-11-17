@@ -505,7 +505,7 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
   }
   const el = page.locator(target.selector).nth(target.index);
   const buf = await el.screenshot({ timeout: BROWSER_TIMEOUT_MS }).catch(async (e: unknown) => {
-    throw new McpError("SITE_ERROR", `скриншот плана (${target.selector}[${target.index}]) не удался: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+    throw new McpError("SITE_ERROR", `скриншот плана (${target.selector}[${target.index}]) не удался (${e instanceof Error ? e.name : "ошибка"})`);
   });
   if (width !== 1600) {
     await page.setViewportSize({ width: 1600, height: 1000 }).catch(() => {});
