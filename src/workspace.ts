@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { BACKUPS_DIR } from "./config.ts";
@@ -1795,12 +1795,12 @@ export class Workspace {
   writeBackup(): string {
     const path = this.backupPath();
     ensurePrivateDir(BACKUPS_DIR);
-    // B3 (аудит 65): containment-проверка по realpath — каталог файла обязан
-    // совпасть с BACKUPS_DIR (обе стороны через realpath: tmpdir может быть
-    // symlink'ом, а путь до файла ещё не существует).
-    const root = realpathSync(BACKUPS_DIR);
-    if (realpathSync(dirname(path)) !== root) {
-      throw new McpError("INTERNAL", "путь снимка вышел за пределы каталога резервных копий — запись отменена");
+    // B3 (аудит 65, ревью 164 m3): BACKUPS_DIR не должен быть symlink наружу.
+    // Дальше защита — безопасный basename в backupPath (sanitize) и числовой id
+    // на входе; текстовая containment-проверка здесь была тавтологией и убрана.
+    const rootStat = lstatSync(BACKUPS_DIR);
+    if (rootStat.isSymbolicLink()) {
+      throw new McpError("INTERNAL", "каталог резервных копий — символическая ссылка — запись отменена");
     }
     writePrivateFile(
       path,

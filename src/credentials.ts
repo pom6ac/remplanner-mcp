@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { dirname } from "node:path";
-import { hasWideMode, inspectPath } from "./fs-safe.ts";
+import { ensurePrivateDir, hasWideMode, inspectPath, inspectPathFollow, ownedByCurrentUser } from "./fs-safe.ts";
 import { McpError } from "./errors.ts";
 
 export type Credentials = {
@@ -39,10 +39,24 @@ export function isPrivateMode(filePath: string): boolean {
 
 /**
  * B4 (аудит 65): права файла и каталога проверяются ДО чтения. Широкие права
- * (group/other) — отказ с подсказкой chmod; содержимое файла в ошибку не
- * попадает. Symlink-файл тоже отклоняется (указывает не туда, куда рассчитывал
- * пользователь).
+ * (group/other) файла — отказ с подсказкой chmod; каталог текущего пользователя
+ * чинится chmod 700 (ревью 164 m2), чужой владелец — отказ. Содержимое файла в
+ * ошибку не попадает. Symlink-файл тоже отклоняется. На Windows и ФС без
+ * достоверных POSIX-прав проверка режима не выполняется (ревью 164 M1):
+ * разовое предупреждение вместо отказа.
  */
+/** Режимы POSIX достоверны не везде: на win32 lstat().mode файла всегда 0666. */
+const POSIX_MODES = process.platform !== "win32";
+let warnedNonPosix = false;
+
+function warnNonPosixOnce(filePath: string): void {
+  if (warnedNonPosix) return;
+  warnedNonPosix = true;
+  console.error(
+    `предупреждение: ${filePath}: проверка прав 0600/0700 пропущена — платформа/ФС без достоверных POSIX-прав`,
+  );
+}
+
 function assertPrivateStorage(filePath: string): void {
   let fileStat;
   try {
@@ -57,23 +71,39 @@ function assertPrivateStorage(filePath: string): void {
       hint: `положите обычный файл с правами 0600 (chmod 600 ${filePath})`,
     });
   }
+  if (!POSIX_MODES) {
+    warnNonPosixOnce(filePath);
+    return;
+  }
   if (hasWideMode(fileStat.mode)) {
     const mode = (fileStat.mode & 0o777).toString(8);
     throw new McpError("AUTH_REQUIRED", `${filePath}: права файла шире 0600 (${mode}), доступ группы/других — отказ`, {
       hint: `chmod 600 ${filePath}`,
     });
   }
+  // Ревью 164 m1: каталог проверяется по realpath — symlink-каталог 0700 не отказ,
+  // подсказка chmod даётся с реальным путём каталога.
+  let dirPath = dirname(filePath);
+  try {
+    dirPath = realpathSync(dirPath);
+  } catch {
+    return; // каталог исчез между проверками — ошибка чтения ниже
+  }
   let dirStat;
   try {
-    dirStat = inspectPath(dirname(filePath));
+    dirStat = inspectPathFollow(dirPath);
   } catch {
     return; // каталог исчез между проверками — ошибка чтения ниже
   }
   if (hasWideMode(dirStat.mode)) {
-    const mode = (dirStat.mode & 0o777).toString(8);
-    throw new McpError("AUTH_REQUIRED", `каталог ${dirname(filePath)} имеет права шире 0700 (${mode}) — отказ`, {
-      hint: `chmod 700 ${dirname(filePath)}`,
-    });
+    // Ревью 164 m2: каталог текущего пользователя чинится (chmod 700), отказ —
+    // только для чужого владельца.
+    if (!ownedByCurrentUser(dirPath)) {
+      throw new McpError("AUTH_REQUIRED", `каталог ${dirPath} принадлежит другому пользователю — отказ`, {
+        hint: "положите учётные данные в каталог своего пользователя с правами 0700",
+      });
+    }
+    ensurePrivateDir(dirPath);
   }
 }
 

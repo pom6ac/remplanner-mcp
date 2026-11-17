@@ -17,11 +17,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensurePrivateDir, writePrivateFile, inspectPath } from "../../src/fs-safe.ts";
+import { ensurePrivateDir, writePrivateFile, inspectPath, fsWriteCalls } from "../../src/fs-safe.ts";
 import { readCredentials } from "../../src/credentials.ts";
 import { readPlanFile, MAX_PLAN_FILE_BYTES } from "../../src/server/tools-projects.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
-import { BACKUPS_DIR } from "../../src/config.ts";
+import { BACKUPS_DIR, HOME_DIR } from "../../src/config.ts";
 import { McpError } from "../../src/errors.ts";
 
 const ROOT = mkdtempSync(join(tmpdir(), "b3b4-files-"));
@@ -40,6 +40,18 @@ test("ensurePrivateDir: создаёт 0700, чинит существующий
   ensurePrivateDir(nested);
   assert.equal(mode(nested), 0o700);
   assert.equal(mode(dir), 0o700);
+});
+
+// Ревью 164 m7: подкаталог HOME_DIR чинит и сам HOME_DIR.
+test("ensurePrivateDir: подкаталог HOME_DIR чинит и сам HOME_DIR", () => {
+  const home = HOME_DIR;
+  mkdirSync(home, { recursive: true });
+  chmodSync(home, 0o755);
+  assert.equal(mode(home), 0o755);
+
+  ensurePrivateDir(join(home, "backups"));
+  assert.equal(mode(home), 0o700, "HOME_DIR починен вместе с подкаталогом");
+  assert.equal(mode(join(home, "backups")), 0o700);
 });
 
 test("writePrivateFile: новый файл 0600, перезапись чинит 0644 → 0600, tmp не остаётся", () => {
@@ -88,6 +100,56 @@ test("writePrivateFile: отказ на каталог-цель; запись в
   assert.ok(!statSync(join(dir, "nodir"), { throwIfNoEntry: false }), "каталог не создан");
 });
 
+// Ревью 164 m10: удаление tmp при сбое записи/rename — инъекция ошибки через
+// fsWriteCalls (ESM-namespace node:fs не патчится).
+function inject<K extends "writeSync" | "renameSync">(
+  name: K,
+  impl: (typeof fsWriteCalls)[K],
+): (typeof fsWriteCalls)[K] {
+  const original = fsWriteCalls[name];
+  fsWriteCalls[name] = impl;
+  return original;
+}
+
+test("writePrivateFile: tmp удаляется при сбое rename (инъекция ошибки)", () => {
+  const dir = join(ROOT, "w4");
+  ensurePrivateDir(dir);
+  const file = join(dir, "plan.json");
+  const injected = new Error("rename failed (инъекция)");
+  let calls = 0;
+  const original = inject("renameSync", () => {
+    calls++;
+    throw injected;
+  });
+  try {
+    assert.throws(() => writePrivateFile(file, '{"a":1}'), (e: unknown) => e === injected);
+    assert.equal(calls, 1);
+    assert.deepEqual(readdirSync(dir).filter((f) => f.startsWith(".")), [], "tmp удалён после сбоя rename");
+    assert.ok(!statSync(file, { throwIfNoEntry: false }), "файл не создан");
+  } finally {
+    fsWriteCalls.renameSync = original;
+  }
+});
+
+test("writePrivateFile: tmp удаляется при сбое записи (инъекция ошибки)", () => {
+  const dir = join(ROOT, "w5");
+  ensurePrivateDir(dir);
+  const file = join(dir, "plan.json");
+  const injected = new Error("write failed (инъекция)");
+  let calls = 0;
+  const original = inject("writeSync", () => {
+    calls++;
+    throw injected;
+  });
+  try {
+    assert.throws(() => writePrivateFile(file, '{"a":1}'), (e: unknown) => e === injected);
+    assert.equal(calls, 1);
+    assert.deepEqual(readdirSync(dir).filter((f) => f.startsWith(".")), [], "tmp удалён после сбоя записи");
+  } finally {
+    fsWriteCalls.writeSync = original;
+  }
+});
+
 // ---------- credentials: широкие права — отказ ДО чтения ----------
 
 test("credentials: права файла 0644 → отказ с chmod-подсказкой, без значений секретов", () => {
@@ -106,18 +168,30 @@ test("credentials: права файла 0644 → отказ с chmod-подск
   });
 });
 
-test("credentials: широкий каталог → отказ с chmod 700", () => {
+// Ревью 164 m2: широкий каталог текущего пользователя чинится, а не отказ.
+test("credentials: широкий каталог текущего пользователя чинится chmod 700 (самопочинка)", () => {
   const dir = join(ROOT, "cred2");
   mkdirSync(dir, { recursive: true, mode: 0o755 });
   const file = join(dir, "credentials.env");
   writeFileSync(file, "REMPLANNER_LOGIN=u@x\nREMPLANNER_PASSWORD=p\n");
   chmodSync(file, 0o600);
-  assert.throws(() => readCredentials(file), (e: McpError) => {
-    assert.equal(e.code, "AUTH_REQUIRED");
-    assert.match(e.message, /каталог/);
-    assert.match(e.hint ?? "", /chmod 700/);
-    return true;
-  });
+  const creds = readCredentials(file);
+  assert.equal(creds.login, "u@x");
+  assert.equal(mode(dir), 0o700, "каталог починен chmod 700");
+});
+
+// Ревью 164 m1: каталог по realpath — symlink-каталог 0700 не отказ.
+test("credentials: каталог-symlink на 0700 — не отказ, проверка по realpath", () => {
+  const real = join(ROOT, "cred4-real");
+  ensurePrivateDir(real);
+  const link = join(ROOT, "cred4-link");
+  symlinkSync(real, link);
+  const file = join(link, "credentials.env");
+  writeFileSync(file, "REMPLANNER_LOGIN=u@x\nREMPLANNER_PASSWORD=p\n");
+  chmodSync(file, 0o600);
+  const creds = readCredentials(file);
+  assert.equal(creds.login, "u@x");
+  assert.equal(creds.password, "p");
 });
 
 test("credentials: symlink вместо файла → отказ", () => {
@@ -231,6 +305,26 @@ test("backupPath: objectId с ../ не выходит за BACKUPS_DIR, файл
   assert.deepEqual(readdirSync(BACKUPS_DIR).filter((f) => f.startsWith(".")), [], "tmp не остался");
 
   rmSync(written, { force: true });
+});
+
+// Ревью 164 m3: BACKUPS_DIR-symlink — запись отменяется, цель ссылки не трогается.
+test("writeBackup: BACKUPS_DIR-symlink → отказ, в цель ссылки ничего не записано", async () => {
+  const outside = join(ROOT, "outside-backups");
+  ensurePrivateDir(outside);
+  rmSync(BACKUPS_DIR, { recursive: true, force: true });
+  symlinkSync(outside, BACKUPS_DIR);
+  try {
+    const ws = new Workspace(mockDeps());
+    await ws.open("123", "1");
+    assert.throws(() => (ws as unknown as { writeBackup(): string }).writeBackup(), (e: McpError) => {
+      assert.equal(e.code, "INTERNAL");
+      return true;
+    });
+    assert.deepEqual(readdirSync(outside), [], "в цель ссылки ничего не записано");
+  } finally {
+    rmSync(BACKUPS_DIR, { force: true });
+    mkdirSync(BACKUPS_DIR, { recursive: true, mode: 0o700 });
+  }
 });
 
 test("writePrivateFile: буфер (PNG-сценарий render) — 0600", () => {
