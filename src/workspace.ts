@@ -8,6 +8,7 @@ import type { SessionState } from "./session.ts";
 import type { LoadedModel } from "./api.ts";
 import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, EditorRoom } from "./editor/adapter.ts";
 import type { Model, Point } from "./model/types.ts";
+import { MODEL_ENTITY_COLLECTIONS, entityCounts, hasEntities, type ModelEntityCollection } from "./model/collections.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
 import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmatchedDanglingEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, assertNoNewWarmFloorCrossing, type WallAxisSegment, type DanglingEnd } from "./model/walls.ts";
@@ -140,42 +141,68 @@ export type SaveOutcome = {
   backup_path: string;
   verified: boolean;
   rounds: number;
-  /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено. */
-  will_delete: { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number; led_strips: number; stripes_light: number; line_strips: number; warm_floors: number; pipes_warm_floor: number; pipes_conditioner: number; pipes_heat: number; pipes_ventilation: number };
+  /** Сверка с серверной версией перед записью: сколько объектов сервера будет удалено.
+   *  Специальные ключи walls/openings; остальные — по реестру MODEL_ENTITY_COLLECTIONS. */
+  will_delete: { walls: number; openings: number } & {
+    [K in Exclude<ModelEntityCollection, "walls">]: number;
+  };
   /** Предупреждения (удаления объектов сервера). */
   warnings: string[];
 };
 
 export type HistorySnapshot = { label: string; at: string };
 
+/**
+ * Подписи коллекций в предупреждении об удалении объектов сервера
+ * (кроме стен и проёмов, у которых свои тексты). Ключи — реестр
+ * MODEL_ENTITY_COLLECTIONS без walls (C1, аудит 65).
+ */
+const ENTITY_DELETE_LABELS: Record<Exclude<ModelEntityCollection, "walls">, string> = {
+  items: "предметы",
+  pillars: "колонны",
+  rigels: "ригели",
+  pipes_gas: "газовые линии",
+  pipes: "трубы водоснабжения",
+  terrace_borders: "границы террас",
+  territory_borders: "границы участка",
+  level_holes: "проёмы в полу",
+  led_strips: "светодиодные ленты",
+  stripes_light: "трековые шины",
+  line_strips: "линии линейного освещения",
+  cables: "соединительные провода",
+  rulers: "размеры",
+  comments: "текстовые комментарии",
+  warm_floors: "контуры тёплого пола",
+  pipes_warm_floor: "магистрали тёплого пола",
+  pipes_conditioner: "дренажи кондиционеров",
+  pipes_heat: "магистрали отопления",
+  pipes_ventilation: "воздуховоды",
+};
+
 export const MAX_HISTORY = 50;
 
 /** Результат мутации стен: полезное значение + предупреждения (офлайн-режим). */
 export type WallMutation<T> = { result: T; warnings: string[] };
 
-/** Счётчики объектов модели: стены, проёмы, предметы, колонны, ригели, газовые линии, трубы воды, границы террас/участка, проёмы пола, световые линии, тёплый пол и трубы климата (этап 122). */
-export function modelCounts(model: Model | Record<string, unknown>): { walls: number; openings: number; items: number; pillars: number; rigels: number; gas_lines: number; pipes: number; terrace_borders: number; territory_borders: number; level_holes: number; led_strips: number; stripes_light: number; line_strips: number; warm_floors: number; pipes_warm_floor: number; pipes_conditioner: number; pipes_heat: number; pipes_ventilation: number } {
+/**
+ * Счётчики объектов модели. Специальные ключи: walls (число стен) и openings
+ * (число проёмов в стенах); остальные — по общему реестру коллекций
+ * MODEL_ENTITY_COLLECTIONS (C1, аудит 65), чтобы новая сущность не выпадала
+ * из счётчиков (раньше вручную отставали cables/rulers/comments).
+ */
+export type ModelCounts = { walls: number; openings: number } & {
+  [K in Exclude<ModelEntityCollection, "walls">]: number;
+};
+
+export function modelCounts(model: Model | Record<string, unknown>): ModelCounts {
   const m = model as Model;
   const walls = m.walls ?? {};
+  const { walls: _w, ...rest } = entityCounts(m);
+  void _w;
   return {
     walls: Object.keys(walls).length,
     openings: Object.values(walls).reduce((n, w) => n + Object.keys(w.holes ?? {}).length, 0),
-    items: Object.keys(m.items ?? {}).length,
-    pillars: Object.keys(m.pillars ?? {}).length,
-    rigels: Object.keys(m.rigels ?? {}).length,
-    gas_lines: Object.keys(m.pipes_gas ?? {}).length,
-    pipes: Object.keys(m.pipes ?? {}).length,
-    terrace_borders: Object.keys(m.terrace_borders ?? {}).length,
-    territory_borders: Object.keys(m.territory_borders ?? {}).length,
-    level_holes: Object.keys(m.level_holes ?? {}).length,
-    led_strips: Object.keys(m.led_strips ?? {}).length,
-    stripes_light: Object.keys(m.stripes_light ?? {}).length,
-    line_strips: Object.keys(m.line_strips ?? {}).length,
-    warm_floors: Object.keys(m.warm_floors ?? {}).length,
-    pipes_warm_floor: Object.keys(m.pipes_warm_floor ?? {}).length,
-    pipes_conditioner: Object.keys(m.pipes_conditioner ?? {}).length,
-    pipes_heat: Object.keys(m.pipes_heat ?? {}).length,
-    pipes_ventilation: Object.keys(m.pipes_ventilation ?? {}).length,
+    ...rest,
   };
 }
 
@@ -194,17 +221,11 @@ function errorGrowth(before: Record<string, number> | null | undefined, after: R
   return grown;
 }
 
-/** Разобранная модель без содержимого: ни стен, ни предметов, ни прочих сущностей. */
+/** Разобранная модель без содержимого: ни одной сущности планировки (по общему
+ *  реестру коллекций, C1) и без комнат. */
 export function modelIsContentEmpty(model: Model): boolean {
-  const c = modelCounts(model);
-  if (c.walls > 0 || c.items > 0) return false;
+  if (hasEntities(model)) return false;
   const nonEmpty = (v: unknown): boolean => v !== null && v !== undefined && typeof v === "object" && Object.keys(v as object).length > 0;
-  if (nonEmpty(model.pillars) || nonEmpty(model.rigels) || nonEmpty(model.rulers) || nonEmpty(model.comments)) return false;
-  if (nonEmpty(model.pipes_gas)) return false;
-  if (nonEmpty(model.pipes)) return false;
-  if (nonEmpty(model.terrace_borders) || nonEmpty(model.territory_borders) || nonEmpty(model.level_holes)) return false;
-  if (nonEmpty(model.led_strips) || nonEmpty(model.stripes_light) || nonEmpty(model.line_strips)) return false;
-  if (nonEmpty(model.warm_floors) || nonEmpty(model.pipes_warm_floor) || nonEmpty(model.pipes_conditioner) || nonEmpty(model.pipes_heat) || nonEmpty(model.pipes_ventilation)) return false;
   if (nonEmpty(model.rooms2) || nonEmpty(model.rooms1)) return false;
   return true;
 }
@@ -1841,68 +1862,40 @@ export class Workspace {
     const serverWallsMissing = missingIds(new Set(Object.keys(serverModel.walls ?? {})), new Set(Object.keys(this.modelInternal!.walls)));
     const renamedWalls = serverWallsMissing.filter((id) => wallAxisCoveredBy(serverModel.walls?.[id] as { p1: Point; p2: Point } | undefined, localWallSegments));
     const deletedWalls = serverWallsMissing.filter((id) => !renamedWalls.includes(id));
-    const deletedIds = {
-      walls: deletedWalls,
-      renamedWalls,
-      openings: missingIds(openingIds(serverModel), openingIds(this.modelInternal!)),
-      items: missingIds(new Set(Object.keys(serverModel.items ?? {})), new Set(Object.keys(this.modelInternal!.items ?? {}))),
-      pillars: missingIds(new Set(Object.keys(serverModel.pillars ?? {})), new Set(Object.keys(this.modelInternal!.pillars ?? {}))),
-      rigels: missingIds(new Set(Object.keys(serverModel.rigels ?? {})), new Set(Object.keys(this.modelInternal!.rigels ?? {}))),
-      gas_lines: missingIds(new Set(Object.keys(serverModel.pipes_gas ?? {})), new Set(Object.keys(this.modelInternal!.pipes_gas ?? {}))),
-      pipes: missingIds(new Set(Object.keys(serverModel.pipes ?? {})), new Set(Object.keys(this.modelInternal!.pipes ?? {}))),
-      terrace_borders: missingIds(new Set(Object.keys(serverModel.terrace_borders ?? {})), new Set(Object.keys(this.modelInternal!.terrace_borders ?? {}))),
-      territory_borders: missingIds(new Set(Object.keys(serverModel.territory_borders ?? {})), new Set(Object.keys(this.modelInternal!.territory_borders ?? {}))),
-      level_holes: missingIds(new Set(Object.keys(serverModel.level_holes ?? {})), new Set(Object.keys(this.modelInternal!.level_holes ?? {}))),
-      led_strips: missingIds(new Set(Object.keys(serverModel.led_strips ?? {})), new Set(Object.keys(this.modelInternal!.led_strips ?? {}))),
-      stripes_light: missingIds(new Set(Object.keys(serverModel.stripes_light ?? {})), new Set(Object.keys(this.modelInternal!.stripes_light ?? {}))),
-      line_strips: missingIds(new Set(Object.keys(serverModel.line_strips ?? {})), new Set(Object.keys(this.modelInternal!.line_strips ?? {}))),
-      warm_floors: missingIds(new Set(Object.keys(serverModel.warm_floors ?? {})), new Set(Object.keys(this.modelInternal!.warm_floors ?? {}))),
-      pipes_warm_floor: missingIds(new Set(Object.keys(serverModel.pipes_warm_floor ?? {})), new Set(Object.keys(this.modelInternal!.pipes_warm_floor ?? {}))),
-      pipes_conditioner: missingIds(new Set(Object.keys(serverModel.pipes_conditioner ?? {})), new Set(Object.keys(this.modelInternal!.pipes_conditioner ?? {}))),
-      pipes_heat: missingIds(new Set(Object.keys(serverModel.pipes_heat ?? {})), new Set(Object.keys(this.modelInternal!.pipes_heat ?? {}))),
-      pipes_ventilation: missingIds(new Set(Object.keys(serverModel.pipes_ventilation ?? {})), new Set(Object.keys(this.modelInternal!.pipes_ventilation ?? {}))),
-    };
-    const willDelete = {
-      walls: deletedIds.walls.length,
-      openings: deletedIds.openings.length,
-      items: deletedIds.items.length,
-      pillars: deletedIds.pillars.length,
-      rigels: deletedIds.rigels.length,
-      gas_lines: deletedIds.gas_lines.length,
-      pipes: deletedIds.pipes.length,
-      terrace_borders: deletedIds.terrace_borders.length,
-      territory_borders: deletedIds.territory_borders.length,
-      level_holes: deletedIds.level_holes.length,
-      led_strips: deletedIds.led_strips.length,
-      stripes_light: deletedIds.stripes_light.length,
-      line_strips: deletedIds.line_strips.length,
-      warm_floors: deletedIds.warm_floors.length,
-      pipes_warm_floor: deletedIds.pipes_warm_floor.length,
-      pipes_conditioner: deletedIds.pipes_conditioner.length,
-      pipes_heat: deletedIds.pipes_heat.length,
-      pipes_ventilation: deletedIds.pipes_ventilation.length,
-    };
+    // Разность идентичностей по всем коллекциям реестра (C1, аудит 65): стены —
+    // специальные ключи (renamedWalls, openings), остальные — из
+    // MODEL_ENTITY_COLLECTIONS, чтобы новая сущность не выпадала из will_delete
+    // (раньше вручную отставали cables/rulers/comments).
+    type DeletedIds = Record<"walls" | "renamedWalls" | "openings" | Exclude<ModelEntityCollection, "walls">, string[]>;
+    const deletedIds = {} as DeletedIds;
+    deletedIds.walls = deletedWalls;
+    deletedIds.renamedWalls = renamedWalls;
+    deletedIds.openings = missingIds(openingIds(serverModel), openingIds(this.modelInternal!));
+    for (const key of MODEL_ENTITY_COLLECTIONS) {
+      if (key === "walls") continue;
+      deletedIds[key] = missingIds(
+        new Set(Object.keys(serverModel[key] ?? {})),
+        new Set(Object.keys(this.modelInternal![key] ?? {})),
+      );
+    }
+    const willDelete = {} as SaveOutcome["will_delete"];
+    willDelete.walls = deletedIds.walls.length;
+    willDelete.openings = deletedIds.openings.length;
+    for (const key of MODEL_ENTITY_COLLECTIONS) {
+      if (key === "walls") continue;
+      willDelete[key] = deletedIds[key].length;
+    }
     const warnings: string[] = [];
     const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
     if (willDelete.walls > 0) warnings.push(`будут удалены стены (${willDelete.walls}), которых нет в модели: ${idList(deletedIds.walls)}`);
     if (deletedIds.renamedWalls.length > 0) warnings.push(`идентификаторы стен изменились (${deletedIds.renamedWalls.length}) — геометрия сохранена, это нормализация, а не потеря: ${idList(deletedIds.renamedWalls)}`);
     if (willDelete.openings > 0) warnings.push(`будут удалены проёмы (${willDelete.openings}), которых нет в модели: ${idList(deletedIds.openings)}`);
-    if (willDelete.items > 0) warnings.push(`будут удалены предметы (${willDelete.items}), которых нет в модели: ${idList(deletedIds.items)}`);
-    if (willDelete.pillars > 0) warnings.push(`будут удалены колонны (${willDelete.pillars}), которых нет в модели: ${idList(deletedIds.pillars)}`);
-    if (willDelete.rigels > 0) warnings.push(`будут удалены ригели (${willDelete.rigels}), которых нет в модели: ${idList(deletedIds.rigels)}`);
-    if (willDelete.gas_lines > 0) warnings.push(`будут удалены газовые линии (${willDelete.gas_lines}), которых нет в модели: ${idList(deletedIds.gas_lines)}`);
-    if (willDelete.pipes > 0) warnings.push(`будут удалены трубы водоснабжения (${willDelete.pipes}), которых нет в модели: ${idList(deletedIds.pipes)}`);
-    if (willDelete.terrace_borders > 0) warnings.push(`будут удалены границы террас (${willDelete.terrace_borders}), которых нет в модели: ${idList(deletedIds.terrace_borders)}`);
-    if (willDelete.territory_borders > 0) warnings.push(`будут удалены границы участка (${willDelete.territory_borders}), которых нет в модели: ${idList(deletedIds.territory_borders)}`);
-    if (willDelete.level_holes > 0) warnings.push(`будут удалены проёмы в полу (${willDelete.level_holes}), которых нет в модели: ${idList(deletedIds.level_holes)}`);
-    if (willDelete.led_strips > 0) warnings.push(`будут удалены светодиодные ленты (${willDelete.led_strips}), которых нет в модели: ${idList(deletedIds.led_strips)}`);
-    if (willDelete.stripes_light > 0) warnings.push(`будут удалены трековые шины (${willDelete.stripes_light}), которых нет в модели: ${idList(deletedIds.stripes_light)}`);
-    if (willDelete.line_strips > 0) warnings.push(`будет удалено линейное освещение (${willDelete.line_strips}), которого нет в модели: ${idList(deletedIds.line_strips)}`);
-    if (willDelete.warm_floors > 0) warnings.push(`будут удалены контуры тёплого пола (${willDelete.warm_floors}), которых нет в модели: ${idList(deletedIds.warm_floors)}`);
-    if (willDelete.pipes_warm_floor > 0) warnings.push(`будут удалены магистрали тёплого пола (${willDelete.pipes_warm_floor}), которых нет в модели: ${idList(deletedIds.pipes_warm_floor)}`);
-    if (willDelete.pipes_conditioner > 0) warnings.push(`будет удалён дренаж кондиционеров (${willDelete.pipes_conditioner}), которого нет в модели: ${idList(deletedIds.pipes_conditioner)}`);
-    if (willDelete.pipes_heat > 0) warnings.push(`будут удалены магистрали отопления (${willDelete.pipes_heat}), которых нет в модели: ${idList(deletedIds.pipes_heat)}`);
-    if (willDelete.pipes_ventilation > 0) warnings.push(`будут удалены воздуховоды (${willDelete.pipes_ventilation}), которых нет в модели: ${idList(deletedIds.pipes_ventilation)}`);
+    for (const key of MODEL_ENTITY_COLLECTIONS) {
+      if (key === "walls") continue;
+      if (willDelete[key] > 0) {
+        warnings.push(`будут удалены ${ENTITY_DELETE_LABELS[key]} (${willDelete[key]}), которых нет в модели: ${idList(deletedIds[key])}`);
+      }
+    }
     if (fresh.save_id !== saveIdBefore) {
       if (!this.editorInternal && !options.force) {
         throw new McpError(
@@ -2417,7 +2410,25 @@ export class Workspace {
     prepareForRestore(prepared);
     const norm = await editor.normalize(prepared as unknown as Record<string, unknown>);
     if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
-    const seen = { walls: norm.after.walls, openings: norm.after.holes, items: norm.after.items, pillars: norm.after.pillars ?? Object.keys((norm.model as { pillars?: Record<string, unknown> }).pillars ?? {}).length, rigels: norm.after.rigels ?? Object.keys((norm.model as { rigels?: Record<string, unknown> }).rigels ?? {}).length, pipes: Object.keys((norm.model as { pipes?: Record<string, unknown> }).pipes ?? {}).length, led_strips: Object.keys((norm.model as { led_strips?: Record<string, unknown> }).led_strips ?? {}).length, stripes_light: Object.keys((norm.model as { stripes_light?: Record<string, unknown> }).stripes_light ?? {}).length, line_strips: Object.keys((norm.model as { line_strips?: Record<string, unknown> }).line_strips ?? {}).length };
+    // Счётчики «что видит редактор»: walls/openings/items/pillars/rigels — из
+    // отчёта адаптера (after), остальные коллекции — из нормализованной модели,
+    // ключи — по общему реестру MODEL_ENTITY_COLLECTIONS (C1, аудит 65), чтобы
+    // новая сущность не выпадала из сверки рендера (раньше вручную отставали
+    // cables/rulers/comments и трубы климата).
+    const normModel = norm.model as Record<string, unknown>;
+    const normModelCount = (key: string): number =>
+      Object.keys((normModel[key] as Record<string, unknown> | null | undefined) ?? {}).length;
+    const seen: Record<string, number> = {
+      walls: norm.after.walls,
+      openings: norm.after.holes,
+      items: norm.after.items,
+      pillars: norm.after.pillars ?? normModelCount("pillars"),
+      rigels: norm.after.rigels ?? normModelCount("rigels"),
+    };
+    for (const key of MODEL_ENTITY_COLLECTIONS) {
+      if (key === "walls" || key === "items" || key === "pillars" || key === "rigels") continue;
+      seen[key] = normModelCount(key);
+    }
     // стены — по каноническому набору осевых отрезков (ревью v0.1.1-r2 R2-3):
     // слияние/разрез коллинеарных стен — допустимая нормализация, сдвиг и лишние
     // стены — расхождение; проёмы и предметы — по счётчикам
@@ -2428,13 +2439,10 @@ export class Workspace {
       mismatch.push(`стены: осевые отрезки в модели ${localSegments.length} (покрытие ${Math.round(wallAxisCoverageCm(this.modelInternal!.walls) * 10)} мм), в редакторе ${editorSegments.length} (покрытие ${Math.round(wallAxisCoverageCm((norm.model as { walls?: Record<string, unknown> }).walls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>) * 10)} мм)`);
     }
     if (seen.openings !== expected.openings) mismatch.push(`openings: в модели ${expected.openings}, в редакторе ${seen.openings}`);
-    if (seen.items !== expected.items) mismatch.push(`items: в модели ${expected.items}, в редакторе ${seen.items}`);
-    if (seen.pillars !== expected.pillars) mismatch.push(`pillars: в модели ${expected.pillars}, в редакторе ${seen.pillars}`);
-    if (seen.pipes !== expected.pipes) mismatch.push(`pipes: в модели ${expected.pipes}, в редакторе ${seen.pipes}`);
-    if (seen.rigels !== expected.rigels) mismatch.push(`rigels: в модели ${expected.rigels}, в редакторе ${seen.rigels}`);
-    if (seen.led_strips !== expected.led_strips) mismatch.push(`led_strips: в модели ${expected.led_strips}, в редакторе ${seen.led_strips}`);
-    if (seen.stripes_light !== expected.stripes_light) mismatch.push(`stripes_light: в модели ${expected.stripes_light}, в редакторе ${seen.stripes_light}`);
-    if (seen.line_strips !== expected.line_strips) mismatch.push(`line_strips: в модели ${expected.line_strips}, в редакторе ${seen.line_strips}`);
+    for (const key of MODEL_ENTITY_COLLECTIONS) {
+      if (key === "walls") continue;
+      if (seen[key] !== expected[key]) mismatch.push(`${key}: в модели ${expected[key]}, в редакторе ${seen[key]}`);
+    }
     if (mismatch.length > 0) {
       throw new McpError("RENDER_OUT_OF_SYNC", `редактор показывает не текущую модель (${mismatch.join(", ")}) — картинка не отдаётся`, {
         hint: "повторите render_plan; при повторении сверитесь с model_get и model_validate",
@@ -2453,7 +2461,7 @@ export class Workspace {
       items: expected.items,
       pillars: expected.pillars,
       rigels: expected.rigels,
-      editor: seen,
+      editor: seen as RenderRevision["editor"],
     };
     return { ...res, revision };
   }

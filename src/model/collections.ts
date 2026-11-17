@@ -37,6 +37,46 @@ export const MODEL_ENTITY_COLLECTIONS = [
 export type ModelEntityCollection = (typeof MODEL_ENTITY_COLLECTIONS)[number];
 
 /**
+ * Сторож компиляции (C1, аудит 65): реестр обязан совпадать с набором коллекций
+ * сущностей в типе Model. Новая коллекция в types.ts без регистрации в реестре —
+ * ошибка компиляции (npm run typecheck красный); ключ реестра, которого нет в
+ * Model (переименование, опечатка), — тоже. Коллекция сущности — поле Model,
+ * значение которого Record<id, объект с id>.
+ */
+type EntityCollectionKeyMap<T> = {
+  [K in keyof T as string extends K ? never : number extends K ? never : K]-?: NonNullable<T[K]> extends
+    Record<string, { id: string }>
+    ? K
+    : never;
+};
+type EntityCollectionKeysOf<T> = EntityCollectionKeyMap<T>[keyof EntityCollectionKeyMap<T>];
+
+type RegistryVsModel =
+  | Exclude<EntityCollectionKeysOf<Model>, ModelEntityCollection>
+  | Exclude<ModelEntityCollection, EntityCollectionKeysOf<Model>>;
+const registryMatchesModelType: RegistryVsModel extends never ? true : never = true;
+void registryMatchesModelType;
+
+/** Счётчик сущностей каждой коллекции реестра (отсутствующая коллекция — 0). */
+export function entityCounts(model: Model): Record<ModelEntityCollection, number> {
+  const out = {} as Record<ModelEntityCollection, number>;
+  for (const key of MODEL_ENTITY_COLLECTIONS) {
+    const v = model[key];
+    out[key] = v !== null && typeof v === "object" ? Object.keys(v).length : 0;
+  }
+  return out;
+}
+
+/** Есть ли в модели хоть одна сущность планировки (комнаты не считаются). */
+export function hasEntities(model: Model): boolean {
+  for (const key of MODEL_ENTITY_COLLECTIONS) {
+    const v = model[key];
+    if (v !== null && typeof v === "object" && Object.keys(v).length > 0) return true;
+  }
+  return false;
+}
+
+/**
  * Обязательные коллекции (ревью 68 №1): инвариант Model — walls/items/pillars/
  * rulers/comments существуют всегда (как в пустом проекте редактора и как clear
  * в main до этапа 67). Очистка/замена оставляет их пустыми объектами, а не
