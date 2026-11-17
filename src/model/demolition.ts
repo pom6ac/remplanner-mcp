@@ -6,7 +6,8 @@ import { McpError } from "../errors.ts";
 
 // Раздел «Перепланировка» (этап 103): демонтаж — лист break_walls редактора.
 // Демонтаж — это пометки для строителей на стене/проёме (план «до/после»), а не удаление:
-// стена остаётся в модели с флагами, комнаты листа «c» редактор перестраивает сам при draw.
+// стена остаётся в модели с флагами; rooms2 редактор перестраивает при save, а не при
+// normalize (живая проба p135-n1, анонимный проект, ревью 133 N1).
 // Эталоны tests/fixtures/ui-ref-replan-demolition.json (клики UI, анонимный проект):
 //   - стена целиком: `demount:1` + `p1.demount:1` + `p2.demount:1` (setDemount очищает sectors);
 //   - участок: `sectors[sid] = {id, pc (центр на оси, см), width (см)}`;
@@ -348,14 +349,16 @@ export function replacementOf(wall: Wall, hole: Hole): Hole | null {
  * Семантический снимок демонтажа стены (id секторов исключены — редактор их пересоздаёт).
  * Ревью 129 C1: инвариантен к направлению оси — разворот p1/p2 нормализатором не
  * меняет снимок: участки и центр замены приводятся к каноническому направлению
- * (t → len−t у развёрнутой стены).
+ * (t → len−t у развёрнутой стены). tShiftCm — сдвиг начала оси при сопоставлении
+ * со слитой коллинеарной стеной (ревью 133 N3): прежняя ось начинается дальше
+ * от начала слитой.
  */
-export function demolitionSignature(wall: Wall): DemolitionSig {
+export function demolitionSignature(wall: Wall, tShiftCm = 0): DemolitionSig {
   const len = axisLength(wall);
   const ux = len > 0 ? (wall.p2.x - wall.p1.x) / len : 1;
   const uy = len > 0 ? (wall.p2.y - wall.p1.y) / len : 0;
   const rev = axisIsReversed(wall);
-  const canon = (t: number) => (rev ? len - t : t);
+  const canon = (t: number) => (rev ? len - t : t) + tShiftCm;
   const sectors = Object.values(sectorsOf(wall))
     .map((s) => {
       const t = (s.pc.x - wall.p1.x) * ux + (s.pc.y - wall.p1.y) * uy;
@@ -368,7 +371,11 @@ export function demolitionSignature(wall: Wall): DemolitionSig {
       demount: h.demount === 1 ? 1 : undefined,
       hasReplacement: h.hasReplacement ? 1 : undefined,
     };
-    // ревью 105 R5: ключевые свойства замены (type, размеры, позиция) — часть сверки
+    // ревью 105 R5: ключевые свойства замены (type, размеры, позиция) — часть сверки.
+    // Ревью 133 N2: центр замены — проекция мирового центра (pc) на ось, БЕЗ
+    // служебного at: мировые координаты не зависят от направления оси, а нормализатор
+    // при развороте p1/p2 может оставить at в старых координатах (ложное расхождение
+    // «центр 1500 → 4500», проба P9)
     if (h.hasReplacement) {
       const rep = replacementOf(wall, h);
       if (rep) {
@@ -376,7 +383,7 @@ export function demolitionSignature(wall: Wall): DemolitionSig {
           type: rep.type,
           width: rep.width,
           height: rep.height,
-          center: canon(holeOffsetCm(wall, rep) + rep.width / 2),
+          center: canon((rep.pc.x - wall.p1.x) * ux + (rep.pc.y - wall.p1.y) * uy),
         };
       }
     }
@@ -401,7 +408,19 @@ const TOL_CM = 0.5;
  * Ревью 129 C2: стену под прежним ID нормализатор может перенумеровать — пара ищется
  * по геометрии оси (как в guard R10, в любом направлении), один-к-одному; стена
  * с пометками демонтажа без пары — расхождение, а не пропуск.
- */
+  * редактора блокировкой не считаются.
+  * Ревью 129 C2: стену под прежним ID нормализатор может перенумеровать — пара ищется
+  * по геометрии оси (как в guard R10, в любом направлении); стена с пометками демонтажа
+  * без пары — расхождение, а не пропуск.
+  * Ревью 133 N5: сначала ВСЕ прямые совпадения по ID, геометрические — по оставшимся;
+  * прямой ID принимается только при совместимой геометрии (точная ось или покрытие),
+  * иначе ID перебирает чужую стену и сверка перестаёт быть один-к-одному.
+  * Ревью 133 N3: редактор сливает коллинеарные стены (design §12) — если стена с
+  * пометками не нашла пару по ID/точной оси, ищем after-стену, отрезок которой
+  * ПОКРЫВАЕТ прежнюю ось (слитая стена). Слитая after-стена обслуживает ОБЕ
+  * before-половины (группа слияния): участки и центры замен каждой части сверяются
+  * со сдвигом начала оси, проёмы с demount переносятся слитой стеной с теми же id.
+  */
 export function demolitionMismatches(
   before: Record<string, Wall> | undefined,
   after: Record<string, Wall> | undefined,
@@ -410,85 +429,161 @@ export function demolitionMismatches(
   const b = before ?? {};
   const a = after ?? {};
   const usedAfter = new Set<string>();
-  const pairOf = (id: string, wallB: Wall): Wall | undefined => {
+  const pair = new Map<string, { wall: Wall; tShift: number }>();
+  const deferred: string[] = [];
+  const covers = (segA: NonNullable<ReturnType<typeof axisSegmentOf>>, segB: NonNullable<ReturnType<typeof axisSegmentOf>>): boolean =>
+    Math.abs(segA.ux - segB.ux) <= 1e-6 && Math.abs(segA.uy - segB.uy) <= 1e-6 &&
+    Math.abs(segA.offset - segB.offset) <= SEG_TOL_CM &&
+    segA.a <= segB.a + SEG_TOL_CM && segA.b >= segB.b - SEG_TOL_CM;
+  // проход 1: прямые совпадения по ID с совместимой геометрией (точная ось или
+  // покрытие слитой стеной); ID с чужой геометрией — в отложенные
+  for (const [id, wallB] of Object.entries(b)) {
     const direct = a[id];
-    if (direct) {
-      usedAfter.add(id);
-      return direct;
-    }
-    // сопоставление по геометрии оси — смена ID стены не пропускает сверку
+    if (!direct) continue;
     const segB = axisSegmentOf(wallB);
-    if (!segB) return undefined;
+    const segA = axisSegmentOf(direct);
+    if (!segB || !segA) {
+      pair.set(id, { wall: direct, tShift: 0 });
+      usedAfter.add(id);
+    } else if (axisSegmentsMatch(segB, segA)) {
+      pair.set(id, { wall: direct, tShift: 0 });
+      usedAfter.add(id);
+    } else if (covers(segA, segB)) {
+      pair.set(id, { wall: direct, tShift: segB.a - segA.a });
+      usedAfter.add(id);
+    } else {
+      deferred.push(id);
+    }
+  }
+  // проход 2: точное совпадение оси (смена ID, любое направление)
+  for (const [id, wallB] of Object.entries(b)) {
+    if (pair.has(id)) continue;
+    const segB = axisSegmentOf(wallB);
+    if (!segB) continue;
     for (const [aid, aw] of Object.entries(a)) {
       if (usedAfter.has(aid)) continue;
       const segA = axisSegmentOf(aw);
       if (segA && axisSegmentsMatch(segB, segA)) {
         usedAfter.add(aid);
-        return aw;
+        pair.set(id, { wall: aw, tShift: 0 });
+        break;
       }
     }
-    return undefined;
-  };
+  }
+  // проход 3: покрытие — слитая коллинеарная стена содержит прежнюю ось; слитая
+  // after-стена обслуживает ВСЕ покрытые before-части (группа слияния), поэтому
+  // переиспользование after-стены здесь допустимо (сначала — свободные)
   for (const [id, wallB] of Object.entries(b)) {
-    const wallA = pairOf(id, wallB);
-    if (!wallA) {
-      // потерю стены без пометок ловит общий слой (wallAxisSetsEqual); здесь —
-      // только случай, когда пропали пометки демонтажа вместе со стеной
-      if (hasDemolitionMarks(wallB)) {
-        problems.push(`wall ${id}: стена с пометками демонтажа отсутствует после операции`);
+    if (pair.has(id)) continue;
+    const segB = axisSegmentOf(wallB);
+    if (!segB) continue;
+    let best: { wall: Wall; tShift: number } | null = null;
+    for (const preferUnused of [true, false]) {
+      for (const [aid, aw] of Object.entries(a)) {
+        if (usedAfter.has(aid) === preferUnused) continue;
+        const segA = axisSegmentOf(aw);
+        if (segA && covers(segA, segB)) {
+          best = { wall: aw, tShift: segB.a - segA.a };
+          if (preferUnused) usedAfter.add(aid);
+          break;
+        }
       }
+      if (best) break;
+    }
+    if (best) pair.set(id, best);
+  }
+  // отложенные: прямой ID, если after-стена так и не нашлась по геометрии
+  for (const id of deferred) {
+    if (pair.has(id)) continue;
+    const direct = a[id];
+    if (direct && !usedAfter.has(id)) {
+      usedAfter.add(id);
+      pair.set(id, { wall: direct, tShift: 0 });
+    }
+  }
+  // группировка по after-стене: слитая стена обслуживает несколько before-частей
+  const unpaired = new Set<string>();
+  const groups = new Map<Wall, Array<{ id: string; wallB: Wall; tShift: number }>>();
+  for (const [id, wallB] of Object.entries(b)) {
+    const matched = pair.get(id);
+    if (!matched) {
+      unpaired.add(id);
       continue;
     }
-    const sigB = demolitionSignature(wallB);
+    const list = groups.get(matched.wall) ?? [];
+    list.push({ id, wallB, tShift: matched.tShift });
+    groups.set(matched.wall, list);
+  }
+  for (const [wallA, list] of groups) {
     const sigA = demolitionSignature(wallA);
-    if (sigB.demount !== sigA.demount) {
-      problems.push(`wall ${id}: demount ${sigB.demount ?? 0} → ${sigA.demount ?? 0}`);
-    }
-    if (sigB.demount === 1) {
-      if (sigB.p1_demount !== sigA.p1_demount || sigB.p2_demount !== sigA.p2_demount) {
-        problems.push(`wall ${id}: p1/p2.demount потеряны при демонтаже целиком`);
+    const merge = list.length > 1;
+    for (const { id, wallB, tShift } of list) {
+      const sigB = demolitionSignature(wallB, tShift);
+      if (sigB.demount !== sigA.demount) {
+        problems.push(`wall ${id}: demount ${sigB.demount ?? 0} → ${sigA.demount ?? 0}`);
       }
-      // ревью 105 R5: при демонтаже целиком участки редактор сбрасывает сам (setDemount),
-      // но пометки demount проёмов сверяются как обычно — continue только для участков
-    } else if (sigB.sectors.length !== sigA.sectors.length) {
-      problems.push(`wall ${id}: участков демонтажа ${sigB.sectors.length} → ${sigA.sectors.length}`);
-    } else {
-      for (let i = 0; i < sigB.sectors.length; i++) {
-        const s1 = sigB.sectors[i]!;
-        const s2 = sigA.sectors[i]!;
-        if (Math.abs(s1.t - s2.t) > TOL_CM || Math.abs(s1.width - s2.width) > TOL_CM) {
-          // величины в мм (t/width в см × 10) — ревью 129 C6
-          problems.push(`wall ${id}: участок демонтажа ${i} изменился (${Math.round(s1.t * 10)}..+${Math.round(s1.width * 10)} мм → ${Math.round(s2.t * 10)}..+${Math.round(s2.width * 10)} мм)`);
+      if (sigB.demount === 1) {
+        if (sigB.p1_demount !== sigA.p1_demount || sigB.p2_demount !== sigA.p2_demount) {
+          problems.push(`wall ${id}: p1/p2.demount потеряны при демонтаже целиком`);
+        }
+        // ревью 105 R5: при демонтаже целиком участки редактор сбрасывает сам (setDemount),
+        // но пометки demount проёмов сверяются как обычно — continue только для участков
+      } else if (merge) {
+        // группа слияния: у каждой части сверяем её участки (со сдвигом оси) по вхождению;
+        // лишние участки слитой стены — от соседних частей, не потеря
+        for (const s1 of sigB.sectors) {
+          const found = sigA.sectors.some((s2) => Math.abs(s1.t - s2.t) <= TOL_CM && Math.abs(s1.width - s2.width) <= TOL_CM);
+          if (!found) {
+            problems.push(`wall ${id}: участок демонтажа потерян при слиянии стен (${Math.round(s1.t * 10)}..+${Math.round(s1.width * 10)} мм)`);
+          }
+        }
+      } else if (sigB.sectors.length !== sigA.sectors.length) {
+        problems.push(`wall ${id}: участков демонтажа ${sigB.sectors.length} → ${sigA.sectors.length}`);
+      } else {
+        for (let i = 0; i < sigB.sectors.length; i++) {
+          const s1 = sigB.sectors[i]!;
+          const s2 = sigA.sectors[i]!;
+          if (Math.abs(s1.t - s2.t) > TOL_CM || Math.abs(s1.width - s2.width) > TOL_CM) {
+            // величины в мм (t/width в см × 10) — ревью 129 C6
+            problems.push(`wall ${id}: участок демонтажа ${i} изменился (${Math.round(s1.t * 10)}..+${Math.round(s1.width * 10)} мм → ${Math.round(s2.t * 10)}..+${Math.round(s2.width * 10)} мм)`);
+          }
+        }
+      }
+      for (const [hid, h] of Object.entries(sigB.holes)) {
+        // ревью 105 R5: отсутствующий ожидаемый проём — расхождение, а не пропуск;
+        // ревью 129 C5: holes:null у серверной модели (T27) — не TypeError
+        if ((wallA.holes ?? {})[hid] === undefined) {
+          problems.push(`wall ${id}: проём ${hid} отсутствует после операции`);
+          continue;
+        }
+        if ((h.demount ?? 0) !== (sigA.holes[hid]?.demount ?? 0)) {
+          problems.push(`wall ${id}: проём ${hid}: demount ${h.demount ?? 0} → ${sigA.holes[hid]?.demount ?? 0}`);
+        }
+        if ((h.hasReplacement ?? 0) !== (sigA.holes[hid]?.hasReplacement ?? 0)) {
+          problems.push(`wall ${id}: проём ${hid}: hasReplacement ${h.hasReplacement ?? 0} → ${sigA.holes[hid]?.hasReplacement ?? 0}`);
+        }
+        if (h.replacement || sigA.holes[hid]?.replacement) {
+          const rep1 = h.replacement;
+          const rep2 = sigA.holes[hid]?.replacement;
+          if (!rep1 || !rep2) {
+            problems.push(`wall ${id}: проём ${hid}: замена ${rep1 ? "потеряна на сервере" : "появилась при операции"}`);
+          } else if (
+            rep1.type !== rep2.type ||
+            Math.abs(rep1.width - rep2.width) > TOL_CM ||
+            ((rep1.height ?? undefined) !== (rep2.height ?? undefined) && Math.abs((rep1.height ?? 0) - (rep2.height ?? 0)) > TOL_CM) ||
+            Math.abs(rep1.center - rep2.center) > TOL_CM
+          ) {
+            problems.push(`wall ${id}: проём ${hid}: свойства замены изменились (type ${rep1.type} → ${rep2.type}, ширина ${Math.round(rep1.width * 10)} → ${Math.round(rep2.width * 10)} мм, центр ${Math.round(rep1.center * 10)} → ${Math.round(rep2.center * 10)} мм)`);
+          }
         }
       }
     }
-    for (const [hid, h] of Object.entries(sigB.holes)) {
-      // ревью 105 R5: отсутствующий ожидаемый проём — расхождение, а не пропуск;
-      // ревью 129 C5: holes:null у серверной модели (T27) — не TypeError
-      if ((wallA.holes ?? {})[hid] === undefined) {
-        problems.push(`wall ${id}: проём ${hid} отсутствует после операции`);
-        continue;
-      }
-      if ((h.demount ?? 0) !== (sigA.holes[hid]?.demount ?? 0)) {
-        problems.push(`wall ${id}: проём ${hid}: demount ${h.demount ?? 0} → ${sigA.holes[hid]?.demount ?? 0}`);
-      }
-      if ((h.hasReplacement ?? 0) !== (sigA.holes[hid]?.hasReplacement ?? 0)) {
-        problems.push(`wall ${id}: проём ${hid}: hasReplacement ${h.hasReplacement ?? 0} → ${sigA.holes[hid]?.hasReplacement ?? 0}`);
-      }
-      if (h.replacement || sigA.holes[hid]?.replacement) {
-        const rep1 = h.replacement;
-        const rep2 = sigA.holes[hid]?.replacement;
-        if (!rep1 || !rep2) {
-          problems.push(`wall ${id}: проём ${hid}: замена ${rep1 ? "потеряна на сервере" : "появилась при операции"}`);
-        } else if (
-          rep1.type !== rep2.type ||
-          Math.abs(rep1.width - rep2.width) > TOL_CM ||
-          ((rep1.height ?? undefined) !== (rep2.height ?? undefined) && Math.abs((rep1.height ?? 0) - (rep2.height ?? 0)) > TOL_CM) ||
-          Math.abs(rep1.center - rep2.center) > TOL_CM
-        ) {
-          problems.push(`wall ${id}: проём ${hid}: свойства замены изменились (type ${rep1.type} → ${rep2.type}, ширина ${Math.round(rep1.width * 10)} → ${Math.round(rep2.width * 10)} мм, центр ${Math.round(rep1.center * 10)} → ${Math.round(rep2.center * 10)} мм)`);
-        }
-      }
+  }
+  for (const id of unpaired) {
+    // потерю стены без пометок ловит общий слой (wallAxisSetsEqual); здесь —
+    // только случай, когда пропали пометки демонтажа вместе со стеной
+    if (hasDemolitionMarks(b[id]!)) {
+      problems.push(`wall ${id}: стена с пометками демонтажа отсутствует после операции`);
     }
   }
   return problems;

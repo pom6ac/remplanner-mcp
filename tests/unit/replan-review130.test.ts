@@ -242,16 +242,30 @@ test("130 C6: текст расхождения участка — единиц�
 // ---------- П.5: перегородка plan:c через комнату с контуром тёплого пола (#16) ----------
 
 test("130: перегородка через комнату с тёплым полом — guard климата не блокирует", async () => {
+  // ревью 133 N1 (живая проба p135-n1b, эталон ui-ref-replan-partition-warmfloor):
+  // редактор перестраивает rooms2 при перегородке и сам переназначает id_room контура
+  // на новую комнату; перегородка НЕ пересекает контур (контур — правая половина комнаты)
   const { addWarmFloor } = await import("../../src/model/climate.ts");
   const { splitWall } = await import("../../src/model/walls.ts");
   const m = base(); prepareHolePoints(m);
-  // контур тёплого пола внутри верхне-левой комнаты (внутренняя область x 10..290, y -290..-10)
-  addWarmFloor(m, { kind: "cable", corner1: { x: 300, y: -2700 }, corner2: { x: 2700, y: -300 } });
+  // контур внутри верхне-левой комнаты (внутренняя область x 10..290, y -290..-10),
+  // целиком на правой половине будущей перегородки x=150
+  const wf = addWarmFloor(m, { kind: "cable", corner1: { x: 1600, y: -2700 }, corner2: { x: 2700, y: -300 } });
   assert.equal(Object.keys(m.warm_floors ?? {}).length, 1, "контур добавлен");
   const serverModel = { v: null as Model | null };
-  // normalize — сквозной: перегородка не меняет rooms2 (комнаты «до/после» строит
-  // редактор по своим листам; в рамках этого PR контур и комнаты не перестраиваются)
-  const W = ws(m, editor(() => {}, serverModel));
+  // normalize — как редактор: комната делится перегородкой x=150 (левая часть 10..145
+  // под прежним id, правая 155..290 — новая), id_room контура переназначается
+  const W = ws(m, editor((c) => {
+    if (!Object.values(c.walls).some((w) => w.plan === "c")) return;
+    const rooms2 = c.rooms2 as Record<string, { polygon: { x: number; y: number }[] }>;
+    const r = rooms2[wf.id_room!];
+    if (!r) return;
+    const right = structuredClone(r);
+    r.polygon = [{ x: 145, y: -290 }, { x: 145, y: -10 }, { x: 10, y: -10 }, { x: 10, y: -290 }];
+    right.polygon = [{ x: 290, y: -290 }, { x: 290, y: -10 }, { x: 155, y: -10 }, { x: 155, y: -290 }];
+    rooms2["_newroom"] = right;
+    for (const g of Object.values(c.warm_floors ?? {})) g.id_room = "_newroom";
+  }, serverModel));
   await W.open("123", "1");
   // перегородка plan:c через комнату с контуром: разрезаем стены, ставим между узлами
   await W.applyWalls("wall_add", (mm) => {
@@ -266,7 +280,8 @@ test("130: перегородка через комнату с тёплым по
 test("130: перегенерация ID комнат при нормализации не блокирует контур (сверка по геометрии)", async () => {
   const { addWarmFloor } = await import("../../src/model/climate.ts");
   const m = base(); prepareHolePoints(m);
-  addWarmFloor(m, { kind: "cable", corner1: { x: 300, y: -2700 }, corner2: { x: 2700, y: -300 } });
+  // контур на правой половине будущей перегородки (x 160..270) — перегородка не пересекает
+  addWarmFloor(m, { kind: "cable", corner1: { x: 1600, y: -2700 }, corner2: { x: 2700, y: -300 } });
   const serverModel = { v: null as Model | null };
   const W = ws(m, editor((c) => {
     // редактор штатно регенерирует id комнат при пересчёте (и обновляет id_room контуров):

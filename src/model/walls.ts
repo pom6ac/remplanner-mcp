@@ -9,6 +9,7 @@ import { McpError } from "../errors.ts";
 import { prepareHolePoints, refreshWallHoles, holeRange, normalizeWallOpeningFormats } from "./openings.ts";
 import { refreshPillarsAfterWallChange } from "./pillars.ts";
 import { refreshRigelsAfterWallOrPillarChange } from "./rigels.ts";
+import { assertNoWarmFloorCrossing } from "./climate.ts";
 
 // Топология стен (design §12.3): Node задаёт ТОЛЬКО геометрию — оси, толщину, T-концы на
 // гранях. Связи (node/edge), грани на стыках и комнаты редактор строит сам из геометрии
@@ -426,6 +427,10 @@ export function addWall(model: Model, params: AddWallParams): Wall {
     p1 = snapEnd(model, p1, p2, new Set());
     p2 = snapEnd(model, p2, p1, new Set());
     assertNoCrossing(model, p1, p2, new Set());
+    // ревью 133 N1: перегородка, чья ось проходит через контур тёплого пола,
+    // при сохранении удаляет контур (проба p135-n1c, анонимный проект) —
+    // осознанный отказ до записи с понятным hint
+    if (params.plan === "c") assertNoWarmFloorCrossing(model, p1, p2);
     // коллинеарное перекрытие с существующей стеной — наложение (валидатор ловит как
     // WALL_OVER_WALL, здесь отказываем сразу, атомарно)
     for (const w of Object.values(model.walls)) {

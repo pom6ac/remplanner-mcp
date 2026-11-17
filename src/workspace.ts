@@ -2242,6 +2242,10 @@ export class Workspace {
           mode: "save",
           itemsExpected: structuredClone((norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {}),
           itemsGot: (itemsAfter as Record<string, PipeLinkItem>) ?? {},
+          // ревью 133 N1: при перегородке редактор перестраивает комнаты при save
+          // и сам переназначает id_room контуров — сверка привязки по геометрии
+          roomsExpected: ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+          roomsGot: ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
         },
       );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
