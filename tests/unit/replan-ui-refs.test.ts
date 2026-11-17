@@ -171,6 +171,15 @@ test("103: замена исходного проёма — plan:c + position:c,
   assert.equal(door.hasReplacement, REPL_REF.original_hole.hasReplacement);
   // замена встала по центру исходного
   assert.ok(Math.abs((rep.pc.x - door.pc.x)) < 0.1, "центр замены = центр исходного");
+  // обязательные поля замены (без них редактор падает на restore — проба 103-norm-check)
+  assert.equal(rep.parent, corridor.id);
+  assert.equal(rep.parent_depth, corridor.depth);
+  assert.deepEqual(rep.dls_prs, {});
+  assert.equal(rep.offset, 0);
+  const pt = (v: unknown) => v as { x: number; y: number };
+  const pcb = pt(rep.pcb), p1b = pt(rep.p1b), p2b = pt(rep.p2b);
+  assert.ok(Math.abs((pcb.x - rep.pc.x)) < 0.1, "pcb = центр замены");
+  assert.ok(Math.abs((p1b.x - rep.p1!.x)) < 0.1 && Math.abs((p2b.y - rep.p2!.y)) < 0.1, "p1b/p2b = края");
   // повторная замена — INVALID_ARGUMENT
   assert.throws(() => addOpening(m, { wallId: corridor.id, type: "doorway", replacesHoleId: door.id }), /уже заменён/);
   // замена проёма plan:c — INVALID_ARGUMENT

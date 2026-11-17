@@ -654,9 +654,18 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
   setHolePoints(wall, hole);
   if (replaced) {
     // замена исходного проёма (эталон ui-ref-replan-replacement): проём листа «c»
-    // по центру исходного, у исходного — hasReplacement:1
+    // по центру исходного, у исходного — hasReplacement:1. Без полей parent/
+    // parent_depth/offset/dls_prs/pcb/p1b/p2b редактор падает на restore
+    // (проба 103-norm-check, этап replacement)
     hole.plan = "c";
     hole.position = "c";
+    hole.parent = wall.id;
+    hole.parent_depth = wall.depth;
+    hole.dls_prs = {};
+    hole.offset = 0;
+    hole.pcb = { x: r2(hole.pc.x), y: r2(hole.pc.y) };
+    hole.p1b = { x: r2(hole.p1!.x), y: r2(hole.p1!.y) };
+    hole.p2b = { x: r2(hole.p2!.x), y: r2(hole.p2!.y) };
     replaced.hasReplacement = 1;
   }
   assertHoleInvariants(hole); // все инварианты кандидата — до записи в модель (ревью 28, R3/R4)
