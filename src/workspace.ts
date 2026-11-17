@@ -196,14 +196,34 @@ type CableLinkItem = {
  * pipeConnectionMismatches): у каждой вершины-выключателя под-розетка хранит
  * cables.cable_id (МАССИВ — socket_group multi), содержащий id связи; у каждой
  * вершины-светильника cables.cable_id (СКАЛЯР) указывает на связь; каждая обратная
- * ссылка обеих сторон — на существующую связь, чьи вершины содержат этот предмет.
+ * ссылка обеих сторон — на существующую связь, чьи вершины содержат этот предмет
+ * (ревью 90 R3 — держатель ссылки обязан быть вершиной этого кабеля).
  * Полная сверка обеих сторон: нет лишних, нет пропущенных, нет висячих.
+ * Ревью 90 R2: вершина-цель разрешается по типу вершины — "lamp" ищется в items,
+ * "led_strip"/"strip_light"/"line_strip" — в коллекциях световых линий (led_strips/
+ * stripes_light/line_strips). У линии обратная ссылка (props.cables) не требуется —
+ * живой формат не утверждён; наличие связи на линию само по себе не блокирует save.
  */
+type CableLinkLines = {
+  led_strips?: Record<string, unknown>;
+  stripes_light?: Record<string, unknown>;
+  line_strips?: Record<string, unknown>;
+};
+
+/** Коллекция световой линии по типу вершины связи (ревью 90 R2) — зеркало electric.ts. */
+const CABLE_LINE_BY_VERTEX: Record<string, keyof CableLinkLines> = {
+  led_strip: "led_strips",
+  strip_light: "stripes_light",
+  line_strip: "line_strips",
+};
+
 function cableConnectionMismatches(
   expectedCables: Record<string, GasLineSig>,
   expectedItems: Record<string, CableLinkItem>,
   gotCables: Record<string, GasLineSig>,
   gotItems: Record<string, CableLinkItem>,
+  expectedLines: CableLinkLines = {},
+  gotLines: CableLinkLines = {},
 ): string[] {
   const out: string[] = [];
   /** Слоты выключателя связи: [itemId, subId] по вершинам type "switch". */
@@ -223,12 +243,28 @@ function cableConnectionMismatches(
     if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
     return [];
   };
+  /** Держатель ссылки — вершина этой связи? (ревью 90 R3: лишняя ссылка — расхождение). */
+  const holderIsVertex = (cable: GasLineSig | undefined, kind: "sub" | "item", itemId: string, subId: string): boolean => {
+    if (!cable) return false;
+    for (const v of cable.vertexes ?? []) {
+      if (kind === "sub") {
+        if (v.type === "switch" && v.id === `${itemId}|s|${subId}`) return true;
+      } else if (v.type !== "node" && v.type !== "switch" && v.id === itemId) {
+        return true;
+      }
+    }
+    return false;
+  };
   /** Ссылки ожидаемой стороны: id связи → множество «предмет(под-розетка)». */
   const collectRefs = (cables: Record<string, GasLineSig>, items: Record<string, CableLinkItem>, side: string): Map<string, Set<string>> => {
     const refs = new Map<string, Set<string>>();
-    const addRef = (cableId: string, holder: string): boolean => {
+    const addRef = (cableId: string, holder: string, kind: "sub" | "item", itemId: string, subId: string): boolean => {
       if (!cables[cableId]) {
         out.push(`${side}: висячая ссылка на связь ${cableId} (у ${holder}) — связи нет`);
+        return false;
+      }
+      if (!holderIsVertex(cables[cableId], kind, itemId, subId)) {
+        out.push(`${side}: ${cableId} — держатель ссылки ${holder} не является вершиной связи (лишняя ссылка)`);
         return false;
       }
       if (!refs.has(cableId)) refs.set(cableId, new Set());
@@ -241,9 +277,9 @@ function cableConnectionMismatches(
         if (ids.length > 0 && !(SWITCH_KEYS.has(sub.name ?? ""))) {
           out.push(`${side}: под-розетка «${sub.name ?? "?"}» (${itemId}/${sub.id ?? "?"}) хранит ссылки cables (${ids.join(", ")}) — cables пишут только выключатели`);
         }
-        for (const id of ids) addRef(id, `под-розетка ${itemId}/${sub.id ?? "?"}`);
+        for (const id of ids) addRef(id, `под-розетка ${itemId}/${sub.id ?? "?"}`, "sub", itemId, sub.id ?? "");
       }
-      for (const id of cableIdsOf(item.cables)) addRef(id, `предмет ${itemId}`);
+      for (const id of cableIdsOf(item.cables)) addRef(id, `предмет ${itemId}`, "item", itemId, "");
     }
     return refs;
   };
@@ -264,8 +300,12 @@ function cableConnectionMismatches(
     }
   }
   // прямая сторона: каждая вершина-предмет связи имеет обратную ссылку
-  for (const side of [["ожидание", expectedCables, expectedItems], ["сервер", gotCables, gotItems]] as const) {
-    const [label, cables, items] = side;
+  // (вершины-линии — только существование в своей коллекции: ревью 90 R2)
+  for (const side of [
+    ["ожидание", expectedCables, expectedItems, expectedLines],
+    ["сервер", gotCables, gotItems, gotLines],
+  ] as const) {
+    const [label, cables, items, lines] = side;
     for (const [cableId, cable] of Object.entries(cables)) {
       for (const [slotGid, slotSid] of switchSlots(cable)) {
         const item = items[slotGid];
@@ -279,11 +319,112 @@ function cableConnectionMismatches(
       }
       for (const v of cable.vertexes ?? []) {
         if (v.type === "node" || v.type === "switch") continue;
+        const collKey = CABLE_LINE_BY_VERTEX[String(v.type)];
+        if (collKey) {
+          const line = (lines[collKey] ?? {})[String(v.id)];
+          if (!line) out.push(`${label}: ${cableId} — линия ${String(v.id)} (type ${String(v.type)}) не найдена в ${collKey}`);
+          continue;
+        }
         const item = items[String(v.id)];
         if (!item) { out.push(`${label}: ${cableId} — предмет ${String(v.id)} не найден`); continue; }
         const ids = cableIdsOf(item.cables);
         if (!ids.includes(cableId)) out.push(`${label}: ${cableId} — светильник ${String(v.id)} не ссылается на связь`);
       }
+    }
+  }
+  return out;
+}
+
+/**
+ * Формы обратных ссылок после сохранения (ревью 90 R6): у под-розетки cable_id —
+ * МАССИВ, у светильника — СКАЛЯР; сверяется форма ответа сервера с формой
+ * нормализованного ожидания — подмена массива скаляром (и наоборот) не «verified».
+ * Legacy-модели не блокируются: на чтении принимаются обе формы, сравнение — с
+ * ожидаемой стороной.
+ */
+function cableLinkFormMismatches(
+  expectedItems: Record<string, CableLinkItem>,
+  gotItems: Record<string, unknown>,
+): string[] {
+  const out: string[] = [];
+  const formOf = (v: unknown): "array" | "scalar" | "none" => {
+    if (Array.isArray(v)) return "array";
+    if (typeof v === "string" && v !== "") return "scalar";
+    return "none";
+  };
+  for (const [itemId, item] of Object.entries(expectedItems)) {
+    const got = gotItems[itemId] as CableLinkItem | undefined;
+    if (!got) continue;
+    for (const sub of item.socket_group ?? []) {
+      const gSub = got.socket_group?.find((s) => s.id === sub.id);
+      if (!gSub) continue;
+      const ef = formOf(sub.cables?.cable_id);
+      const gf = formOf(gSub.cables?.cable_id);
+      if (ef !== "none" && gf !== "none" && ef !== gf) {
+        out.push(`${itemId}/${sub.id ?? "?"}: форма ссылки изменилась (ожидание ${ef}, сервер ${gf})`);
+      }
+    }
+    const ef = formOf(item.cables?.cable_id);
+    const gf = formOf(got.cables?.cable_id);
+    if (ef !== "none" && gf !== "none" && ef !== gf) {
+      out.push(`${itemId}: форма ссылки изменилась (ожидание ${ef}, сервер ${gf})`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Состав под-розеток socket_group (ревью 90 R1): id, тип (name), координаты center/
+ * real_center и высота установки группы (over_floor.value, см). Потеря под-розетки,
+ * смена типа, смещение или смена высоты — расхождение; производные поля — допуск
+ * 0,1 см. Проверка не зависит от связей: неподключённые группы тоже сверяются.
+ */
+type SubsItemSig = {
+  socket_group?: Array<{ name?: string; id?: string; center?: { x?: number; y?: number }; real_center?: { x?: number; y?: number } }>;
+  over_floor?: unknown;
+};
+
+function socketGroupSubsMismatches(
+  expected: Record<string, SubsItemSig>,
+  got: Record<string, unknown>,
+): string[] {
+  const out: string[] = [];
+  const near = (a: number | undefined, b: number | undefined): boolean =>
+    a !== undefined && b !== undefined && Math.abs(a - b) <= 0.1;
+  const ptEq = (e: { x?: number; y?: number } | undefined, g: { x?: number; y?: number } | undefined): boolean =>
+    near(e?.x, g?.x) && near(e?.y, g?.y);
+  const overFloorOf = (it: SubsItemSig | undefined): number | undefined => {
+    const of = it?.over_floor;
+    return of && typeof of === "object" && typeof (of as { value?: unknown }).value === "number"
+      ? (of as { value: number }).value
+      : undefined;
+  };
+  for (const [itemId, it] of Object.entries(expected)) {
+    const subs = it.socket_group;
+    if (!Array.isArray(subs)) continue;
+    const g = got[itemId] as SubsItemSig | undefined;
+    const gSubs = g?.socket_group;
+    if (!Array.isArray(gSubs)) {
+      out.push(`${itemId}: группа socket_group (${subs.length} под-розеток) потеряна после сохранения`);
+      continue;
+    }
+    if (gSubs.length !== subs.length) {
+      out.push(`${itemId}: число под-розеток изменилось (ожидалось ${subs.length}, на сервере ${gSubs.length})`);
+      continue;
+    }
+    for (let i = 0; i < subs.length; i++) {
+      const s = subs[i]!;
+      const gs = gSubs[i]!;
+      const label = `${itemId}/${s.id ?? i}`;
+      if ((s.id ?? "") !== (gs.id ?? "")) out.push(`${label}: id под-розетки изменился (на сервере «${gs.id ?? ""}»)`);
+      if ((s.name ?? "") !== (gs.name ?? "")) out.push(`${label}: тип изменился (на сервере «${gs.name ?? ""}»; ожидалось «${s.name ?? ""}»)`);
+      if (!ptEq(s.center, gs.center)) out.push(`${label}: center сместился (на сервере ${gs.center?.x},${gs.center?.y}; ожидалось ${s.center?.x},${s.center?.y})`);
+      if (!ptEq(s.real_center, gs.real_center)) out.push(`${label}: real_center сместился (на сервере ${gs.real_center?.x},${gs.real_center?.y}; ожидалось ${s.real_center?.x},${s.real_center?.y})`);
+    }
+    const h = overFloorOf(it);
+    const gh = overFloorOf(g);
+    if (h !== undefined && gh !== undefined && Math.abs(h - gh) > 0.1) {
+      out.push(`${itemId}: высота установки изменилась (на сервере ${gh}; ожидалось ${h})`);
     }
   }
   return out;
@@ -1238,15 +1379,33 @@ export class Workspace {
       const normCables = ((norm.model as Record<string, unknown>).cables ?? {}) as Record<string, unknown>;
       const lostCablesNorm = missingIds(new Set(Object.keys(wsCables)), new Set(Object.keys(normCables)));
       const cablesGraphNorm = gasLineGraphMismatches(structuredClone(wsCables), normCables, "связь выключатель → светильник");
+      const wsLinesNorm: CableLinkLines = {
+        led_strips: (this.modelInternal!.led_strips ?? {}) as Record<string, unknown>,
+        stripes_light: (this.modelInternal!.stripes_light ?? {}) as Record<string, unknown>,
+        line_strips: (this.modelInternal!.line_strips ?? {}) as Record<string, unknown>,
+      };
+      const normLinesNorm: CableLinkLines = {
+        led_strips: ((norm.model as Record<string, unknown>).led_strips ?? {}) as Record<string, unknown>,
+        stripes_light: ((norm.model as Record<string, unknown>).stripes_light ?? {}) as Record<string, unknown>,
+        line_strips: ((norm.model as Record<string, unknown>).line_strips ?? {}) as Record<string, unknown>,
+      };
       const cablesConnNorm = cableConnectionMismatches(
         (this.modelInternal!.cables ?? {}) as Record<string, GasLineSig>,
         (this.modelInternal!.items ?? {}) as Record<string, CableLinkItem>,
         normCables as Record<string, GasLineSig>,
         (norm.model as { items?: Record<string, CableLinkItem> }).items ?? {},
+        wsLinesNorm,
+        normLinesNorm,
       );
-      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник» — мутация отменена`, {
-          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm },
+      // ревью 90 R1: состав под-розеток socket_group (id/тип/координаты/высота)
+      // сверяется при нормализации независимо от связей
+      const subsNorm = socketGroupSubsMismatches(
+        this.modelInternal!.items as Record<string, SubsItemSig>,
+        (norm.model as { items?: Record<string, unknown> }).items ?? {},
+      );
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник» или под-розетки — мутация отменена`, {
+          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm },
         });
       }
       // нормализованная копия становится канонической
@@ -1560,6 +1719,21 @@ export class Workspace {
       (this.modelInternal!.items ?? {}) as Record<string, CableLinkItem>,
       (norm.model as { cables?: Record<string, GasLineSig> }).cables ?? {},
       (norm.model as { items?: Record<string, CableLinkItem> }).items ?? {},
+      {
+        led_strips: (this.modelInternal!.led_strips ?? {}) as Record<string, unknown>,
+        stripes_light: (this.modelInternal!.stripes_light ?? {}) as Record<string, unknown>,
+        line_strips: (this.modelInternal!.line_strips ?? {}) as Record<string, unknown>,
+      },
+      {
+        led_strips: ((norm.model as Record<string, unknown>).led_strips ?? {}) as Record<string, unknown>,
+        stripes_light: ((norm.model as Record<string, unknown>).stripes_light ?? {}) as Record<string, unknown>,
+        line_strips: ((norm.model as Record<string, unknown>).line_strips ?? {}) as Record<string, unknown>,
+      },
+    );
+    // ревью 90 R1: состав под-розеток socket_group сверяется до записи
+    const subsNorm = socketGroupSubsMismatches(
+      this.modelInternal!.items as Record<string, SubsItemSig>,
+      (norm.model as { items?: Record<string, unknown> }).items ?? {},
     );
     // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
     const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
@@ -1583,7 +1757,7 @@ export class Workspace {
       lostLedStrips.length > 0 || lostStripesLight.length > 0 || lostLineStrips.length > 0 ||
       lostCables.length > 0 ||
       ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0 ||
-      cablesGraphNorm.length > 0 || cablesConnNorm.length > 0
+      cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -1615,6 +1789,7 @@ export class Workspace {
           line_strips_mismatches: lineStripsGraphNorm,
           cables_mismatches: cablesGraphNorm,
           cables_connection_mismatches: cablesConnNorm,
+          socket_group_mismatches: subsNorm,
         },
       });
     }
@@ -1690,6 +1865,27 @@ export class Workspace {
         expectedItems as Record<string, CableLinkItem>,
         cablesAfter as Record<string, GasLineSig>,
         (itemsAfter as Record<string, CableLinkItem>) ?? {},
+        {
+          led_strips: ((norm.model as Record<string, unknown>).led_strips ?? {}) as Record<string, unknown>,
+          stripes_light: ((norm.model as Record<string, unknown>).stripes_light ?? {}) as Record<string, unknown>,
+          line_strips: ((norm.model as Record<string, unknown>).line_strips ?? {}) as Record<string, unknown>,
+        },
+        {
+          led_strips: ((after.model["led_strips"] as Record<string, unknown> | undefined) ?? {}),
+          stripes_light: ((after.model["stripes_light"] as Record<string, unknown> | undefined) ?? {}),
+          line_strips: ((after.model["line_strips"] as Record<string, unknown> | undefined) ?? {}),
+        },
+      );
+      // ревью 90 R6: форма обратных ссылок (массив у под-розетки, скаляр у светильника)
+      // после save сверяется с нормализованным ожиданием
+      const cableFormAfter = cableLinkFormMismatches(
+        expectedItems as Record<string, CableLinkItem>,
+        itemsAfter,
+      );
+      // ревью 90 R1: состав под-розеток socket_group после save
+      const subsAfter = socketGroupSubsMismatches(
+        expectedItems as Record<string, SubsItemSig>,
+        itemsAfter,
       );
       // ревью 66 №3: роли стен после save — ограждение, ставшее обычной стеной, не «verified»
       const wallsAfterTyped = wallsAfter as Record<string, { role?: string; p1: Point; p2: Point }>;
@@ -1701,7 +1897,7 @@ export class Workspace {
         wallsAfterTyped as unknown as Record<string, BalconyWallProps>,
       );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -1725,6 +1921,8 @@ export class Workspace {
             line_strips_mismatches: lineStripsMismatch,
             cables_mismatches: cablesMismatch,
             cables_connection_mismatches: cablesConnAfter,
+            cables_link_form_mismatches: cableFormAfter,
+            socket_group_mismatches: subsAfter,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });

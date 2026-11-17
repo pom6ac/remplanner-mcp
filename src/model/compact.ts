@@ -5,6 +5,7 @@ import { roomPolygons } from "./items.ts";
 import { holeOffsetFromStart } from "./openings.ts";
 import { wallFaces } from "./walls.ts";
 import { projectionLength, type Segment } from "./geometry.ts";
+import { parseSwitchVertexId } from "./electric.ts";
 
 // Компактное представление модели для агента (< 5 КБ): метки W/R/O/I, мм.
 
@@ -71,6 +72,20 @@ export type CompactItem = {
   width_mm: number;
   depth_mm: number;
   height_mm: number;
+  /** Высота установки над полом, мм (розетки/выключатели: over_floor.value; ревью 90 R5). */
+  over_floor_mm?: number;
+  /** Под-розетки группы socket_group (ревью 90 R5): id, тип, координаты в мм. */
+  socket_group?: CompactSocketSub[];
+};
+
+/** Под-розетка группы socket_group в компактном виде (ревью 90 R5). */
+export type CompactSocketSub = {
+  id: string;
+  /** Тип под-розетки (socket, light_switch_double, …). */
+  name: string;
+  /** Точка center под-розетки, мм. */
+  x_mm: number;
+  y_mm: number;
 };
 
 export type CompactPillar = {
@@ -153,10 +168,12 @@ export type CompactLightStrip = {
 export type CompactCable = {
   id: string;
   site_id: string;
-  /** Вершина выключателя: id группы и под-розетки («<groupId>|s|<subId>» — формат редактора). */
-  switch_item: string;
-  /** Вершина светильника: id предмета. */
-  lamp_item: string;
+  /** id предмета-группы выключателя (ревью 90 R5 — без склейки «|s|»). */
+  switch_item_id: string;
+  /** id под-розетки-выключателя внутри группы. */
+  switch_sub_id: string;
+  /** id предмета-светильника. */
+  lamp_item_id: string;
   /** Число вершин графа (включая промежуточные узлы). */
   vertexes: number;
   /** Длина, мм (в модели редактора метры). */
@@ -298,16 +315,34 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     };
   });
 
-  const items: CompactItem[] = Object.values(model.items).map((item, i) => ({
-    id: `I${i + 1}`,
-    name: item.name,
-    x_mm: round0(cmToMm(item.pc.x)),
-    y_mm: round0(cmToMm(item.pc.y)),
-    angle_deg: item.angle,
-    width_mm: round0(cmToMm(item.width)),
-    depth_mm: round0(cmToMm(item.height)),
-    height_mm: round0(cmToMm(item.self_height ?? 0)),
-  }));
+  const items: CompactItem[] = Object.values(model.items).map((item, i) => {
+    // ревью 90 R5: состав под-розеток и высота установки видны в компактном API
+    const subs = Array.isArray(item.socket_group) ? (item.socket_group as Array<{ name?: string; id?: string; center?: { x?: number; y?: number } }>) : null;
+    const overFloor = item.over_floor;
+    return {
+      id: `I${i + 1}`,
+      name: item.name,
+      x_mm: round0(cmToMm(item.pc.x)),
+      y_mm: round0(cmToMm(item.pc.y)),
+      angle_deg: item.angle,
+      width_mm: round0(cmToMm(item.width)),
+      depth_mm: round0(cmToMm(item.height)),
+      height_mm: round0(cmToMm(item.self_height ?? 0)),
+      ...(overFloor && typeof overFloor === "object" && typeof (overFloor as { value?: unknown }).value === "number"
+        ? { over_floor_mm: round0(cmToMm((overFloor as { value: number }).value)) }
+        : {}),
+      ...(subs && subs.length > 0
+        ? {
+            socket_group: subs.map((s) => ({
+              id: s.id ?? "",
+              name: s.name ?? "",
+              x_mm: round0(cmToMm(s.center?.x ?? item.pc.x)),
+              y_mm: round0(cmToMm(s.center?.y ?? item.pc.y)),
+            })),
+          }
+        : {}),
+    };
+  });
 
   const pillars: CompactPillar[] = Object.values(model.pillars ?? {}).map((pillar, i) => ({
     id: `P${i + 1}`,
@@ -427,11 +462,13 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     Object.values(src ?? {}).map((cable, i) => {
       const sw = cable.vertexes.find((v) => v.type === "switch");
       const lamp = cable.vertexes.find((v) => v.type !== "node" && v.type !== "switch");
+      const parsedSw = sw?.id ? parseSwitchVertexId(sw.id) : null;
       return {
         id: `CB${i + 1}`,
         site_id: cable.id,
-        switch_item: sw?.id ?? "",
-        lamp_item: lamp?.id ?? "",
+        switch_item_id: parsedSw?.[0] ?? "",
+        switch_sub_id: parsedSw?.[1] ?? "",
+        lamp_item_id: lamp?.id ?? "",
         vertexes: cable.vertexes.length,
         length_mm: Math.round((cable.length ?? 0) * 1000),
       };

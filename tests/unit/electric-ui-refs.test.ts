@@ -301,7 +301,7 @@ test("88: реестр коллекций — cables в clear/import, пусто
   assert.equal(Object.keys(m.cables ?? {}).length, 1);
 });
 
-test("88: компакт — метки CB с switch_item/lamp_item и длиной в мм", () => {
+test("88: компакт — метки CB с раздельными switch_item_id/switch_sub_id/lamp_item_id и длиной в мм (ревью 90 R5)", () => {
   const m = baseModel();
   const sw = addItemByName(m, "light_switch", { againstWall: { wallId: topWall(m), offsetMm: 500 } });
   const lamp = addItemByName(m, "chandelier", { center: { x: 1500, y: 1500 } });
@@ -311,10 +311,23 @@ test("88: компакт — метки CB с switch_item/lamp_item и длин�
   const cb = c.cables[0]!;
   assert.equal(cb.id, "CB1");
   assert.equal(cb.site_id, cable.id);
-  assert.equal(cb.switch_item, cable.vertexes[0]!.id);
-  assert.equal(cb.lamp_item, lamp.id);
+  const sub = (sw.socket_group as Array<{ id: string }>)[0]!;
+  assert.equal(cb.switch_item_id, sw.id);
+  assert.equal(cb.switch_sub_id, sub.id);
+  assert.equal(cb.lamp_item_id, lamp.id);
+  assert.ok(!JSON.stringify(cb).includes("|s|"), "id не склеены разделителем");
   assert.equal(cb.vertexes, 2);
   assert.equal(cb.length_mm, Math.round(cable.length * 1000));
+  // ревью 90 R5: под-розетки и высота установки видны в компактных items
+  const csw = c.items.find((it) => it.name === "socket_group")!;
+  assert.ok(csw, "выключатель в компактных items");
+  assert.equal(csw.over_floor_mm, 900);
+  assert.equal(csw.socket_group!.length, 1);
+  assert.equal(csw.socket_group![0]!.id, sub.id);
+  assert.equal(csw.socket_group![0]!.name, "light_switch");
+  const subCenter = (sw.socket_group as Array<{ center: { x: number; y: number } }>)[0]!.center;
+  assert.equal(csw.socket_group![0]!.x_mm, Math.round(subCenter.x * 10));
+  assert.equal(csw.socket_group![0]!.y_mm, Math.round(subCenter.y * 10));
 });
 
 // ---------- mock save (подмена writeBackup/loadModel/openEditor) ----------
@@ -459,6 +472,236 @@ test("88: mock save — сервер оторвал обратную ссылк�
     }
     return ok;
   });
+});
+
+// ---------- ревью 90 R1: состав под-розеток при нормализации и после save ----------
+
+test("90 R1: mock save — нормализация потеряла под-розетку → NORMALIZATION_DROPPED, записи нет", async () => {
+  const m = baseModel();
+  addItemByName(m, "socket", { againstWall: { wallId: topWall(m), offsetMm: 1000 } });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    const it = Object.values(norm.items as Record<string, ItemProps>).find((i) => i.name === "socket_group")!;
+    delete it.socket_group;
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => e instanceof McpError && (e as McpError).code === "NORMALIZATION_DROPPED");
+  // запись не состоялась: у серверной группы под-розетка на месте
+  const srvIt = Object.values((server.model as { items: Record<string, ItemProps> }).items).find((i) => i.name === "socket_group")!;
+  assert.ok(Array.isArray(srvIt.socket_group) && srvIt.socket_group.length === 1);
+});
+
+test("90 R1: mock save — сервер потерял под-розетку после save → SITE_ERROR (socket_group_mismatches)", async () => {
+  const m = baseModel();
+  addItemByName(m, "socket", { againstWall: { wallId: topWall(m), offsetMm: 1000 } });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (srv) => {
+    const it = Object.values((srv.model as { items: Record<string, ItemProps> }).items).find((i) => i.name === "socket_group")!;
+    delete it.socket_group;
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const ok = e instanceof McpError && (e as McpError).code === "SITE_ERROR";
+    if (ok) {
+      const det = (e as McpError).details as Record<string, unknown>;
+      assert.ok(Array.isArray(det["socket_group_mismatches"]) && (det["socket_group_mismatches"] as string[]).some((s) => s.includes("потеряна")));
+    }
+    return ok;
+  });
+});
+
+test("90 R1: mock save — смена типа/смещение/смена высоты под-розетки → NORMALIZATION_DROPPED", async () => {
+  const cases: Array<(it: ItemProps) => void> = [
+    // смена типа под-розетки
+    (it) => { (it.socket_group as Array<{ name: string }>)[0]!.name = "socket_usb"; },
+    // смещение координат
+    (it) => {
+      const s = (it.socket_group as Array<{ center: { x: number; y: number }; real_center: { x: number; y: number } }>)[0]!;
+      s.center.x += 5; s.real_center.x += 5;
+    },
+    // смена высоты установки группы
+    (it) => { (it.over_floor as { value: number }).value = 999; },
+  ];
+  let n = 0;
+  for (const mutate of cases) {
+    n++;
+    const m = baseModel();
+    addItemByName(m, "socket", { againstWall: { wallId: topWall(m), offsetMm: 1000 } });
+    const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, () => {}, (norm) => {
+      const it = Object.values(norm.items as Record<string, ItemProps>).find((i) => i.name === "socket_group")!;
+      mutate(it);
+    });
+    await ws.open("0", "1");
+    await assert.rejects(() => ws.save(), (e: unknown) => {
+      const ok = e instanceof McpError && (e as McpError).code === "NORMALIZATION_DROPPED";
+      if (ok) {
+        const det = (e as McpError).details as Record<string, unknown>;
+        assert.ok(Array.isArray(det["socket_group_mismatches"]) && (det["socket_group_mismatches"] as string[]).length > 0, `кейс ${n}`);
+      }
+      return ok;
+    }, `кейс ${n}`);
+  }
+});
+
+// ---------- ревью 90 R2: связи с линиями не блокируют save, cable_delete снимает ссылку у линии ----------
+
+/** Переносит цель связи из items в коллекцию световых линий (синтетический legacy-формат). */
+function retargetToLine(m: Model, cable: Cable, collection: "led_strips" | "stripes_light" | "line_strips", vertexType: string): void {
+  const lampId = cable.vertexes.find((v) => v.type === "lamp")!.id;
+  const lamp = m.items[lampId]!;
+  delete m.items[lampId];
+  (m as unknown as Record<string, Record<string, unknown>>)[collection] = {
+    [lampId]: {
+      id: lampId, type: vertexType, length: 0, on_size: 1,
+      props: { id: lampId, name: vertexType },
+      vertexes: [], matrix: [], items: {},
+    },
+  };
+  cable.vertexes.find((v) => v.id === lampId)!.type = vertexType;
+  cable.items[lampId] = vertexType;
+}
+
+test("90 R2: mock save — существующая связь с led_strips/stripes_light/line_strips сохраняется (verified, без обратной ссылки на линии)", async () => {
+  const cases: Array<["led_strips" | "stripes_light" | "line_strips", string]> = [
+    ["led_strips", "led_strip"],
+    ["stripes_light", "strip_light"],
+    ["line_strips", "line_strip"],
+  ];
+  for (const [collection, vertexType] of cases) {
+    const { m, sw, lamp } = switchLampScenario();
+    const cable = addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+    retargetToLine(m, cable, collection, vertexType);
+    const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, () => {});
+    await ws.open("0", "1");
+    const res = await ws.save();
+    assert.equal(res.verified, true, collection);
+    assert.equal(res.rounds, 1, collection);
+  }
+});
+
+test("90 R2: cable_delete снимает обратную ссылку и у световой линии (props.cables, скаляр и массив)", () => {
+  for (const form of ["scalar", "array"] as const) {
+    const { m, sw, lamp } = switchLampScenario();
+    const cable = addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+    retargetToLine(m, cable, "led_strips", "led_strip");
+    const line = m.led_strips![lamp.id]! as unknown as { props: { cables?: { cable_id?: unknown } } };
+    line.props.cables = { cable_id: form === "scalar" ? cable.id : [cable.id] };
+    deleteCable(m, cable.id);
+    assert.equal(m.cables![cable.id], undefined, form);
+    assert.equal(line.props.cables, undefined, form);
+    // ссылка под-розетки тоже снята
+    assert.equal((sw.socket_group as Array<{ cables?: unknown }>)[0]!.cables, undefined, form);
+  }
+});
+
+// ---------- ревью 90 R3: держатель ссылки обязан быть вершиной кабеля ----------
+
+test("90 R3: mock save — лишняя обратная ссылка (держатель не вершина) отвергается сверкой", async () => {
+  const { m, sw, lamp } = switchLampScenario();
+  const cable = addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+  const extra = addItemByName(m, "lightspot", { center: { x: 2500, y: 1500 } });
+  (m.items[extra.id] as ItemProps & { cables: { cable_id: string } }).cables = { cable_id: cable.id };
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {});
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const ok = e instanceof McpError && (e as McpError).code === "NORMALIZATION_DROPPED";
+    if (ok) {
+      const det = (e as McpError).details as Record<string, unknown>;
+      const conn = (det["cables_connection_mismatches"] ?? det["cables_mismatches"]) as string[] | undefined;
+      assert.ok(Array.isArray(conn) && conn.some((s) => s.includes("не является вершиной связи")));
+    }
+    return ok;
+  });
+});
+
+test("90 R3: cable_delete снимает и висячую ссылку держателя вне вершин связи", () => {
+  const { m, sw, lamp } = switchLampScenario();
+  const cable = addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+  const extra = addItemByName(m, "lightspot", { center: { x: 2500, y: 1500 } });
+  (m.items[extra.id] as ItemProps & { cables: { cable_id: string } }).cables = { cable_id: cable.id };
+  deleteCable(m, cable.id);
+  assert.equal(m.cables![cable.id], undefined);
+  assert.equal((m.items[extra.id] as ItemProps & { cables?: unknown }).cables, undefined);
+  assert.equal((sw.socket_group as Array<{ cables?: unknown }>)[0]!.cables, undefined);
+  assert.equal((m.items[lamp.id] as ItemProps & { cables?: unknown }).cables, undefined);
+});
+
+// ---------- ревью 90 R6: форма обратных ссылок (массив/скаляр) после save ----------
+
+test("90 R6: mock save — сервер поменял форму ссылки (массив↔скаляр) → SITE_ERROR (cables_link_form_mismatches)", async () => {
+  const { m, sw, lamp } = switchLampScenario();
+  const cable = addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (srv) => {
+    const items = (srv.model as { items: Record<string, ItemProps & { cables?: { cable_id: unknown } }> }).items;
+    (Object.values(items).find((i) => (i.socket_group as Array<{ cables?: { cable_id: unknown } }>)?.some((s) => Array.isArray(s.cables?.cable_id)))!
+      .socket_group as Array<{ cables: { cable_id: unknown } }>)[0]!.cables = { cable_id: cable.id };
+    (items[lamp.id]!).cables = { cable_id: [cable.id] };
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const ok = e instanceof McpError && (e as McpError).code === "SITE_ERROR";
+    if (ok) {
+      const det = (e as McpError).details as Record<string, unknown>;
+      assert.ok(Array.isArray(det["cables_link_form_mismatches"]) && (det["cables_link_form_mismatches"] as string[]).length >= 2);
+    }
+    return ok;
+  });
+});
+
+test("90 R6: mock save — legacy-модель (скаляр у под-розетки) сохраняется без ложной блокировки", async () => {
+  const { m, sw, lamp } = switchLampScenario();
+  const cable = addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
+  // legacy: у под-розетки скаляр вместо массива (старая модель)
+  (sw.socket_group as Array<{ cables: { cable_id: unknown } }>)[0]!.cables = { cable_id: cable.id };
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {});
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+  assert.equal(res.rounds, 1);
+});
+
+// ---------- ревью 90 R4: согласованность кабельного эталона ----------
+
+test("90 R4: кабельный эталон согласован — вершины = center/pc, длина по matrix, cable_id = id кабеля, round trip addCable", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-elec-cable.json"), "utf8")) as {
+    model_cable: Cable;
+    switch_item: ItemProps;
+    lamp_item: ItemProps;
+  };
+  const cable = fx.model_cable;
+  const sub = (fx.switch_item.socket_group as Array<{ id: string; center: { x: number; y: number } }>)[0]!;
+  // вершина выключателя = center под-розетки, светильника = pc
+  assert.deepEqual(cable.vertexes[0]!.point, sub.center);
+  assert.deepEqual(cable.vertexes[1]!.point, fx.lamp_item.pc);
+  // длина = длина по matrix (координаты вершин, 2 знака)
+  const lenCm = Math.hypot(cable.vertexes[1]!.point.x - cable.vertexes[0]!.point.x, cable.vertexes[1]!.point.y - cable.vertexes[0]!.point.y);
+  assert.equal(cable.length, Math.round(lenCm) / 100);
+  assert.ok(cable.length > 0);
+  // обратные ссылки — id этого кабеля (массив у под-розетки, скаляр у светильника)
+  assert.deepEqual((fx.switch_item.socket_group as Array<{ cables: { cable_id: string[] } }>)[0]!.cables, { cable_id: [cable.id] });
+  assert.deepEqual((fx.lamp_item as ItemProps & { cables: { cable_id: string } }).cables, { cable_id: cable.id });
+  // операции → семантика эталона: addCable на модели из предметов эталона (ссылки
+  // эталона сняты — их ставит сам addCable) даёт ту же связь
+  const m = baseModel();
+  const swItem = structuredClone(fx.switch_item);
+  const lampItem = structuredClone(fx.lamp_item);
+  delete (swItem.socket_group as Array<{ cables?: unknown }>)[0]!.cables;
+  delete (lampItem as ItemProps & { cables?: unknown }).cables;
+  m.items[swItem.id!] = swItem;
+  m.items[lampItem.id!] = lampItem;
+  const built = addCable(m, { switchItemId: swItem.id!, lampItemId: lampItem.id! });
+  assert.deepEqual(built.vertexes.map((v) => [v.id, v.point, v.type]), cable.vertexes.map((v) => [v.id, v.point, v.type]));
+  assert.equal(built.length, cable.length);
+  assert.deepEqual(built.items, cable.items);
+  assert.equal(built.on_arc, cable.on_arc);
+  assert.equal(built.type, cable.type);
+  assert.deepEqual((m.items[swItem.id!] as ItemProps & { socket_group: Array<{ cables: { cable_id: string[] } }> }).socket_group[0]!.cables, { cable_id: [built.id] });
+  assert.deepEqual((m.items[lampItem.id!] as ItemProps & { cables: { cable_id: string } }).cables, { cable_id: built.id });
 });
 
 // ---------- регрессия прежних разделов ----------

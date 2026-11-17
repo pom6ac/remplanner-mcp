@@ -1196,7 +1196,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "по умолчанию первая под-розетка со свободным ключом. path — промежуточные узлы (мм, опционально). " +
         "У выключателя ограничение по клавишам (light_switch — 1 связь, double — 2, triple — 3); у светильника " +
         "одно подключение. Коллекция cables — отдельная сущность; обратные ссылки на предметах ставятся " +
-        "автоматически (cables.cable_id). После добавления вызывайте model_validate и project_save.",
+        "автоматически (cables.cable_id). Ответ — компактная сущность CB: switch_item_id (группа), switch_sub_id " +
+        "(под-розетка) и lamp_item_id раздельно. После добавления вызывайте model_validate и project_save.",
       {
         switch_item_id: z.string().min(1).describe("предмет-группа с выключателем (I<n> из model_get или id сайта)"),
         switch_sub_id: z.string().optional().describe("id под-розетки-выключателя (socket_group[].id); по умолчанию первый свободный"),
@@ -1217,7 +1218,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     cable_delete: tool(
       "Удалить связь «выключатель → светильник» (метка CB<n> из model_get): обратные ссылки " +
-        "(cables.cable_id у под-розетки выключателя и у светильника) снимаются автоматически.",
+        "(cables.cable_id у под-розетки выключателя, у светильника и у световых линий) снимаются автоматически.",
       { cable_id: z.string().min(1).describe("метка CB<n> из model_get или id сайта") },
       async (a) => {
         const ws = wsOf();

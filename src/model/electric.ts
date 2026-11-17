@@ -81,6 +81,19 @@ export function cableLampVertexType(itemName: string): "lamp" {
   return "lamp";
 }
 
+/**
+ * Коллекция-цель вершины связи по типу вершины (Cable.getTypeItem, бандл app.3.0):
+ * "lamp" — предметы model.items; вершины световых линий ищутся в своей коллекции
+ * (ревью 90 R2 — уже существующие связи с лентами/шинами/линейным светом не
+ * блокируют save, cable_delete снимает ссылку и у линии; новые подключения к
+ * линиям cable_add по-прежнему не ставит).
+ */
+export const CABLE_VERTEX_COLLECTION: Record<string, "led_strips" | "stripes_light" | "line_strips"> = {
+  led_strip: "led_strips",
+  strip_light: "stripes_light",
+  line_strip: "line_strips",
+};
+
 /** Под-розетки группы socket_group ($SocketsGroup.types, бандл app.3.0). */
 export const SOCKET_GROUP_SUBS = new Set([
   "socket", "socket_ip44", "socket_tv", "socket_ip", "socket_usb", "socket_hdmi",
@@ -316,28 +329,53 @@ export function addCable(
   return candidate;
 }
 
-/** Снимает обратные ссылки связи (под-розетка и светильники). */
+/**
+ * Снимает обратные ссылки связи у ВСЕХ держателей (ревью 90 R3): вершины связи
+ * (под-розетка — массив, светильник — скаляр) плюс держатели вне вершин испорченной
+ * модели — лишние ссылки не остаются висячими после cable_delete. Световые линии
+ * (led_strips/stripes_light/line_strips) держат ссылку в props.cables (ревью 90 R2).
+ */
 function unlinkCable(model: Model, cable: Cable): void {
-  for (const slot of cableSwitchSlots(cable)) {
-    const item = model.items[slot.itemId] as ItemProps | undefined;
-    const subs = item?.socket_group as SocketGroupSub[] | undefined;
-    const s = Array.isArray(subs) ? subs.find((x) => x.id === slot.subId) : undefined;
-    if (!s) continue;
-    const arr = subCableIds(s).filter((x) => x !== cable.id);
-    if (arr.length > 0) s.cables = { cable_id: arr };
-    else delete s.cables;
+  // под-розетки групп: массив cable_id — чистим у всех групп, где есть ссылка на этот кабель
+  for (const item of Object.values(model.items)) {
+    const subs = item.socket_group as SocketGroupSub[] | undefined;
+    if (!Array.isArray(subs)) continue;
+    for (const s of subs) {
+      const cur = subCableIds(s);
+      if (!cur.includes(cable.id)) continue;
+      const arr = cur.filter((x) => x !== cable.id);
+      if (arr.length > 0) s.cables = { cable_id: arr };
+      else delete s.cables;
+    }
   }
-  for (const v of cable.vertexes) {
-    if (v.type === "node" || v.type === "switch") continue;
-    const item = model.items[v.id] as (ItemProps & { cables?: { cable_id?: unknown } }) | undefined;
-    if (!item?.cables) continue;
-    const cur = item.cables.cable_id;
-    const arr = Array.isArray(cur) ? cur.filter((x) => x !== cable.id) : [];
+  // предметы (светильники): скаляр или массив
+  for (const item of Object.values(model.items) as (ItemProps & { cables?: { cable_id?: unknown } })[]) {
+    const cur = item.cables?.cable_id;
+    if (cur === undefined || cur === null) continue;
     if (Array.isArray(cur)) {
-      if (arr.length > 0) item.cables = { cable_id: arr };
-      else delete item.cables;
+      const arr = cur.filter((x) => x !== cable.id);
+      if (arr.length !== cur.length) {
+        if (arr.length > 0) item.cables = { cable_id: arr };
+        else delete item.cables;
+      }
     } else if (cur === cable.id) {
       delete item.cables;
+    }
+  }
+  // световые линии: props.cables (формат обратной ссылки на линии — ревью 90 R2)
+  for (const key of ["led_strips", "stripes_light", "line_strips"] as const) {
+    for (const line of Object.values(model[key] ?? {}) as { props?: { cables?: { cable_id?: unknown } } }[]) {
+      const cur = line.props?.cables?.cable_id;
+      if (cur === undefined || cur === null) continue;
+      if (Array.isArray(cur)) {
+        const arr = cur.filter((x) => x !== cable.id);
+        if (arr.length !== cur.length) {
+          if (arr.length > 0) line.props!.cables = { cable_id: arr };
+          else delete line.props!.cables;
+        }
+      } else if (cur === cable.id) {
+        delete line.props!.cables;
+      }
     }
   }
 }
