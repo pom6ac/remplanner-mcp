@@ -429,7 +429,7 @@ export function holeOffsetCm(wall: Wall, hole: Hole): number {
   return t * len - hole.width / 2;
 }
 
-function checkPlacement(wall: Wall, at: number, width: number, ignoreHoleId?: string): void {
+function checkPlacement(wall: Wall, at: number, width: number, ignoreHoleId?: string, ignoreHoleId2?: string): void {
   const len = axisLength(wall);
   const margin = wall.depth / 2;
   if (at < margin - 1e-6 || at + width > len - margin + 1e-6) {
@@ -438,7 +438,7 @@ function checkPlacement(wall: Wall, at: number, width: number, ignoreHoleId?: st
     });
   }
   for (const other of Object.values(wall.holes ?? {})) {
-    if (other.id === ignoreHoleId) continue;
+    if (other.id === ignoreHoleId || other.id === ignoreHoleId2) continue;
     const [o1, o2] = holeRange(wall, other);
     if (at < o2 - 1e-6 && o1 < at + width) {
       throw new McpError("GEOMETRY_CONFLICT", "проём пересекает другой проём", {
@@ -935,7 +935,11 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
     // положение не меняем: at из поля или проекции прежнего pc, а не середина стены (№6 ревью)
     at = holeOffsetCm(wall, hole);
   }
-  checkPlacement(wall, at, width, hole.id); // до мутации: при ошибке модель не меняется
+  // ревью 108 R4: партнёр по паре замены исключается из проверки пересечений
+  // (высота/размеры одного участника не должны блокироваться вторым), а перенос,
+  // меняющий центр, переносится согласованно на второго участника
+  const pair = replacementPairOf(wall, hole);
+  checkPlacement(wall, at, width, hole.id, pair?.id); // до мутации: при ошибке модель не меняется
 
   if (windoor) applyWindoorPartsFrom(candidate, windoor);
   // Миграция legacy-высоты (ревью 32, N3): блок, созданный прежней версией MCP (d107f87),
@@ -983,64 +987,96 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   candidate.at = r2(at);
   refreshHole(wall, candidate);
   assertHoleInvariants(candidate); // финальные инварианты — тоже до изменения модели (R3/R4)
+  // согласованный перенос пары (ревью 108 R4): центр сместился — второй участник
+  // следует за первым. Проверка на копии стены до любой мутации: не помещается —
+  // атомарный отказ с подсказкой (выбор поведения: перенос, а не разъезд пары)
+  if (pair) {
+    const newCenter = at + width / 2;
+    const pairCenter = holeOffsetCm(wall, pair) + pair.width / 2;
+    if (Math.abs(newCenter - pairCenter) > 0.005) {
+      const scratch = structuredClone(wall);
+      assignHole(scratch.holes[hole.id]!, candidate);
+      const sp = scratch.holes[pair.id]!;
+      if (sp.at !== undefined) {
+        sp.at = r2(newCenter - sp.width / 2);
+        refreshHole(scratch, sp);
+      } else {
+        // UI-проём без служебного at: позиция задаётся центром pc
+        const pc = pointAtLength(wallAxis(scratch), newCenter);
+        sp.pc = { x: r2(pc.x), y: r2(pc.y) };
+        setHolePoints(scratch, sp);
+      }
+      try {
+        checkPlacement(scratch, holeOffsetCm(scratch, sp), sp.width, sp.id, hole.id);
+      } catch (cause) {
+        const code = cause instanceof McpError ? cause.code : "GEOMETRY_CONFLICT";
+        throw new McpError(code,
+          `перенос проёма ${hole.id} уводит с места пару замены: второй участник ${pair.id} (${hole.plan === "c" ? "исходный" : "замена"}) не помещается на стене после переноса`, {
+            hint: "пара замены переносится согласованно; перенесите пару в пределы стены или удалите замену (opening_delete) перед переносом",
+            details: { kind: "replacement_pair_transfer_conflict", wall_id: wall.id, hole_id: hole.id, pair_id: pair.id },
+          });
+      }
+      assignHole(pair, scratch.holes[pair.id]!);
+    }
+  }
   assignHole(hole, candidate);
   return hole;
 }
 
 /**
- * opening_delete (ревью 105 R4 — жизненный цикл пары замены):
+ * opening_delete (ревью 105 R4, 108 R4 — жизненный цикл пары замены):
  * - удаление замены (plan:c с parent = id стены) снимает hasReplacement у исходного —
  *   иначе повторная замена навсегда запрещена;
  * - удаление исходного (hasReplacement) удаляет и замену — висячая замена не нужна
- *   (выбор поведения описан в отчёте 106; отказ альтернативой).
- * Пара сопоставляется по стене (parent) и центру: замена создаётся по центру исходного.
+ *   (выбор поведения описан в отчёте 106; отказ альтернативой); ревью 108 R11:
+ *   возвращает все удалённые ID — инструмент показывает каскад в ответе.
+ * Пара сопоставляется по связи (parent/hasReplacement), центр — только
+ * для выбора между несколькими парами на стене (replacementPairOf).
  */
-export function deleteOpening(model: Model, wallId: string, holeId: string): void {
+export function deleteOpening(model: Model, wallId: string, holeId: string): { deleted: string[] } {
   const wall = model.walls[wallId];
   if (!wall) throw new McpError("NOT_FOUND", `стена ${wallId} не найдена`);
   const hole = wall.holes[holeId];
   if (!hole) throw new McpError("NOT_FOUND", `проём ${holeId} не найден`);
+  const deleted: string[] = [holeId];
   if (hole.hasReplacement) {
-    // исходный: замену ищем среди plan:c с parent = этой стеной и тем же центром
-    const rep = findReplacement(wall, hole);
-    if (rep) delete wall.holes[rep.id];
+    // исходный: замену ищем по связи (plan:c, parent = эта стена)
+    const rep = replacementPairOf(wall, hole);
+    if (rep) {
+      delete wall.holes[rep.id];
+      deleted.push(rep.id);
+    }
   } else if (hole.parent === wallId && hole.plan === "c") {
-    // замена: исходный — проём этой стены с hasReplacement и совпадающим центром
-    const original = findOriginal(wall, hole);
+    // замена: исходный — проём этой стены с hasReplacement (связь по флагу)
+    const original = replacementPairOf(wall, hole);
     if (original) delete original.hasReplacement;
   }
   delete wall.holes[holeId];
+  return { deleted };
 }
 
-const PAIR_CENTER_TOL_CM = 1;
-
-/** Замена исходного проёма: plan:c на той же стене с parent = id стены и тем же центром. */
-function findReplacement(wall: Wall, original: Hole): Hole | null {
-  const center = holeOffsetCm(wall, original) + original.width / 2;
-  let best: Hole | null = null;
+/**
+ * Пара замены (ревью 108 R4): связь определяется структурой, а не центром —
+ * у замены plan:"c" с parent = id стены, у исходного hasReplacement на той же стене.
+ * Центр используется только, чтобы выбрать между несколькими парами на одной стене;
+ * согласованный перенос в updateOpening держит центры пары совпадающими.
+ * Единая точка поиска пары для update/delete и сверки демонтажа (replacementOf).
+ */
+export function replacementPairOf(wall: Wall, hole: Hole): Hole | null {
+  const holeIsReplacement = hole.plan === "c" && hole.parent === wall.id;
+  const candidates = Object.values(wall.holes ?? {}).filter((other) => {
+    if (other.id === hole.id) return false;
+    if (holeIsReplacement) return Boolean(other.hasReplacement);
+    return other.plan === "c" && other.parent === wall.id;
+  });
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0]!;
+  const center = holeOffsetCm(wall, hole) + hole.width / 2;
+  let best = candidates[0]!;
   let bestDist = Infinity;
-  for (const other of Object.values(wall.holes)) {
-    if (other.id === original.id) continue;
-    if (other.parent !== wall.id || other.plan !== "c") continue;
+  for (const other of candidates) {
     const d = Math.abs(holeOffsetCm(wall, other) + other.width / 2 - center);
-    if (d <= PAIR_CENTER_TOL_CM && d < bestDist) {
-      best = other;
-      bestDist = d;
-    }
-  }
-  return best;
-}
-
-/** Исходный проёма-замены: hasReplacement на той же стене с совпадающим центром. */
-function findOriginal(wall: Wall, replacement: Hole): Hole | null {
-  const center = holeOffsetCm(wall, replacement) + replacement.width / 2;
-  let best: Hole | null = null;
-  let bestDist = Infinity;
-  for (const other of Object.values(wall.holes)) {
-    if (other.id === replacement.id) continue;
-    if (!other.hasReplacement) continue;
-    const d = Math.abs(holeOffsetCm(wall, other) + other.width / 2 - center);
-    if (d <= PAIR_CENTER_TOL_CM && d < bestDist) {
+    if (d < bestDist) {
       best = other;
       bestDist = d;
     }

@@ -646,18 +646,25 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     opening_delete: tool(
-      "Удалить проём (дверь/окно) со стены.",
+      "Удалить проём (дверь/окно) со стены. Если проём — исходный, у которого есть замена " +
+        "(проём листа «Перегородки», plan:c), замена удаляется вместе с ним (каскад): ответ " +
+        "возвращает все удалённые ID (deleted) и предупреждение (warning). Удаление замены " +
+        "снимает у исходного флаг hasReplacement — повторная замена снова возможна.",
       { opening_id: z.string().min(1) },
       async (a) => {
         const ws = wsOf();
         const openingId = a["opening_id"] as string;
-        ws.apply("opening_delete", (m) => {
+        const result = ws.apply("opening_delete", (m) => {
           const found = Object.values(m.walls).find((w) => (w.holes ?? {})[openingId]);
           if (!found) throwNotFound(`проём ${openingId} не найден`);
-          deleteOpening(m, found.id, openingId);
-          return true;
+          return deleteOpening(m, found.id, openingId);
         });
-        return ok({ deleted: openingId, hint: SCENARIO_HINT });
+        const cascade = result.deleted.length > 1;
+        return ok({
+          deleted: result.deleted,
+          ...(cascade ? { warning: `вместе с проёмом ${openingId} удалена его замена (каскад): ${result.deleted.filter((id: string) => id !== openingId).join(", ")}` } : {}),
+          hint: SCENARIO_HINT,
+        });
       },
     ),
 

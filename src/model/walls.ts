@@ -362,23 +362,23 @@ function mergeCollinear(model: Model): void {
         else if (dist(a.p1, b.p1) <= NODE_TOL_CM) { p1 = b.p2; p2 = a.p2; }
         else if (dist(a.p1, b.p2) <= NODE_TOL_CM) { p1 = b.p1; p2 = a.p2; }
         if (!p1 || !p2 || dist(p1, p2) < wallLen(a)) continue; // только удлинение
-        // ревью 105 R2: ось a меняется (в т.ч. разворачивается в ветках 3/4) —
-        // сектора a и b переносятся на новую ось; не помещающиеся — атомарный отказ
-        const aOld = { p1: { ...a.p1 }, p2: { ...a.p2 } };
+        // ревью 108 R2: объединение коллинеарных стен не двигает ось в мире —
+        // сектора ОБЕИХ стен сохраняют мировые координаты и перепроецируются на
+        // итоговую ось (с проверкой пределов), а не переносятся от старого p1
+        // (прежний syncSectors от старой оси a сдвигал сектор на сдвиг начала оси)
         a.p1 = { x: r2(p1.x), y: r2(p1.y) };
         a.p2 = { x: r2(p2.x), y: r2(p2.y) };
         for (const hole of Object.values(b.holes)) {
           a.holes[hole.id] = hole;
         }
-        const bSectors = sectorsOfWall(b);
-        const aSectors = sectorsOfWall(a) ?? {};
         const mergedDir = sub(a.p2, a.p1);
         const mergedLen = Math.hypot(mergedDir.x, mergedDir.y);
         const mergedU = mergedLen > 1e-9 ? scale(mergedDir, 1 / mergedLen) : { x: 1, y: 0 };
-        for (const s of Object.values(bSectors ?? {})) {
+        const aSectors = sectorsOfWall(a) ?? {};
+        for (const s of [...Object.values(aSectors), ...Object.values(sectorsOfWall(b) ?? {})]) {
           const t = (s.pc.x - a.p1.x) * mergedU.x + (s.pc.y - a.p1.y) * mergedU.y;
           if (t - s.width / 2 < -0.05 || t + s.width / 2 > mergedLen + 0.05) {
-            throw new McpError("INVALID_ARGUMENT", `участок демонтажа стены ${b.id} не помещается в объединённую стену ${a.id}`, {
+            throw new McpError("INVALID_ARGUMENT", `участок демонтажа не помещается в объединённую стену ${a.id}`, {
               hint: "отмените демонтаж участка (demolish_cancel) перед объединением стен",
               details: { kind: "sector_outside_wall", wall_id: a.id, sector_id: s.id },
             });
@@ -388,8 +388,6 @@ function mergeCollinear(model: Model): void {
         }
         if (Object.keys(aSectors).length > 0) a.sectors = aSectors;
         delete model.walls[b.id];
-        // ревью 105 R2: собственные сектора a — на новую ось (t от прежнего p1)
-        syncSectors(model, new Map([[a.id, aOld]]));
         // ссылки соседей на поглощённую стену → на оставшуюся; связи будут
         // пересчитаны редактором при ближайшей нормализации
         for (const w of Object.values(model.walls)) {

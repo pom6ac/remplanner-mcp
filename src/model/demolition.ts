@@ -1,7 +1,7 @@
 import type { Model, Wall, Hole, Point } from "./types.ts";
 import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
-import { holeRange, holeOffsetCm } from "./openings.ts";
+import { holeRange, holeOffsetCm, replacementPairOf } from "./openings.ts";
 import { McpError } from "../errors.ts";
 
 // Раздел «Перепланировка» (этап 103): демонтаж — лист break_walls редактора.
@@ -285,31 +285,13 @@ export type DemolitionSig = {
   holes: Record<string, DemolitionHoleSig>;
 };
 
-const REPLACEMENT_CENTER_TOL_CM = 1;
-
 /**
- * Замена проёма hole: проём plan:c на той же стене с parent = id стены и центром,
- * совпадающим с центром исходного (замена создаётся по центру, см. addOpening).
+ * Замена проёма hole (ревью 108 R4): единое правило пары с openings — связь по
+ * parent/hasReplacement (план:c, parent = id стены), центр только выбирает между
+ * несколькими парами на стене (replacementPairOf).
  */
 export function replacementOf(wall: Wall, hole: Hole): Hole | null {
-  const axisLen = Math.hypot(wall.p2.x - wall.p1.x, wall.p2.y - wall.p1.y) || 1;
-  const ux = (wall.p2.x - wall.p1.x) / axisLen;
-  const uy = (wall.p2.y - wall.p1.y) / axisLen;
-  const center = (h: Hole): number =>
-    (h.pc.x - wall.p1.x) * ux + (h.pc.y - wall.p1.y) * uy;
-  const holeCenter = holeOffsetCm(wall, hole) + hole.width / 2;
-  let best: Hole | null = null;
-  let bestDist = Infinity;
-  for (const other of Object.values(wall.holes ?? {})) {
-    if (other.id === hole.id) continue;
-    if (other.parent !== wall.id || other.plan !== "c") continue;
-    const d = Math.abs(holeOffsetCm(wall, other) + other.width / 2 - holeCenter);
-    if (d <= REPLACEMENT_CENTER_TOL_CM && d < bestDist) {
-      best = other;
-      bestDist = d;
-    }
-  }
-  return best;
+  return replacementPairOf(wall, hole);
 }
 
 /** Семантический снимок демонтажа стены (id секторов исключены — редактор их пересоздаёт). */
