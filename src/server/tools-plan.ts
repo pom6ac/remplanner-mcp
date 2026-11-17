@@ -1682,7 +1682,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "следует за предметом при item_update. К стенам и проёмам концы магнитятся в UI только " +
         "координатно — при переносе стены размер остаётся на месте (привязки к стенам в " +
         "редакторе нет). sheet — лист: a (исходный план, по умолчанию) или furniture. " +
-        "offset_mm/offset_side — отступ размерной линии (side a|l|r). Цвет — из палитры UI. " +
+        "offset_mm/offset_side — отступ размерной линии (side a|l|r; при отступе больше нуля нужна сторона l|r). Цвет — из палитры UI. " +
         "После добавления вызывайте model_validate и project_save.",
       {
         p1: mmPoint.describe("начало, мм"),

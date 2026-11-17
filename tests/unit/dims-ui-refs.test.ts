@@ -117,6 +117,7 @@ test("113: атомарность — неизвестный предмет пр
   assert.throws(() => addComment(m, { point: P(0, 0), text: "x".repeat(COMMENT_TEXT_MAX + 1) }), /600/);
   assert.throws(() => addComment(m, { point: P(0, 0), text: "т", fontSize: 7 }), /шрифта/);
   assert.throws(() => addComment(m, { point: P(0, 0), text: "т", url: "javascript:alert(1)" }), /http/);
+  assert.throws(() => addRuler(m, { p1: P(0, -3000), p2: P(3000, -3000), offsetMm: 300 }), /offset_side|сторона/);
   assert.deepEqual(m, before, "модель не изменилась");
 });
 
@@ -369,7 +370,7 @@ function modelWithDims(): Model {
   m.rulers = {};
   m.comments = {};
   const itemId = ensureItem(m);
-  addRuler(m, { p1: P(0, -3000), p2: P(3000, -3000), attach1: itemId, offsetMm: 100 });
+  addRuler(m, { p1: P(0, -3000), p2: P(3000, -3000), attach1: itemId, offsetMm: 100, offsetSide: "l" });
   addComment(m, { point: P(2500, -1000), text: "Проба 113", attachItem: itemId, fontSize: 12 });
   return m;
 }

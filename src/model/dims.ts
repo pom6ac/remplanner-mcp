@@ -52,6 +52,21 @@ export const DIM_POINT_TOL_CM = 0.11;
 /** Допуск сверки угла привязки (градусы). */
 export const DIM_ANGLE_TOL = 1;
 
+/**
+ * Отступ размерной линии: val > 0 допустим только со стороной "l"/"r" — с "a"
+ * (авто, val 0) отрисовка редактора падает (LIB.parallel не знает сторону "a";
+ * живая проба 113-live-check: NORMALIZATION_DROPPED на restore).
+ */
+function checkOffset(offsetMm: number | undefined, offsetSide: "a" | "l" | "r" | undefined): void {
+  const val = offsetMm ?? 0;
+  const side = offsetSide ?? "a";
+  if (val > 0 && side === "a") {
+    throw new McpError("INVALID_ARGUMENT", "offset_side: при отступе больше нуля нужна сторона l или r (side «a» — только при нулевом отступе, как в редакторе)", {
+      details: { kind: "offset_side_required", offset_mm: val },
+    });
+  }
+}
+
 function cmPoint(p: MmPoint): Point {
   return { x: r2(mmToCm(p.x)), y: r2(mmToCm(p.y)) };
 }
@@ -104,6 +119,7 @@ export type AddRulerParams = {
 export function addRuler(model: Model, params: AddRulerParams): RulerEntity {
   requireFinitePoint("p1", params.p1);
   requireFinitePoint("p2", params.p2);
+  checkOffset(params.offsetMm, params.offsetSide);
   const sheet = params.sheet ?? "a";
   const p1 = cmPoint(params.p1);
   const p2 = cmPoint(params.p2);
@@ -208,8 +224,12 @@ export function updateRuler(model: Model, params: UpdateRulerParams): RulerEntit
       details: { kind: "length_out_of_range", length_mm: Math.round(len * 10) },
     });
   }
-  if (params.offsetMm !== undefined) ruler.offset = { val: r2(mmToCm(params.offsetMm)), side: ruler.offset.side };
-  if (params.offsetSide !== undefined) ruler.offset = { val: ruler.offset.val, side: params.offsetSide };
+  const finalOffsetMm = params.offsetMm ?? (ruler.offset ? Math.round(ruler.offset.val * 10) : 0);
+  const finalOffsetSide = (params.offsetSide ?? (ruler.offset?.side as "a" | "l" | "r" | undefined) ?? "a");
+  checkOffset(finalOffsetMm, finalOffsetSide);
+  if (params.offsetMm !== undefined || params.offsetSide !== undefined) {
+    ruler.offset = { val: r2(mmToCm(finalOffsetMm)), side: finalOffsetSide };
+  }
   if (params.showEverywhere !== undefined) {
     if (params.showEverywhere) ruler.show_everywhere = 1;
     else delete ruler.show_everywhere;
