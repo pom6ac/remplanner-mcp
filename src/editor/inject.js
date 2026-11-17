@@ -175,8 +175,12 @@ export const PAGE = {
             }
           } catch (e) {
             // ревью 139 m2: сбой пересчёта не откатывается молча — краткий код
-            // ошибки (без пользовательских данных) идёт в результат normalize
-            rebuildError = String(e && e.message ? e.message : e).slice(0, 200);
+            // ошибки (без пользовательских данных) идёт в результат normalize.
+            // ревью 147 №4: только имя исключения/код, текст исключения наружу не идёт
+            const label = e && (e.name || e.code) ? String(e.name || "error") : "";
+            rebuildError = label
+              ? (e && e.code !== undefined ? label + " (" + String(e.code) + ")" : label).slice(0, 200)
+              : String(e).slice(0, 200);
           } finally {
             // ревью 139 m1: при любом исключении лист редактора возвращается
             // в исходный (restorePlan), модель — в состояние до пересчёта

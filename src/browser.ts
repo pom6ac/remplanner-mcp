@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { BROWSER_IDLE_CLOSE_MS } from "./config.ts";
-import { McpError } from "./errors.ts";
+import { McpError, maskSecrets } from "./errors.ts";
 
 let browser: Browser | null = null;
 let context: BrowserContext | null = null;
@@ -59,10 +59,17 @@ async function launchBrowser(options?: { headed?: boolean }): Promise<Browser> {
   } catch (e) {
     lastError = e;
   }
-  throw new McpError("INTERNAL", "не найден Chrome (системный и кэш Playwright)", {
+  // ревью 147 №3: класс ситуации в details (нет Chrome vs Chrome упал при запуске),
+  // замаскированный текст последней ошибки — в stderr (диагностика ProcessSingleton
+  // в песочнице), но не наружу
+  const kind = candidates.length > 0 ? "launch_crashed" : "not_found";
+  if (lastError instanceof Error) {
+    console.error(`[remplanner-mcp] запуск Chrome не удался: ${maskSecrets(lastError.message)}`);
+  }
+  throw new McpError("INTERNAL", "не удалось запустить Chrome (системный и кэш Playwright)", {
     hint: "укажите путь через REMPLANNER_BROWSER или выполните npx playwright install chromium",
     // сообщение исключения запуска содержит пути — наружу только сводка (этап 145, B2)
-    details: { kind: "chrome_launch_failed", attempts: candidates.length + 1 },
+    details: { kind, attempts: candidates.length + 1 },
   });
 }
 

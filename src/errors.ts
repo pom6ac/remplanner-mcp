@@ -54,45 +54,161 @@ export class McpError extends Error {
 
 /**
  * Имена секретных ключей (регистронезависимо): query-параметры, JSON-поля,
- * заголовки, cookie. Дополнение списка — здесь, в одном месте.
+ * заголовки, cookie. Дополнение списка — здесь, в одном месте; текстовое
+ * правило и isSecretKey строятся из одного источника (ревью 147, «упростить» №1).
  */
 const SECRET_KEY_SOURCE =
-  "authkey|authorization|auth|password|passwd|pwd|token|jwt|secret|api_key|apikey|access_key|" +
-  "cookie|set_cookie|set-cookie|session|sessionid|sessid|login";
+  "authkey|auth_key|authorization|auth|password|passwd|pwd|pass|token|access_token|refresh_token|" +
+  "id_token|jwt|secret|client_secret|api_key|api-key|apikey|x-api-key|access_key|cookie|set_cookie|" +
+  "set-cookie|session|sessionid|phpsessid|sessid|sid|csrf|xsrf|login";
 
-const IS_SECRET_KEY_RE = new RegExp(`^(?:${SECRET_KEY_SOURCE})$`, "i");
+/**
+ * true, если имя ключа/параметра — секретное. Совпадение «по вхождению с
+ * границей слова»: access_token, x-auth-token, PHPSESSID, client_secret
+ * ловятся так же, как точные имена (находка №2 ревью 147).
+ */
+const IS_SECRET_KEY_RE = new RegExp(`(?:^|[^a-z0-9])(?:${SECRET_KEY_SOURCE})(?:$|[^a-z0-9])`, "i");
 
 /** true, если имя ключа/параметра — секретное. */
 export function isSecretKey(name: string): boolean {
   return IS_SECRET_KEY_RE.test(name.trim().toLowerCase());
 }
 
+// Левая граница слова: не буквенно-цифровая (ревью 147 №6 — иначе «relogin:» маскируется как «login»).
+const LEFT = "(?<![A-Za-z0-9])";
+
 // key=value / key: value (query, form-тела, заголовки, плоский текст).
 // Значение — до разделителя (&, пробел, кавычка, ;, скобки); кавычкованное — целиком.
 const KV_SECRETS_RE = new RegExp(
-  `((?:${SECRET_KEY_SOURCE})["']?\\s*[:=]\\s*)("[^"]*"|'[^']*'|[^\\s&"',;})\\]]+)`,
+  `(${LEFT}(?:${SECRET_KEY_SOURCE})["']?\\s*[:=]\\s*)("[^"\\r\\n]*"|'[^'\\r\\n]*'|[^\\s&"',;})\\r\\n\\]]+)`,
   "gi",
 );
-// Authorization Bearer/Basic — значение целиком (до него: kv-правило скрыло бы слово Bearer).
-const BEARER_RE = /\b(bearer|basic)(\s+)([A-Za-z0-9._~+/=-]{6,})/gi;
+// Authorization — любая схема (Bearer/Basic/Token/Digest/…): значение целиком до конца
+// строки (находка №2 ревью 147: Token/Digest скрывались частично). Стоит ДО kv-правила.
+const AUTHZ_RE = new RegExp(`(${LEFT}authorization["']?\\s*[:=]\\s*)([^\\r\\n]+)`, "gi");
+
+// Cookie/Set-Cookie: значения всех пар маскируются, кроме безопасных атрибутов
+// (находка №2 ревью 147: произвольные имена cookie вроде remember_me).
+const COOKIE_LINE_RE = /((?:set-?cookie|cookie)["']?\s*[:=]\s*)([^\r\n]*)/gi;
+const COOKIE_PAIR_RE = /([A-Za-z0-9_-]+)(\s*=\s*)([^;]*)/g;
+const SAFE_COOKIE_ATTR_RE = /^(?:path|domain|expires|max-age|samesite|secure|httponly|priority|partitioned)$/i;
+// JSON-поле с секретным ключом и строковым значением с экранированными кавычками
+// ("password":"ab\"…") — значение матчится целиком с учётом экранирования
+// (находка №2 ревью 147). Стоит ДО kv-правила, иначе хвост после \" остаётся открытым.
+const JSON_SECRET_RE = new RegExp(
+  `(${LEFT}"(?:${SECRET_KEY_SOURCE})"\\s*:\\s*")((?:\\\\.|[^"\\\\])*)(")`,
+  "g",
+);
+// [value="…"] в Playwright-селекторах (input[name=password][value="…"]).
+const SELECTOR_VALUE_RE = /(\[\s*value\s*=\s*)("[^"]*"|'[^']*')(\s*\])/g;
+// «token <значение>» — секрет после имени через пробел (токеноподобное значение,
+// без двоеточий/скобок, чтобы не задевать обычный текст diagnostics).
+const TOKEN_SPACE_RE = /\b(bearer|basic|token|jwt)(\s+)([A-Za-z0-9._~+/=-]{6,})/gi;
+
+function collectSecretValues(text: string, into: Set<string>): void {
+  // значения, найденные после секретных ключей, маскируются во всём тексте:
+  // секрет часто встречается повторно без ключа (находка №2 ревью 147)
+  for (const m of text.matchAll(KV_SECRETS_RE)) {
+    const v = m[2] ?? "";
+    const clean = v.length > 1 && (v.startsWith('"') || v.startsWith("'")) ? v.slice(1, -1) : v;
+    if (clean.length >= 4) into.add(clean);
+  }
+  for (const m of text.matchAll(JSON_SECRET_RE)) {
+    const v = m[2] ?? "";
+    if (v.length >= 4) into.add(v);
+  }
+}
+
+function applySecretRules(text: string): string {
+  const values = new Set<string>();
+  collectSecretValues(text, values);
+  let out = text.replace(AUTHZ_RE, "$1***");
+  out = out.replace(COOKIE_LINE_RE, (_m, label: string, rest: string) => {
+    const pairs = rest.replace(COOKIE_PAIR_RE, (pair, name: string) =>
+      SAFE_COOKIE_ATTR_RE.test(name) ? pair : `${name}=***`);
+    return label + pairs;
+  });
+  out = out.replace(JSON_SECRET_RE, "$1***$3");
+  out = out.replace(SELECTOR_VALUE_RE, "$1***$3");
+  out = out.replace(TOKEN_SPACE_RE, "$1$2***");
+  out = out.replace(KV_SECRETS_RE, "$1***");
+  for (const v of values) out = out.split(v).join("***");
+  return out;
+}
+
+/** Один уровень нормализации: URL-decode (%XX, %uXXXX, \uXXXX) и снятие JSON-экранирования. */
+function normalizeOnce(s: string): string {
+  return s
+    .replace(/\\u([0-9A-Fa-f]{4})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/%u([0-9A-Fa-f]{4})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/%([0-9A-Fa-f]{2})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\"/g, '"')
+    .replace(/\\'/g, "'")
+    .replace(/\\\\/g, "\\");
+}
 
 /**
  * Маскирование значений секретных ключей в произвольном тексте: query, заголовки,
- * JSON-фрагменты, плоский текст. JSON-поля (секретный ключ в кавычках) и ключ-значение
- * в кавычках покрываются одним kv-правилом (значение в кавычках матчится целиком).
+ * JSON-фрагменты (в том числе экранированные и URL-кодированные), cookie, плоский
+ * текст. Перед правилами вход нормализуется (до 2 уровней URL-decode и снятия
+ * JSON-экранирования, находка №2 ревью 147); нормализованный вид возвращается
+ * только если на нём найден секрет, иначе текст уходит в исходном виде.
  */
 export function maskSecrets(text: string): string {
-  return text.replace(BEARER_RE, "$1$2***").replace(KV_SECRETS_RE, "$1***");
+  const direct = applySecretRules(text);
+  let norm = direct;
+  let deeper: string | null = null;
+  for (let level = 0; level < 2; level++) {
+    const next = normalizeOnce(norm);
+    if (next === norm) break;
+    norm = next;
+    const masked = applySecretRules(norm);
+    if (masked !== norm) {
+      deeper = masked;
+      break;
+    }
+  }
+  return deeper ?? direct;
 }
 
 /** Рекурсивное маскирование в деталях ошибки: по именам ключей, строки, массивы. */
 export function maskSecretsDeep(value: unknown): unknown {
   if (typeof value === "string") return maskSecrets(value);
-  if (Array.isArray(value)) return value.map(maskSecretsDeep);
+  if (Array.isArray(value)) {
+    // пары [имя, значение] (списки заголовков) — значение маскируется по имени;
+    // имя должно быть чистым идентификатором, а не строкой «ключ=значение»
+    if (value.length === 2 && typeof value[0] === "string" && /^[A-Za-z0-9_-]+$/.test(value[0]) && isSecretKey(value[0])) {
+      return [value[0], "***"];
+    }
+    return value.map(maskSecretsDeep);
+  }
   if (value !== null && typeof value === "object") {
+    if (value instanceof Error) {
+      // Error-объект в details: только имя и диагностический код, message наружу не идёт
+      // (находка №2 ревью 147: enumerable-свойства и message уводили секрет мимо правил).
+      return { name: value.name, message: `*** (${diagnosticCode(value)})` };
+    }
+    if (value instanceof Date || value instanceof RegExp || value instanceof URL) {
+      return maskSecrets(String(value));
+    }
+    const obj = value as Record<string, unknown>;
+    // записи {name, value} (заголовки, cookie-джары) — значение маскируется по имени
+    if (typeof obj["name"] === "string" && "value" in obj && isSecretKey(obj["name"])) {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(obj)) {
+        out[k] = k === "value" ? "***" : maskSecretsDeep(v);
+      }
+      return out;
+    }
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      out[k] = isSecretKey(k) ? "***" : maskSecretsDeep(v);
+    for (const [k, v] of Object.entries(obj)) {
+      // секретный ключ с объектным значением маскируется рекурсивно, а не целиком
+      // (ревью 147 №6: {session:{object_id,plan_id}} не должен превращаться в "***")
+      out[k] = isSecretKey(k) && v !== null && typeof v === "object" && !Array.isArray(v)
+        ? maskSecretsDeep(v)
+        : isSecretKey(k)
+          ? "***"
+          : maskSecretsDeep(v);
     }
     return out;
   }
@@ -106,10 +222,11 @@ export type ErrorPayload = { code: ErrorCode; message: string; hint?: string; de
 /**
  * Безопасный диагностический код неожиданного исключения: стабильный хеш
  * имени и сообщения. Клиенту код отдаётся, исходное сообщение — нет
- * (в stderr оно пишется замаскированным).
+ * (в stderr оно пишется замаскированным). Хешируется замаскированное
+ * сообщение (ревью 147 №7) — код не становится оракулом для перебора секрета.
  */
 export function diagnosticCode(e: unknown): string {
-  const basis = e instanceof Error ? `${e.name}|${e.message}` : String(e);
+  const basis = e instanceof Error ? `${e.name}|${maskSecrets(e.message)}` : maskSecrets(String(e));
   let h = 5381;
   for (let i = 0; i < basis.length; i++) {
     h = ((h * 33) ^ basis.charCodeAt(i)) >>> 0;
@@ -126,9 +243,10 @@ export function diagnosticCode(e: unknown): string {
  */
 export function errorToPayload(e: unknown): ErrorPayload {
   if (e instanceof McpError) return e.toJSON();
-  const code = (e as { code?: string }).code;
+  // null/undefined и примитивы не должны ронять сериализацию (ревью 147 №5)
+  const code = typeof e === "object" && e !== null ? (e as { code?: string }).code : undefined;
   if (code === "NOT_FOUND" || code === "INVALID_ARGUMENT") {
-    return { code, message: maskSecrets((e as Error).message) };
+    return { code, message: maskSecrets(e instanceof Error ? e.message : String(e)) };
   }
   const diag = diagnosticCode(e);
   const kind = e instanceof Error ? e.name : "Error";

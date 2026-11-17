@@ -13,8 +13,8 @@ const CANARY = "CANARY_SECRET_7771002";
 const KV_AUTHKEY = "authkey" + "=" + CANARY;
 const KV_PASSWORD = "password" + "=" + CANARY;
 
-function assertMasked(text: string, where: string): void {
-  assert.ok(!text.includes(CANARY), `${where}: canary просочился в ответ: ${text}`);
+function assertMasked(text: string, where: string, needle: string = CANARY): void {
+  assert.ok(!text.includes(needle), `${where}: canary просочился в ответ: ${text}`);
 }
 
 test("maskSecrets: query-параметр authkey", () => {
@@ -163,4 +163,101 @@ test("api.unknownBodySummary: только статус, content-type и дли�
   assert.ok(text.includes("text/html"));
   assert.ok(text.includes("4096"));
   assert.ok(!text.includes("<"), "в сводке нет фрагментов тела");
+});
+
+// ---------- Canary 35 форм (ревью 147, находка №2; все значения синтетические) ----------
+
+const AKV = "authkey" + "=";
+const C2 = "CANARY" + "_TEST_" + "4242";
+
+/** [имя формы, функция, дающая канарейку наружу] — все 35 форм пробы probe147. */
+const FORMS: Array<[string, () => unknown]> = [
+  ["json spaces/newline", () => maskSecrets(`{"authkey" :\n  "${C2}"}`)],
+  ["json escaped (double-stringified)", () => maskSecrets(JSON.stringify(JSON.stringify({ authkey: C2 })))],
+  ["json value w/ escaped quote", () => maskSecrets(JSON.stringify({ password: `ab"${C2}` }))],
+  ["url-encoded authkey%3D", () => maskSecrets(`/x?authkey%3D${C2}`)],
+  ["url-encoded json", () => maskSecrets(encodeURIComponent(JSON.stringify({ authkey: C2 })))],
+  ["fragment #authkey", () => maskSecrets(`https://h/p#${AKV}${C2}`)],
+  ["cookie string", () => maskSecrets(`Cookie: visitor_id=1; PHPSESSID=${C2}`)],
+  ["cookie remember", () => maskSecrets(`cookie: a=1; remember_me=${C2}`)],
+  ["Authorization Basic b64", () => maskSecrets(`Authorization: Basic ${Buffer.from(`u:${C2}`).toString("base64")}`)],
+  ["Authorization Bearer", () => maskSecrets(`Authorization: Bearer ${C2}`)],
+  ["Authorization Token scheme", () => maskSecrets(`Authorization: Token ${C2}`)],
+  ["Authorization Digest", () => maskSecrets(`Authorization: Digest username="u", response="${C2}"`)],
+  ["x-api-key header", () => maskSecrets(`X-Api-Key: ${C2}`)],
+  ["auth_key=", () => maskSecrets(`auth_key=${C2}`)],
+  ["access_token=", () => maskSecrets(`access_token=${C2}`)],
+  ["pass=", () => maskSecrets(`pass=${C2}`)],
+  ["Playwright msg w/ url", () => maskSecrets(`page.goto: net::ERR_FAILED at https://remplanner.ru/planner/?${AKV}${C2}\nCall log:\n  - navigating to "https://remplanner.ru/planner/?${AKV}${C2}"`)],
+  ["selector w/ value", () => maskSecrets(`locator.fill: Timeout 30000ms exceeded.\n  - waiting for locator('input[name=password][value="${C2}"]')`)],
+  ["deep AUTHKEY", () => maskSecretsDeep({ AUTHKEY: C2 })],
+  ["deep authKey", () => maskSecretsDeep({ authKey: C2 })],
+  ["deep access_token", () => maskSecretsDeep({ access_token: C2 })],
+  ["deep x-auth-token", () => maskSecretsDeep({ "x-auth-token": C2 })],
+  ["deep refresh_token", () => maskSecretsDeep({ refresh_token: C2 })],
+  ["deep client_secret", () => maskSecretsDeep({ client_secret: C2 })],
+  ["deep PHPSESSID", () => maskSecretsDeep({ PHPSESSID: C2 })],
+  ["deep nested arrays", () => maskSecretsDeep([[{ x: [[{ authkey: C2 }]] }]])],
+  ["deep headers array pair", () => maskSecretsDeep([["authorization", C2]])],
+  ["deep headers obj list", () => maskSecretsDeep([{ name: "authkey", value: C2 }])],
+  ["deep Map", () => maskSecretsDeep(new Map([["authkey", C2]]))],
+  ["deep URL obj", () => maskSecretsDeep({ url: new URL(`https://h/?${AKV}${C2}`) })],
+  ["Error w/ cause", () => errorToPayload(new Error("x", { cause: new Error(`${AKV}${C2}`) }))],
+  ["AggregateError", () => errorToPayload(new AggregateError([new Error(C2)], `token ${C2}`))],
+  ["McpError details Error obj", () => new McpError("SITE_ERROR", "x", { details: { err: Object.assign(new Error(C2), { url: `https://h/?q=${C2}` }) } }).toJSON()],
+  ["McpError details url-encoded", () => new McpError("SITE_ERROR", "x", { details: { path: `/a?authkey%3D${C2}` } }).toJSON()],
+  ["plain NOT_FOUND w/ secret", () => errorToPayload(Object.assign(new Error(`${AKV}${C2} raw ${C2}`), { code: "NOT_FOUND" }))],
+];
+
+for (const [name, make] of FORMS) {
+  test(`canary 35: ${name} — канарейка не проходит`, () => {
+    assertMasked(JSON.stringify(make()), name, C2);
+  });
+}
+
+test("canary 35: повтор CANARY_SECRET_7771002 без ключа тоже маскируется", () => {
+  // значение, найденное после секретного ключа, маскируется во всём тексте
+  assertMasked(maskSecrets(`ответ для ${AKV}${CANARY}; см. ${CANARY} в дампе`), "value repeat");
+});
+
+test("canary 35: маскировщик устойчив к ReDoS — 100 КБ быстрее 50 мс", () => {
+  for (const [nm, str] of [
+    ["token=\"", 'token="'.repeat(12_500)],
+    ["bearer ", "bearer ".repeat(15_000)],
+    ["token: :", "token" + " ".repeat(100_000) + "x"],
+    ["authauth", "auth".repeat(25_000)],
+    ["percent", "%22%3A%22".repeat(12_500)],
+  ] as const) {
+    const t0 = performance.now();
+    maskSecrets(str);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 50, `${nm}: maskSecrets на ${str.length} байтах занял ${ms.toFixed(1)} мс`);
+  }
+});
+
+test("ревью 147 №5: errorToPayload(null/undefined) безопасен", () => {
+  for (const v of [null, undefined, 42, "строка"]) {
+    const p = errorToPayload(v);
+    assert.equal(p.code, "INTERNAL");
+    assert.match(p.message, /ERR-[0-9a-f]{8}/);
+  }
+});
+
+test("ревью 147 №6: диагностический текст не маскируется, объектные значения — рекурсивно", () => {
+  // левая граница слова: «relogin» — не «login»
+  assert.equal(maskSecrets("relogin: через 10 минут"), "relogin: через 10 минут");
+  assert.equal(maskSecrets("author: Иванов"), "author: Иванов");
+  assert.equal(maskSecrets("tokens=5"), "tokens=5");
+  assert.equal(maskSecrets("sessions: 3"), "sessions: 3");
+  const out = maskSecretsDeep({ session: { object_id: 1, plan_id: 2 }, auth: { logged_in: true }, token: 3 }) as Record<string, unknown>;
+  assert.deepEqual(out.session, { object_id: 1, plan_id: 2 }, "объект под секретным ключом маскируется рекурсивно, а не целиком");
+  assert.deepEqual(out.auth, { logged_in: true });
+  assert.equal(out.token, "***");
+});
+
+test("ревью 147 №7: диагностический код не зависит от секрета в сообщении", () => {
+  // одно и то же сообщение с разными секретами даёт один код (нет оракула перебора)
+  const a = errorToPayload(new Error(`${AKV}${C2}`));
+  const b = errorToPayload(new Error(AKV + "ДРУГОЙ_СЕКРЕТ_9183"));
+  assert.equal(a.message, b.message);
 });
