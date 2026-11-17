@@ -51,7 +51,7 @@ MCP-сервер, через который агент (Claude Code, OpenCode, C
 | `p1`/`p2` | `{x,y,link}` | `{role:"p1", x, y, demount:0, bak:{x,y}}` | `role`/`demount`/`bak` **не обязательны** — restore принимает `{x,y}` и дополняет сам (у `bak` появляется `link`) |
 | `l1,l2,r1,r2` | нет | есть; при направлении по +X сторона `l` = −Y (слева по ходу стены при Y вниз) | **обязательны на входе restore** (не пересчитывает!): считать самому — нормаль левой грани `(dy,−dx)/len·depth/2`; `l*f/angle/area/eds2/neighbors/room_on_*` — необязательны, редактор досчитывает |
 | `holes` у проёмов | `{pc,width,height,…}` | есть `p1/p2` — края проёма на оси стены | **`p1/p2` обязательны** (`pc ± width/2` по оси), иначе `Walls.restore` молча удаляет окно/дверь |
-| верхний уровень | `v, id, plan_id, walls, items, pillars, rulers, comments, total_height, final` | ещё ~45 коллекций, в том числе `rooms1`, `rooms2`, `errors{wallTooShort,wallOverWall,…}`, `drawing`, `version`, `session`, `logs`, `settings`, `params:false`, `is_forced` | базой брать загруженную модель и менять в ней только нужные коллекции; `errors` использовать в `model_validate`; каноническое чтение — GET-модель: `project.save` пишет больше, чем `copy("server")` (добавляет `rooms2` с зонами, `borders`, `is_forced`, `params`, `logs`, `bak`) |
+| верхний уровень | `v, id, plan_id, walls, items, pillars, rulers, comments, total_height, final` | ещё ~45 коллекций, в том числе `rooms1`, `rooms2`, `errors{wallTooShort,wallOverWall,…}`, `drawing`, `version`, `session`, `logs`, `settings`, `params:false`, `is_forced` | базой брать загруженную модель и менять в ней только нужные коллекции; `errors` использовать в `model_validate`; каноническое чтение — GET-модель: `project.save` пишет больше, чем `copy("server")` (`borders`, `is_forced`, `params`, `logs`, `bak`; `rooms2` попадает в copy только после пересчёта комнат — этап 137 повторяет его в normalize) |
 | `link` на узлах | задан вручную (`ct:node`, `z0/z1`) | у одиночной стены отсутствует | семантику `z0/z1` снять в T1 на двух соединённых стенах — **не закрыто** (см. 02-feasibility «не проверено») |
 
 Вывод: «сырой» A-путь записи без редактора возможен только как аварийный (сервер примет что угодно); штатный путь — B.
@@ -471,6 +471,11 @@ Workspace отклоняет мутацию (откат клона) с `INVALID_
   пакет из нескольких операций (`walls_add_polyline`, `room_add_rect`) нормализуется один раз.
   В офлайн-режиме (`REMPLANNER_OFFLINE_FIXTURE`) стены меняются без нормализации, комнаты и связи не обновляются.
   Инструмент сообщает это предупреждением `EDITOR_REQUIRED_FOR_ROOMS`.
+- **Пересчёт комнат в normalize (этап 137).** Редактор перестраивает `rooms2` только внутри штатного сохранения
+  (в начале `project.save`: план «a» → `copyRooms1` → план «c» → `draw({rooms:1})`), поэтому `copy("server")` после
+  простого `draw` несёт старые комнаты — строгая сверка комнат после save (#17) давала ложный `SITE_ERROR` на каждом
+  save с делением/слиянием/переносом комнаты. `normalize` повторяет ту же последовательность тех же функций редактора
+  и возвращает копию с перестроенными комнатами (эталоны `tests/fixtures/ui-ref-rooms-save-*.json`).
 - **Инструменты MCP.** Сигнатуры §7.2 не меняются. Меняются ответы:
   - `room_add_rect` возвращает созданные и использованные (общие) стены и комнаты из редактора;
   - `rooms_list` — только из редактора;
