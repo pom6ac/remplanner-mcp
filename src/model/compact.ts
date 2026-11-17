@@ -61,6 +61,10 @@ export type CompactRoom = {
   /** Площадь по осевым линиям, м² (null для комнат из rooms2 — осевой контур не восстанавливается). */
   area_axis_m2: number | null;
   perimeter_mm: number;
+  /** Покрытие пола комнаты (лист «Напольные покрытия», этап 94). */
+  floor?: string | null;
+  /** Покрытие потолка комнаты (лист «Потолки», этап 94). */
+  ceiling?: string | null;
 };
 
 export type CompactItem = {
@@ -306,12 +310,18 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     const name = room.roomId && roomNames?.[room.roomId]
       ? ((roomNames[room.roomId] as { zones?: Array<{ name?: string }> }).zones?.[0]?.name ?? null)
       : null;
+    // этап 94: покрытие пола/потолка комнаты видно в компактном API
+    const room2 = room.roomId ? (model.rooms2 as Record<string, Record<string, unknown>> | undefined)?.[room.roomId] : undefined;
+    const floorRec = room2 ? (room2["floors"] as Array<Record<string, unknown>> | undefined)?.[0] : undefined;
+    const ceilingRec = room2 ? (room2["ceilings"] as Array<Record<string, unknown>> | undefined)?.[0] : undefined;
     return {
       id: `R${i + 1}`,
       name,
       area_m2: Math.round((room.areaCm2 / 10_000) * 100) / 100,
       area_axis_m2: room.axisAreaCm2 === null ? null : Math.round((room.axisAreaCm2 / 10_000) * 100) / 100,
       perimeter_mm: round0(cmToMm(perimeter)),
+      floor: floorRec && floorRec["exist"] === true && typeof floorRec["cover"] === "string" ? floorRec["cover"] as string : null,
+      ceiling: ceilingRec && ceilingRec["exist"] === true && typeof ceilingRec["material"] === "string" ? ceilingRec["material"] as string : null,
     };
   });
 
