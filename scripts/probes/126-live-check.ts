@@ -30,6 +30,9 @@ if (!OBJECT_ID || !PLAN_ID) {
 }
 const SNAP_ID = process.env.REMPLANNER_SNAPSHOT_OBJECT_ID;
 const SNAP_PLAN = process.env.REMPLANNER_SNAPSHOT_PLAN_ID;
+// RP_FAULT=rename|save — fault-injection (ревью 127 R3): аварийное исключение сразу
+// после renameViaEditor / после project_save — проверка восстановления в finally.
+const FAULT = process.env.RP_FAULT;
 
 const WATCHDOG_MS = 8 * 60_000;
 const watchdog = setTimeout(() => {
@@ -135,20 +138,19 @@ function firstRoomName(model: any): { roomId: string; name: string } | null {
   return null;
 }
 
-/** Комната по каноническому контуру (id регенерируется при каждом save). */
-function roomByContour(model: any, roomId: string): string | null {
+/** Комната по каноническому контуру (id регенерируется при каждом save).
+ *  Ревью 127: эталонный контур берётся из refModel (бэкап) — если id в текущей
+ *  модели регенерировался, комната всё равно находится по контуру. */
+function roomByContour(model: any, roomId: string, refModel: any = model): string | null {
   const rooms = (model.rooms2 ?? {}) as Record<string, any>;
-  const ref = rooms[roomId];
+  const ref = (refModel.rooms2 ?? {})[roomId] ?? rooms[roomId];
   if (!ref) return null;
   const canon = (r: any): string =>
     JSON.stringify(((r?.polygon ?? r?.points ?? []) as Array<{ x: number; y: number }>)
       .map((p) => [Math.round(p.x * 2) / 2, Math.round(p.y * 2) / 2])
       .sort((a, b) => a[0]! - b[0]! || a[1]! - b[1]!));
   const target = canon(ref);
-  for (const [rid, room] of Object.entries(rooms)) {
-    if (canon(room) === target) return rid;
-  }
-  return null;
+  return Object.keys(rooms).find((rid) => canon(rooms[rid]) === target) ?? null;
 }
 
 /** Смена имени комнаты как в UI (проба 43): zones[0].name/zone_name + localSave + editor.save. */
@@ -180,12 +182,13 @@ async function renameViaEditor(roomId: string, newName: string): Promise<void> {
 
 /** Имя комнаты на сервере с повторным чтением: применённый save виден не сразу
  *  (проба 126 #3), опрос до ~60 с. Чтение — прямой HTTP GET (model_get MCP-клиента
- *  отдаёт кеш workspace на момент project_open). */
-async function roomNameOnServer(roomId: string, expect: string, attempts = 12): Promise<string | null> {
+ *  отдаёт кеш workspace на момент project_open). Контур комнаты — из refModel
+ *  (ревью 127: id комнат регенерируется при каждом save). */
+async function roomNameOnServer(roomId: string, expect: string, refModel?: any, attempts = 12): Promise<string | null> {
   for (let i = 0; i < attempts; i++) {
     await new Promise((res) => setTimeout(res, 5000));
     const model = await loadModel(loadSession(STATE_PATH), OBJECT_ID, PLAN_ID);
-    const currentId = roomByContour(model.model, roomId) ?? roomId;
+    const currentId = roomByContour(model.model, roomId, refModel ?? model.model) ?? roomId;
     const name = ((model.model.rooms2 ?? {})[currentId]?.zones ?? [])[0]?.name ?? null;
     if (name === expect) return name;
     console.log(`  чтение ${i + 1}: имя "${name}" (ждём "${expect}")`);
@@ -195,13 +198,15 @@ async function roomNameOnServer(roomId: string, expect: string, attempts = 12): 
 
 async function main() {
   const client = await freshClient();
-  let persisted = false;
+  let persisted = false; // возможная запись на сервер (ревью 127 R3: до первого мутирующего вызова)
   let before: any = null;
   let probeRoom: { roomId: string; name: string } | null = null;
+  let restoredOk = false; // полная сверка с бэкапом прошла — восстановление не нужно
+  let exitCode = 0;
+  let snapBefore: string | null = null;
 
   try {
     // 0. контрольный проект: GET до (запись запрещена)
-    let snapBefore: string | null = null;
     if (SNAP_ID && SNAP_PLAN) {
       await call(client, "project_open", { object_id: SNAP_ID, plan_id: SNAP_PLAN });
       snapBefore = JSON.stringify(await call(client, "model_get", { detail: "full" }));
@@ -232,35 +237,39 @@ async function main() {
     await closeBrowser();
 
     // 3. смена имени комнаты как в UI + штатный save редактора.
-    // id комнат регенерируется при каждом save — комнату берём из СВЕЖЕГО GET по контуру
+    // id комнат регенерируется при каждом save — комнату берём из СВЕЖЕГО GET по контуру.
+    // Ревью 127 R3: признак возможной записи ставится ДО первого мутирующего вызова —
+    // если rename или editor.save упадут после записи, восстановление в finally начнётся.
     const PROBE_NAME = `Проба 126 (${probeRoom.name})`;
     const freshModel = await call(client, "model_get", { detail: "full" });
     const liveRoomId = roomByContour(freshModel, probeRoom.roomId);
     if (!liveRoomId) throw new Error("комната бэкапа не найдена по контуру в свежей модели");
     console.log("комната пробы:", liveRoomId, `"${((freshModel.rooms2 ?? {})[liveRoomId]?.zones ?? [])[0]?.name}"`);
+    persisted = true;
     await renameViaEditor(liveRoomId, PROBE_NAME);
-    const gotName = await roomNameOnServer(liveRoomId, PROBE_NAME);
+    if (FAULT === "rename") throw new Error("fault injection: исключение сразу после rename");
+    const gotName = await roomNameOnServer(liveRoomId, PROBE_NAME, freshModel);
     console.log("имя на сервере после editor.save:", gotName ? `"${gotName}"` : "не доехало");
     if (gotName !== PROBE_NAME) throw new Error("имя не доехало до сервера");
     await closeBrowser();
 
     // 4. штатный save с изменённым именем (свежий контекст): verified без ложной блокировки
     const client2 = await freshClient();
-    persisted = true;
     await call(client2, "project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
     const saveRes2 = await call(client2, "project_save", {});
     console.log("save с новым именем:", JSON.stringify({ verified: saveRes2.verified, rounds: saveRes2.rounds, warnings: saveRes2.warnings }));
     if (!saveRes2.verified) throw new Error("save с новым именем не verified");
+    if (FAULT === "save") throw new Error("fault injection: исключение сразу после project_save");
     await call(client2, "project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
-    const nameKept = await roomNameOnServer(probeRoom.roomId, PROBE_NAME);
+    const nameKept = await roomNameOnServer(probeRoom.roomId, PROBE_NAME, before);
     console.log("после reopen:", nameKept ? `"${nameKept}"` : "нет");
     if (nameKept !== PROBE_NAME) throw new Error("имя потеряно после save+reopen");
     await closeBrowser();
 
     // 5. откат имени (свежий GET → контур) + штатный save
-    const liveRoom2 = roomByContour(await call(client2, "model_get", { detail: "full" }), probeRoom.roomId) ?? liveRoomId;
+    const liveRoom2 = roomByContour(await call(client2, "model_get", { detail: "full" }), probeRoom.roomId, before) ?? liveRoomId;
     await renameViaEditor(liveRoom2, probeRoom.name);
-    const reverted = await roomNameOnServer(probeRoom.roomId, probeRoom.name);
+    const reverted = await roomNameOnServer(probeRoom.roomId, probeRoom.name, before);
     console.log("имя на сервере после отката:", reverted ? `"${reverted}"` : "не доехало");
     if (reverted !== probeRoom.name) throw new Error("откат имени не доехал");
     await closeBrowser();
@@ -281,6 +290,7 @@ async function main() {
       writeFileSync(".orca-reports/tmp/backup-dev-126-after.json", JSON.stringify({ model: after }, null, 1));
       throw new Error("модель не совпала с бэкапом");
     }
+    restoredOk = true;
 
     // 7. контрольный проект: GET после
     if (SNAP_ID && SNAP_PLAN && snapBefore) {
@@ -291,23 +301,28 @@ async function main() {
       if (snapAfter !== snapBefore) throw new Error("контрольный проект изменился");
     }
     console.log("126-live OK");
-    clearTimeout(watchdog);
-    await client.close().catch(() => {});
-    process.exit(0);
   } catch (e) {
+    exitCode = 1;
     console.error("FAIL:", String((e as Error).message ?? e).slice(0, 800));
     if (process.env.RP_DEBUG) console.error((e as Error).stack);
-    try {
-      if (persisted && before && probeRoom) {
-        // аварийное восстановление: откат имени пробой (если осталось), save, сверка
-        const now = await call(await freshClient(), "model_get", { detail: "full" });
-        const liveRoomR = roomByContour(now, probeRoom.roomId);
+  } finally {
+    // Ревью 127 R3/N1: аварийное восстановление в finally при любом исходе — save
+    // способен записать модель и затем упасть (SITE_ERROR на GET-верификации).
+    if (persisted && before && probeRoom && !restoredOk) {
+      try {
+        // аварийное восстановление: чтение через клиент с project_open (не «голый»
+        // model_get — без project_open он отвечает INVALID_ARGUMENT), комната по
+        // каноническому контуру бэкапа, затем откат имени, save и сверка
+        const clientR0 = await freshClient();
+        await call(clientR0, "project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
+        const now = await call(clientR0, "model_get", { detail: "full" });
+        const liveRoomR = roomByContour(now, probeRoom.roomId, before);
         const curName = liveRoomR ? (((now.rooms2 ?? {})[liveRoomR]?.zones ?? [])[0]?.name ?? null) : null;
         if (curName !== probeRoom.name && liveRoomR) {
           await renameViaEditor(liveRoomR, probeRoom.name).catch((e) => console.error("revert:", String(e).slice(0, 200)));
-          await closeBrowser().catch(() => {});
-          await new Promise((r) => setTimeout(r, 3000));
         }
+        await closeBrowser().catch(() => {});
+        await new Promise((r) => setTimeout(r, 3000));
         const clientR = await freshClient();
         await call(clientR, "project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
         const r = await call(clientR, "project_save", {});
@@ -315,17 +330,20 @@ async function main() {
         const restored = strip(afterFail) === strip(before);
         console.log("аварийное восстановление:", r.verified ? "save OK" : "save не verified", "; сверка с бэкапом:", restored ? "OK — модель совпала" : "РАСХОЖДЕНИЕ");
         if (!restored) {
+          exitCode = 1;
           console.error("различающиеся пути:", diffKeysOf(JSON.parse(strip(before)), JSON.parse(strip(afterFail))).slice(0, 20).join(" | "));
           writeFileSync(".orca-reports/tmp/backup-dev-126-after.json", JSON.stringify({ model: afterFail }, null, 1));
         }
+      } catch (e2) {
+        exitCode = 1;
+        console.error("RESTORE-FAIL:", String((e2 as Error).message ?? e2).slice(0, 400));
       }
-    } catch (e2) {
-      console.error("RESTORE-FAIL:", String((e2 as Error).message ?? e2).slice(0, 400));
     }
-    clearTimeout(watchdog);
-    await client.close().catch(() => {});
-    process.exit(1);
   }
+  clearTimeout(watchdog);
+  await closeBrowser().catch(() => {});
+  await client.close().catch(() => {});
+  process.exit(exitCode);
 }
 
 await main();
