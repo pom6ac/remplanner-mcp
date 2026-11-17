@@ -589,12 +589,15 @@ function pointEq(a: Point | undefined, b: Point | undefined, tol = DIM_POINT_TOL
 }
 
 /**
- * Сверка одной привязки (ревью 117 R2): различаются две формы — ruler-target
- * (target_name "ruler", штатная форма Ruler.split() без point_delta/target_plan/
- * target_angle, эталон 113-ruler-src-full.json) и item-target (привязка к
- * предмету, с delta). Ruler-target сверяется по target_id/target_name; у
- * item-target отсутствие delta на обеих сторонах — тоже не расхождение
- * (undefined−undefined давало NaN и ложное «смещение изменилось»).
+ * Сверка одной привязки (ревью 117 R2, уточнено ревью 119 R2): различаются две
+ * формы — ruler-target (target_name "ruler", штатная форма Ruler.split() без
+ * point_delta/target_plan/target_angle, эталон 113-ruler-src-full.json) и
+ * item-target (привязка к предмету, с delta). Ruler-target сверяется по
+ * target_id/target_name. У item-target наличие каждой компоненты point_delta_x/y
+ * сравнивается отдельно: потеря или появление компоненты — расхождение
+ * (серверная потеря поля пользовательских данных не должна проходить как
+ * verified), присутствующие числа — с допуском DIM_POINT_TOL_CM; отсутствие
+ * delta на обеих сторонах — не расхождение.
  * target_plan/target_angle — производные, не блокируют.
  */
 function targetMismatches(label: string, expected: RulerTarget | null | undefined, got: RulerTarget | null | undefined, out: string[]): void {
@@ -609,10 +612,14 @@ function targetMismatches(label: string, expected: RulerTarget | null | undefine
   }
   if (expected.target_name !== got.target_name) out.push(`${label}: target_name привязки сменился (${expected.target_name} → ${got.target_name})`);
   if (expected.target_name === "ruler") return;
-  const eDelta = { x: expected.point_delta_x, y: expected.point_delta_y };
-  const gDelta = { x: got.point_delta_x, y: got.point_delta_y };
-  if (eDelta.x === undefined && eDelta.y === undefined && gDelta.x === undefined && gDelta.y === undefined) return;
-  if (!pointEq({ x: eDelta.x ?? 0, y: eDelta.y ?? 0 }, { x: gDelta.x ?? 0, y: gDelta.y ?? 0 })) {
+  const deltaAxisChanged = (axis: "x" | "y"): boolean => {
+    const e = expected[`point_delta_${axis}`] as number | undefined;
+    const g = got[`point_delta_${axis}`] as number | undefined;
+    if (e === undefined && g === undefined) return false;
+    if (e === undefined || g === undefined) return true;
+    return Math.abs(e - g) > DIM_POINT_TOL_CM;
+  };
+  if (deltaAxisChanged("x") || deltaAxisChanged("y")) {
     out.push(`${label}: смещение привязки изменилось (delta ${expected.point_delta_x},${expected.point_delta_y} → ${got.point_delta_x},${got.point_delta_y})`);
   }
 }
