@@ -1,0 +1,45 @@
+{
+ "_source": "клики UI в анонимном проекте на синтетической базе «коридор + 3 комнаты» (проба 103-replan-fixtures2/zone/extra, без save); id объектов обезличены, координаты — синтетическая база, см (модель редактора)",
+ "break_whole": {
+  "demount": 1,
+  "p1": {
+   "demount": 1
+  },
+  "p2": {
+   "demount": 1
+  }
+ },
+ "break_part": {
+  "sectors": {
+   "id75": {
+    "id": "id75",
+    "pc": {
+     "x": 100,
+     "y": -300
+    },
+    "width": 100
+   }
+  }
+ },
+ "break_door": {
+  "p2": {
+   "demount": 0
+  },
+  "holes": {
+   "id6": {
+    "plan": "a",
+    "type": "single",
+    "demount": 1
+   }
+  }
+ },
+ "remove_break": {
+  "demount": 0,
+  "p1": {
+   "demount": 0
+  },
+  "p2": {
+   "demount": 0
+  }
+ }
+}

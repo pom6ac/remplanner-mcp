@@ -9,7 +9,7 @@ import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, Edit
 import type { Model, Point } from "./model/types.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
-import { prepareForRestore, findUnattachedEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
+import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmatchedDanglingEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, assertNoNewWarmFloorCrossing, type WallAxisSegment } from "./model/walls.ts";
 import { dist, closestPoint, pointInPolygon, segmentsCross, type Polygon as GeoPolygon } from "./model/geometry.ts";
 import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey, PIPE_COLLECTIONS, CLIMATE_PIPE_KINDS } from "./model/pipes.ts";
 import { warmFloorMismatches } from "./model/climate.ts";
@@ -17,6 +17,7 @@ import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./rend
 import { borderMismatches } from "./model/terraces.ts";
 import { levelHoleMismatches } from "./model/floorhole.ts";
 import { finishCompare } from "./model/finish.ts";
+import { demolitionMismatches } from "./model/demolition.ts";
 import { roomsSaveCompare, roomsChangePolicy, type RoomsChangePolicy } from "./model/rooms-save.ts";
 import { dimsMismatches } from "./model/dims.ts";
 import type { Model as TerracesModel } from "./model/types.ts";
@@ -1399,7 +1400,18 @@ export class Workspace {
   async applyWalls<T>(label: string, fn: (model: Model) => T): Promise<WallMutation<T>> {
     if (!this.project) throw new McpError("INVALID_ARGUMENT", "проект не открыт — сначала project_open");
     const clone = structuredClone(this.modelInternal!);
+    // ревью 108 R10: диагностика несоединённых концов ДО мутации — по рабочей модели
+    // (каноническая копия после последней нормализации/загрузки с сервера); отклоняются
+    // только НОВЫЕ дефекты соединений, унаследованные штатные операции не блокируют
+    const beforeDangling = findUnattachedEnds(Object.values(clone.walls));
+    const beforeDanglingKeys = new Set(beforeDangling.map((d) => `${d.wallId}.${d.node}`));
     const result = fn(clone);
+    // m1 ревью 136: перегородка (plan:"c"), чья ось проходит через контур тёплого пола,
+    // удаляет контур при сохранении (проба p135-n1c, анонимный проект) — осознанный отказ
+    // до записи во ВСЕХ путях мутаций (wall_add, walls_add_polyline, room_add_rect/
+    // room_add_polygon с plan:"c", wall_move, wall_update): по разнице осей plan:"c"
+    // «до → после»; неизменённые перегородки моделей из UI не блокируются
+    assertNoNewWarmFloorCrossing(clone, this.modelInternal!.walls);
     const warnings: string[] = [];
     if (this.offline) {
       this.modelInternal = clone;
@@ -1416,11 +1428,25 @@ export class Workspace {
           details: { over_walls: over },
         });
       }
-      // §12.4: конец, который Node ставил на грань или в узел, остался без связи
-      const dangling = findUnattachedEnds(norm.walls ?? []);
+      // §12.4: конец, который Node ставил на грань или в узел, остался без связи.
+      // ревью 108 R10: отклоняются только НОВЫЕ несоединённые концы — унаследованные
+      // (присутствовали в модели до операции) штатные демонтаж/перенос не блокируют;
+      // защита новых дефектов сохранена полностью.
+      // ревью 110 R10: унаследованные концы сопоставляются геометрически (точка конца
+      // с допуском, с учётом ожидаемого переноса/разреза/слияния стены операцией —
+      // expectedDanglingEndPoints), а не по `wallId.node`: нормализатор редактора
+      // может перенумеровывать стены и менять направление оси, ключ наследования —
+      // физическое положение конца, а не идентификаторы.
+      // ревью 111 R10: сопоставление один-к-одному — каждая унаследованная точка
+      // оправдывает не более одного конца после операции; позиция конца по
+      // wallId.node переносится только если конец остался несоединённым
+      // (внутренние узлы разреза при split ожидаемо соединены).
+      const danglingAll = findUnattachedEnds(norm.walls ?? []);
+      const expectedEnds = expectedDanglingEndPoints(beforeDangling, Object.values(clone.walls));
+      const dangling = unmatchedDanglingEnds(danglingAll, expectedEnds);
       if (dangling.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации у стен остались несоединённые концы (${dangling.slice(0, 5).map((d) => `${d.wallId}.${d.node}`).join(", ")})`, {
-          details: { unattached: dangling },
+        throw new McpError("INVALID_GEOMETRY", `после нормализации появились новые несоединённые концы стен (${dangling.slice(0, 5).map((d) => `${d.wallId}.${d.node}`).join(", ")}) — мутация отменена`, {
+          details: { unattached: dangling, unattached_inherited: [...beforeDanglingKeys] },
         });
       }
       // §12.4: выросли счётчики ошибок редактора
@@ -1583,6 +1609,15 @@ export class Workspace {
       if (norm.roomsRebuild && norm.roomsRebuild !== "ok") {
         warnings.push(`rooms_recalc_failed: ${norm.roomsRebuild}`);
       }
+      // этап 103: флаги демонтажа (demount, p1/p2.demount, sectors, holes[].demount)
+      // после нормализации не теряются; id секторов редактор может пересоздать —
+      // участки сверяются по геометрии (демонтажу, а не id).
+      // Ревью 105 R1: сверка идёт с кандидатом (клоном ПОСЛЕ операции), а не с исходной
+      // моделью — намеренное добавление/снятие демонтажа не «потеря данных».
+      const demolitionNorm = demolitionMismatches(
+        clone.walls as Record<string, never>,
+        (norm.model as Record<string, unknown>)["walls"] as Record<string, never>,
+      );
       // этап 113: размеры и комментарии после нормализации не теряются и не искажаются
       const dimsNorm = dimsMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
       // этап 128 (ревью 127 R1/R2/R4): комнаты до записи сверяются с базой (сервер /
@@ -1609,9 +1644,9 @@ export class Workspace {
           details: { room_mismatches: roomsNormCheck.problems },
         });
       }
-      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, размеры/комментарии или сущности климата — мутация отменена`, {
-          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, dims_mismatches: dimsNorm, climate_mismatches: climateNorm },
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, пометки демонтажа, размеры/комментарии или сущности климата — мутация отменена`, {
+          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm },
         });
       }
       // нормализованная копия становится канонической
@@ -1986,6 +2021,11 @@ export class Workspace {
     // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
     const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
     const rolesNorm = wallRoleMismatches(this.modelInternal!.walls as unknown as Record<string, { role?: string; p1: Point; p2: Point }>, expectedWalls);
+    // этап 103: пометки демонтажа до записи сверяются с нормализованной моделью
+    const demolitionNorm = demolitionMismatches(
+      this.modelInternal!.walls as Record<string, never>,
+      (norm.model as Record<string, unknown>)["walls"] as Record<string, never>,
+    );
     // ревью 73 №2: свойства ограждений (height/depth/material) не должны меняться при нормализации
     const propsNorm = balconyWallPropertyMismatches(
       this.modelInternal!.walls as unknown as Record<string, BalconyWallProps>,
@@ -2028,7 +2068,7 @@ export class Workspace {
       lostLedStrips.length > 0 || lostStripesLight.length > 0 || lostLineStrips.length > 0 ||
       lostCables.length > 0 ||
       ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0 ||
-      cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 ||
+      cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 ||
       dimsNorm.length > 0 || climateNorm.length > 0 || roomsNormProblems.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
@@ -2063,6 +2103,7 @@ export class Workspace {
           cables_connection_mismatches: cablesConnNorm,
           socket_group_mismatches: subsNorm,
           finish_mismatches: finishNorm.problems,
+          demolition_mismatches: demolitionNorm,
           dims_mismatches: dimsNorm,
           climate_mismatches: climateNorm,
           room_mismatches: roomsNormProblems,
@@ -2194,6 +2235,12 @@ export class Workspace {
         after.model["walls"] as Record<string, unknown> | undefined,
         "save",
       ).problems;
+      // этап 103: пометки демонтажа после save — нормализованное ожидание против сервера,
+      // строго (участки по геометрии, флаги demount по каждой стене и проёму)
+      const demolitionAfter = demolitionMismatches(
+        (norm.model as Record<string, unknown>)["walls"] as Record<string, never>,
+        after.model["walls"] as Record<string, never>,
+      );
       // этап 113: размеры и комментарии после save сверяются по GET — нормализованное
       // ожидание против сервера (строго: текст, точки, привязки, отступ, цвет)
       const dimsAfter = dimsMismatches(norm.model as Model, after.model as Record<string, unknown>);
@@ -2212,6 +2259,10 @@ export class Workspace {
           mode: "save",
           itemsExpected: structuredClone((norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {}),
           itemsGot: (itemsAfter as Record<string, PipeLinkItem>) ?? {},
+          // ревью 133 N1: при перегородке редактор перестраивает комнаты при save
+          // и сам переназначает id_room контуров — сверка привязки по геометрии
+          roomsExpected: ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+          roomsGot: ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
         },
       );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
@@ -2222,7 +2273,7 @@ export class Workspace {
         ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
         "save",
       ).problems;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -2254,6 +2305,7 @@ export class Workspace {
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
             room_mismatches: roomsAfterCheck,
             finish_mismatches: finishAfter,
+            demolition_mismatches: demolitionAfter,
             dims_mismatches: dimsAfter,
             climate_mismatches: climateAfter,
           },

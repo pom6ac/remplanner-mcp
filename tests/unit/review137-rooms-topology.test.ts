@@ -95,7 +95,9 @@ function saveMock(
 function opFor(name: string, r: Ref): (m: Model) => void {
   void r;
   if (name === "split") {
-    return (m) => addWall(m, { start: { x: 100, y: -1500 }, end: { x: 2900, y: -1500 }, thicknessMm: 100, material: "c_pgb", plan: "a" } as never);
+    // обычная стена plan:"a" (материал по умолчанию a_block — ревью 129 C4:
+    // c_* на исходных стенах не применяется, конфликт слива #18)
+    return (m) => addWall(m, { start: { x: 100, y: -1500 }, end: { x: 2900, y: -1500 }, thicknessMm: 100 } as never);
   }
   if (name === "merge") {
     return (m) => deleteWall(m, "w6");

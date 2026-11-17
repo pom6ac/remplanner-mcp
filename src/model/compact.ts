@@ -18,6 +18,14 @@ export type CompactWall = {
   len_mm: number;
   len_inner_mm: number;
   thickness_mm: number;
+  /** Лист: a — исходный план, c — перегородка (этап 103). */
+  plan: string;
+  /** Материал стены (a_block, c_pgb, c_gypsum, …). */
+  material: string;
+  /** Пометка демонтажа стены целиком (лист «Демонтаж», этап 103). */
+  demount?: boolean;
+  /** Участки демонтажа: отступ от начала оси и длина, мм. */
+  sectors?: Array<{ sector_id: string; offset_mm: number; width_mm: number }>;
   /** Роль не-wall стен: balcony (ограждение балкона), terrace_fence (ограждение террасы). */
   role?: string;
   openings: CompactOpening[];
@@ -51,6 +59,10 @@ export type CompactOpening = {
   door_position?: "l" | "r";
   /** Балконная дверь: импост, мм от низа двери (поле impost_offset модели; высота от пола = значение + подоконник). */
   impost_offset_mm?: number;
+  /** Пометка демонтажа проёма (лист «Демонтаж», этап 103). */
+  demount?: boolean;
+  /** Проём заменён проёмом листа «Перегородок» (hasReplacement, этап 103). */
+  replaced?: boolean;
 };
 
 export type CompactRoom = {
@@ -311,8 +323,23 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       if (hole.door_height !== undefined) c.door_height_mm = round0(cmToMm(hole.door_height as number));
       if (hole.door_position !== undefined) c.door_position = hole.door_position as "l" | "r";
       if (hole.impost_offset !== undefined) c.impost_offset_mm = round0(cmToMm(hole.impost_offset as number));
+      if (hole.demount === 1) c.demount = true;
+      if (hole.hasReplacement) c.replaced = true;
       return c;
     });
+    // перепланировка (этап 103): план, материал, пометки демонтажа
+    const sectors = wall.sectors as Record<string, { pc: { x: number; y: number }; width: number }> | undefined;
+    const axisLen = Math.hypot(wall.p2.x - wall.p1.x, wall.p2.y - wall.p1.y) || 1;
+    const ux = (wall.p2.x - wall.p1.x) / axisLen;
+    const uy = (wall.p2.y - wall.p1.y) / axisLen;
+    // ревью 105 R8: актуальный sector_id в ответе — отменить отдельный участок
+    // (demolish_cancel sector_id) иначе нечем: id, возвращённый demolish, нормализатор
+    // может пересоздать, а компактная model_get без id не позволяет выбрать участок
+    const sectorList = Object.entries(sectors ?? {}).map(([sid, s]) => ({
+      sector_id: (s as { id?: string }).id ?? sid,
+      offset_mm: round0(cmToMm((s.pc.x - wall.p1.x) * ux + (s.pc.y - wall.p1.y) * uy - s.width / 2)),
+      width_mm: round0(cmToMm(s.width)),
+    })).sort((a, b) => a.offset_mm - b.offset_mm);
     return {
       id: label,
       site_id: wall.id,
@@ -321,6 +348,10 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       len_mm: wallLengthMm(wall),
       len_inner_mm: lenInner,
       thickness_mm: round0(cmToMm(wall.depth)),
+      plan: wall.plan,
+      material: wall.material,
+      ...(wall.demount === 1 ? { demount: true } : {}),
+      ...(sectorList.length > 0 ? { sectors: sectorList } : {}),
       ...(wall.role && wall.role !== "wall" ? { role: wall.role } : {}),
       openings,
     };

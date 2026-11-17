@@ -1,0 +1,273 @@
+// 108: резолюция повторного ревью PR #14 — R2, R4, R10, R11.
+// По каждой находке тест, падающий на 4cad482:
+// R2 — mergeCollinear сохраняет мировые координаты секторов обеих стен;
+// R4 — пара замены в updateOpening (пересечения, согласованный перенос, поиск пары);
+// R10 — guard несоединённых концов отклоняет только НОВЫЕ дефекты;
+// R11 — opening_delete возвращает все удалённые ID, описание говорит о каскаде.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import type { Model, Wall } from "../../src/model/types.ts";
+import { demolish, demolishCancel } from "../../src/model/demolition.ts";
+import { addWall, moveWall } from "../../src/model/walls.ts";
+import { addOpening, updateOpening, deleteOpening, prepareHolePoints, holeOffsetCm } from "../../src/model/openings.ts";
+import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
+import type { NormalizeResult } from "../../src/editor/adapter.ts";
+import type { LoadedModel } from "../../src/api.ts";
+import { ServerContext } from "../../src/server/context.ts";
+import { planTools } from "../../src/server/tools-plan.ts";
+
+const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+
+function baseModel(): Model {
+  return (JSON.parse(readFileSync(FIXTURE, "utf8")) as { model: Model }).model;
+}
+
+/** Свободная горизонтальная стена 6000 мм на оси y=-6000 (2 несоединённых конца). */
+function probeWall(m: Model): Wall {
+  prepareHolePoints(m);
+  return addWall(m, { start: { x: 0, y: -6000 }, end: { x: 6000, y: -6000 } });
+}
+
+const centerCm = (wall: Wall, hole: { pc: { x: number; y: number }; width: number }): number =>
+  holeOffsetCm(wall, hole as never) + hole.width / 2;
+
+type Sector = { id: string; pc: { x: number; y: number }; width: number };
+const sectorsOf = (w: Wall): Record<string, Sector> => (w.sectors ?? {}) as Record<string, Sector>;
+
+// ---------- R2: mergeCollinear — мировые координаты секторов ----------
+
+test("108 R2: продолжение слева — сектор существующей стены остаётся на месте (не сдвиг на 2000 мм)", () => {
+  const m = baseModel();
+  const w = probeWall(m);
+  const res = demolish(m, { target: "wall", id: w.id, range: { from: "start", offset_mm: 500, length_mm: 1000 } });
+  const sectorId = res.sectorId!;
+  addWall(m, { start: { x: -2000, y: -6000 }, end: { x: 0, y: -6000 } });
+  const s = sectorsOf(m.walls[w.id]!)[sectorId]!;
+  assert.ok(s, "сектор пережил объединение");
+  assert.equal(s.pc.x, 100, `центр сектора в мировых координатах x=100 см, получено ${s.pc.x}`);
+  assert.equal(s.pc.y, -600);
+});
+
+test("108 R2: продолжение справа — сектор существующей стены остаётся на месте", () => {
+  const m = baseModel();
+  const w = probeWall(m);
+  const res = demolish(m, { target: "wall", id: w.id, range: { from: "start", offset_mm: 500, length_mm: 1000 } });
+  const sectorId = res.sectorId!;
+  addWall(m, { start: { x: 6000, y: -6000 }, end: { x: 8000, y: -6000 } });
+  const s = sectorsOf(m.walls[w.id]!)[sectorId]!;
+  assert.ok(s, "сектор пережил объединение");
+  assert.equal(s.pc.x, 100, `центр сектора x=100 см, получено ${s.pc.x}`);
+  assert.equal(s.pc.y, -600);
+});
+
+test("108 R2: сектор на поглощаемой стене — мировые координаты сохраняются (оба порядка)", () => {
+  const m = baseModel();
+  prepareHolePoints(m);
+  const left = addWall(m, { start: { x: -2000, y: -6000 }, end: { x: 0, y: -6000 } });
+  const res = demolish(m, { target: "wall", id: left.id, range: { from: "start", offset_mm: 500, length_mm: 1000 } });
+  const sectorId = res.sectorId!;
+  addWall(m, { start: { x: 0, y: -6000 }, end: { x: 6000, y: -6000 } });
+  // стена left поглощена или поглотила — сектор в мировых координатах x=-100 см
+  const host = Object.values(m.walls).find((w) => sectorsOf(w)[sectorId]);
+  assert.ok(host, "сектор пережил объединение");
+  const s = sectorsOf(host)[sectorId]!;
+  assert.equal(s.pc.x, -100, `центр сектора x=-100 см, получено ${s.pc.x}`);
+  assert.equal(s.pc.y, -600);
+});
+
+// ---------- R10: guard несоединённых концов — только новые дефекты ----------
+
+/** identity-нормализатор, отдающий реальные стены (как в воспроизведении ревью 107). */
+function identityEditorRealWalls(): EditorLike {
+  return {
+    objectId: "123", planId: "1",
+    async normalize(model) {
+      const copy = structuredClone(model) as Record<string, unknown>;
+      const walls = Object.values((model as { walls: Record<string, Wall> }).walls)
+        .map((w) => ({ id: w.id, p1: w.p1, p2: w.p2, depth: w.depth }));
+      const c = { walls: walls.length, holes: 0, items: 0, pillars: 0, rigels: 0 };
+      return { model: copy, rooms: [], before: c, after: c, walls, errors: null } as unknown as NormalizeResult;
+    },
+    async save() { return { ok: true, saveId: "s2", conflict: false }; },
+    async renderPng() { return Buffer.from(""); },
+    async compatInfo() { return { global_version: null, planner_version: null, bundles: [], object_id: "123", plan_id: "1", present: { WALLS: true, ROOMS2: true, restore: true, draw: true, copy: true, save: true, canvas: true, wall_link1: true, wall_link2: true, wall_calc: true } } as never; },
+    async close() {},
+  };
+}
+
+function wsDeps(editor: EditorLike, model: Model): WorkspaceDeps {
+  return {
+    session: { cookies: [] },
+    async loadModel(): Promise<LoadedModel> {
+      return { object_id: "123", plan_id: "1", save_id: "s1", units: "cm", data_empty: false, model: structuredClone(model) as unknown as Record<string, unknown> };
+    },
+    async openEditor() { return editor; },
+  };
+}
+
+function wsWithIsolatedWall(): { ws: Workspace; isolated: Wall; top: Wall } {
+  const m = baseModel();
+  prepareHolePoints(m);
+  const isolated = probeWall(m); // 2 несоединённых конца ДО операции
+  const top = Object.values(m.walls).find((w) => w.p1.y === -300 && w.p2.x === 600)!;
+  const ws = new Workspace(wsDeps(identityEditorRealWalls(), m));
+  return { ws, isolated, top };
+}
+
+test("108 R10: демонтаж целой другой стены проходит при 2 унаследованных концах", async () => {
+  const { ws, top } = wsWithIsolatedWall();
+  await ws.open("123", "1");
+  const { result } = await ws.applyWalls("demolish", (mm) => demolish(mm, { target: "wall", id: top.id }));
+  assert.equal(result.wallId, top.id);
+});
+
+test("108 R10: демонтаж участка и отмена проходят при 2 унаследованных концах", async () => {
+  const { ws, top } = wsWithIsolatedWall();
+  await ws.open("123", "1");
+  const { result } = await ws.applyWalls("demolish", (mm) => demolish(mm, { target: "wall", id: top.id, range: { from: "start", offset_mm: 500, length_mm: 1000 } }));
+  assert.ok(result.sectorId);
+  const { result: c } = await ws.applyWalls("demolish_cancel", (mm) => demolishCancel(mm, { target: "wall", id: top.id, sector_id: result.sectorId }));
+  assert.equal(c.sectorId, result.sectorId);
+});
+
+test("108 R10: cancel заранее установленной пометки проходит при 2 унаследованных концах", async () => {
+  const m = baseModel();
+  prepareHolePoints(m);
+  probeWall(m);
+  const top = Object.values(m.walls).find((w) => w.p1.y === -300 && w.p2.x === 600)!;
+  const { sectorId } = demolish(m, { target: "wall", id: top.id, range: { from: "start", offset_mm: 500, length_mm: 1000 } });
+  const ws = new Workspace(wsDeps(identityEditorRealWalls(), m));
+  await ws.open("123", "1");
+  const { result } = await ws.applyWalls("demolish_cancel", (mm) => demolishCancel(mm, { target: "wall", id: top.id, sector_id: sectorId! }));
+  assert.equal(result.sectorId, sectorId);
+});
+
+test("108 R10: wall_move изолированной стены проходит при 2 унаследованных концах", async () => {
+  const { ws, isolated } = wsWithIsolatedWall();
+  await ws.open("123", "1");
+  await ws.applyWalls("wall_move", (mm) => moveWall(mm, { wallId: isolated.id, offsetMm: 200 }));
+  assert.equal(ws.model.walls[isolated.id]!.p1.y, -620);
+});
+
+test("108 R10: операция, создающая новый висячий конец, — INVALID_GEOMETRY", async () => {
+  const { ws } = wsWithIsolatedWall();
+  await ws.open("123", "1");
+  await assert.rejects(
+    ws.applyWalls("wall_add", (mm) => addWall(mm, { start: { x: 0, y: 10000 }, end: { x: 3000, y: 10000 } })),
+    (e: unknown) => {
+      const err = e as { code?: string; details?: { unattached?: unknown[] } };
+      return err.code === "INVALID_GEOMETRY" && Array.isArray(err.details?.unattached) && (err.details.unattached as unknown[]).length === 2;
+    },
+  );
+});
+
+// ---------- R4: пара замены в updateOpening ----------
+
+function pairScenario(): { m: Model; wall: Wall; door: Wall["holes"][string]; rep: Wall["holes"][string] } {
+  const m = baseModel();
+  const wall = probeWall(m);
+  const door = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 2000 });
+  const rep = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door.id, widthMm: 800 });
+  delete door.at; // UI-модель: служебного at нет
+  delete rep.at;
+  return { m, wall, door, rep };
+}
+
+test("108 R4: update высоты исходного при живой паре проходит (партнёр исключён из пересечений)", () => {
+  const { m, wall, door } = pairScenario();
+  updateOpening(m, { wallId: wall.id, holeId: door.id, heightMm: 2200 });
+  assert.equal(door.height, 220);
+});
+
+test("108 R4: update высоты замены при живой паре проходит", () => {
+  const { m, wall, rep } = pairScenario();
+  updateOpening(m, { wallId: wall.id, holeId: rep.id, heightMm: 2200 });
+  assert.equal(rep.height, 220);
+});
+
+test("108 R4: перенос исходного согласованно переносит замену; delete исходного удаляет замену", () => {
+  const { m, wall, door, rep } = pairScenario();
+  updateOpening(m, { wallId: wall.id, holeId: door.id, offsetMm: 4000, offsetFrom: "axis" });
+  const door2 = wall.holes[door.id]!;
+  const rep2 = wall.holes[rep.id]!;
+  assert.ok(Math.abs(centerCm(wall, door2) - centerCm(wall, rep2)) < 0.05, `центры пары совпадают после переноса: ${centerCm(wall, door2)} vs ${centerCm(wall, rep2)}`);
+  assert.equal(centerCm(wall, door2), 440, "исходный на новом месте (ось, 4000 мм + полуширина)");
+  deleteOpening(m, wall.id, door.id);
+  assert.equal(wall.holes[rep.id], undefined, "замена удалена каскадом после переноса");
+});
+
+test("108 R4: перенос замены согласованно переносит исходный", () => {
+  const { m, wall, door, rep } = pairScenario();
+  updateOpening(m, { wallId: wall.id, holeId: rep.id, offsetMm: 4000, offsetFrom: "axis" });
+  const door2 = wall.holes[door.id]!;
+  const rep2 = wall.holes[rep.id]!;
+  assert.ok(Math.abs(centerCm(wall, door2) - centerCm(wall, rep2)) < 0.05);
+  assert.equal(door2.hasReplacement, 1, "связь пары сохранена");
+});
+
+test("108 R4: партнёр не помещается после переноса — атомарный отказ с подсказкой", () => {
+  const m = baseModel();
+  const wall = probeWall(m);
+  const door = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 2000 });
+  const rep = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door.id, widthMm: 1200 });
+  delete door.at;
+  delete rep.at;
+  const doorCenter = centerCm(wall, door);
+  assert.throws(
+    () => updateOpening(m, { wallId: wall.id, holeId: door.id, centerMm: 5500 }),
+    (e: unknown) => {
+      const err = e as { code?: string; message?: string };
+      return err.code === "GEOMETRY_CONFLICT" && /замены|пар/.test(err.message ?? "");
+    },
+  );
+  assert.equal(centerCm(wall, wall.holes[door.id]!), doorCenter, "исходный не сдвинут (отказ атомарен)");
+  assert.equal(centerCm(wall, wall.holes[rep.id]!), centerCm(wall, rep), "замена не сдвинута");
+});
+
+test("108 R4: пара ищется по связи — перенос одной пары не ломает удаление другой", () => {
+  const m = baseModel();
+  const wall = probeWall(m);
+  const door1 = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 1000 });
+  const rep1 = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door1.id, widthMm: 800 });
+  const door2 = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 4000 });
+  const rep2 = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door2.id, widthMm: 800 });
+  delete door1.at; delete rep1.at; delete door2.at; delete rep2.at;
+  updateOpening(m, { wallId: wall.id, holeId: door1.id, offsetMm: 2000, offsetFrom: "axis" });
+  deleteOpening(m, wall.id, door1.id);
+  assert.equal(wall.holes[rep1.id], undefined, "замена первой пары удалена");
+  assert.ok(wall.holes[door2.id], "вторая пара не тронута");
+  assert.ok(wall.holes[rep2.id], "замена второй пары на месте");
+  assert.equal(wall.holes[door2.id]!.hasReplacement, 1);
+});
+
+// ---------- R11: opening_delete — каскад в описании и все удалённые ID ----------
+
+test("108 R11: deleteOpening возвращает все удалённые ID (исходный + замена)", () => {
+  const { m, wall, door, rep } = pairScenario();
+  const res = deleteOpening(m, wall.id, door.id);
+  assert.deepEqual(res.deleted.sort(), [door.id, rep.id].sort());
+  assert.equal(wall.holes[door.id], undefined);
+  assert.equal(wall.holes[rep.id], undefined);
+});
+
+test("108 R11: deleteOpening без пары возвращает один ID", () => {
+  const m = baseModel();
+  const wall = probeWall(m);
+  const door = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 2000 });
+  const res = deleteOpening(m, wall.id, door.id);
+  assert.deepEqual(res.deleted, [door.id]);
+});
+
+test("108 R11: инструмент opening_delete — описание упоминает каскад, ответ содержит все ID", async () => {
+  const ctx = new ServerContext({ offlineFixture: FIXTURE });
+  const tools = planTools(ctx);
+  const desc = tools["opening_delete"]!.description;
+  assert.ok(/каскад|вместе с ним|замен/i.test(desc), `описание говорит о каскаде: ${desc}`);
+  const text = (r: { content: unknown }): Record<string, unknown> =>
+    JSON.parse((r.content as Array<{ text?: string }>)[0]!.text!) as Record<string, unknown>;
+  const door = (text(await tools["opening_add"]!.handler({ wall_id: "W1", type: "door", offset_mm: 2000 }))["entity"] ?? {}) as { id: string };
+  const rep = (text(await tools["opening_add"]!.handler({ wall_id: "W1", type: "doorway", width_mm: 800, replaces: door.id }))["entity"] ?? {}) as { id: string };
+  const del = text(await tools["opening_delete"]!.handler({ opening_id: door.id })) as { deleted: string[] };
+  assert.deepEqual([...del.deleted].sort(), [door.id, rep.id].sort());
+});
