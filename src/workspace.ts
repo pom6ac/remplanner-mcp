@@ -15,7 +15,7 @@ import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey } from "./model/pipes.
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { borderMismatches } from "./model/terraces.ts";
 import { levelHoleMismatches } from "./model/floorhole.ts";
-import { finishMismatches } from "./model/finish.ts";
+import { finishCompare } from "./model/finish.ts";
 import type { Model as TerracesModel } from "./model/types.ts";
 
 /** Потеря/изменение границ террас и участка (сверка семантики, этап 64). */
@@ -1444,18 +1444,23 @@ export class Workspace {
         this.modelInternal!.items as Record<string, SubsItemSig>,
         (norm.model as { items?: Record<string, unknown> }).items ?? {},
       );
-      // этап 94, ревью 95: отделка (пол/потолок/стены по комнатам) после нормализации
+      // этап 94, ревью 95/98: отделка (пол/потолок/стены по комнатам) после нормализации
       // не теряется; сопоставление комнат по геометрии (id комнат редактор может
-      // пересоздать), проёмы стен — для объяснимых разрывов отделки сторон
-      const finishNorm = finishMismatches(
+      // пересоздать), проёмы стен — для объяснимых разрывов отделки сторон.
+      // Режим normalize: топологические правила — по эталонам редактора 98
+      // (split — все части наследуют пол/потолок; merge — покрытие одного из источников);
+      // отделка сторон при merge не сверяется — предупреждение finish_topology_changed.
+      const finishNorm = finishCompare(
         (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined,
         ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
         this.modelInternal!["walls"] as Record<string, unknown> | undefined,
         (norm.model as Record<string, unknown>)["walls"] as Record<string, unknown> | undefined,
+        "normalize",
       );
-      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.length > 0) {
+      warnings.push(...finishNorm.warnings);
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0) {
         throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки или отделку — мутация отменена`, {
-          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm },
+          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems },
         });
       }
       // нормализованная копия становится канонической
@@ -1786,12 +1791,14 @@ export class Workspace {
       this.modelInternal!.items as Record<string, SubsItemSig>,
       (norm.model as { items?: Record<string, unknown> }).items ?? {},
     );
-    // этап 94, ревью 95: отделка до записи сверяется с нормализованной моделью
-    const finishNorm = finishMismatches(
+    // этап 94, ревью 95/98: отделка до записи сверяется с нормализованной моделью
+    // (режим normalize — правила топологии по эталонам редактора 98)
+    const finishNorm = finishCompare(
       (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined,
       ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
       this.modelInternal!["walls"] as Record<string, unknown> | undefined,
       (norm.model as Record<string, unknown>)["walls"] as Record<string, unknown> | undefined,
+      "normalize",
     );
     // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
     const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
@@ -1815,7 +1822,7 @@ export class Workspace {
       lostLedStrips.length > 0 || lostStripesLight.length > 0 || lostLineStrips.length > 0 ||
       lostCables.length > 0 ||
       ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0 ||
-      cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.length > 0
+      cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -1848,10 +1855,11 @@ export class Workspace {
           cables_mismatches: cablesGraphNorm,
           cables_connection_mismatches: cablesConnNorm,
           socket_group_mismatches: subsNorm,
-          finish_mismatches: finishNorm,
+          finish_mismatches: finishNorm.problems,
         },
       });
     }
+    warnings.push(...finishNorm.warnings);
     let rounds = 0;
     let verified = false;
     let finalSaveId = p.saveId;
@@ -1961,16 +1969,18 @@ export class Workspace {
         expectedWalls as unknown as Record<string, BalconyWallProps>,
         wallsAfterTyped as unknown as Record<string, BalconyWallProps>,
       );
-      // этап 94, ревью 95: отделка после save сверяется по GET — нормализованное ожидание
-      // против сервера; стены — для проёмов и сопоставления отделки при переносе стен
+      // этап 94, ревью 95/98: отделка после save сверяется по GET — нормализованное
+      // ожидание против сервера; режим save — СТРОГО (ревью 98 N1/N2): комната и каждая
+      // сторона стены (ориентированно) сохраняют отделку; никаких merge/split-освобождений
       const expectedFinish = ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined;
       const gotFinish = ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {};
-      const finishAfter = finishMismatches(
+      const finishAfter = finishCompare(
         expectedFinish,
         gotFinish,
         (norm.model as Record<string, unknown>)["walls"] as Record<string, unknown> | undefined,
         after.model["walls"] as Record<string, unknown> | undefined,
-      );
+        "save",
+      ).problems;
       const roomsLost = normRooms > 0 && roomsAfter === 0;
       if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && !roomsLost) {
         verified = true;

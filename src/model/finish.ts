@@ -276,11 +276,24 @@ export function removeCeilingFinish(model: Model, roomRef: string): void {
 // ---------- семантическая сверка ----------
 // Ревью 95 (R1–R4): сопоставление комнат по геометрии контура (канонический полигон
 // без коллинеарных вершин, независимо от стартовой вершины и направления), ID — только
-// подсказка с проверкой геометрии; split/merge — правило отчёта 94 (пол/потолок остаётся
-// за комнатой-наследником по наибольшему перекрытию, отделка сторон — по рёбрам);
-// отделываемая область стороны сверяется целиком без процентного порога — допустимы
-// только сокращения, объяснимые геометрией (проёмы, подрезка UI ~5 см у концов, малый
-// абсолютный допуск); явно заданные пользовательские параметры обязательны.
+// подсказка с проверкой геометрии; отделываемая область стороны сверяется целиком без
+// процентного порога — допустимы только сокращения, объяснимые геометрией (проёмы,
+// подрезка UI ~5 см у концов, малый абсолютный допуск); явно заданные пользовательские
+// параметры обязательны.
+//
+// Ревью 98 — сверка в два режима (эталоны редактора tests/fixtures/ui-ref-finish-topo-*.json,
+// сняты настоящим headless-нормализатором пробой scripts/probes/98-finish-topo.ts):
+// - режим «normalize» (до записи, локальная модель против результата normalize):
+//   топологические операции редактора разрешены только при реально изменившейся
+//   топологии (есть комнаты без сопоставления по контуру), и только по правилам,
+//   снятым с редактора: split — пол/потолок наследует КАЖДАЯ часть, отделка сторон
+//   переживает разрез в комнате-наследнике; merge — объединённая комната сохраняет
+//   покрытие одного из источников; отделка сторон при merge не сверяется
+//   (эталона нет — предупреждение finish_topology_changed);
+// - режим «save» (после записи, GET против нормализованной модели): СТРОГО — каждая
+//   комната (по каноническому контуру) и каждая сторона стены (ориентированно, часть
+//   принадлежит своей комнате) сохраняет отделку и параметры; никаких merge/split-
+//   освобождений — порча после записи не «verified».
 
 export type FinishSig = {
   floor?: { cover: string; width?: number; height?: number; stitch?: number; angle?: number; laying?: string };
@@ -300,7 +313,8 @@ export type FinishWall = {
 const COORD_TOL = 0.5; // см: допуск сравнения вершин/границ
 const COLLINEAR_TOL = 0.5; // см: вершина на хорде ближе этого — коллинеарная
 const SPLIT_MIN = 0.3; // доля ожидаемой комнаты в комнате-кандидате при split
-const MERGE_MAX = 0.7; // доля ожидаемой комнаты в产品 объединённой комнате ниже — комната-наследник другая
+const MERGE_MAX = 0.7; // доля ожидаемой комнаты в объединённой комнате ниже — комната-наследник другая
+const PART_SHARE_MIN = 0.5; // доля части внутри ожидаемой комнаты: комната-«часть» split (эталон 98)
 
 function signedArea(poly: Point[]): number {
   let s = 0;
@@ -649,19 +663,28 @@ function roomHasFloorCeiling(room: RoomRec): boolean {
   return Boolean(floorSig(room) || ceilingSig(room));
 }
 
+/** Режим сверки отделки: «normalize» — до записи (штатная топология редактора),
+ *  «save» — после записи по GET (строго, без освобождений). */
+export type FinishMode = "normalize" | "save";
+
+export type FinishCompareResult = { problems: string[]; warnings: string[] };
+
+type WallPartSig = { pid?: string; line: [Point, Point]; type: string; layer: number; height: number; fromFloor: number };
+
 /**
  * Семантическая сверка отделки по комнатам (сопоставление по геометрии контура, не по id;
- * ID — только подсказка с проверкой геометрии: тот же контур с новой нумерацией, лишней
- * коллинеарной вершиной или после перестановки id совпадает; при split/merge пол/потолок
- * ищется у комнаты-наследника по наибольшему перекрытию, отделка сторон — по рёбрам).
- * Возвращает список расхождений (пусто — совпало).
+ * ID — только подсказка с проверкой геометрии). Правила топологии — эталоны 98
+ * (tests/fixtures/ui-ref-finish-topo-*.json): см. комментарий в начале раздела.
+ * Возвращает problems (расхождения → ошибка) и warnings (штатные изменения топологии,
+ * при которых отделка сторон не сверяется — предупреждение finish_topology_changed).
  */
-export function finishMismatches(
+export function finishCompare(
   expectedRooms: Record<string, unknown> | undefined,
   gotRooms: Record<string, unknown> | undefined,
   expectedWalls?: Record<string, unknown>,
   gotWalls?: Record<string, unknown>,
-): string[] {
+  mode: FinishMode = "normalize",
+): FinishCompareResult {
   const exp = (expectedRooms ?? {}) as RoomsMap;
   const got = (gotRooms ?? {}) as RoomsMap;
   const asFinishWalls = (walls: Record<string, unknown> | undefined): Record<string, FinishWall> =>
@@ -669,6 +692,7 @@ export function finishMismatches(
   const expW = asFinishWalls(expectedWalls);
   const gotW = asFinishWalls(gotWalls);
   const problems: string[] = [];
+  const warnings: string[] = [];
   const gotKeys = Object.keys(got);
 
   // 1. точное сопоставление по каноническому контуру (id — подсказка, проверенная геометрией)
@@ -689,38 +713,84 @@ export function finishMismatches(
       claimed.add(found);
     }
   }
+  const unmatchedExp = Object.keys(exp).filter((rid) => !exact.has(rid));
 
-  // 2. пол/потолок
-  const unmatched = Object.entries(exp).filter(([rid]) => !exact.has(rid));
-  for (const [rid, room] of Object.entries(exp)) {
-    const gid = exact.get(rid);
-    const expFloor = floorSig(room);
-    const expCeil = ceilingSig(room);
-    if (!gid) {
-      if (!expFloor && !expCeil) continue; // только стены — сверяются глобально по рёбрам
-      // split/merge: ищем комнату-наследника по наибольшему перекрытию
+  // 2. наследники при изменившейся топологии (только режим normalize): комната-наследник
+  //    по наибольшему перекрытию; split/merge — по доле наследника в ожидаемой комнате
+  type HeirInfo = { key: string; mergeLike: boolean; partKeys: string[] } | null;
+  const heirOf = new Map<string, HeirInfo>();
+  if (mode === "normalize") {
+    for (const rid of unmatchedExp) {
+      const room = exp[rid]!;
       const poly = roomPolygon(room);
       let best: { key: string; shareExp: number; shareGot: number } | null = null;
       for (const k of gotKeys) {
         const shareExp = overlapShare(poly ?? [], roomPolygon(got[k]!) ?? []);
         if (shareExp < SPLIT_MIN) continue;
-        const shareGot = polygonArea(roomPolygon(got[k]!)) > 1e-9 ? overlapShare(roomPolygon(got[k]!) ?? [], poly ?? []) : 0;
+        const gp = roomPolygon(got[k]!) ?? [];
+        const shareGot = polygonArea(gp) > 1e-9 ? overlapShare(gp, poly ?? []) : 0;
         if (!best || shareExp > best.shareExp) best = { key: k, shareExp, shareGot };
       }
-      let floorOk = !expFloor;
-      let ceilOk = !expCeil;
-      if (best) {
-        const heir = got[best.key]!;
-        const gotFloor = floorSig(heir);
-        const gotCeil = ceilingSig(heir);
-        // split: у части-наследника то же покрытие; merge: комната заметно больше
-        // ожидаемой (наследник — другая комната), потеря покрытия ожидаема (отчёт 94)
-        const mergeLike = best.shareGot <= MERGE_MAX;
-        if (expFloor) floorOk = (gotFloor !== undefined && sameFloor(expFloor, gotFloor)) || mergeLike;
-        if (expCeil) ceilOk = (gotCeil !== undefined && sameCeiling(expCeil, gotCeil)) || mergeLike;
+      if (!best) { heirOf.set(rid, null); continue; }
+      const mergeLike = best.shareGot <= MERGE_MAX;
+      const partKeys = mergeLike ? [] : Object.keys(got).filter((k) => {
+        const gp = roomPolygon(got[k]!) ?? [];
+        return polygonArea(gp) > 1e-9 && overlapShare(gp, poly ?? []) >= PART_SHARE_MIN;
+      });
+      heirOf.set(rid, { key: best.key, mergeLike, partKeys });
+    }
+  }
+
+  // 3. пол/потолок
+  for (const [rid, room] of Object.entries(exp)) {
+    const gid = exact.get(rid);
+    const expFloor = floorSig(room);
+    const expCeil = ceilingSig(room);
+    if (!gid) {
+      if (!expFloor && !expCeil) continue; // только стены — сверяются по рёбрам ниже
+      if (mode === "save") {
+        // строго: комната на сервере не совпала по контуру — освобождений нет (ревью 98 N1)
+        if (expFloor) problems.push(`room ${rid}: комната исчезла или изменилась на сервере — покрытие пола (${expFloor.cover}) потеряно`);
+        if (expCeil) problems.push(`room ${rid}: комната исчезла или изменилась на сервере — покрытие потолка (${expCeil.material}) потеряно`);
+        continue;
       }
-      if (!floorOk) problems.push(`room ${rid}: потеряно покрытие пола (${expFloor?.cover}) при split/merge`);
-      if (!ceilOk) problems.push(`room ${rid}: потеряно покрытие потолка (${expCeil?.material}) при split/merge`);
+      const heir = heirOf.get(rid) ?? null;
+      if (!heir) {
+        if (expFloor) problems.push(`room ${rid}: потеряно покрытие пола (${expFloor.cover}) при split/merge`);
+        if (expCeil) problems.push(`room ${rid}: потеряно покрытие потолка (${expCeil.material}) при split/merge`);
+        continue;
+      }
+      const heirRoom = got[heir.key]!;
+      if (!heir.mergeLike) {
+        // split: пол/потолок наследует КАЖДАЯ часть (эталон 98: split-unequal, split-3)
+        for (const k of heir.partKeys) {
+          const part = got[k]!;
+          if (expFloor) {
+            const gf = floorSig(part);
+            if (!gf || !sameFloor(expFloor, gf)) problems.push(`room ${rid}: часть ${k} не унаследовала покрытие пола (${expFloor.cover}) при split`);
+          }
+          if (expCeil) {
+            const gc = ceilingSig(part);
+            if (!gc || !sameCeiling(expCeil, gc)) problems.push(`room ${rid}: часть ${k} не унаследовала покрытие потолка (${expCeil.material}) при split`);
+          }
+        }
+      } else {
+        // merge: объединённая комната сохраняет покрытие ОДНОГО из источников
+        // (эталон 98: merge-diff-floors — floor_tile, merge-one-floor — laminate+потолок)
+        const sources = unmatchedExp
+          .map((k) => exp[k]!)
+          .filter((r) => overlapShare(roomPolygon(r) ?? [], roomPolygon(heirRoom) ?? []) >= SPLIT_MIN);
+        const srcFloors = sources.map(floorSig).filter((s) => s !== undefined);
+        const srcCeils = sources.map(ceilingSig).filter((s) => s !== undefined);
+        const gotFloor = floorSig(heirRoom);
+        const gotCeil = ceilingSig(heirRoom);
+        if (srcFloors.length > 0 && (!gotFloor || !srcFloors.some((s) => sameFloor(s, gotFloor)))) {
+          problems.push(`room ${rid}: объединённая комната потеряла покрытие пола (${srcFloors.map((s) => s.cover).join(" / ")}) при merge`);
+        }
+        if (srcCeils.length > 0 && (!gotCeil || !srcCeils.some((s) => sameCeiling(s, gotCeil)))) {
+          problems.push(`room ${rid}: объединённая комната потеряла покрытие потолка (${srcCeils.map((s) => s.material).join(" / ")}) при merge`);
+        }
+      }
       continue;
     }
     const match = got[gid]!;
@@ -739,28 +809,69 @@ export function finishMismatches(
       }
     }
   }
-  void unmatched;
 
-  // 3. отделка сторон стен: каждая ожидаемая сторона должна быть покрыта частями got
-  // по рёбрам (сопоставление геометрией: стена разрезана — частей несколько; перенос
-  // стены — часть следует за стеной по id; потерян кусок — покрытие неполное)
-  const gotPartsAll: Array<{ pid?: string; line: [Point, Point]; type: string; layer: number; height: number; fromFloor: number; room: string }> = [];
+  // 4. отделка сторон стен: каждая ожидаемая сторона должна быть покрыта частями got
+  //    по рёбрам. Принадлежность стороне ориентированная (ревью 98 N2): часть может
+  //    покрывать только сторону СВОЕЙ комнаты — чужая сторона той же стены не компенсирует
+  //    потерю. При изменившейся топологии (normalize) отделка переживает разрез в
+  //    комнате-наследнике (эталон 98: split), при merge не сверяется — предупреждение.
+  const gotPartsByRoom = new Map<string, WallPartSig[]>();
   for (const [gk, gr] of Object.entries(got)) {
-    for (const w of wallSigs(gr, Array.isArray(gr.edges) ? gr.edges : undefined)) {
-      gotPartsAll.push({ ...w, room: gk });
-    }
+    gotPartsByRoom.set(gk, wallSigs(gr, Array.isArray(gr.edges) ? gr.edges : undefined));
   }
+  /** Часть отделки пересекает ожидаемый отрезок по длине (хоть немного). */
+  const overlapsExpLine = (w: { line: [Point, Point] }, g: { line: [Point, Point] }): boolean => {
+    const t1 = projT(g.line[0], w.line[0], w.line[1]);
+    const t2 = projT(g.line[1], w.line[0], w.line[1]);
+    const lo = Math.max(Math.min(t1, t2), 0);
+    const hi = Math.min(Math.max(t1, t2), 1);
+    return hi - lo > 1e-9;
+  };
   for (const [rid, room] of Object.entries(exp)) {
-    const expWalls = wallSigs(room, Array.isArray(room.edges) ? room.edges : undefined);
-    for (const w of expWalls) {
-      const sameParams = (g: { type: string; layer: number; height: number; fromFloor: number }): boolean =>
-        g.type === w.type && g.layer === w.layer &&
-        Math.abs(g.height - w.height) <= NUM_TOL && Math.abs(g.fromFloor - w.fromFloor) <= NUM_TOL;
+    const expWallsList = wallSigs(room, Array.isArray(room.edges) ? room.edges : undefined);
+    if (expWallsList.length === 0) continue;
+    const sameParams = (w: WallPartSig) => (g: { type: string; layer: number; height: number; fromFloor: number }): boolean =>
+      g.type === w.type && g.layer === w.layer &&
+      Math.abs(g.height - w.height) <= NUM_TOL && Math.abs(g.fromFloor - w.fromFloor) <= NUM_TOL;
+    const gid = exact.get(rid);
+    if (!gid) {
+      if (mode === "save") {
+        for (const sig of expWallsList) {
+          problems.push(`room ${rid}: потеряна отделка стены ${sig.pid ?? "?"} (${sig.type}, слой ${sig.layer}) — комната не найдена на сервере`);
+        }
+        continue;
+      }
+      const heir = heirOf.get(rid) ?? null;
+      if (!heir) {
+        for (const sig of expWallsList) {
+          problems.push(`room ${rid}: потеряна отделка стены ${sig.pid ?? "?"} (${sig.type}, слой ${sig.layer}) при split/merge`);
+        }
+        continue;
+      }
+      if (heir.mergeLike) {
+        // merge: эталона наследования отделки сторон нет — не блокируем, предупреждение
+        warnings.push(`finish_topology_changed: room ${rid}: отделка сторон (${expWallsList.length}) при merge не сверяется — проверьте finish_get после сохранения`);
+        continue;
+      }
+      // split: отделка переживает разрез в одной из частей (эталон 98: обе части без
+      // отделки — потеря); укорачивание линии — штатно, площадь не сверяется
+      for (const w of expWallsList) {
+        const survived = heir.partKeys.some((k) =>
+          (gotPartsByRoom.get(k) ?? []).some((g) => sameParams(w)(g) && gotPartNear(w, g, gotW) !== null && overlapsExpLine(w, g)),
+        );
+        if (!survived) {
+          problems.push(`room ${rid}: потеряна отделка стены ${w.pid ?? "?"} (${w.type}, слой ${w.layer}) при split`);
+        }
+      }
+      continue;
+    }
+    for (const w of expWallsList) {
+      // только части этой комнаты: чужая сторона не компенсирует потерю (ревью 98 N2)
+      const candidates = (gotPartsByRoom.get(gid) ?? []).filter(sameParams(w));
       const near: Array<"line" | "wall"> = [];
       const onLine: Array<[Point, Point]> = [];
       const onWall: Array<[Point, Point]> = [];
-      for (const g of gotPartsAll) {
-        if (!sameParams(g)) continue;
+      for (const g of candidates) {
         const how = gotPartNear(w, g, gotW);
         if (!how) continue;
         near.push(how);
@@ -803,7 +914,17 @@ export function finishMismatches(
       }
     }
   }
-  return problems;
+  return { problems, warnings };
+}
+
+/** Список расхождений (режим normalize, до записи): пусто — совпало. */
+export function finishMismatches(
+  expectedRooms: Record<string, unknown> | undefined,
+  gotRooms: Record<string, unknown> | undefined,
+  expectedWalls?: Record<string, unknown>,
+  gotWalls?: Record<string, unknown>,
+): string[] {
+  return finishCompare(expectedRooms, gotRooms, expectedWalls, gotWalls, "normalize").problems;
 }
 
 /** Список отделки для публичного ответа (finish_get): по одной или всем комнатам. */

@@ -121,8 +121,12 @@ test("96 R1: перестановка id двух комнат с разными
   assert.equal(res.verified, true);
 });
 
-/** Разрезать первую комнату (10..290 × -290..-10) на две по x=150. */
-function splitFirstRoom(norm: Record<string, unknown>, heirFloor: boolean, wallParts: "one-room" | "two-rooms"): void {
+/** Разрезать первую комнату (10..290 × -290..-10) на две по x=150.
+ *  Эталон 98 (ui-ref-finish-topo-split-*.json): пол/потолок наследует КАЖДАЯ часть. */
+function splitFirstRoom(
+  norm: Record<string, unknown>,
+  opts: { floors: "both" | "none" | "first-only"; wallParts: "one-room" | "two-rooms" },
+): void {
   const rooms = normRooms(norm);
   const rid = Object.keys(rooms)[0]!;
   const rec = rooms[rid];
@@ -132,11 +136,13 @@ function splitFirstRoom(norm: Record<string, unknown>, heirFloor: boolean, wallP
     polygon: [{ x: x1, y: -290 }, { x: x1, y: -10 }, { x: x0, y: -10 }, { x: x0, y: -290 }],
     edges: [{ p1: { x: x0, y: -290 }, p2: { x: x1, y: -290 }, pid: "w1", side: "r" }],
     decors: [{ exist: false }],
+    floors: [{ exist: false }],
   });
   const g1 = mk(10, 150) as AnyRooms;
   const g2 = mk(150, 290) as AnyRooms;
-  if (heirFloor) g1["floors"] = structuredClone(floors);
-  if (wallParts === "two-rooms") {
+  if (opts.floors !== "none") g1["floors"] = structuredClone(floors);
+  if (opts.floors === "both") g2["floors"] = structuredClone(floors);
+  if (opts.wallParts === "two-rooms") {
     g1["decors"] = [{ exist: true, parts: { p1: part("pa", { x: 10, y: -290 }, { x: 150, y: -290 }) } }];
     g2["decors"] = [{ exist: true, parts: { p2: part("pb", { x: 150, y: -290 }, { x: 290, y: -290 }) } }];
   } else {
@@ -147,13 +153,13 @@ function splitFirstRoom(norm: Record<string, unknown>, heirFloor: boolean, wallP
   rooms["split-2"] = g2;
 }
 
-test("96 R1: split комнаты — пол у наследника, отделка сторон по рёбрам двух комнат — verified", async () => {
+test("96 R1: split комнаты — пол у обеих частей (эталон 98), отделка сторон по рёбрам двух комнат — verified", async () => {
   const m = baseModel();
   const room = firstRoomId(m);
   setFloorFinish(m, room, "laminate", {});
   setWallFinish(m, room, bottomEdge(m).pid, "wallpaper", {});
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
-  const ws = saveMock(server, () => {}, (norm) => splitFirstRoom(norm, true, "two-rooms"));
+  const ws = saveMock(server, () => {}, (norm) => splitFirstRoom(norm, { floors: "both", wallParts: "two-rooms" }));
   await ws.open("0", "1");
   const res = await ws.save();
   assert.equal(res.verified, true);
@@ -165,7 +171,7 @@ test("96 R1: split — отделка стороны осталась одной
   setFloorFinish(m, room, "laminate", {});
   setWallFinish(m, room, bottomEdge(m).pid, "wallpaper", {});
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
-  const ws = saveMock(server, () => {}, (norm) => splitFirstRoom(norm, true, "one-room"));
+  const ws = saveMock(server, () => {}, (norm) => splitFirstRoom(norm, { floors: "both", wallParts: "one-room" }));
   await ws.open("0", "1");
   const res = await ws.save();
   assert.equal(res.verified, true);
@@ -176,7 +182,17 @@ test("96 R1: split без наследования пола — NORMALIZATION_DR
   const room = firstRoomId(m);
   setFloorFinish(m, room, "laminate", {});
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
-  const ws = saveMock(server, () => {}, (norm) => splitFirstRoom(norm, false, "one-room"));
+  const ws = saveMock(server, () => {}, (norm) => splitFirstRoom(norm, { floors: "none", wallParts: "one-room" }));
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => e instanceof McpError && e.code === "NORMALIZATION_DROPPED");
+});
+
+test("98 N3: split — пол только у одной части (эталон 98: наследуют все) — NORMALIZATION_DROPPED", async () => {
+  const m = baseModel();
+  const room = firstRoomId(m);
+  setFloorFinish(m, room, "laminate", {});
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => splitFirstRoom(norm, { floors: "first-only", wallParts: "one-room" }));
   await ws.open("0", "1");
   await assert.rejects(() => ws.save(), (e: unknown) => e instanceof McpError && e.code === "NORMALIZATION_DROPPED");
 });
@@ -221,6 +237,68 @@ test("96 R1: комната с отделкой исчезла целиком �
   const kept: Record<string, Record<string, unknown>> = {};
   kept[other] = got[other]!;
   assert.ok(finishMismatches(m.rooms2, kept, m.walls as never).length > 0);
+});
+
+// ---------- 98 N1: fault injection только в GET → SITE_ERROR ----------
+
+test("98 N1: сервер после записи удвоил полигон комнаты и удалил пол — SITE_ERROR, не verified", async () => {
+  const m = baseModel();
+  const room = firstRoomId(m);
+  setFloorFinish(m, room, "laminate", {});
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const rooms = s.model["rooms2"] as AnyRooms;
+    const rec = rooms[room];
+    const poly = rec["polygon"] as Array<{ x: number; y: number }>;
+    const minX = Math.min(...poly.map((p) => p.x));
+    for (const p of poly) p.x = minX + (p.x - minX) * 2;
+    (rec["floors"] as Array<Record<string, unknown>>)[0] = { exist: false };
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: Error) => {
+    return e instanceof McpError && e.code === "SITE_ERROR";
+  });
+});
+
+// ---------- 98 N2: ориентированная сторона общей стены ----------
+
+function setBothSidesOfSharedWall(m: Model): { r1: string; r2: string; pid: string } {
+  const rooms = (m.rooms2 ?? {}) as Record<string, Record<string, unknown>>;
+  const [r1, r2] = [Object.keys(rooms)[0]!, Object.keys(rooms)[1]!];
+  const edges1 = rooms[r1]!["edges"] as Array<{ pid?: string }>;
+  const edges2 = rooms[r2]!["edges"] as Array<{ pid?: string }>;
+  const pid = edges1.find((e) => edges2.some((f) => f.pid === e.pid))!.pid!;
+  setWallFinish(m, r1, pid, "wallpaper", {});
+  setWallFinish(m, r2, pid, "wallpaper", {});
+  return { r1, r2, pid };
+}
+
+test("98 N2: сервер удалил отделку одной из двух сторон общей стены — SITE_ERROR, чужая сторона не компенсирует", async () => {
+  const m = baseModel();
+  const { r1, pid } = setBothSidesOfSharedWall(m);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const rooms = s.model["rooms2"] as AnyRooms;
+    const edges = rooms[r1]["edges"] as Array<{ pid?: string }>;
+    const idx = edges.findIndex((e) => e.pid === pid);
+    (rooms[r1]["decors"] as Array<Record<string, unknown>>)[idx] = { exist: false };
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: Error) => e instanceof McpError && e.code === "SITE_ERROR");
+});
+
+test("98 N2: нормализация потеряла отделку одной стороны без изменения топологии — NORMALIZATION_DROPPED", async () => {
+  const m = baseModel();
+  const { r1, pid } = setBothSidesOfSharedWall(m);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    const rooms = normRooms(norm);
+    const edges = rooms[r1]["edges"] as Array<{ pid?: string }>;
+    const idx = edges.findIndex((e) => e.pid === pid);
+    (rooms[r1]["decors"] as Array<Record<string, unknown>>)[idx] = { exist: false };
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => e instanceof McpError && e.code === "NORMALIZATION_DROPPED");
 });
 
 // ---------- R2: вся отделываемая область, без процентного порога ----------
