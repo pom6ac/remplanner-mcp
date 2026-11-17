@@ -18,6 +18,7 @@ import { borderMismatches } from "./model/terraces.ts";
 import { levelHoleMismatches } from "./model/floorhole.ts";
 import { finishCompare } from "./model/finish.ts";
 import { demolitionMismatches } from "./model/demolition.ts";
+import { roomsSaveCompare, roomsChangePolicy, type RoomsChangePolicy } from "./model/rooms-save.ts";
 import { dimsMismatches } from "./model/dims.ts";
 import type { Model as TerracesModel } from "./model/types.ts";
 
@@ -1279,10 +1280,32 @@ export class Workspace {
   private lastErrors: Record<string, number> | null = null;
   /** Проект открыт с пустой моделью (дефект 3, отчёт 11) — сохранение под защитой. */
   private openedEmpty = false;
+  /** База сверки комнат (этап 128, ревью 127 R1/R2/R4): модель с сервера / после
+   *  последнего успешного save. Комнаты в normalize сравниваются с ней, а не с
+   *  локальной моделью после операции; изменённые пользователем стены = разница
+   *  «база → рабочая копия». */
+  private roomSaveBase: { rooms: Record<string, unknown>; walls: Record<string, { p1: Point; p2: Point; depth?: number }> } | null = null;
 
   constructor(deps: WorkspaceDeps, options: { offline?: boolean } = {}) {
     this.deps = deps;
     this.offline = options.offline ?? false;
+  }
+
+  /** Комнаты и стены базы сверки комнат (модель с сервера / после последнего save). */
+  private captureRoomBase(): { rooms: Record<string, unknown>; walls: Record<string, { p1: Point; p2: Point; depth?: number }> } {
+    const m = this.modelInternal! as unknown as Record<string, unknown>;
+    return {
+      rooms: structuredClone(((m["rooms2"] ?? m["rooms1"]) ?? {}) as Record<string, unknown>),
+      walls: structuredClone((m["walls"] ?? {}) as Record<string, { p1: Point; p2: Point; depth?: number }>),
+    };
+  }
+
+  /** Политика локальных изменений стен (ревью 127 R1/R2): база → стены рабочей
+   *  копии (или clone после операции пользователя, если передан). */
+  private roomChangePolicy(nowWalls?: Record<string, unknown>): RoomsChangePolicy {
+    const base = this.roomSaveBase;
+    if (!base) return {};
+    return roomsChangePolicy(base.rooms, base.walls, (nowWalls ?? (this.modelInternal!.walls ?? {})) as Record<string, { p1?: Point; p2?: Point; depth?: number }>);
   }
 
   get model(): Model {
@@ -1336,6 +1359,7 @@ export class Workspace {
       openedAt: new Date().toISOString(),
       anon: opts.anon ?? false,
     };
+    this.roomSaveBase = this.captureRoomBase();
     this.snapshots = [];
     this.historyIndex = -1;
     this.pushSnapshot("open");
@@ -1585,6 +1609,29 @@ export class Workspace {
       );
       // этап 113: размеры и комментарии после нормализации не теряются и не искажаются
       const dimsNorm = dimsMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
+      // этап 128 (ревью 127 R1/R2/R4): комнаты до записи сверяются с базой (сервер /
+      // последний успешный save) с политикой локальных изменений стен: исчезновение
+      // затронутой комнаты и новая комната из изменённых стен — предупреждение,
+      // потеря незатронутой комнаты — атомарный отказ операции.
+      // T24: редактор кладёт полигоны комнат в копию после save → reload; если в
+      // нормализованной копии rooms2 ещё пуст, а редактор отчитался списком комнат
+      // (norm.rooms), контурную сверку откладываем до верификации после записи.
+      const normRoomsMap = ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined;
+      const roomsPendingInCopy = (normRoomsMap === undefined || Object.keys(normRoomsMap).length === 0) && (norm.rooms?.length ?? 0) > 0;
+      const roomsNormCheck = roomsPendingInCopy
+        ? { problems: [], warnings: [] }
+        : roomsSaveCompare(
+            (this.roomSaveBase?.rooms ?? ((this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined)) as Record<string, unknown> | undefined,
+            normRoomsMap,
+            "normalize",
+            this.roomChangePolicy(clone.walls as unknown as Record<string, unknown>),
+          );
+      warnings.push(...roomsNormCheck.warnings);
+      if (roomsNormCheck.problems.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил комнаты, не затронутые изменёнными стенами — мутация отменена`, {
+          details: { room_mismatches: roomsNormCheck.problems },
+        });
+      }
       if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0) {
         throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, пометки демонтажа, размеры/комментарии или сущности климата — мутация отменена`, {
           details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm },
@@ -1971,6 +2018,29 @@ export class Workspace {
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
     const normRooms = Object.keys((norm.model as { rooms2?: Record<string, unknown> }).rooms2 ?? {}).length;
+    // этап 126: комнаты до записи сверяются с нормализованной моделью — присутствие
+    // каждой комнаты по каноническому контуру и пользовательские поля (имя, зоны);
+    // допустимы только штатные топологии редактора (split/merge — предупреждение,
+    // перенос стены — строгая сверка имени). При штатном изменении стен пользователем
+    // (размыкание контура, перекомпоновка) потеря комнаты объяснима — предупреждение.
+    // этап 126/128: комнаты до записи сверяются с базой (модель с сервера / после
+    // последнего успешного save — ревью 127 R1/R2/R4), а не с локальной моделью после
+    // операции. Изменённые пользователем стены = разница «база → рабочая копия»;
+    // затронутые ими комнаты базы и новые замкнутые контуры из изменённых стен —
+    // предупреждения, потеря незатронутой комнаты — NORMALIZATION_DROPPED.
+    // T24: если в нормализованной копии rooms2 ещё пуст, а редактор отчитался
+    // списком комнат (norm.rooms), контурная сверка откладывается до записи.
+    const saveNormRoomsMap = ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined;
+    const saveRoomsPending = (saveNormRoomsMap === undefined || Object.keys(saveNormRoomsMap).length === 0) && (norm.rooms?.length ?? 0) > 0;
+    const roomsNormCheck = saveRoomsPending
+      ? { problems: [], warnings: [] }
+      : roomsSaveCompare(
+          (this.roomSaveBase?.rooms ?? ((this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined)) as Record<string, unknown> | undefined,
+          saveNormRoomsMap,
+          "normalize",
+          this.roomChangePolicy(),
+        );
+    const roomsNormProblems = roomsNormCheck.problems;
     if (roomsBefore > 0 && normRooms === 0) {
       warnings.push(`редактор убрал комнаты при нормализации (${roomsBefore} → 0) — имя и отделка комнат могут быть потеряны; проверьте rooms_list после сохранения`);
     }
@@ -1982,7 +2052,7 @@ export class Workspace {
       lostCables.length > 0 ||
       ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0 ||
       cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 ||
-      dimsNorm.length > 0 || climateNorm.length > 0
+      dimsNorm.length > 0 || climateNorm.length > 0 || roomsNormProblems.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -2019,10 +2089,12 @@ export class Workspace {
           demolition_mismatches: demolitionNorm,
           dims_mismatches: dimsNorm,
           climate_mismatches: climateNorm,
+          room_mismatches: roomsNormProblems,
         },
       });
     }
     warnings.push(...finishNorm.warnings);
+    warnings.push(...roomsNormCheck.warnings);
     let rounds = 0;
     let verified = false;
     let finalSaveId = p.saveId;
@@ -2173,10 +2245,19 @@ export class Workspace {
         },
       );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && !roomsLost) {
+      // этап 126: комнаты после save — строго (по каноническому контуру и
+      // пользовательским полям): частичная потеря N→M>0 и потеря имени/зон — не verified
+      const roomsAfterCheck = roomsSaveCompare(
+        ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+        ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
+        "save",
+      ).problems;
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
+        // база сверки комнат — серверная истина после записи (этап 128)
+        this.roomSaveBase = this.captureRoomBase();
       } else if (attempt === 1) {
         const coverageAfter = wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
         throw new McpError("SITE_ERROR", "после сохранения модель на сервере не совпала с рабочей копией", {
@@ -2201,6 +2282,7 @@ export class Workspace {
             socket_group_mismatches: subsAfter,
             socket_group_derived_mismatches: subsDerivedAfter,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
+            room_mismatches: roomsAfterCheck,
             finish_mismatches: finishAfter,
             demolition_mismatches: demolitionAfter,
             dims_mismatches: dimsAfter,
