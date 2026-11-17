@@ -963,9 +963,12 @@ export function deleteWall(model: Model, wallId: string): { removedHoles: number
  * другой стены (node), либо лежать на её грани (edge). Вызывается ПОСЛЕ normalize —
  * по стенам живого редактора; потерянная связь → откат мутации (INVALID_GEOMETRY).
  */
-export function findUnattachedEnds(walls: ReadonlyArray<{ id: string; p1: Point; p2: Point; depth: number }>): Array<{ wallId: string; node: "p1" | "p2" }> {
+/** Несоединённый конец стены: узел и его точка в мировых координатах. */
+export type DanglingEnd = { wallId: string; node: "p1" | "p2"; point: Point };
+
+export function findUnattachedEnds(walls: ReadonlyArray<{ id: string; p1: Point; p2: Point; depth: number }>): DanglingEnd[] {
   const list = walls.filter((w) => dist(w.p1, w.p2) > 1e-9);
-  const out: Array<{ wallId: string; node: "p1" | "p2" }> = [];
+  const out: DanglingEnd[] = [];
   for (const w of list) {
     for (const node of ["p1", "p2"] as const) {
       const e = w[node];
@@ -983,10 +986,48 @@ export function findUnattachedEnds(walls: ReadonlyArray<{ id: string; p1: Point;
           break;
         }
       }
-      if (!attached) out.push({ wallId: w.id, node });
+      if (!attached) out.push({ wallId: w.id, node, point: { x: e.x, y: e.y } });
     }
   }
   return out;
+}
+
+/** Допуск сопоставления висячих концов по геометрии (дрейф координат нормализатора), см. */
+export const DANGLING_MATCH_TOL_CM = 0.5;
+
+/**
+ * Ожидаемые точки унаследованных висячих концов после мутации (ревью 110 R10).
+ * Ключ наследования — геометрия конца, а не `wallId.node`: нормализатор редактора
+ * может перенумеровывать стены и менять направление оси (p1/p2), физический конец
+ * при этом остаётся тем же. Ожидаемое множество:
+ * - исходные точки унаследованных концов (переименование, разрез и слияние стен
+ *   не смещают свободный конец);
+ * - положения тех же концов (по wallId.node) в рабочей модели ПОСЛЕ операции —
+ *   перенос/укорочение/разрез/слияние стены уносят её висячий конец с собой,
+ *   если операция эту стену затронула.
+ * Точки, появившиеся только из-за операции (разрыв стыка, новая свободная стена),
+ * в множество не попадают — guard отклоняет действительно новые дефекты.
+ * Чистая функция без сети: сопоставление guard'а applyWalls проверяется юнит-тестами.
+ */
+export function expectedDanglingEndPoints(
+  before: ReadonlyArray<{ wallId: string; node: "p1" | "p2"; point: Point }>,
+  afterWalls: ReadonlyArray<{ id: string; p1: Point; p2: Point }>,
+): Point[] {
+  const out: Point[] = before.map((d) => ({ x: d.point.x, y: d.point.y }));
+  for (const d of before) {
+    const w = afterWalls.find((x) => x.id === d.wallId);
+    if (w) out.push({ x: w[d.node].x, y: w[d.node].y });
+  }
+  return out;
+}
+
+/** Конец унаследован, если среди ожидаемых точек есть его точка с допуском. */
+export function isDanglingEndInherited(
+  point: Point,
+  expected: ReadonlyArray<Point>,
+  tolCm = DANGLING_MATCH_TOL_CM,
+): boolean {
+  return expected.some((p) => dist(p, point) <= tolCm);
 }
 
 // ---------- грани l1/l2/r1/r2 (обязательны перед $Project.restore) ----------

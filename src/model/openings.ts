@@ -1061,9 +1061,14 @@ export function deleteOpening(model: Model, wallId: string, holeId: string): { d
  * Центр используется только, чтобы выбрать между несколькими парами на одной стене;
  * согласованный перенос в updateOpening держит центры пары совпадающими.
  * Единая точка поиска пары для update/delete и сверки демонтажа (replacementOf).
+ * ревью 110 R4: обычный проём — не замена (нет plan:"c" с parent на стене) и сам
+ * не имеет hasReplacement — ни в какой паре не состоит, возвращается null. Иначе
+ * поиск по структуре подсовывает чужую замену и согласованный перенос двигает её
+ * вслед за обычным проёмом (порча чужой пары без запроса).
  */
 export function replacementPairOf(wall: Wall, hole: Hole): Hole | null {
   const holeIsReplacement = hole.plan === "c" && hole.parent === wall.id;
+  if (!holeIsReplacement && !hole.hasReplacement) return null;
   const candidates = Object.values(wall.holes ?? {}).filter((other) => {
     if (other.id === hole.id) return false;
     if (holeIsReplacement) return Boolean(other.hasReplacement);

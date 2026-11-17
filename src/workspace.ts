@@ -9,7 +9,7 @@ import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, Edit
 import type { Model, Point } from "./model/types.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
-import { prepareForRestore, findUnattachedEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
+import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, isDanglingEndInherited, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
 import { dist, closestPoint, pointInPolygon, segmentsCross, type Polygon as GeoPolygon } from "./model/geometry.ts";
 import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey } from "./model/pipes.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
@@ -1295,9 +1295,8 @@ export class Workspace {
     // ревью 108 R10: диагностика несоединённых концов ДО мутации — по рабочей модели
     // (каноническая копия после последней нормализации/загрузки с сервера); отклоняются
     // только НОВЫЕ дефекты соединений, унаследованные штатные операции не блокируют
-    const beforeDangling = new Set(
-      findUnattachedEnds(Object.values(clone.walls)).map((d) => `${d.wallId}.${d.node}`),
-    );
+    const beforeDangling = findUnattachedEnds(Object.values(clone.walls));
+    const beforeDanglingKeys = new Set(beforeDangling.map((d) => `${d.wallId}.${d.node}`));
     const result = fn(clone);
     const warnings: string[] = [];
     if (this.offline) {
@@ -1318,12 +1317,18 @@ export class Workspace {
       // §12.4: конец, который Node ставил на грань или в узел, остался без связи.
       // ревью 108 R10: отклоняются только НОВЫЕ несоединённые концы — унаследованные
       // (присутствовали в модели до операции) штатные демонтаж/перенос не блокируют;
-      // защита новых дефектов сохранена полностью
+      // защита новых дефектов сохранена полностью.
+      // ревью 110 R10: унаследованные концы сопоставляются геометрически (точка конца
+      // с допуском, с учётом ожидаемого переноса/разреза/слияния стены операцией —
+      // expectedDanglingEndPoints), а не по `wallId.node`: нормализатор редактора
+      // может перенумеровывать стены и менять направление оси, ключ наследования —
+      // физическое положение конца, а не идентификаторы
       const danglingAll = findUnattachedEnds(norm.walls ?? []);
-      const dangling = danglingAll.filter((d) => !beforeDangling.has(`${d.wallId}.${d.node}`));
+      const expectedEnds = expectedDanglingEndPoints(beforeDangling, Object.values(clone.walls));
+      const dangling = danglingAll.filter((d) => !isDanglingEndInherited(d.point, expectedEnds));
       if (dangling.length > 0) {
         throw new McpError("INVALID_GEOMETRY", `после нормализации появились новые несоединённые концы стен (${dangling.slice(0, 5).map((d) => `${d.wallId}.${d.node}`).join(", ")}) — мутация отменена`, {
-          details: { unattached: dangling, unattached_inherited: [...beforeDangling] },
+          details: { unattached: dangling, unattached_inherited: [...beforeDanglingKeys] },
         });
       }
       // §12.4: выросли счётчики ошибок редактора
