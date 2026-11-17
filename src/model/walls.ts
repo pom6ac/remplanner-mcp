@@ -417,6 +417,24 @@ function mergeCollinear(model: Model): void {
   }
 }
 
+/**
+ * m1 ревью 136: отказ partition_crosses_warm_floor — во всех путях мутаций стен,
+ * а не только wall_add (проба p135 P4: walls_add_polyline, room_add_rect/room_add_polygon
+ * с plan:"c", wall_move/wall_update перегородки в контур проходили без отказа, потеря
+ * контура всплывала SITE_ERROR уже на сервере). Вызывается после операции по разнице
+ * осей plan:"c" «до → после»: проверяются новые и изменившиеся перегородки; неизменённые
+ * перегородки существующих моделей из UI с унаследованным сочетанием не блокируются
+ * (ревью 136 P3 — запрет только на новое действие).
+ */
+export function assertNoNewWarmFloorCrossing(model: Model, wallsBefore: Record<string, Wall>): void {
+  for (const w of Object.values(model.walls)) {
+    if (w.plan !== "c") continue;
+    const old = wallsBefore[w.id];
+    if (old && dist(old.p1, w.p1) <= 0.005 && dist(old.p2, w.p2) <= 0.005) continue;
+    assertNoWarmFloorCrossing(model, w.p1, w.p2);
+  }
+}
+
 /** addWall: добавить стену по осевой линии (мм); узлы и T-концы прижимаются правилами 1–2. */
 export function addWall(model: Model, params: AddWallParams): Wall {
   ensureModel(model);

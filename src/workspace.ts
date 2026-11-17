@@ -9,7 +9,7 @@ import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, Edit
 import type { Model, Point } from "./model/types.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
-import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmatchedDanglingEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
+import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmatchedDanglingEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, assertNoNewWarmFloorCrossing, type WallAxisSegment } from "./model/walls.ts";
 import { dist, closestPoint, pointInPolygon, segmentsCross, type Polygon as GeoPolygon } from "./model/geometry.ts";
 import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey, PIPE_COLLECTIONS, CLIMATE_PIPE_KINDS } from "./model/pipes.ts";
 import { warmFloorMismatches } from "./model/climate.ts";
@@ -1406,6 +1406,12 @@ export class Workspace {
     const beforeDangling = findUnattachedEnds(Object.values(clone.walls));
     const beforeDanglingKeys = new Set(beforeDangling.map((d) => `${d.wallId}.${d.node}`));
     const result = fn(clone);
+    // m1 ревью 136: перегородка (plan:"c"), чья ось проходит через контур тёплого пола,
+    // удаляет контур при сохранении (проба p135-n1c, анонимный проект) — осознанный отказ
+    // до записи во ВСЕХ путях мутаций (wall_add, walls_add_polyline, room_add_rect/
+    // room_add_polygon с plan:"c", wall_move, wall_update): по разнице осей plan:"c"
+    // «до → после»; неизменённые перегородки моделей из UI не блокируются
+    assertNoNewWarmFloorCrossing(clone, this.modelInternal!.walls);
     const warnings: string[] = [];
     if (this.offline) {
       this.modelInternal = clone;

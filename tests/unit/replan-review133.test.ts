@@ -92,33 +92,77 @@ test("133 N1: подмена id_room на комнату без контура �
   assert.ok(problems.some((p) => p.includes("id_room изменился")), JSON.stringify(problems));
 });
 
-test("133 N1: mock перестраивает rooms2 как редактор — перегородка не блокируется", async () => {
+test("133 N1: mock повторяет фактическое место перестройки (normalize после #18) — сквозной save verified", async () => {
+  // m2 ревью 136: прежний вариант закреплял деление в normalize при живом факте
+  // «перестройка при save» и не вызывал save — сквозной SITE_ERROR (M1) был пропущен.
+  // Этап 137/#18 перенёс пересчёт комнат сохранения в normalize (план "a" → copyRooms1 →
+  // план "c" → draw, те же функции редактора), и живая проба p140-m1 (анонимный проект,
+  // сквозной Workspace.save) подтвердила: деление появляется уже в копии normalize,
+  // save даёт verified=true, rounds=1, предупреждение room_topology_changed.
+  // Mock теперь повторяет именно это место и идёт через полный save.
   const { addWarmFloor: awf } = await import("../../src/model/climate.ts");
   const m = base(); prepareHolePoints(m);
   // контур на ПРАВОЙ половине будущей перегородки (как в эталоне): x 160..280 см
   const wf = awf(m, { kind: "cable", corner1: { x: 1600, y: -2400 }, corner2: { x: 2800, y: -600 } });
   assert.ok(wf.id_room, "контур привязан к комнате");
-  const W = ws(m, editor((c) => {
-    // редактор перестраивает rooms2 при save: комната делится перегородкой x=150,
-    // id_room контура переназначается на новую комнату (живая проба p135-n1b)
-    if (!Object.values(c.walls).some((w) => w.plan === "c")) return;
-    const rooms2 = c.rooms2 as Record<string, { polygon: { x: number; y: number }[] }>;
-    const r = rooms2[wf.id_room!]!;
-    const right = structuredClone(r);
-    r.polygon = [{ x: 145, y: -290 }, { x: 145, y: -10 }, { x: 10, y: -10 }, { x: 10, y: -290 }];
-    right.polygon = [{ x: 290, y: -290 }, { x: 290, y: -10 }, { x: 155, y: -10 }, { x: 155, y: -290 }];
-    rooms2["_newroom"] = right;
-    wf.id_room = "_newroom";
-    for (const g of Object.values(c.warm_floors ?? {})) g.id_room = "_newroom";
-  }));
+  const server = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  let normalized: Record<string, unknown> | null = null;
+  const ed: EditorLike = {
+    objectId: "123", planId: "1",
+    async normalize(model) {
+      const copy = structuredClone(model) as Model;
+      // деление появляется уже в копии normalize (после #18): комната делится
+      // перегородкой x=150, id_room контура переназначается на новую комнату
+      // (геометрия эталона ui-ref-replan-partition-warmfloor: rA 10..145, rB 155..290)
+      if (Object.values(copy.walls).some((w) => w.plan === "c")) {
+        const rooms2 = copy.rooms2 as Record<string, { polygon: { x: number; y: number }[] }>;
+        const r = rooms2[wf.id_room!]!;
+        const right = structuredClone(r);
+        r.polygon = [{ x: 145, y: -290 }, { x: 145, y: -10 }, { x: 10, y: -10 }, { x: 10, y: -290 }];
+        right.polygon = [{ x: 290, y: -290 }, { x: 290, y: -10 }, { x: 155, y: -10 }, { x: 155, y: -290 }];
+        rooms2["_newroom"] = right;
+        for (const g of Object.values(copy.warm_floors ?? {})) g.id_room = "_newroom";
+      }
+      normalized = structuredClone(copy) as unknown as Record<string, unknown>;
+      const walls = Object.values(copy.walls).map((w) => ({ id: w.id, p1: w.p1, p2: w.p2, depth: w.depth }));
+      const c = { walls: walls.length, holes: 0, items: 0, pillars: 0, rigels: 0 };
+      return { model: copy, rooms: [], before: c, after: c, walls, errors: null } as unknown as NormalizeResult;
+    },
+    // сервер после записи имеет то, что редактор отправил (перестроенную копию normalize)
+    async save() {
+      server.model = structuredClone(normalized!);
+      return { ok: true, saveId: "s2", conflict: false };
+    },
+    async renderPng() { return Buffer.from(""); },
+    async compatInfo() { return { present: {} } as never; },
+    async close() {},
+  } as EditorLike;
+  const deps: WorkspaceDeps = {
+    session: { cookies: [] },
+    async loadModel() { return { object_id: "123", plan_id: "1", save_id: server.saveId, units: "cm", data_empty: false, model: structuredClone(server.model) as never }; },
+    async openEditor() { return ed; },
+  } as WorkspaceDeps;
+  const W = new Workspace(deps);
+  (W as unknown as { writeBackup: unknown }).writeBackup = async () => {};
   await W.open("123", "1");
-  const r = await W.applyWalls("wall_add", (mm) => {
+  const applied = await W.applyWalls("wall_add", (mm) => {
     splitWall(mm, "w1", 1500);
     splitWall(mm, "w5", 1400);
     addWall(mm, { start: { x: 1500, y: -3000 }, end: { x: 1500, y: 0 }, thicknessMm: 100, material: "c_pgb", plan: "c" });
-  }).then((res) => `ok:${res.warnings.filter((w) => w.startsWith("room_")).join("|")}`, (e) => `${e.code}: ${e.message} ${JSON.stringify(e.details)}`);
-  assert.equal(r, "ok:room_topology_changed: room _uwwgk: split при нормализации — имя помещения (none) не сверяется, проверьте rooms_list после сохранения", String(r));
-  assert.equal(Object.keys(W.model.warm_floors ?? {}).length, 1, "контур на месте");
+  });
+  assert.ok(
+    applied.warnings.some((w) => w.startsWith("room_topology_changed")),
+    JSON.stringify(applied.warnings),
+  );
+  assert.equal(Object.keys(W.model.warm_floors ?? {}).length, 1, "контур на месте в рабочей копии");
+  // сквозной save: сверка комнат после save проходит без SITE_ERROR (M1 закрыт #18)
+  const res = await W.save();
+  assert.equal(res.verified, true, JSON.stringify(res));
+  assert.equal(res.rounds, 1, JSON.stringify(res));
+  const serverRooms = server.model["rooms2"] as Record<string, unknown>;
+  assert.equal(Object.keys(serverRooms).length, 5, "на сервере перестроенные комнаты (5)");
+  const serverWf = server.model["warm_floors"] as Record<string, { id_room?: string | null }>;
+  assert.equal(Object.values(serverWf)[0]?.id_room, "_newroom", "контур пережил save, id_room переназначен");
 });
 
 test("133 N1: перегородка через контур тёплого пола — отказ до записи с hint", async () => {
