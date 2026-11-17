@@ -1,13 +1,82 @@
 import { writeFileSync, readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { z } from "zod";
 import { SCENARIO_HINT, mmInt, mmPoint } from "./context.ts";
 import type { ServerContext } from "./context.ts";
 import { ok, tool, type ToolDefLike as ToolDef } from "./toolkit.ts";
 import { McpError } from "../errors.ts";
 import type { Model } from "../model/types.ts";
-import { clearEntityCollections, replaceEntityCollections } from "../model/collections.ts";
+import { clearEntityCollections, replaceEntityCollections, MODEL_ENTITY_COLLECTIONS } from "../model/collections.ts";
 
 // T18: инструменты сессии и проектов (design §7.1).
+
+/** Поля, по которым опознаётся модель в .plan (для проверки формата при импорте). */
+const PLAN_MODEL_KEYS = new Set<string>([
+  ...MODEL_ENTITY_COLLECTIONS,
+  "v", "id", "plan_id", "total_height", "final", "rooms1", "rooms2", "floors", "plans",
+]);
+
+/**
+ * Путь для сообщения об ошибке (M3 ревью 150): абсолютный путь пользователя
+ * наружу не идёт — только basename; относительный показывается как задан.
+ */
+function shownPath(p: string): string {
+  return /^([A-Za-z]:[\\/]|\/)/.test(p) ? basename(p) : p;
+}
+
+/**
+ * Ожидаемые ошибки пользователя у файловых операций (M3 ревью 150): файл не
+ * найден, нет доступа, это каталог, битый JSON, не тот формат — McpError с
+ * понятным текстом, а не нейтральное «внутренняя ошибка: Error (ERR-…)».
+ * Прочие ошибки пробрасываются как есть (неожиданные, сериализует errorToPayload).
+ */
+function planFileError(e: unknown, p: string): McpError {
+  const shown = shownPath(p);
+  const code = e instanceof Error ? (e as NodeJS.ErrnoException).code : undefined;
+  if (code === "ENOENT" || code === "ENOTDIR") {
+    return new McpError("NOT_FOUND", `файл не найден: ${shown}`);
+  }
+  if (code === "EACCES" || code === "EPERM") {
+    return new McpError("INVALID_ARGUMENT", `нет доступа к файлу: ${shown}`);
+  }
+  if (code === "EISDIR") {
+    return new McpError("INVALID_ARGUMENT", `путь указывает на каталог, а не файл: ${shown}`);
+  }
+  if (e instanceof SyntaxError) {
+    return new McpError("INVALID_ARGUMENT", `файл не является JSON модели: ${shown}`);
+  }
+  return e as McpError;
+}
+
+/** Прочитать и разобрать файл .plan: JSON-объект с моделью ({model: …} или сама модель). */
+function readPlanFile(p: string): Model {
+  let raw: string;
+  try {
+    raw = readFileSync(p, "utf8");
+  } catch (e) {
+    throw planFileError(e, p);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw planFileError(e, p);
+  }
+  const root = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : null;
+  const model = (root !== null && (root["model"] ?? root)) as unknown;
+  // минимальная проверка формата (M3 ревью 150): модель — объект, содержащий
+  // хотя бы одно известное поле модели (коллекция сущностей, plan_id, total_height,
+  // floors/plans); иначе JSON валиден, но это не план
+  if (
+    model === null || typeof model !== "object" || Array.isArray(model) ||
+    !Object.keys(model as Record<string, unknown>).some((k) => PLAN_MODEL_KEYS.has(k))
+  ) {
+    throw new McpError("INVALID_ARGUMENT", `файл не является планом (JSON модели): ${shownPath(p)}`);
+  }
+  return model as Model;
+}
 
 export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
   return {
@@ -103,7 +172,11 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
         const ws = ctx.workspace();
         const scope = (args["scope"] as string | undefined) ?? "full";
         const payload = scope === "current" ? ws.model : { model: ws.model, saved_at: new Date().toISOString() };
-        writeFileSync(args["path"] as string, JSON.stringify(payload, null, 1));
+        try {
+          writeFileSync(args["path"] as string, JSON.stringify(payload, null, 1));
+        } catch (e) {
+          throw planFileError(e, args["path"] as string);
+        }
         return ok({ path: args["path"], scope, bytes: JSON.stringify(payload).length });
       },
     ),
@@ -116,8 +189,7 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
         replace: z.literal(true).describe("подтверждение замены текущей планировки"),
       },
       async (args) => {
-        const raw = JSON.parse(readFileSync(args["path"] as string, "utf8")) as Record<string, unknown>;
-        const model = (raw["model"] ?? raw) as Model;
+        const model = readPlanFile(args["path"] as string);
         const ws = ctx.workspace();
         ws.apply("import_plan", (m) => {
           // ревью 66 №2: замена по общему реестру коллекций — новые сущности
