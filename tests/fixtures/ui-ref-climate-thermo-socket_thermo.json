@@ -1,0 +1,93 @@
+{
+ "_source": "клик по UI анонимного проекта (headless Chromium, ID проекта/плана обезличены), проба 122-climate-fixtures, model project.copy(\"server\"), без сохранения; id предмета/комнаты/стены обезличены (\"0\"); wall_line удалён; координаты — реальные точки листа",
+ "menu_title": "Терморегулятор",
+ "tool_id": "plannertool_socket_thermo",
+ "catalog_defaults_cm": {
+  "id": 44,
+  "title": "Терморегулятор",
+  "group": "sockets",
+  "width": 14,
+  "height": 14,
+  "self_height": 0,
+  "plan": {
+   "warm_floor": 11
+  },
+  "anchor": "wall",
+  "over_floor": {
+   "value": 90,
+   "display": true
+  }
+ },
+ "model_object": {
+  "name": "socket_group",
+  "pc": {
+   "x": 150,
+   "y": -283.049
+  },
+  "angle": 180,
+  "projection": {
+   "x": 150,
+   "y": -290
+  },
+  "id_room": "0",
+  "width": 14,
+  "height": 14,
+  "plan": {
+   "warm_floor": 11
+  },
+  "socket_group": [
+   {
+    "name": "socket_thermo",
+    "id": "0",
+    "real_center": {
+     "x": 150,
+     "y": -283
+    },
+    "center": {
+     "x": 150,
+     "y": -282.9799
+    },
+    "center_prs": {
+     "x": 150,
+     "y": -282.9799
+    }
+   }
+  ],
+  "legend": "",
+  "id": "0",
+  "item_id": 577,
+  "over_floor": {
+   "value": 90,
+   "display": true,
+   "vd": 90
+  },
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 150,
+   "y": -282.979
+  },
+  "center3d": {
+   "x": 150,
+   "y": -282.979
+  },
+  "id_room_zone": "_8rnlg",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r"
+ }
+}

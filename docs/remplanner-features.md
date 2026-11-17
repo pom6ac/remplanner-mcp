@@ -932,3 +932,105 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
   MCP: `pillar_add kind=gypsum_box`.
 - **Линия зонирования** (`zone_delimiters[]`, `vertexes` с привязкой к ребру комнаты)
   — эталон `ui-ref-replan-zone` снят; MCP-инструмент — следующий PR.
+### 7.9. Размеры и комментарии [код + пробы 113-*, 2026-11-17]
+
+Нижняя панель: «Добавить размер» (линейка; с Ctrl — только замер, temp-размер
+не сохраняется) и «Текстовый комментарий» (кнопка **PRO**; на бесплатном тарифе
+клик по ней заблокирован — поведение записи на бесплатном тарифе не проверено).
+
+- **Ручной размер** (`model.rulers[id]`): `{id, p1, p2 (см, Y вниз), offset {val, side}
+  (отступ размерной линии, side "a"|"l"|"r"), plan (лист: "a" — исходный,
+  "furniture" — лист мебели; размер создаётся на текущем листе), plan_ 0,
+  prs {room:0, mode:1}, p1_target/p2_target, show_everywhere, color}`. Цвет —
+  палитра UI (по умолчанию `#ed143d`). «Задать длину» в контекстном меню —
+  `LIB.correctValue(5..5000 см)`; там же цвет, «Показать на всех листах»,
+  «Разделить на участки» (split: вторая половина цепляется
+  `p2_target {target_name:"ruler"}`), «Переместить», «Удалить».
+- **Привязки**: конец размера магнитится к **предметам** — пишется
+  `p1_target/p2_target {target_id, target_name, target_plan, target_angle,
+  point_delta_x/y}`; при переносе/повороте предмета конец следует за ним
+  (Ruler.update: поворот delta на разницу углов). Цепочка размеров: при переносе
+  p1 источника p2 прицепленного следует (checkLinkedRulers). Перенос размера
+  целиком (ruler_move) или «Задать длину» сбрасывает предметную привязку
+  переносимого конца. **К стенам и проёмам привязки нет** — магнит координатный,
+  при переносе стены размер остаётся на месте (проба 113-dims-snap2). При
+  удалении предмета редактор оставляет висячую привязку (проба
+  113-fixtures-after-item-delete2) — MCP item_delete снимает привязки затронутых
+  размеров и удаляет комментарий предмета.
+- **Текстовый комментарий** (`model.comments[id]`): `{id, pc (пузырь), points[]
+  (указатели; «Добавить указатель» — несколько), text (textarea maxlength 600),
+  label ("free" — свободный, "item" — предмета, "niche" — системный), plan,
+  plan_, prs, id_item/name_item, color (палитра, по умолчанию #000000), url,
+  font_size (defs.comments: 8..30, умолчание 10), framed (рамка и указатель,
+  по умолчанию true), show_everywhere, id_shield}`. Комментарий предмета —
+  один на предмет (`comment_already_exist`), обратная ссылка `props.comment.id`;
+  у socket_group на щитке — `props.comment.ids` по листам. Каноническая форма
+  текста на сервере: `'` → `` ` ``, `"` → ` `` ` (Comments.copy "server"); restore
+  редактора сводит все `` ` `` к `'` — двойные кавычки восстанавливаются с потерей
+  (проба 113-dims-escape, факт раздела).
+- **MCP**: dim_add/dim_update/dim_delete/dims_list (концы в мм, attach1/attach2 —
+  привязка к предметам, лист plan|furniture — публичные значения; в модели
+  a|furniture, отступ, цвет, show_everywhere; длина
+  50..50000 мм), comment_add/comment_update/comment_delete/comments_list (текст
+  1..600; «"» и «\`» канонизируются к виду restore — в ответе итоговый текст и
+  warning, этап 116; шрифт
+  8..30, attach_item, url http(s), цвет, рамка). Сверки при
+  нормализации и после save — dimsMismatches (идентичности в обе стороны; концы,
+  отступ, лист, цвет, текст по отображаемой форме (этап 116), шрифт, привязки;
+  допуск точек 0,1 см); dim_update пересчитывает цепочки размеров (p2_target →
+  ruler) транзитивно — Ruler.checkLinkedRulers.
+
+### 7.10. Тёплый пол, кондиционеры, вентиляция [код + пробы 122-*, 2026-11-17]
+
+Листы «Тёплые полы» (`plan_warm_floor`), «Кондиционеры» (`plan_conditioners`),
+«Вентиляция» (`plan_ventilation`), «Радиаторы» (`plan_radiators`).
+
+- **Контур тёплого пола** (`model.warm_floors[id]`): граф GraphLines с кольцевой
+  матрицей — `{id, polygon (4 точки от углов протяжки, см), matrix (кольцо 4×4 в обе
+  стороны {length:1}), vertexes/items (узлы "node"), type
+  ("warm_floor"|"warm_floor_ir"|"warm_floor_water"), length (периметр, м, 2 знака),
+  id_room, props {id, name: type}, area (м², 2 знака)}`. У водяного контура ещё
+  `step` (шаг укладки, см; 10), `type_water` ("spiral"), `direction` ("left"|"right"),
+  `length_pipes` (длина трубы, м — считает инструмент рисования, restore не
+  пересчитывает). Один контур на комнату: протяжка в той же комнате **заменяет**
+  контур (проба 122-climate-ui-click: IR заменил кабельный). Меню листа: Кабельный
+  (free), Инфракрасный (free), Терморегулятор (free), Соединительный провод (PRO),
+  Водяной теплый пол (PRO), Соединительные магистрали (PRO), группа «Коллекторные
+  узлы». Кабельная тёплая стена `warm_wall_cable` — в меню листа.
+- **Терморегулятор** `socket_thermo` — предмет-группа `socket_group` с планом
+  `{warm_floor: 11}` (как розетки), у стены, `over_floor {value:90, display:true,
+  vd:90}` (эталон ui-ref-climate-thermo-socket_thermo).
+- **Кондиционеры**: `conditioner` (внутренний блок, 75×25, anchor wall, 210 см),
+  `conditioner_engine` (внешний блок, 60×25, anchor wall, 20 см, self_height 40,
+  `dimensions {display:0, default_value_set:1}`; клик в UI создаёт комментарий
+  «Внешний блок» label "item" — restore его не создаёт), `floor_conditioner`
+  (27×48, свободно), `air_curtain` (тепловая завеса, 77×13, 250 см) — эталоны
+  ui-ref-climate-*. **Трасса кондиционера** `conditioner_wire` (PRO) — коллекция
+  `cables_conditioner`; **дренаж** `conditioner_drainage` (PRO) —
+  `pipes_conditioner`; оба — тот же граф GraphLines без plan (пробы 122-dev-*).
+- **Вентиляция**: `ventilation_gate` (решётка круглая), `ventilation_gate_long`,
+  `ventilation_diffusor`, `ventilation_diffusor_long`, `ventilation_system`
+  (приточно-вытяжная установка, 250 см), `inflow_valve`, `breezer`, `recuperator`,
+  `duct_indoor_block` — группа «Решетки и диффузоры»/«Оборудование» **PRO**;
+  вентиляторы `fan` (20×20), `fan_wall`, `fan_channel`, `bladed_fan`,
+  `wall_blade_fan` — free. **Воздуховоды** `ventpipe_out`/`ventpipe_in` (PRO) —
+  `pipes_ventilation`: у рёбер дополнительно `{length:1, width, type:"flat",
+  height}` (сечение), у линии `spots {}` (проба 122-dev-vent-ventpipe_out).
+- **Радиаторы** (лист «Радиаторы»): 9 предметов у стены (`radiator_bimetal` 70×12,
+  self_height 56, 10 см; `radiator_steel`, `radiator_iron`, `radiator_tubular_*`,
+  `vertical_radiator`, `floor_convector`, `convector_on_floor`,
+  `electro_convector`). **Магистрали отопления** `heat_pipe_hot` (подача)/
+  `heat_pipe_cold` (обратная, PRO) — `pipes_heat`; вершина подключённого радиатора —
+  тип "waterspot" с `pp` (точка подключения на габарите), как у труб воды
+  (проба 122-dev-heat).
+- **Магистрали тёплого пола** `warm_floor_pipe` (PRO) — `pipes_warm_floor`;
+  **соединительный провод** `warm_floor_wire` (PRO) — `cables_warm_floor`
+  (вершина терморегулятора — `"<id группы>|s|<id под-розетки>"`, тип
+  "socket_thermo", как у выключателей в cables).
+- **MCP** (этап 122): warm_floor_add/warm_floor_update/warm_floor_delete (мм;
+  один контур на комнату — INVALID_ARGUMENT при повторном), item_add для предметов
+  раздела, pipe_add kind=warm_floor|conditioner_drainage|heat_hot|heat_cold|
+  vent_out|vent_in (только узлы; подключения предметов — следующий PR);
+  компактный API — метки WF/PW/PC/PH/PV. Сверки при нормализации и после save:
+  контуры — polygon/кольцо/узлы/площадь/шаг (climate_mismatches), трубы климата —
+  общий слой газовых графов.

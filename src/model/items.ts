@@ -9,6 +9,7 @@ import type { MmPoint } from "./walls.ts";
 import type { ToolEntry } from "../catalog.ts";
 import { McpError } from "../errors.ts";
 import { pipesReferencingItem, refreshPipeForItem } from "./pipes.ts";
+import { detachRulerItemTargets, itemComments, deleteComment, refreshRulersForItem, refreshItemComments } from "./dims.ts";
 import {
   CABLE_LAMP_ITEMS, cablesReferencingItem, refreshCablesForItem, refreshSocketGroupSubs,
   STANDALONE_SOCKETS, SWITCH_ITEMS, type SocketGroupSub,
@@ -146,16 +147,45 @@ const COMM_DIMENSIONS_HIDDEN = new Set([
 const COMM_OVER_FLOOR_DISPLAY_FALSE = new Set(["radiator_old", "conditioner_cage"]);
 
 /**
- * Линейные сущности (этапы 57, 78, 84): «Газовый трубопровод» gas_line редактор ставит в
- * отдельную коллекцию model.pipes_gas, трубы водоснабжения/канализации
- * water_pipe/water_hot_pipe/drainage_pipe (лист «Водоснабжение») — в model.pipes, а
+ * Пункты меню климата (этап 122, эталоны ui-ref-climate-*): у conditioner_engine и
+ * floor_conditioner редактор пишет dimensions {display:0, default_value_set:1}
+ * (показ размеров выключен по умолчанию), у остальных — display:true.
+ */
+const CLIMATE_DIMENSIONS_DEFAULT = new Set(["conditioner_engine", "floor_conditioner"]);
+
+/**
+ * Климат-предметы (этап 122): группы каталога, чьи plan указывает листы разделов
+ * климата. У них over_floor берётся из каталога целиком (значение И display —
+ * эталоны ui-ref-climate-*: conditioner {value:210, display:false}, radiator_bimetal
+ * {value:10, display:false}, socket_thermo {value:90, display:true}).
+ */
+const CLIMATE_SHEETS = new Set(["warm_floor", "conditioners", "ventilation", "radiators"]);
+
+function isClimateEntry(entry: ToolEntry | undefined): boolean {
+  if (!entry) return false;
+  return Object.keys(entry.plan ?? {}).some((k) => CLIMATE_SHEETS.has(k));
+}
+
+/**
+ * Линейные сущности (этапы 57, 78, 84, 122): «Газовый трубопровод» gas_line редактор
+ * ставит в отдельную коллекцию model.pipes_gas, трубы водоснабжения/канализации
+ * water_pipe/water_hot_pipe/drainage_pipe (лист «Водоснабжение») — в model.pipes,
  * световые линии листа «Освещение» — led_strip в model.led_strips,
  * recessed_strip/surface_stripe/pendent_strip в model.stripes_light, line_light в
- * model.line_strips (этап 84); все — графы узлов, через item_add неприменимы.
+ * model.line_strips (этап 84); трубы/провода климата (этап 122): warm_floor_pipe
+ * (pipes_warm_floor), conditioner_wire (cables_conditioner — следующий PR),
+ * conditioner_drainage (pipes_conditioner), heat_pipe_hot/heat_pipe_cold (pipes_heat),
+ * ventpipe_out/ventpipe_in (pipes_ventilation), warm_floor_wire (cables_warm_floor —
+ * следующий PR), warm_floor/warm_floor_ir/warm_floor_water (контуры model.warm_floors —
+ * warm_floor_add), warm_wall_cable (Кабельная тёплая стена — формат не снят, следующий PR);
+ * все — графы или контуры, через item_add неприменимы.
  */
 export const LINE_TOOLS = new Set([
   "gas_line", "water_pipe", "water_hot_pipe", "drainage_pipe",
   "led_strip", "recessed_strip", "surface_stripe", "pendent_strip", "line_light",
+  "warm_floor", "warm_floor_ir", "warm_floor_water", "warm_floor_wire", "warm_floor_pipe",
+  "conditioner_wire", "conditioner_drainage", "heat_pipe_hot", "heat_pipe_cold",
+  "ventpipe_out", "ventpipe_in", "warm_wall_cable",
 ]);
 
 /** Подсказка для LINE_TOOLS: каким инструментом ставится линия. */
@@ -164,6 +194,7 @@ export function lineToolHint(name: string): string {
   if (name === "led_strip") return "led_strip_add";
   if (name === "line_light") return "line_light_add";
   if (name === "recessed_strip" || name === "surface_stripe" || name === "pendent_strip") return "stripe_add";
+  if (name === "warm_floor" || name === "warm_floor_ir" || name === "warm_floor_water") return "warm_floor_add";
   return "pipe_add";
 }
 
@@ -295,9 +326,14 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
   }
 
   const id = `_${newId(5)}`;
+  const climate = isClimateEntry(entry);
   const overFloor = params.elevationMm !== undefined
     ? { value: r2(mmToCm(params.elevationMm)), display: !COMM_OVER_FLOOR_DISPLAY_FALSE.has(params.name) && entry?.group !== "waterspots" }
-    : entry?.group === "waterspots" && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
+    : climate && entry?.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
+      // этап 122: у климат-предметов over_floor из каталога целиком (значение и display,
+      // эталоны ui-ref-climate-*: conditioner {value:210, display:false})
+      ? { value: r2((entry.over_floor as { value: number }).value), display: (entry.over_floor as { display?: boolean }).display !== false }
+      : entry?.group === "waterspots" && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
       ? { value: r2((entry.over_floor as { value: number }).value), display: false }
       : entry?.group === "lights" && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
         ? { value: r2((entry.over_floor as { value: number }).value), display: (entry.over_floor as { display?: boolean }).display !== false }
@@ -368,7 +404,10 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
       demount: 0,
       // этап 55, ревью №3 / этап 57: display — как в эталонах UI (у пяти видов лестниц
       // и пяти видов «Коммуникаций» false)
-      dimensions: { display: !STAIR_DIMENSIONS_HIDDEN.has(params.name) && !COMM_DIMENSIONS_HIDDEN.has(params.name) },
+      // этап 122: у conditioner_engine/floor_conditioner — {display:0, default_value_set:1}
+      dimensions: CLIMATE_DIMENSIONS_DEFAULT.has(params.name)
+        ? ({ display: 0, default_value_set: 1 } as unknown as { display: boolean })
+        : { display: !STAIR_DIMENSIONS_HIDDEN.has(params.name) && !COMM_DIMENSIONS_HIDDEN.has(params.name) },
       rotated: 0,
       // этап 55, ревью №3 / этап 57: подъём над полом — в форме редактора {value, display};
       // display — по эталонам UI (у radiator_old/conditioner_cage false, у прочих true).
@@ -435,11 +474,17 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   if (params.center !== undefined || params.angleDeg !== undefined) {
     refreshCablesForItem(model, params.itemId);
   }
+  // этап 113: транзитивный пересчёт затронутых привязок размеров (формула
+  // Ruler.update редактора) и комментариев, привязанных к предмету
+  if (params.center !== undefined || params.angleDeg !== undefined) {
+    refreshRulersForItem(model, params.itemId);
+    refreshItemComments(model, params.itemId);
+  }
   return props;
 }
 
 /** item_delete: предмет, подключённый к трубе или связи, удаляется только после них. */
-export function deleteItem(model: Model, itemId: string): void {
+export function deleteItem(model: Model, itemId: string): { detached_rulers: string[]; deleted_comments: string[] } {
   if (!model.items[itemId]) throw new McpError("NOT_FOUND", `предмет ${itemId} не найден`);
   const linked = pipesReferencingItem(model, itemId);
   if (linked.length > 0) {
@@ -460,6 +505,13 @@ export function deleteItem(model: Model, itemId: string): void {
     );
   }
   delete model.items[itemId];
+  // этап 113: привязки размеров к предмету снимаются (геометрия размеров
+  // сохраняется; редактор оставил бы висячую привязку — проба 113-fixtures),
+  // комментарий предмета (label "item") удаляется каскадно
+  const detached = detachRulerItemTargets(model, itemId);
+  const comments = itemComments(model, itemId);
+  for (const c of comments) deleteComment(model, c.id);
+  return { detached_rulers: detached, deleted_comments: comments.map((c) => c.id) };
 }
 
 /** items_list (опционально по комнате-точке). */

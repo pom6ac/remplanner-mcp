@@ -387,6 +387,117 @@ export type Cable = {
   [key: string]: unknown;
 };
 
+/**
+ * Контур тёплого пола (лист «Тёплые полы», инструмент warm_floor/warm_floor_ir/
+ * warm_floor_water, model.warm_floors, этап 122, 2026-11-17). Класс GraphLines —
+ * тот же формат графа, что pipes/pipes_gas: vertexes — узлы type "node" (point в см,
+ * кольцо контура), matrix — кольцо N×N в обе стороны ({length:1}), items — карта
+ * id узла → "node". Плюс собственные поля: polygon — точки контура (см, Y вниз),
+ * type — "warm_floor"|"warm_floor_ir"|"warm_floor_water", length — периметр контура
+ * в метрах (2 знака), id_room — комната контура, props {id, name: type}, area —
+ * площадь в м² (2 знака). У водяного тёплого пола (warm_floor_water) ещё step — шаг
+ * укладки, см (10), type_water — "spiral", direction — "left"|"right", length_pipes —
+ * длина трубы контура, м (считает инструмент рисования; хранится как пользовательское
+ * свойство, редактор на restore не пересчитывает). Один контур на комнату: повторная
+ * протяжка в комнате заменяет контур (проба 122-climate-ui-click).
+ */
+export type WarmFloor = {
+  id: string;
+  polygon: Point[];
+  matrix: ({ length: number } | null)[][];
+  vertexes: GasLineVertex[];
+  items: Record<string, string>;
+  type: "warm_floor" | "warm_floor_ir" | "warm_floor_water" | (string & {});
+  /** Периметр контура, м (2 знака). */
+  length: number;
+  id_room: string | null;
+  props: { id: string; name: string };
+  /** Площадь контура, м² (2 знака). */
+  area: number;
+  /** Водяной тёплый пол: шаг укладки, см. */
+  step?: number;
+  /** Водяной тёплый пол: схема укладки ("spiral"). */
+  type_water?: string;
+  /** Водяной тёплый пол: направление укладки ("left"|"right"). */
+  direction?: string;
+  /** Водяной тёплый пол: длина трубы контура, м. */
+  length_pipes?: number;
+  [key: string]: unknown;
+};
+
+/**
+ * Привязка конца размера (этап 113, ревью 117 R2): target_id/target_name —
+ * пользовательские; item-target (target_name — имя предмета каталога) несёт
+ * target_plan (план предмета), target_angle и point_delta — смещение конца от
+ * центра предмета (см) на момент привязки; эти поля пересчитываются при
+ * переносе предмета. Ruler-target (target_name "ruler", форма Ruler.split(),
+ * эталон 113-ruler-src-full.json) полей предметной привязки не пишет — они
+ * необязательные.
+ */
+export type RulerTarget = {
+  target_id: string;
+  target_name: string;
+  target_plan?: Record<string, number>;
+  target_angle?: number;
+  point_delta_x?: number;
+  point_delta_y?: number;
+};
+
+/**
+ * Ручной размер (model.rulers, кнопка «Добавить размер», этап 113, 2026-11-17):
+ * эталоны tests/fixtures/ui-ref-dims-*.json. p1/p2 — концы в см (ось Y вниз),
+ * offset {val, side} — отступ размерной линии (см; side "a" — авто, "l"/"r" —
+ * сторона), plan — лист ("a" — исходный план, "furniture" — лист мебели),
+ * plan_ 0, prs {room:0, mode:1}, p1_target/p2_target — привязки к предметам или
+ * другим размерам, show_everywhere — «показать на всех листах», color — цвет
+ * (палитра UI, по умолчанию #ed143d). К стенам/проёмам концы магнитятся только
+ * координатно (без target): при переносе стены размер не следует (проба 113).
+ */
+export type RulerEntity = {
+  id: string;
+  p1: Point;
+  p2: Point;
+  offset: { val: number; side: string };
+  plan: string;
+  plan_: number;
+  prs: { room: number; mode: number };
+  p1_target?: RulerTarget | null;
+  p2_target?: RulerTarget | null;
+  show_everywhere?: number;
+  color: string;
+  [key: string]: unknown;
+};
+
+/**
+ * Текстовый комментарий (model.comments, кнопка «Текстовый комментарий» в нижней
+ * панели, PRO в UI; этап 113): points — точки-указатели (одна или несколько),
+ * pc — центр пузыря, text (≤ 600 символов), label "free"|"item"|"niche",
+ * font_size 8..30 (умолчание defs.comments.defaultFontSize = 10), framed — рамка
+ * и указатель (по умолчанию true), color (палитра UI, по умолчанию #000000),
+ * url — прикреплённая ссылка, id_item/name_item — привязка к предмету
+ * (label "item"; такой комментарий перемещается вместе с предметом),
+ * show_everywhere — «показать на всех листах».
+ */
+export type CommentEntity = {
+  id: string;
+  pc: Point;
+  points: Point[];
+  text: string;
+  label: string;
+  plan: string;
+  plan_: number;
+  prs: { room: number; mode: number };
+  name_item?: string;
+  id_item?: string;
+  color?: string;
+  url?: string;
+  font_size: number;
+  framed?: boolean | number;
+  show_everywhere?: number;
+  id_shield?: string;
+  [key: string]: unknown;
+};
+
 export type Model = {
   v: number;
   id: string;
@@ -419,8 +530,20 @@ export type Model = {
   line_strips?: Record<string, LineStrip>;
   /** Соединительные провода «выключатель → светильник» (лист «Выключатели» → cable); у старых моделей может отсутствовать. */
   cables?: Record<string, Cable>;
-  rulers: Record<string, unknown>;
-  comments: Record<string, unknown>;
+  /** Контуры тёплого пола (лист «Тёплые полы» → warm_floor/warm_floor_ir/warm_floor_water); у старых моделей может отсутствовать. */
+  warm_floors?: Record<string, WarmFloor>;
+  /** Магистрали тёплого пола (лист «Тёплые полы» → warm_floor_pipe); у старых моделей может отсутствовать. */
+  pipes_warm_floor?: Record<string, Pipe>;
+  /** Дренаж кондиционеров (лист «Кондиционеры» → conditioner_drainage); у старых моделей может отсутствовать. */
+  pipes_conditioner?: Record<string, Pipe>;
+  /** Магистрали отопления (лист «Радиаторы» → heat_pipe_hot/heat_pipe_cold); у старых моделей может отсутствовать. */
+  pipes_heat?: Record<string, Pipe>;
+  /** Воздуховоды (лист «Вентиляция» → ventpipe_out/ventpipe_in); у старых моделей может отсутствовать. */
+  pipes_ventilation?: Record<string, Pipe>;
+  /** Ручные размеры (кнопка «Добавить размер»); у старых моделей может отсутствовать. */
+  rulers?: Record<string, RulerEntity>;
+  /** Текстовые комментарии (кнопка «Текстовый комментарий», PRO в UI); может отсутствовать. */
+  comments?: Record<string, CommentEntity>;
   total_height: number;
   final: boolean;
   rooms1?: Record<string, unknown>;
