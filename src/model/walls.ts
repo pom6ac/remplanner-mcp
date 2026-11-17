@@ -253,6 +253,14 @@ function makeWall(model: Model, p1: Point, p2: Point, params: { thicknessMm?: nu
       details: { kind: "partition_material_invalid", material },
     });
   }
+  // ревью 129 C4: симметрично — материал перегородки c_* на исходной стене plan:"a"
+  // не проходит (обход PRO-гейта c_glass/c_bar и чужой лист материалов)
+  if (params.plan !== "c" && material.startsWith("c_")) {
+    throw new McpError("INVALID_ARGUMENT", `материал «${material}» — материал перегородок листа «Перегородки», у исходных стен (plan:"a") свои материалы`, {
+      hint: "для исходных стен используйте a_block и другие a_*; перегородка — wall_add с kind=partition",
+      details: { kind: "initial_material_invalid", material },
+    });
+  }
   const id = uniqueId(model);
   const wall: Wall = {
     id,
@@ -810,7 +818,24 @@ export function updateWall(model: Model, params: UpdateWallParams): Wall {
       refreshWallHolesSafe(wall);
     }
 
-    if (params.material) wall.material = params.material;
+    if (params.material) {
+      // ревью 129 C4: материал перегородки c_* на исходной стене (plan:"a") не проходит,
+      // материал исходных стен a_* на перегородке — как в makeWall
+      const targetIsPartition = wall.plan === "c";
+      if (targetIsPartition && params.material.startsWith("a_")) {
+        throw new McpError("INVALID_ARGUMENT", `материал «${params.material}» — материал исходных стен, у перегородок листа «Перегородки» свои материалы`, {
+          hint: "для plan:\"c\" используйте c_pgb, c_block, c_brick, c_gypsum, c_glass (PRO), c_bar (PRO)",
+          details: { kind: "partition_material_invalid", material: params.material, wall_id: wall.id },
+        });
+      }
+      if (!targetIsPartition && params.material.startsWith("c_")) {
+        throw new McpError("INVALID_ARGUMENT", `материал «${params.material}» — материал перегородок листа «Перегородки», у исходных стен (plan:"a") свои материалы`, {
+          hint: "для исходных стен используйте a_block и другие a_*; перегородка — wall_add с kind=partition",
+          details: { kind: "initial_material_invalid", material: params.material, wall_id: wall.id },
+        });
+      }
+      wall.material = params.material;
+    }
     // ревью 105 R2: сектора демонтажа стены и соседей следуют за геометрией; участок,
     // вышедший за пределы после сокращения, — атомарный отказ
     syncSectors(model, oldAxes);

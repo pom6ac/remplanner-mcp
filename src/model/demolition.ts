@@ -118,6 +118,55 @@ function axisLength(wall: Wall): number {
   return Math.hypot(wall.p2.x - wall.p1.x, wall.p2.y - wall.p1.y);
 }
 
+/**
+ * Развёрнута ли ось стены относительно канонического направления (ревью 129 C1):
+ * нормализатор редактора может поменять p1/p2 местами, физическая стена та же.
+ * Каноническое направление — лексикографически большее (p1 → p2 «вправо-вниз»).
+ */
+function axisIsReversed(wall: Wall): boolean {
+  return wall.p2.x < wall.p1.x || (wall.p2.x === wall.p1.x && wall.p2.y < wall.p1.y);
+}
+
+/**
+ * Канонический осевой отрезок стены (ревью 129 C2): направление приведено к
+ * каноническому, координаты вдоль оси — в мировых величинах (см). Стена,
+ * переименованная нормализатором, узнаётся по геометрии оси в любом направлении.
+ */
+function axisSegmentOf(wall: Wall): { ux: number; uy: number; offset: number; a: number; b: number } | null {
+  const dx = wall.p2.x - wall.p1.x;
+  const dy = wall.p2.y - wall.p1.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-9) return null;
+  let ux = dx / len;
+  let uy = dy / len;
+  if (uy < 0 || (uy === 0 && ux < 0)) {
+    ux = -ux;
+    uy = -uy;
+  }
+  const offset = -uy * wall.p1.x + ux * wall.p1.y;
+  const t1 = wall.p1.x * ux + wall.p1.y * uy;
+  const t2 = wall.p2.x * ux + wall.p2.y * uy;
+  return { ux, uy, offset, a: Math.min(t1, t2), b: Math.max(t1, t2) };
+}
+
+const SEG_TOL_CM = 0.5;
+
+function axisSegmentsMatch(s1: { ux: number; uy: number; offset: number; a: number; b: number }, s2: { ux: number; uy: number; offset: number; a: number; b: number }): boolean {
+  return Math.abs(s1.ux - s2.ux) <= 1e-6 && Math.abs(s1.uy - s2.uy) <= 1e-6 &&
+    Math.abs(s1.offset - s2.offset) <= SEG_TOL_CM &&
+    Math.abs(s1.a - s2.a) <= SEG_TOL_CM && Math.abs(s1.b - s2.b) <= SEG_TOL_CM;
+}
+
+/** Есть ли на стене хоть одна пометка демонтажа (стена/узлы/участки/проёмы/замена). */
+function hasDemolitionMarks(wall: Wall): boolean {
+  if (wall.demount === 1 || wall.p1.demount === 1 || wall.p2.demount === 1) return true;
+  if (Object.keys(sectorsOf(wall)).length > 0) return true;
+  for (const h of Object.values(wall.holes ?? {})) {
+    if (h.demount === 1 || h.hasReplacement) return true;
+  }
+  return false;
+}
+
 function sectorsOf(wall: Wall): Record<string, { id: string; pc: Point; width: number }> {
   const s = wall.sectors as Record<string, { id: string; pc: Point; width: number }> | undefined;
   return s ?? {};
@@ -231,7 +280,8 @@ export function demolishCancel(model: Model, params: DemolishCancelParams): { wa
     const wall = wallOf(model, params.id);
     if (params.sector_id !== undefined) {
       const sectors = sectorsOf(wall);
-      if (!(params.sector_id in sectors)) {
+      // ревью 129 C3: только собственные свойства — «toString»/«constructor» не проходят
+      if (!Object.hasOwn(sectors, params.sector_id)) {
         throw new McpError("NOT_FOUND", `участок демонтажа ${params.sector_id} не найден на стене ${wall.id}`, {
           details: { kind: "sector_not_found", wall_id: wall.id, sector_id: params.sector_id },
         });
@@ -294,16 +344,23 @@ export function replacementOf(wall: Wall, hole: Hole): Hole | null {
   return replacementPairOf(wall, hole);
 }
 
-/** Семантический снимок демонтажа стены (id секторов исключены — редактор их пересоздаёт). */
+/**
+ * Семантический снимок демонтажа стены (id секторов исключены — редактор их пересоздаёт).
+ * Ревью 129 C1: инвариантен к направлению оси — разворот p1/p2 нормализатором не
+ * меняет снимок: участки и центр замены приводятся к каноническому направлению
+ * (t → len−t у развёрнутой стены).
+ */
 export function demolitionSignature(wall: Wall): DemolitionSig {
   const len = axisLength(wall);
   const ux = len > 0 ? (wall.p2.x - wall.p1.x) / len : 1;
   const uy = len > 0 ? (wall.p2.y - wall.p1.y) / len : 0;
+  const rev = axisIsReversed(wall);
+  const canon = (t: number) => (rev ? len - t : t);
   const sectors = Object.values(sectorsOf(wall))
-    .map((s) => ({
-      t: (s.pc.x - wall.p1.x) * ux + (s.pc.y - wall.p1.y) * uy,
-      width: s.width,
-    }))
+    .map((s) => {
+      const t = (s.pc.x - wall.p1.x) * ux + (s.pc.y - wall.p1.y) * uy;
+      return { t: canon(t), width: s.width };
+    })
     .sort((a, b) => a.t - b.t || a.width - b.width);
   const holes: Record<string, DemolitionHoleSig> = {};
   for (const [hid, h] of Object.entries(wall.holes ?? {})) {
@@ -319,7 +376,7 @@ export function demolitionSignature(wall: Wall): DemolitionSig {
           type: rep.type,
           width: rep.width,
           height: rep.height,
-          center: holeOffsetCm(wall, rep) + rep.width / 2,
+          center: canon(holeOffsetCm(wall, rep) + rep.width / 2),
         };
       }
     }
@@ -341,6 +398,9 @@ const TOL_CM = 0.5;
  * до save (после normalize) и после save по GET — флаги демонтажа и участки обязаны
  * сохраниться; изменённый id сектора, перестроенные связи и производная геометрия
  * редактора блокировкой не считаются.
+ * Ревью 129 C2: стену под прежним ID нормализатор может перенумеровать — пара ищется
+ * по геометрии оси (как в guard R10, в любом направлении), один-к-одному; стена
+ * с пометками демонтажа без пары — расхождение, а не пропуск.
  */
 export function demolitionMismatches(
   before: Record<string, Wall> | undefined,
@@ -349,9 +409,36 @@ export function demolitionMismatches(
   const problems: string[] = [];
   const b = before ?? {};
   const a = after ?? {};
+  const usedAfter = new Set<string>();
+  const pairOf = (id: string, wallB: Wall): Wall | undefined => {
+    const direct = a[id];
+    if (direct) {
+      usedAfter.add(id);
+      return direct;
+    }
+    // сопоставление по геометрии оси — смена ID стены не пропускает сверку
+    const segB = axisSegmentOf(wallB);
+    if (!segB) return undefined;
+    for (const [aid, aw] of Object.entries(a)) {
+      if (usedAfter.has(aid)) continue;
+      const segA = axisSegmentOf(aw);
+      if (segA && axisSegmentsMatch(segB, segA)) {
+        usedAfter.add(aid);
+        return aw;
+      }
+    }
+    return undefined;
+  };
   for (const [id, wallB] of Object.entries(b)) {
-    const wallA = a[id];
-    if (!wallA) continue; // потерю стены ловит общий слой (wallAxisSetsEqual)
+    const wallA = pairOf(id, wallB);
+    if (!wallA) {
+      // потерю стены без пометок ловит общий слой (wallAxisSetsEqual); здесь —
+      // только случай, когда пропали пометки демонтажа вместе со стеной
+      if (hasDemolitionMarks(wallB)) {
+        problems.push(`wall ${id}: стена с пометками демонтажа отсутствует после операции`);
+      }
+      continue;
+    }
     const sigB = demolitionSignature(wallB);
     const sigA = demolitionSignature(wallA);
     if (sigB.demount !== sigA.demount) {
@@ -370,13 +457,15 @@ export function demolitionMismatches(
         const s1 = sigB.sectors[i]!;
         const s2 = sigA.sectors[i]!;
         if (Math.abs(s1.t - s2.t) > TOL_CM || Math.abs(s1.width - s2.width) > TOL_CM) {
-          problems.push(`wall ${id}: участок демонтажа ${i} изменился (${Math.round(s1.t * 10)}..+${Math.round(s1.width * 10)} см → ${Math.round(s2.t * 10)}..+${Math.round(s2.width * 10)} см)`);
+          // величины в мм (t/width в см × 10) — ревью 129 C6
+          problems.push(`wall ${id}: участок демонтажа ${i} изменился (${Math.round(s1.t * 10)}..+${Math.round(s1.width * 10)} мм → ${Math.round(s2.t * 10)}..+${Math.round(s2.width * 10)} мм)`);
         }
       }
     }
     for (const [hid, h] of Object.entries(sigB.holes)) {
-      // ревью 105 R5: отсутствующий ожидаемый проём — расхождение, а не пропуск
-      if (a[id]?.holes[hid] === undefined) {
+      // ревью 105 R5: отсутствующий ожидаемый проём — расхождение, а не пропуск;
+      // ревью 129 C5: holes:null у серверной модели (T27) — не TypeError
+      if ((wallA.holes ?? {})[hid] === undefined) {
         problems.push(`wall ${id}: проём ${hid} отсутствует после операции`);
         continue;
       }

@@ -263,6 +263,28 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     }
   };
 
+  /**
+   * Выбор материала и плана по kind (ревью 129 C7a — одна функция вместо копипасты
+   * в wall_add/walls_add_polyline/wall_update). kind=partition: нормализация к
+   * публичному ключу (строгий enum, ревью 105 R6) и флаг PRO-гейта — c_glass проходит
+   * тот же гейт, что и glass. kind=initial: материал c_* перегородок отклоняется
+   * (ревью 129 C4 — обход PRO-гейта c_glass/c_bar).
+   */
+  const resolveWallMaterial = (kind: "initial" | "partition" | undefined, material: string | undefined): { plan: "a" | "c"; material: string; pro: boolean } => {
+    if (kind === "partition") {
+      const key = partitionMaterialKey(material ?? "pgb");
+      return { plan: "c", material: PARTITION_MATERIALS[key], pro: PARTITION_PRO_MATERIALS.has(key) };
+    }
+    const mat = material ?? "a_block";
+    if (/^c_/.test(mat)) {
+      throw new McpError("INVALID_ARGUMENT", `материал «${mat}» — материал перегородок листа «Перегородки», у исходных стен (plan:"a") свои материалы`, {
+        hint: "для исходных стен используйте a_block и другие a_*; перегородка — wall_add с kind=partition",
+        details: { kind: "initial_material_invalid", material: mat },
+      });
+    }
+    return { plan: "a", material: mat, pro: false };
+  };
+
   const compactEntity = (model: Model, predicate: (c: ReturnType<typeof compactModel>) => unknown) => {
     // комнаты — из кеша workspace (нормализованная модель), если в model.rooms2 их ещё нет
     const compact = compactModel(model, wsOf().rooms());
@@ -288,22 +310,13 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         const ws = wsOf();
         const isPartition = a["kind"] === "partition";
-        let material: string;
-        if (isPartition) {
-          // ревью 105 R6: сначала нормализация к публичному ключу (строгий enum —
-          // c_nonsense/constructor → INVALID_ARGUMENT), затем PRO-гейт по ключу —
-          // c_glass проходит тот же гейт, что и glass
-          const key = partitionMaterialKey((a["material"] as string | undefined) ?? "pgb");
-          if (PARTITION_PRO_MATERIALS.has(key)) await assertProMaterialAllowed();
-          material = PARTITION_MATERIALS[key];
-        } else {
-          material = (a["material"] as string | undefined) ?? "a_block";
-        }
+        const resolved = resolveWallMaterial(a["kind"] as "initial" | "partition" | undefined, a["material"] as string | undefined);
+        if (resolved.pro) await assertProMaterialAllowed();
         const { result: wall, warnings } = await ws.applyWalls("wall_add", (m) => addWall(m, {
           start: a["start"] as MmPoint, end: a["end"] as MmPoint,
           thicknessMm: (a["thickness_mm"] as number | undefined) ?? (isPartition ? 100 : undefined),
-          material,
-          plan: isPartition ? "c" : "a",
+          material: resolved.material,
+          plan: resolved.plan,
           role: a["role"] as "wall" | "balcony" | undefined,
         }));
         return ok({ ...compactEntity(ws.model, (c) => c.walls.find((w) => w.site_id === wall.id) ?? null), ...(warnings.length ? { warnings } : {}) });
@@ -323,23 +336,14 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         const ws = wsOf();
         const isPartition = a["kind"] === "partition";
-        let material: string;
-        if (isPartition) {
-          // ревью 105 R6: сначала нормализация к публичному ключу (строгий enum —
-          // c_nonsense/constructor → INVALID_ARGUMENT), затем PRO-гейт по ключу —
-          // c_glass проходит тот же гейт, что и glass
-          const key = partitionMaterialKey((a["material"] as string | undefined) ?? "pgb");
-          if (PARTITION_PRO_MATERIALS.has(key)) await assertProMaterialAllowed();
-          material = PARTITION_MATERIALS[key];
-        } else {
-          material = (a["material"] as string | undefined) ?? "a_block";
-        }
+        const resolved = resolveWallMaterial(a["kind"] as "initial" | "partition" | undefined, a["material"] as string | undefined);
+        if (resolved.pro) await assertProMaterialAllowed();
         const { result: walls, warnings } = await ws.applyWalls("walls_add_polyline", (m) => addPolyline(m, {
           points: a["points"] as MmPoint[],
           closed: a["closed"] as boolean | undefined,
           thicknessMm: (a["thickness_mm"] as number | undefined) ?? (isPartition ? 100 : undefined),
-          material,
-          plan: isPartition ? "c" : "a",
+          material: resolved.material,
+          plan: resolved.plan,
         }));
         return ok({ ...compactEntity(ws.model, (c) => c.walls.filter((w) => walls.some((x) => x.id === w.site_id))), ...(warnings.length ? { warnings } : {}) });
       },
@@ -414,12 +418,17 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         const ws = wsOf();
         // ревью 105 R6: материал перегородки (plan:c) — тот же строгий enum и PRO-гейт,
-        // что у wall_add; материал исходных стен не трогается
+        // что у wall_add; ревью 129 C4/C7a: материал c_* на исходной стене отклоняется
+        const targetPlan = resolveWall(ws.model, a["wall_id"] as string).plan;
         let material = a["material"] as string | undefined;
-        if (material !== undefined && resolveWall(ws.model, a["wall_id"] as string).plan === "c") {
-          const key = partitionMaterialKey(material);
-          if (PARTITION_PRO_MATERIALS.has(key)) await assertProMaterialAllowed();
-          material = PARTITION_MATERIALS[key];
+        if (material !== undefined) {
+          if (targetPlan === "c") {
+            const resolved = resolveWallMaterial("partition", material);
+            if (resolved.pro) await assertProMaterialAllowed();
+            material = resolved.material;
+          } else {
+            resolveWallMaterial("initial", material);
+          }
         }
         const { result: wall, warnings } = await ws.applyWalls("wall_update", (m) => updateWall(m, {
           wallId: resolveWall(m, a["wall_id"] as string).id,
