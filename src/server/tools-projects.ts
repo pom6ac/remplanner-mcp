@@ -1,14 +1,26 @@
-import { writeFileSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { z } from "zod";
 import { SCENARIO_HINT, mmInt, mmPoint } from "./context.ts";
 import type { ServerContext } from "./context.ts";
 import { ok, tool, type ToolDefLike as ToolDef } from "./toolkit.ts";
 import { McpError } from "../errors.ts";
+import { inspectPath, writePrivateFile } from "../fs-safe.ts";
 import type { Model } from "../model/types.ts";
 import { clearEntityCollections, replaceEntityCollections, MODEL_ENTITY_COLLECTIONS } from "../model/collections.ts";
 
 // T18: инструменты сессии и проектов (design §7.1).
+
+/**
+ * B3 (аудит 65): id проекта/планировки — числовые строки (как отдаёт сайт);
+ * нечисловое значение отклоняется схемой ещё до HTTP и workspace.
+ */
+const NUMERIC_ID = /^\d+$/;
+const objectIdSchema = z.string().regex(NUMERIC_ID, "object_id — числовой id проекта (project_list/project_create)");
+const planIdSchema = z.string().regex(NUMERIC_ID, "plan_id — числовой id планировки");
+
+/** B3 (аудит 65): лимит размера файла плана при импорте (проверка до чтения). */
+export const MAX_PLAN_FILE_BYTES = 10 * 1024 * 1024;
 
 /** Поля, по которым опознаётся модель в .plan (для проверки формата при импорте). */
 const PLAN_MODEL_KEYS = new Set<string>([
@@ -53,7 +65,24 @@ function planFileError(e: unknown, p: string, kind: "import" | "export" = "impor
 }
 
 /** Прочитать и разобрать файл .plan: JSON-объект с моделью ({model: …} или сама модель). */
-function readPlanFile(p: string): Model {
+export function readPlanFile(p: string, options: { maxBytes?: number } = {}): Model {
+  const maxBytes = options.maxBytes ?? MAX_PLAN_FILE_BYTES;
+  // B3 (аудит 65): проверки до чтения — symlink, не-обычный файл, размер.
+  let stat;
+  try {
+    stat = inspectPath(p);
+  } catch (e) {
+    throw planFileError(e, p);
+  }
+  if (stat.symlink) {
+    throw new McpError("INVALID_ARGUMENT", `файл является символической ссылкой, импорт отклонён: ${shownPath(p)}`);
+  }
+  if (!stat.regular) {
+    throw new McpError("INVALID_ARGUMENT", `путь не является обычным файлом: ${shownPath(p)}`);
+  }
+  if (stat.size > maxBytes) {
+    throw new McpError("INVALID_ARGUMENT", `файл слишком большой (${stat.size} байт, лимит ${maxBytes}): ${shownPath(p)}`);
+  }
   let raw: string;
   try {
     raw = readFileSync(p, "utf8");
@@ -121,8 +150,8 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
         "Повторный project_open перечитывает сервер и СБРАСЫВАЕТ несохранённые правки (это способ отказаться от правок). " +
         "Если сервер отдал непустой проект (save_id > 0 или непустой data), а модель разобралась пустой — ошибка MODEL_PARSE_EMPTY.",
       {
-        object_id: z.string().min(1).describe("id проекта (project_list или project_create)"),
-        plan_id: z.string().optional().describe("id планировки; по умолчанию основной"),
+        object_id: objectIdSchema.describe("id проекта (project_list или project_create)"),
+        plan_id: planIdSchema.optional().describe("id планировки; по умолчанию основной"),
       },
       async (args) => {
         const objectId = args["object_id"] as string;
@@ -156,7 +185,7 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
     project_rename: tool(
       "Переименовать проект аккаунта (нужен вход). Не работает с анонимными проектами. Название ≤ 40 символов.",
       {
-        object_id: z.string().min(1),
+        object_id: objectIdSchema,
         title: z.string().min(1).max(40),
       },
       async (args) => {
@@ -177,8 +206,10 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
         const scope = (args["scope"] as string | undefined) ?? "full";
         const payload = scope === "current" ? ws.model : { model: ws.model, saved_at: new Date().toISOString() };
         try {
-          writeFileSync(args["path"] as string, JSON.stringify(payload, null, 1));
+          // B3/B4 (аудит 65): атомарная запись, 0600, отказ на symlink/не-обычную цель.
+          writePrivateFile(args["path"] as string, JSON.stringify(payload, null, 1));
         } catch (e) {
+          if (e instanceof McpError) throw e;
           throw planFileError(e, args["path"] as string, "export");
         }
         return ok({ path: args["path"], scope, bytes: JSON.stringify(payload).length });

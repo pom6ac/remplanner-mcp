@@ -1,7 +1,8 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { BACKUPS_DIR } from "./config.ts";
+import { ensurePrivateDir, writePrivateFile } from "./fs-safe.ts";
 import { McpError, maskSecrets } from "./errors.ts";
 import type { SessionState } from "./session.ts";
 import type { LoadedModel } from "./api.ts";
@@ -1373,6 +1374,14 @@ export class Workspace {
    * (инцидент 2026-11-15), его фактические object_id/plan_id принимаются как целевые.
    */
   async open(objectId: string, planId = "1", opts: { anon?: boolean } = {}): Promise<OpenProject> {
+    // B3 (аудит 65): id проекта/планировки — только числовые (как отдаёт сайт);
+    // нечисловая строка не доходит до HTTP и не попадает в имена бэкап-файлов.
+    if (!/^\d+$/.test(objectId)) {
+      throw new McpError("INVALID_ARGUMENT", `object_id должен быть числовым id проекта (project_list/project_create), получено: «${objectId.slice(0, 30)}»`);
+    }
+    if (!/^\d+$/.test(planId)) {
+      throw new McpError("INVALID_ARGUMENT", `plan_id должен быть числовым id планировки, получено: «${planId.slice(0, 30)}»`);
+    }
     const loaded = await this.deps.loadModel(this.deps.session, objectId, planId);
     this.modelInternal = toModel(structuredClone(loaded.model));
     // Ревью v0.1.1 №2: валидная пустая модель — не потеря данных, новый или очищенный
@@ -1776,17 +1785,27 @@ export class Workspace {
 
   private backupPath(): string {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    return join(BACKUPS_DIR, `${this.project!.objectId}-${this.project!.planId}-${stamp}.json`);
+    // B3 (аудит 65): objectId/planId в имя файла — только безопасный basename
+    // (всё, кроме [0-9A-Za-z_-], заменяется на "_"), traversal исключён.
+    const safe = (v: string) => v.replace(/[^0-9A-Za-z_-]/g, "_").slice(0, 40) || "0";
+    return join(BACKUPS_DIR, `${safe(this.project!.objectId)}-${safe(this.project!.planId)}-${stamp}.json`);
   }
 
   /** Снимок модели в backups/ перед каждым сохранением. */
   writeBackup(): string {
     const path = this.backupPath();
-    mkdirSync(BACKUPS_DIR, { recursive: true });
-    writeFileSync(
+    // B3 (аудит 65, ревью 164 m3; ревью 166 n1): BACKUPS_DIR не должен быть
+    // symlink наружу. lstat-проверка ДО ensurePrivateDir: chmodSync следует
+    // по symlink, и при прежнем порядке цель ссылки успевала получить chmod 700
+    // до отказа. Несуществующий каталог — не symlink, создаётся обычным путём.
+    const rootStat = lstatSync(BACKUPS_DIR, { throwIfNoEntry: false });
+    if (rootStat?.isSymbolicLink()) {
+      throw new McpError("INTERNAL", "каталог резервных копий — символическая ссылка — запись отменена");
+    }
+    ensurePrivateDir(BACKUPS_DIR);
+    writePrivateFile(
       path,
       JSON.stringify({ object_id: this.project!.objectId, plan_id: this.project!.planId, save_id: this.project!.saveId, saved_at: new Date().toISOString(), model: this.modelInternal }, null, 1),
-      { mode: 0o600 },
     );
     return path;
   }
