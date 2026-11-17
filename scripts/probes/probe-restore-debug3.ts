@@ -37,4 +37,9 @@ async function main() {
   await tryRestore('13_bare_bak_no_link_keep_holes', (() => { const c = JSON.parse(JSON.stringify(raw)); for (const id of Object.keys(c.walls)) { delete c.walls[id].p1.link; delete c.walls[id].p2.link; for (const p of ['p1','p2']) c.walls[id][p].bak = { x: c.walls[id][p].x, y: c.walls[id][p].y }; } return c; })());
   await browser.close();
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+// Ревью 159 m5 (инцидент 158): main() — только при прямом запуске файла;
+// импорт модуля не должен запускать живой сценарий.
+if (process.argv[1]?.endsWith("probe-restore-debug3.ts")) {
+  main().catch((e) => { console.error(e); process.exit(1); });
+}
+

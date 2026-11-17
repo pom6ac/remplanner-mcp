@@ -202,4 +202,12 @@ async function main() {
   await page.waitForTimeout(1500);
   await browser.close();
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+// Ревью 159 m5 (инцидент 158): main() — только при явном аргументе refs.
+// Импорт модуля не должен запускать headed Chrome и живой сценарий,
+// перезаписывающий эталоны: без refs печатаем usage и выходим.
+if (process.argv[2] === 'refs') {
+  main().catch((e) => { console.error(e); process.exit(1); });
+} else {
+  console.error('Запуск: node scripts/probe-normalize.ts refs (без аргумента refs сценарий не выполняется)');
+  process.exit(1);
+}

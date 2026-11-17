@@ -52,4 +52,9 @@ async function main() {
   }
   await browser.close();
 }
-main().catch((e) => { console.error(e); process.exit(1); });
+// Ревью 159 m5 (инцидент 158): main() — только при прямом запуске файла;
+// импорт модуля не должен запускать живой сценарий.
+if (process.argv[1]?.endsWith("probe-restore-debug2.ts")) {
+  main().catch((e) => { console.error(e); process.exit(1); });
+}
+
