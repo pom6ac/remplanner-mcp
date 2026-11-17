@@ -184,6 +184,118 @@ function stripVertexIdRoom<T>(lines: T): T {
   return lines;
 }
 
+/** Предмет с обратными ссылками связи «выключатель → светильник» (этап 88). */
+type CableLinkItem = {
+  name?: string;
+  cables?: { cable_id?: unknown };
+  socket_group?: Array<{ name?: string; id?: string; cables?: { cable_id?: unknown } }>;
+};
+
+/**
+ * Сверка подключений связь↔предметы в обе стороны (этап 88, по образцу
+ * pipeConnectionMismatches): у каждой вершины-выключателя под-розетка хранит
+ * cables.cable_id (МАССИВ — socket_group multi), содержащий id связи; у каждой
+ * вершины-светильника cables.cable_id (СКАЛЯР) указывает на связь; каждая обратная
+ * ссылка обеих сторон — на существующую связь, чьи вершины содержат этот предмет.
+ * Полная сверка обеих сторон: нет лишних, нет пропущенных, нет висячих.
+ */
+function cableConnectionMismatches(
+  expectedCables: Record<string, GasLineSig>,
+  expectedItems: Record<string, CableLinkItem>,
+  gotCables: Record<string, GasLineSig>,
+  gotItems: Record<string, CableLinkItem>,
+): string[] {
+  const out: string[] = [];
+  /** Слоты выключателя связи: [itemId, subId] по вершинам type "switch". */
+  const switchSlots = (cable: GasLineSig): [string, string][] => {
+    const res: [string, string][] = [];
+    for (const v of cable.vertexes ?? []) {
+      if (v.type !== "switch" || typeof v.id !== "string") continue;
+      const idx = v.id.indexOf("|s|");
+      if (idx > 0) res.push([v.id.slice(0, idx), v.id.slice(idx + 3)]);
+    }
+    return res;
+  };
+  /** id связи из обратной ссылки (скаляр или массив). */
+  const cableIdsOf = (link: { cable_id?: unknown } | undefined): string[] => {
+    const v = link?.cable_id;
+    if (typeof v === "string" && v !== "") return [v];
+    if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
+    return [];
+  };
+  /** Ссылки ожидаемой стороны: id связи → множество «предмет(под-розетка)». */
+  const collectRefs = (cables: Record<string, GasLineSig>, items: Record<string, CableLinkItem>, side: string): Map<string, Set<string>> => {
+    const refs = new Map<string, Set<string>>();
+    const addRef = (cableId: string, holder: string): boolean => {
+      if (!cables[cableId]) {
+        out.push(`${side}: висячая ссылка на связь ${cableId} (у ${holder}) — связи нет`);
+        return false;
+      }
+      if (!refs.has(cableId)) refs.set(cableId, new Set());
+      refs.get(cableId)!.add(holder);
+      return true;
+    };
+    for (const [itemId, item] of Object.entries(items)) {
+      for (const sub of item.socket_group ?? []) {
+        const ids = cableIdsOf(sub.cables);
+        if (ids.length > 0 && !(SWITCH_KEYS.has(sub.name ?? ""))) {
+          out.push(`${side}: под-розетка «${sub.name ?? "?"}» (${itemId}/${sub.id ?? "?"}) хранит ссылки cables (${ids.join(", ")}) — cables пишут только выключатели`);
+        }
+        for (const id of ids) addRef(id, `под-розетка ${itemId}/${sub.id ?? "?"}`);
+      }
+      for (const id of cableIdsOf(item.cables)) addRef(id, `предмет ${itemId}`);
+    }
+    return refs;
+  };
+  const expRefs = collectRefs(expectedCables, expectedItems, "ожидание");
+  const gotRefs = collectRefs(gotCables, gotItems, "сервер");
+  for (const [cableId, holders] of expRefs) {
+    for (const holder of holders) {
+      if (!gotRefs.get(cableId)?.has(holder)) {
+        out.push(`${cableId}: обратная ссылка потеряна на сервере (${holder})`);
+      }
+    }
+  }
+  for (const [cableId, holders] of gotRefs) {
+    for (const holder of holders) {
+      if (!expRefs.get(cableId)?.has(holder)) {
+        out.push(`${cableId}: лишняя обратная ссылка на сервере (${holder})`);
+      }
+    }
+  }
+  // прямая сторона: каждая вершина-предмет связи имеет обратную ссылку
+  for (const side of [["ожидание", expectedCables, expectedItems], ["сервер", gotCables, gotItems]] as const) {
+    const [label, cables, items] = side;
+    for (const [cableId, cable] of Object.entries(cables)) {
+      for (const [slotGid, slotSid] of switchSlots(cable)) {
+        const item = items[slotGid];
+        const sub = item?.socket_group?.find((s) => s.id === slotSid);
+        if (!sub) {
+          out.push(`${label}: ${cableId} — под-розетка ${slotSid} группы ${slotGid} не найдена`);
+          continue;
+        }
+        const ids = cableIdsOf(sub.cables);
+        if (!ids.includes(cableId)) out.push(`${label}: ${cableId} — под-розетка ${slotGid}/${slotSid} не ссылается на связь`);
+      }
+      for (const v of cable.vertexes ?? []) {
+        if (v.type === "node" || v.type === "switch") continue;
+        const item = items[String(v.id)];
+        if (!item) { out.push(`${label}: ${cableId} — предмет ${String(v.id)} не найден`); continue; }
+        const ids = cableIdsOf(item.cables);
+        if (!ids.includes(cableId)) out.push(`${label}: ${cableId} — светильник ${String(v.id)} не ссылается на связь`);
+      }
+    }
+  }
+  return out;
+}
+
+/** Имена выключателей (под-розетки, хранящие cables) — для проверки формы ссылок. */
+const SWITCH_KEYS = new Set([
+  "light_switch", "light_switch_double", "light_switch_triple",
+  "light_switch_through", "light_switch_through_double",
+  "light_switch_cross", "light_switch_cross_double", "light_dimmer",
+]);
+
 /** id проёмов модели: id holes по всем стенам (ревью v0.1.1 №4/№5 — сравнение по id). */function openingIds(model: Model): Set<string> {
   const out = new Set<string>();
   for (const [wid, w] of Object.entries(model.walls ?? {})) {
@@ -1120,6 +1232,23 @@ export class Workspace {
           });
         }
       }
+      // этап 88: связи «выключатель → светильник» после нормализации не теряются
+      // и не искажаются (граф + обе стороны обратных ссылок)
+      const wsCables = stripVertexIdRoom(structuredClone((this.modelInternal!.cables ?? {}) as Record<string, GasLineSig>)) as Record<string, GasLineSig>;
+      const normCables = ((norm.model as Record<string, unknown>).cables ?? {}) as Record<string, unknown>;
+      const lostCablesNorm = missingIds(new Set(Object.keys(wsCables)), new Set(Object.keys(normCables)));
+      const cablesGraphNorm = gasLineGraphMismatches(structuredClone(wsCables), normCables, "связь выключатель → светильник");
+      const cablesConnNorm = cableConnectionMismatches(
+        (this.modelInternal!.cables ?? {}) as Record<string, GasLineSig>,
+        (this.modelInternal!.items ?? {}) as Record<string, CableLinkItem>,
+        normCables as Record<string, GasLineSig>,
+        (norm.model as { items?: Record<string, CableLinkItem> }).items ?? {},
+      );
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник» — мутация отменена`, {
+          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm },
+        });
+      }
       // нормализованная копия становится канонической
       this.modelInternal = toModel(structuredClone(norm.model as unknown as Record<string, unknown>));
       if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
@@ -1354,6 +1483,8 @@ export class Workspace {
     const expectedLedStrips = structuredClone((norm.model as { led_strips?: Record<string, GasLineSig> }).led_strips ?? {});
     const expectedStripesLight = structuredClone((norm.model as { stripes_light?: Record<string, GasLineSig> }).stripes_light ?? {});
     const expectedLineStrips = structuredClone((norm.model as { line_strips?: Record<string, GasLineSig> }).line_strips ?? {});
+    // этап 88: ожидаемые связи «выключатель → светильник» — из нормализованной модели
+    const expectedCables = structuredClone((norm.model as { cables?: Record<string, GasLineSig> }).cables ?? {});
     const localLedIds = new Set(Object.keys(this.modelInternal!.led_strips ?? {}));
     const localStripeIds = new Set(Object.keys(this.modelInternal!.stripes_light ?? {}));
     const localLineIds = new Set(Object.keys(this.modelInternal!.line_strips ?? {}));
@@ -1370,6 +1501,10 @@ export class Workspace {
     const lostLedStrips = missingIds(localLedIds, gotLedIds);
     const lostStripesLight = missingIds(localStripeIds, gotStripeIds);
     const lostLineStrips = missingIds(localLineIds, gotLineIds);
+    // этап 88: потери связей при нормализации
+    const localCableIds = new Set(Object.keys(this.modelInternal!.cables ?? {}));
+    const gotCableIds = new Set(Object.keys((norm.model as { cables?: Record<string, unknown> }).cables ?? {}));
+    const lostCables = missingIds(localCableIds, gotCableIds);
     // ревью 59 №1: до save сверяется семантический граф локальной и нормализованной
     // моделей (узлы, тип, рёбра matrix, длина) — normalizer, обнуливший рёбра,
     // не проходит как «verified»
@@ -1413,6 +1548,19 @@ export class Workspace {
       (norm.model as { line_strips?: Record<string, unknown> }).line_strips ?? {},
       "линейный свет",
     );
+    // этап 88: связи «выключатель → светильник» — семантическая сверка локальной и
+    // нормализованной моделей (id_room вершин — производное, как у световых линий)
+    const cablesGraphNorm = gasLineGraphMismatches(
+      stripVertexIdRoom(structuredClone(this.modelInternal!.cables ?? {})) as Record<string, GasLineSig>,
+      (norm.model as { cables?: Record<string, unknown> }).cables ?? {},
+      "связь выключатель → светильник",
+    );
+    const cablesConnNorm = cableConnectionMismatches(
+      (this.modelInternal!.cables ?? {}) as Record<string, GasLineSig>,
+      (this.modelInternal!.items ?? {}) as Record<string, CableLinkItem>,
+      (norm.model as { cables?: Record<string, GasLineSig> }).cables ?? {},
+      (norm.model as { items?: Record<string, CableLinkItem> }).items ?? {},
+    );
     // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
     const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
     const rolesNorm = wallRoleMismatches(this.modelInternal!.walls as unknown as Record<string, { role?: string; p1: Point; p2: Point }>, expectedWalls);
@@ -1433,7 +1581,9 @@ export class Workspace {
       lostOpenings.length > 0 || lostItems.length > 0 || lostPillars.length > 0 || lostRigels.length > 0 || lostGasLines.length > 0 || lostPipes.length > 0 ||
       gasGraphNorm.length > 0 || pipesGraphNorm.length > 0 || pipesConnNorm.length > 0 || bordersNorm.length > 0 || holesNorm.length > 0 || rolesNorm.length > 0 || propsNorm.length > 0 ||
       lostLedStrips.length > 0 || lostStripesLight.length > 0 || lostLineStrips.length > 0 ||
-      ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0
+      lostCables.length > 0 ||
+      ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0 ||
+      cablesGraphNorm.length > 0 || cablesConnNorm.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -1459,9 +1609,12 @@ export class Workspace {
           lost_led_strips: lostLedStrips,
           lost_stripes_light: lostStripesLight,
           lost_line_strips: lostLineStrips,
+          lost_cables: lostCables,
           led_strip_mismatches: ledGraphNorm,
           stripes_light_mismatches: stripesGraphNorm,
           line_strips_mismatches: lineStripsGraphNorm,
+          cables_mismatches: cablesGraphNorm,
+          cables_connection_mismatches: cablesConnNorm,
         },
       });
     }
@@ -1529,6 +1682,15 @@ export class Workspace {
       const ledMismatch = gasLineGraphMismatches(expectedLedStrips, ledAfter, "светодиодная лента");
       const stripesMismatch = gasLineGraphMismatches(expectedStripesLight, stripesAfter, "трековая шина");
       const lineStripsMismatch = gasLineGraphMismatches(expectedLineStrips, lineStripsAfter, "линейный свет");
+      // этап 88: связи «выключатель → светильник» после save — граф и обе стороны ссылок
+      const cablesAfter = (after.model["cables"] as Record<string, unknown> | undefined) ?? {};
+      const cablesMismatch = gasLineGraphMismatches(expectedCables, cablesAfter, "связь выключатель → светильник");
+      const cablesConnAfter = cableConnectionMismatches(
+        expectedCables,
+        expectedItems as Record<string, CableLinkItem>,
+        cablesAfter as Record<string, GasLineSig>,
+        (itemsAfter as Record<string, CableLinkItem>) ?? {},
+      );
       // ревью 66 №3: роли стен после save — ограждение, ставшее обычной стеной, не «verified»
       const wallsAfterTyped = wallsAfter as Record<string, { role?: string; p1: Point; p2: Point }>;
       const wallRoleMismatch = wallRoleMismatches(expectedWalls, wallsAfterTyped);
@@ -1539,7 +1701,7 @@ export class Workspace {
         wallsAfterTyped as unknown as Record<string, BalconyWallProps>,
       );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && !roomsLost) {
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -1561,6 +1723,8 @@ export class Workspace {
             led_strip_mismatches: ledMismatch,
             stripes_light_mismatches: stripesMismatch,
             line_strips_mismatches: lineStripsMismatch,
+            cables_mismatches: cablesMismatch,
+            cables_connection_mismatches: cablesConnAfter,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
           },
         });

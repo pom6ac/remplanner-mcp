@@ -1,4 +1,4 @@
-import type { Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip } from "./types.ts";
+import type { Cable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
 import type { RoomPolygon } from "./items.ts";
 import { roomPolygons } from "./items.ts";
@@ -149,6 +149,20 @@ export type CompactLightStrip = {
   height_lowering_mm?: number;
 };
 
+/** Связь «выключатель → светильник» (лист «Выключатели», этап 88). */
+export type CompactCable = {
+  id: string;
+  site_id: string;
+  /** Вершина выключателя: id группы и под-розетки («<groupId>|s|<subId>» — формат редактора). */
+  switch_item: string;
+  /** Вершина светильника: id предмета. */
+  lamp_item: string;
+  /** Число вершин графа (включая промежуточные узлы). */
+  vertexes: number;
+  /** Длина, мм (в модели редактора метры). */
+  length_mm: number;
+};
+
 export type CompactFloorHole = {
   id: string;
   site_id: string;
@@ -185,6 +199,7 @@ export type CompactModel = {
   led_strips: CompactLightStrip[];
   stripes_light: CompactLightStrip[];
   line_strips: CompactLightStrip[];
+  cables: CompactCable[];
   total_height_mm: number;
 };
 
@@ -407,6 +422,21 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       };
     });
 
+  // связи «выключатель → светильник» (этап 88): метки CB
+  const compactCables = (src: Record<string, Cable> | undefined): CompactCable[] =>
+    Object.values(src ?? {}).map((cable, i) => {
+      const sw = cable.vertexes.find((v) => v.type === "switch");
+      const lamp = cable.vertexes.find((v) => v.type !== "node" && v.type !== "switch");
+      return {
+        id: `CB${i + 1}`,
+        site_id: cable.id,
+        switch_item: sw?.id ?? "",
+        lamp_item: lamp?.id ?? "",
+        vertexes: cable.vertexes.length,
+        length_mm: Math.round((cable.length ?? 0) * 1000),
+      };
+    });
+
   return {
     walls,
     rooms: compactRooms,
@@ -421,6 +451,7 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     led_strips: compactLightStrips(model.led_strips, "LS"),
     stripes_light: compactLightStrips(model.stripes_light, "SL"),
     line_strips: compactLightStrips(model.line_strips, "LL"),
+    cables: compactCables(model.cables),
     total_height_mm: round0(cmToMm(totalHeight)),
   };
 }

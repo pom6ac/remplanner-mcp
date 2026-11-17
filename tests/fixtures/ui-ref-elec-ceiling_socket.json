@@ -1,0 +1,59 @@
+{
+ "_source": "клик по UI PRO-проекта из env (проба 88-elec-live, headless Chromium; без сохранения, откат перезагрузкой), ID проекта/плана обезличены; id предмета и стены/комнаты обезличены (\"0\"), wall_line удалён; координаты заменены на синтетические (см)",
+ "menu_title": "Потолочная розетка",
+ "tool_id": "plannertool_ceiling_socket",
+ "catalog_defaults_cm": {
+  "id": 1386,
+  "group": "sockets",
+  "width": 14,
+  "height": 14,
+  "self_height": 0,
+  "plan": {
+   "sockets": 9
+  },
+  "anchor": "ceiling",
+  "over_floor": false,
+  "title": "Потолочная розетка"
+ },
+ "model_object": {
+  "name": "ceiling_socket",
+  "pc": {
+   "x": 150,
+   "y": 150
+  },
+  "id_room": "0",
+  "width": 14,
+  "height": 14,
+  "plan": {
+   "sockets": 9
+  },
+  "id": "0",
+  "item_id": 1386,
+  "self_height": 0,
+  "comment": {
+   "id": "_wbmxv"
+  },
+  "dimensions": {
+   "display": true
+  },
+  "angle": 0,
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 150,
+   "y": 143
+  },
+  "center3d": {
+   "x": 150,
+   "y": 143
+  },
+  "id_room_zone": "0"
+ }
+}

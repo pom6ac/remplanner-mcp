@@ -1,0 +1,93 @@
+{
+ "_source": "клик по UI анонимного проекта (headless Chromium, ID проекта/плана обезличены), проба 88-elec-fixtures, model project.copy(\"server\"), без сохранения; id предмета, под-розетки, id_wall/id_wall_old/id_room/id_room_zone обезличены (\"0\"); wall_line удалён; координаты — точки листа базы «коридор + 3 комнаты» (не идентифицируют)",
+ "menu_title": "Стандартная розетка",
+ "tool_id": "plannertool_socket",
+ "catalog_defaults_cm": {
+  "id": 20,
+  "group": "sockets",
+  "width": 14,
+  "height": 14,
+  "self_height": 0,
+  "plan": {
+   "sockets": 9
+  },
+  "anchor": "wall",
+  "over_floor": {
+   "value": 30,
+   "display": false
+  },
+  "title": "Стандартная розетка"
+ },
+ "model_object": {
+  "name": "socket_group",
+  "pc": {
+   "x": 60,
+   "y": -283
+  },
+  "angle": 180,
+  "projection": {
+   "x": 60,
+   "y": -290
+  },
+  "id_room": "0",
+  "width": 14,
+  "height": 14,
+  "plan": {
+   "sockets": 9
+  },
+  "socket_group": [
+   {
+    "name": "socket",
+    "id": "0",
+    "real_center": {
+     "x": 60,
+     "y": -283
+    },
+    "center": {
+     "x": 60,
+     "y": -283
+    },
+    "center_prs": {
+     "x": 60,
+     "y": -283
+    }
+   }
+  ],
+  "legend": "",
+  "id": "0",
+  "item_id": 577,
+  "over_floor": {
+   "value": 30,
+   "display": true,
+   "vd": 30
+  },
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 60,
+   "y": -283
+  },
+  "center3d": {
+   "x": 60,
+   "y": -283
+  },
+  "id_room_zone": "0",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r"
+ }
+}

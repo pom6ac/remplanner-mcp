@@ -23,6 +23,7 @@ export const MODEL_ENTITY_COLLECTIONS = [
   "led_strips",
   "stripes_light",
   "line_strips",
+  "cables",
   "rulers",
   "comments",
 ] as const;
