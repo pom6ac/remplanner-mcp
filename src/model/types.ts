@@ -386,18 +386,21 @@ export type Cable = {
 };
 
 /**
- * Привязка конца ручного размера к предмету (класс Ruler, бандл app.3.0):
- * target_name — имя предмета каталога, target_plan — его план (лист),
- * point_delta — смещение конца от центра предмета (см) на момент привязки.
- * target_name "ruler" — привязка к другому размеру (цепочка).
+ * Привязка конца размера (этап 113, ревью 117 R2): target_id/target_name —
+ * пользовательские; item-target (target_name — имя предмета каталога) несёт
+ * target_plan (план предмета), target_angle и point_delta — смещение конца от
+ * центра предмета (см) на момент привязки; эти поля пересчитываются при
+ * переносе предмета. Ruler-target (target_name "ruler", форма Ruler.split(),
+ * эталон 113-ruler-src-full.json) полей предметной привязки не пишет — они
+ * необязательные.
  */
 export type RulerTarget = {
   target_id: string;
   target_name: string;
-  target_plan: Record<string, number>;
-  target_angle: number;
-  point_delta_x: number;
-  point_delta_y: number;
+  target_plan?: Record<string, number>;
+  target_angle?: number;
+  point_delta_x?: number;
+  point_delta_y?: number;
 };
 
 /**

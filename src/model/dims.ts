@@ -334,11 +334,11 @@ export function refreshRulersForItem(model: Model, itemId: string): void {
     for (const key of ["p1_target", "p2_target"] as const) {
       const t = ruler[key];
       if (!t || t.target_id !== itemId || t.target_name === "ruler") continue;
-      const dAngle = ((t.target_angle - (item.angle ?? 0)) * Math.PI) / 180;
+      const dAngle = (((t.target_angle ?? 0) - (item.angle ?? 0)) * Math.PI) / 180;
       const cos = Math.cos(dAngle);
       const sin = Math.sin(dAngle);
-      const s = t.point_delta_x * cos + t.point_delta_y * sin;
-      const t2 = -t.point_delta_x * sin + t.point_delta_y * cos;
+      const s = (t.point_delta_x ?? 0) * cos + (t.point_delta_y ?? 0) * sin;
+      const t2 = -(t.point_delta_x ?? 0) * sin + (t.point_delta_y ?? 0) * cos;
       const np: Point = { x: r2(item.pc.x - s), y: r2(item.pc.y - t2) };
       ruler[key === "p1_target" ? "p1" : "p2"] = np;
       t.target_angle = item.angle ?? 0;
@@ -588,6 +588,15 @@ function pointEq(a: Point | undefined, b: Point | undefined, tol = DIM_POINT_TOL
   return Math.abs(a.x - b.x) <= tol && Math.abs(a.y - b.y) <= tol;
 }
 
+/**
+ * Сверка одной привязки (ревью 117 R2): различаются две формы — ruler-target
+ * (target_name "ruler", штатная форма Ruler.split() без point_delta/target_plan/
+ * target_angle, эталон 113-ruler-src-full.json) и item-target (привязка к
+ * предмету, с delta). Ruler-target сверяется по target_id/target_name; у
+ * item-target отсутствие delta на обеих сторонах — тоже не расхождение
+ * (undefined−undefined давало NaN и ложное «смещение изменилось»).
+ * target_plan/target_angle — производные, не блокируют.
+ */
 function targetMismatches(label: string, expected: RulerTarget | null | undefined, got: RulerTarget | null | undefined, out: string[]): void {
   if (!expected && !got) return;
   if (!expected || !got) {
@@ -599,7 +608,11 @@ function targetMismatches(label: string, expected: RulerTarget | null | undefine
     return;
   }
   if (expected.target_name !== got.target_name) out.push(`${label}: target_name привязки сменился (${expected.target_name} → ${got.target_name})`);
-  if (!pointEq({ x: expected.point_delta_x, y: expected.point_delta_y }, { x: got.point_delta_x, y: got.point_delta_y })) {
+  if (expected.target_name === "ruler") return;
+  const eDelta = { x: expected.point_delta_x, y: expected.point_delta_y };
+  const gDelta = { x: got.point_delta_x, y: got.point_delta_y };
+  if (eDelta.x === undefined && eDelta.y === undefined && gDelta.x === undefined && gDelta.y === undefined) return;
+  if (!pointEq({ x: eDelta.x ?? 0, y: eDelta.y ?? 0 }, { x: gDelta.x ?? 0, y: gDelta.y ?? 0 })) {
     out.push(`${label}: смещение привязки изменилось (delta ${expected.point_delta_x},${expected.point_delta_y} → ${got.point_delta_x},${got.point_delta_y})`);
   }
 }
