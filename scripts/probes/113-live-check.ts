@@ -45,7 +45,8 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 
 /** Служебные поля (меняются при каждом сохранении/открытии) и регенерируемые id
  *  (id комнат rooms1/rooms2 переименовываются по содержимому; id внутри eds2 —
- *  <regen>). rooms2/settings НЕ исключаются (урок R7 ревью 93). */
+ *  <regen>; eds2.*.id редактор перегенерирует при каждом пересчёте комнат).
+ *  rooms2/settings НЕ исключаются (урок R7 ревью 93). */
 function strip(m: any): string {
   const c = structuredClone(m);
   for (const k of ["errors", "logs", "log_plan", "session", "version", "drawing", "params", "final", "signals", "smeta_water_pipes", "save_id", "is_forced"]) delete c[k];
@@ -70,6 +71,13 @@ function strip(m: any): string {
     }
     return v;
   };
+  // id рёбер граней стен walls.*.eds2.*.id редактор перегенерирует при каждом
+  // пересчёте комнат (исключение перечислено в spec этапа 113)
+  if (c.walls && typeof c.walls === "object") {
+    for (const [wid, wall] of Object.entries<any>(c.walls)) {
+      if (wall?.eds2) c.walls[wid].eds2 = stripIds(wall.eds2);
+    }
+  }
   for (const key of ["rooms1", "rooms2"]) {
     if (c[key] && typeof c[key] === "object") {
       const entries = Object.entries<any>(c[key]).map(([rid, r]) => [rid, stripIds(r)] as const)
@@ -133,7 +141,7 @@ async function main() {
     if (itemIds.length > 0) {
       console.log("dim_add attached:", JSON.stringify(await call(client, "dim_add", {
         p1: { x: 1000, y: 2000 }, p2: { x: 3000, y: 2000 },
-        attach1: itemIds[0], offset_mm: 200,
+        attach1: itemIds[0], offset_mm: 200, offset_side: "l",
       })));
     }
     console.log("comment_add:", JSON.stringify(await call(client, "comment_add", {
