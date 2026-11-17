@@ -109,7 +109,7 @@ function uniqueId(model: Model): string {
     const id = newId(10);
     if (!(id in model.walls)) return id;
   }
-  throw new Error("не удалось сгенерировать id стены");
+  throw new McpError("INTERNAL", "не удалось сгенерировать id стены");
 }
 
 function totalHeight(model: Model): number {
@@ -441,7 +441,7 @@ export function addWall(model: Model, params: AddWallParams): Wall {
   return atomic(model, () => {
     let p1 = cm(params.start);
     let p2 = cm(params.end);
-    if (dist(p1, p2) < 1e-9) throw new Error("стена нулевой длины");
+    if (dist(p1, p2) < 1e-9) throw new McpError("INVALID_ARGUMENT", "стена нулевой длины");
     p1 = snapEnd(model, p1, p2, new Set());
     p2 = snapEnd(model, p2, p1, new Set());
     assertNoCrossing(model, p1, p2, new Set());
@@ -572,7 +572,7 @@ export function addRoomRect(model: Model, params: AddRoomRectParams): Wall[] {
 export function addPolyline(model: Model, params: AddPolylineParams): Wall[] {
   ensureModel(model);
   const pts = params.points;
-  if (pts.length < 2) throw new Error("ломаная требует минимум 2 точки");
+  if (pts.length < 2) throw new McpError("INVALID_ARGUMENT", "ломаная требует минимум 2 точки");
   return atomic(model, () => {
     const walls: Wall[] = [];
     const segs = params.closed ? pts.length : pts.length - 1;
@@ -591,7 +591,7 @@ export function addPolyline(model: Model, params: AddPolylineParams): Wall[] {
  *  dimensions="inner" (по умолчанию): заданный полигон — внутренняя граница помещения,
  *  стены смещаются наружу на полутолщину с прямым (miter) углом (находка №14 ревью). */
 export function addRoomPolygon(model: Model, params: AddRoomPolygonParams): Wall[] {
-  if (params.points.length < 3) throw new Error("полигон помещения требует минимум 3 точки");
+  if (params.points.length < 3) throw new McpError("INVALID_ARGUMENT", "полигон помещения требует минимум 3 точки");
   if ((params.dimensions ?? "inner") === "inner") {
     const pts = params.points.map(cm);
     const n = pts.length;
@@ -747,12 +747,12 @@ function faceLine(axis: Segment, u: Point, depth: number, side: number): Segment
  *  соседей переезжают (правило 5, R2-5), проёмы всех затронутых стен пересчитываются (R2-6). */
 export function moveWall(model: Model, params: MoveWallParams): Wall {
   const wall = model.walls[params.wallId];
-  if (!wall) throw new Error(`стена ${params.wallId} не найдена`);
+  if (!wall) throw new McpError("NOT_FOUND", `стена ${params.wallId} не найдена`);
   return atomic(model, () => {
     const oldAxes = snapshotAxes(model);
     const dir = sub(wall.p2, wall.p1);
     const len = Math.hypot(dir.x, dir.y);
-    if (len < 1e-6) throw new Error("стена нулевой длины");
+    if (len < 1e-6) throw new McpError("GEOMETRY_CONFLICT", "стена нулевой длины");
     const u = scale(dir, 1 / len);
     const n = leftNormal(u.x, u.y);
     const off = mmToCm(params.offsetMm);
@@ -802,7 +802,7 @@ export function moveWall(model: Model, params: MoveWallParams): Wall {
  *  Узлы и T-концы соседей переезжают вместе со стеной (правило 5). */
 export function updateWall(model: Model, params: UpdateWallParams): Wall {
   const wall = model.walls[params.wallId];
-  if (!wall) throw new Error(`стена ${params.wallId} не найдена`);
+  if (!wall) throw new McpError("NOT_FOUND", `стена ${params.wallId} не найдена`);
   return atomic(model, () => {
     const oldAxes = snapshotAxes(model);
     if (params.start || params.end) {
@@ -830,7 +830,7 @@ export function updateWall(model: Model, params: UpdateWallParams): Wall {
       const newLen = mmToCm(params.lengthMm);
       const dir = sub(wall.p2, wall.p1);
       const len = Math.hypot(dir.x, dir.y);
-      if (len < 1e-6) throw new Error("стена нулевой длины");
+      if (len < 1e-6) throw new McpError("GEOMETRY_CONFLICT", "стена нулевой длины");
       const u = scale(dir, 1 / len);
       const anchor = params.anchor ?? "end";
       if (anchor === "end") {
@@ -905,12 +905,12 @@ function shiftWall(model: Model, wall: Wall, v: Point): void {
  *  по pc. Входящие T-связи редактор переназначит сам при draw (правило 6). */
 export function splitWall(model: Model, wallId: string, atMm: number): { first: Wall; second: Wall } {
   const wall = model.walls[wallId];
-  if (!wall) throw new Error(`стена ${wallId} не найдена`);
+  if (!wall) throw new McpError("NOT_FOUND", `стена ${wallId} не найдена`);
   return atomic(model, () => {
     const dir = sub(wall.p2, wall.p1);
     const len = Math.hypot(dir.x, dir.y);
     const at = mmToCm(atMm);
-    if (at <= 1 || at >= len - 1) throw new Error("точка разреза слишком близко к краю стены");
+    if (at <= 1 || at >= len - 1) throw new McpError("INVALID_ARGUMENT", "точка разреза слишком близко к краю стены");
     const u = scale(dir, 1 / len);
     const mid = add(wall.p1, scale(u, at));
 
@@ -989,7 +989,7 @@ export function splitWall(model: Model, wallId: string, atMm: number): { first: 
 /** wall_delete: удаляет стену и её проёмы, снимает ссылки соседей на неё. */
 export function deleteWall(model: Model, wallId: string): { removedHoles: number } {
   const wall = model.walls[wallId];
-  if (!wall) throw new Error(`стена ${wallId} не найдена`);
+  if (!wall) throw new McpError("NOT_FOUND", `стена ${wallId} не найдена`);
   return atomic(model, () => {
     let removedHoles = Object.keys(wall.holes).length;
     for (const other of Object.values(model.walls)) {
@@ -1125,7 +1125,7 @@ export function unmatchedDanglingEnds(
 export function wallFaces(wall: Wall, walls: Record<string, Wall>): { l1: Point; l2: Point; r1: Point; r2: Point } {
   const dir = sub(wall.p2, wall.p1);
   const len = Math.hypot(dir.x, dir.y);
-  if (len < 1e-9) throw new Error(`стена ${wall.id} нулевой длины`);
+  if (len < 1e-9) throw new McpError("GEOMETRY_CONFLICT", `стена ${wall.id} нулевой длины`);
   const u = scale(dir, 1 / len);
   const n = leftNormal(u.x, u.y); // единичная нормаль к стороне l
   const halfOwn = wall.depth / 2;

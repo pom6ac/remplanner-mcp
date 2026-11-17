@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { BACKUPS_DIR } from "./config.ts";
-import { McpError } from "./errors.ts";
+import { McpError, maskSecrets } from "./errors.ts";
 import type { SessionState } from "./session.ts";
 import type { LoadedModel } from "./api.ts";
 import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, EditorRoom } from "./editor/adapter.ts";
@@ -1671,7 +1671,7 @@ export class Workspace {
       // ревью 139 m2: сбой пересчёта комнат в normalize не откатывается молча —
       // диагностическое предупреждение в результате мутации (код без данных пользователя)
       if (norm.roomsRebuild && norm.roomsRebuild !== "ok") {
-        warnings.push(`rooms_recalc_failed: ${norm.roomsRebuild}`);
+        warnings.push(maskSecrets(`rooms_recalc_failed: ${norm.roomsRebuild}`));
       }
       // этап 103: флаги демонтажа (demount, p1/p2.demount, sectors, holes[].demount)
       // после нормализации не теряются; id секторов редактор может пересоздать —
@@ -1918,7 +1918,7 @@ export class Workspace {
     // ревью 139 m2: сбой пересчёта комнат в normalize перед save — диагностическое
     // предупреждение в результате save (код без данных пользователя)
     if (norm.roomsRebuild && norm.roomsRebuild !== "ok") {
-      warnings.push(`rooms_recalc_failed: ${norm.roomsRebuild}`);
+      warnings.push(maskSecrets(`rooms_recalc_failed: ${norm.roomsRebuild}`));
     }
     // потеря проёмов/предметов — по id в копии редактора (ревью v0.1.1 №4)
     const localOpeningIds = openingIds(this.modelInternal!);
