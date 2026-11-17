@@ -17,6 +17,7 @@ import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./rend
 import { borderMismatches } from "./model/terraces.ts";
 import { levelHoleMismatches } from "./model/floorhole.ts";
 import { finishCompare } from "./model/finish.ts";
+import { roomsSaveCompare } from "./model/rooms-save.ts";
 import { dimsMismatches } from "./model/dims.ts";
 import type { Model as TerracesModel } from "./model/types.ts";
 
@@ -1937,6 +1938,20 @@ export class Workspace {
     const gotCoverage = wallAxisCoverageCm(normWalls as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
     // ревью 43 №4: комнаты с пользовательскими полями не исчезают при нормализации молча
     const normRooms = Object.keys((norm.model as { rooms2?: Record<string, unknown> }).rooms2 ?? {}).length;
+    // этап 126: комнаты до записи сверяются с нормализованной моделью — присутствие
+    // каждой комнаты по каноническому контуру и пользовательские поля (имя, зоны);
+    // допустимы только штатные топологии редактора (split/merge — предупреждение,
+    // перенос стены — строгая сверка имени). При штатном изменении стен пользователем
+    // (размыкание контура, перекомпоновка) потеря комнаты объяснима — предупреждение.
+    const roomsNormCheck = roomsSaveCompare(
+      (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined,
+      ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+      "normalize",
+    );
+    const roomsNormProblems = wallAxisSetsEqual(gotSegments, expected.segments) ? roomsNormCheck.problems : [];
+    if (wallAxisSetsEqual(gotSegments, expected.segments) === false && roomsNormCheck.problems.length > 0) {
+      warnings.push(`room_topology_changed: стены изменились, комнаты при нормализации не сверяются (${roomsNormCheck.problems.length}) — проверьте rooms_list после сохранения`);
+    }
     if (roomsBefore > 0 && normRooms === 0) {
       warnings.push(`редактор убрал комнаты при нормализации (${roomsBefore} → 0) — имя и отделка комнат могут быть потеряны; проверьте rooms_list после сохранения`);
     }
@@ -1948,7 +1963,7 @@ export class Workspace {
       lostCables.length > 0 ||
       ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0 ||
       cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 ||
-      dimsNorm.length > 0 || climateNorm.length > 0
+      dimsNorm.length > 0 || climateNorm.length > 0 || roomsNormProblems.length > 0
     ) {
       throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
         details: {
@@ -1984,10 +1999,12 @@ export class Workspace {
           finish_mismatches: finishNorm.problems,
           dims_mismatches: dimsNorm,
           climate_mismatches: climateNorm,
+          room_mismatches: roomsNormProblems,
         },
       });
     }
     warnings.push(...finishNorm.warnings);
+    warnings.push(...roomsNormCheck.warnings);
     let rounds = 0;
     let verified = false;
     let finalSaveId = p.saveId;
@@ -2132,7 +2149,14 @@ export class Workspace {
         },
       );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
-      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && !roomsLost) {
+      // этап 126: комнаты после save — строго (по каноническому контуру и
+      // пользовательским полям): частичная потеря N→M>0 и потеря имени/зон — не verified
+      const roomsAfterCheck = roomsSaveCompare(
+        ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+        ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
+        "save",
+      ).problems;
+      if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && !roomsLost) {
         verified = true;
         finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
         this.modelInternal = toModel(structuredClone(after.model));
@@ -2160,6 +2184,7 @@ export class Workspace {
             socket_group_mismatches: subsAfter,
             socket_group_derived_mismatches: subsDerivedAfter,
             rooms_expected: normRooms, rooms_on_server: roomsAfter,
+            room_mismatches: roomsAfterCheck,
             finish_mismatches: finishAfter,
             dims_mismatches: dimsAfter,
             climate_mismatches: climateAfter,
