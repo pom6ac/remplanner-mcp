@@ -1,0 +1,73 @@
+{
+ "_source": "клик по UI анонимного проекта (headless Chromium, ID проекта/плана обезличены), проба 88-elec-fixtures, model project.copy(\"server\"), без сохранения; id предмета, под-розетки, id_wall/id_wall_old/id_room/id_room_zone обезличены (\"0\"); wall_line удалён; координаты — точки листа базы «коридор + 3 комнаты» (не идентифицируют)",
+ "menu_title": "Силовая розетка",
+ "tool_id": "plannertool_socket_power",
+ "catalog_defaults_cm": {
+  "id": 575,
+  "group": "sockets",
+  "width": 14,
+  "height": 14,
+  "self_height": 0,
+  "plan": {
+   "sockets": 9
+  },
+  "anchor": "wall",
+  "over_floor": {
+   "value": 30,
+   "display": false
+  },
+  "title": "Силовая розетка"
+ },
+ "model_object": {
+  "name": "socket_power",
+  "pc": {
+   "x": 130,
+   "y": -283
+  },
+  "angle": 180,
+  "projection": {
+   "x": 130,
+   "y": -290
+  },
+  "id_room": "0",
+  "width": 14,
+  "height": 14,
+  "plan": {
+   "sockets": 9
+  },
+  "id": "0",
+  "item_id": 575,
+  "over_floor": {
+   "value": 30,
+   "display": true
+  },
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 130,
+   "y": -283
+  },
+  "center3d": {
+   "x": 130,
+   "y": -283
+  },
+  "id_room_zone": "0",
+  "id_wall": "0",
+  "id_wall_old": "0",
+  "wall_direction": "r"
+ }
+}

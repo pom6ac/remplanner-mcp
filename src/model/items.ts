@@ -9,6 +9,10 @@ import type { MmPoint } from "./walls.ts";
 import type { ToolEntry } from "../catalog.ts";
 import { McpError } from "../errors.ts";
 import { pipesReferencingItem, refreshPipeForItem } from "./pipes.ts";
+import {
+  CABLE_LAMP_ITEMS, cablesReferencingItem, refreshCablesForItem, refreshSocketGroupSubs,
+  STANDALONE_SOCKETS, SWITCH_ITEMS, type SocketGroupSub,
+} from "./electric.ts";
 
 // ---------- комнаты (канонические полигоны считает редактор: rooms2) ----------
 
@@ -208,6 +212,24 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
       details: { kind: "track_spot_requires_strip", item: entry.name },
     });
   }
+  // этап 88: соединительный провод — отдельная сущность model.cables, не предмет
+  if (entry && entry.name === "cable") {
+    throw new McpError("INVALID_ARGUMENT", "«cable» (Соединительная линия) — связь «выключатель → светильник», ставится инструментом cable_add (выключатель item_add, затем cable_add), а не item_add", {
+      details: { kind: "cable_tool_required" },
+    });
+  }
+  // этап 88: выводы проводов (лист «Розетки», группа wires) и кабели — отдельный PR
+  if (entry && entry.group === "wires") {
+    throw new McpError("INVALID_ARGUMENT", `«${entry.name}» (вывод провода, группа wires) пока не поддержан — раздел «Электропроводка» отдельным этапом`, {
+      details: { kind: "not_supported_yet", item: entry.name },
+    });
+  }
+  /** Розетка/выключатель у стены — группа socket_group (проба 88-elec-groups:
+   *  одиночная розетка и выключатель тоже пишутся как item name="socket_group";
+   *  socket_power/socket_380 — самостоятельные предметы, $SocketsGroup.types их не знает). */
+  const electricGroup = entry !== undefined
+    && (entry.group === "sockets" || entry.group === "switches")
+    && !STANDALONE_SOCKETS.has(entry.name);
   const widthCm = mmToCm(params.widthMm ?? (entry ? entry.width * 10 : 100));
   const depthCm = mmToCm(params.depthMm ?? (entry ? entry.height * 10 : 100));
   const selfHeightCm = mmToCm(params.heightMm ?? (entry ? entry.self_height * 10 : 0));
@@ -273,40 +295,93 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
   }
 
   const id = `_${newId(5)}`;
-  const props: ItemProps = {
-    id,
-    name: params.name,
-    pc: { x: r2(pc.x), y: r2(pc.y) },
-    angle: Math.round(angle),
-    width: r2(widthCm),
-    height: r2(depthCm),
-    self_height: r2(selfHeightCm),
-    plan: itemPlan(entry),
-    id_room: found.roomId ?? null,
-    id_wall: idWall,
-    layer: null,
-    comment: { id: "" },
-    demount: 0,
-    // этап 55, ревью №3 / этап 57: display — как в эталонах UI (у пяти видов лестниц
-    // и пяти видов «Коммуникаций» false)
-    dimensions: { display: !STAIR_DIMENSIONS_HIDDEN.has(params.name) && !COMM_DIMENSIONS_HIDDEN.has(params.name) },
-    rotated: 0,
-    // этап 55, ревью №3 / этап 57: подъём над полом — в форме редактора {value, display};
-    // display — по эталонам UI (у radiator_old/conditioner_cage false, у прочих true).
-    // Этап 78: у точек воды (waterspots) умолчание — из каталога (over_floor.value,
-    // эталон ui-ref-plumb-waterspot: {value:50, display:false}), display:false.
-    // Этап 84: у настенных светильников листа «Освещение» (bra и т.п.) умолчание —
-    // из каталога целиком с его display (эталон ui-ref-light-bra: {value:140, display:true});
-    // у потолочных (lightspot и др.) over_floor в модели нет (null).
-    over_floor: params.elevationMm !== undefined
-      ? { value: r2(mmToCm(params.elevationMm)), display: !COMM_OVER_FLOOR_DISPLAY_FALSE.has(params.name) && entry?.group !== "waterspots" }
-      : entry?.group === "waterspots" && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
-        ? { value: r2((entry.over_floor as { value: number }).value), display: false }
-        : entry?.group === "lights" && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
-          ? { value: r2((entry.over_floor as { value: number }).value), display: (entry.over_floor as { display?: boolean }).display !== false }
-          : null,
-  };
+  const overFloor = params.elevationMm !== undefined
+    ? { value: r2(mmToCm(params.elevationMm)), display: !COMM_OVER_FLOOR_DISPLAY_FALSE.has(params.name) && entry?.group !== "waterspots" }
+    : entry?.group === "waterspots" && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
+      ? { value: r2((entry.over_floor as { value: number }).value), display: false }
+      : entry?.group === "lights" && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
+        ? { value: r2((entry.over_floor as { value: number }).value), display: (entry.over_floor as { display?: boolean }).display !== false }
+        : entry && (entry.group === "sockets" || entry.group === "switches") && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
+          // этап 88: самостоятельные розетки (socket_power/socket_380) — редактор
+          // включает display (эталон ui-ref-elec-socket_power: {value:30, display:true})
+          ? { value: r2((entry.over_floor as { value: number }).value), display: true }
+          : null;
+  let props: ItemProps;
+  if (electricGroup) {
+    // этап 88: группа socket_group с одной под-розеткой (проба 88-elec-groups:
+    // одиночная розетка/выключатель редактор пишет группой из одного элемента;
+    // имя предмета всегда "socket_group", plan — план под-элемента).
+    // over_floor: редактор включает display и дописывает vd = value
+    // (эталоны ui-ref-elec-*: {value:30, display:true, vd:30}).
+    const ofValue = overFloor !== null
+      ? overFloor.value
+      : entry && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
+        ? r2((entry.over_floor as { value: number }).value)
+        : 0;
+    const angle180 = (() => {
+      let a = angle + 180;
+      if (a > 180) a -= 360;
+      if (a <= -180) a += 360;
+      return a;
+    })();
+    const sub: SocketGroupSub = {
+      name: params.name,
+      id: `_${newId(5)}`,
+      real_center: { x: r2(pc.x), y: r2(pc.y) },
+      center: { x: r2(pc.x), y: r2(pc.y) },
+      center_prs: { x: r2(pc.x), y: r2(pc.y) },
+    };
+    props = {
+      id,
+      name: "socket_group",
+      pc: { x: r2(pc.x), y: r2(pc.y) },
+      angle: Math.round(angle180),
+      width: r2(widthCm),
+      height: r2(depthCm),
+      self_height: 0,
+      plan: itemPlan(entry),
+      id_room: found.roomId ?? null,
+      id_wall: idWall,
+      layer: null,
+      comment: { id: "" },
+      demount: 0,
+      dimensions: { display: true },
+      rotated: 0,
+      socket_group: [sub],
+      legend: "",
+      over_floor: { value: ofValue, display: true, vd: ofValue },
+    };
+  } else {
+    props = {
+      id,
+      name: params.name,
+      pc: { x: r2(pc.x), y: r2(pc.y) },
+      angle: Math.round(angle),
+      width: r2(widthCm),
+      height: r2(depthCm),
+      self_height: r2(selfHeightCm),
+      plan: itemPlan(entry),
+      id_room: found.roomId ?? null,
+      id_wall: idWall,
+      layer: null,
+      comment: { id: "" },
+      demount: 0,
+      // этап 55, ревью №3 / этап 57: display — как в эталонах UI (у пяти видов лестниц
+      // и пяти видов «Коммуникаций» false)
+      dimensions: { display: !STAIR_DIMENSIONS_HIDDEN.has(params.name) && !COMM_DIMENSIONS_HIDDEN.has(params.name) },
+      rotated: 0,
+      // этап 55, ревью №3 / этап 57: подъём над полом — в форме редактора {value, display};
+      // display — по эталонам UI (у radiator_old/conditioner_cage false, у прочих true).
+      // Этап 78: у точек воды (waterspots) умолчание — из каталога (over_floor.value,
+      // эталон ui-ref-plumb-waterspot: {value:50, display:false}), display:false.
+      // Этап 84: у настенных светильников листа «Освещение» (bra и т.п.) умолчание —
+      // из каталога целиком с его display (эталон ui-ref-light-bra: {value:140, display:true});
+      // у потолочных (lightspot и др.) over_floor в модели нет (null).
+      over_floor: overFloor,
+    };
+  }
   model.items[id] = props;
+  if (electricGroup && idWall) refreshSocketGroupSubs(model, props);
   return props;
 }
 
@@ -326,6 +401,8 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   const item = model.items[params.itemId];
   if (!item) throw new McpError("NOT_FOUND", `предмет ${params.itemId} не найден`);
   const props = item;
+  const oldPc = { ...props.pc };
+  const oldAngle = props.angle;
   if (params.center) {
     const pc = { x: mmToCm(params.center.x), y: mmToCm(params.center.y) };
     const found = roomPolygons(model).find((room) => pointInPolygon(room.polygon, pc));
@@ -350,10 +427,18 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
     props.over_floor = { value: r2(mmToCm(params.elevationMm)), display };
   }
   if (params.comment !== undefined) props.comment = { id: params.comment };
+  // этап 88: транзитивный пересчёт затронутых привязок электрики — под-розетки
+  // группы (перенос/поворот) и вершины связей, ссылающиеся на предмет
+  if (Array.isArray(props.socket_group) && (params.center !== undefined || params.angleDeg !== undefined)) {
+    refreshSocketGroupSubs(model, props, oldPc, oldAngle);
+  }
+  if (params.center !== undefined || params.angleDeg !== undefined) {
+    refreshCablesForItem(model, params.itemId);
+  }
   return props;
 }
 
-/** item_delete: предмет, подключённый к трубе, удаляется только после pipe_delete. */
+/** item_delete: предмет, подключённый к трубе или связи, удаляется только после них. */
 export function deleteItem(model: Model, itemId: string): void {
   if (!model.items[itemId]) throw new McpError("NOT_FOUND", `предмет ${itemId} не найден`);
   const linked = pipesReferencingItem(model, itemId);
@@ -362,6 +447,16 @@ export function deleteItem(model: Model, itemId: string): void {
       "INVALID_ARGUMENT",
       `предмет ${itemId} подключён к трубе (${linked.map((p) => p.id).join(", ")}) — сначала удалите трубу pipe_delete, затем предмет`,
       { details: { kind: "pipe_referenced", pipes: linked.map((p) => p.id) } },
+    );
+  }
+  // этап 88: связь «выключатель → светильник» держит обратные ссылки предмета —
+  // удаление оставило бы висячие ссылки
+  const cables = cablesReferencingItem(model, itemId);
+  if (cables.length > 0) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `предмет ${itemId} подключён к связи «выключатель → светильник» (${cables.map((c) => c.id).join(", ")}) — сначала удалите связь cable_delete, затем предмет`,
+      { details: { kind: "cable_referenced", cables: cables.map((c) => c.id) } },
     );
   }
   delete model.items[itemId];

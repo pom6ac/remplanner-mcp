@@ -785,3 +785,48 @@ Esc — сбросить инструмент или меню; стрелки �
 колесо — масштаб; ЛКМ с протяжкой — панорама; Ctrl+клик — множественное выделение и расстояние до стен;
 Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** — удалить выделенное; Ctrl при рисовании размера — только замер.
 **[код]** Есть даже голосовые команды («включить/выключить магнит») через SpeechRecognition.
+
+### 7.6. Электрика: розетки и выключатели [код + пробы 88-elec-*/88-live-check, 2026-11-17]
+
+Листы «Розетки» (`plan_sockets`), «Выключатели» (`plan_light_connections`). Состав по
+каталогу (`global_tools`, группы `sockets`/`switches`) и бандлу app.3.0 (класс
+`Cabling extends TreeLiningGroup`, `Cable extends GraphLines`, `SocketsGroup`):
+
+- **Пристенные розетки и выключатели** — предметы-группы: одиночная постановка
+  (клик у стены) пишет item `name="socket_group"` с массивом `socket_group` из одной
+  под-розетки `{name, id, center, center_prs, real_center}`; клик рядом со стоящей
+  группой добавляет под-розетку в неё (шаг 7 см, ширина группы `7*(n+1)` см,
+  максимум 6 под-розеток). `socket_power`/`socket_380` — самостоятельные предметы
+  (не входят в `$SocketsGroup.types`); `ceiling_socket`/`floor_socket` (anchor
+  `ceiling`, PRO) — свободные предметы без `over_floor`. `socket_thermo` — лист
+  «Теплые полы». Высота установки: 30 см у розеток, 90 см у выключателей
+  (панель свойств — «Высота от пола»); редактор пишет `over_floor
+  {value, display: true, vd: value}` (display включает, vd — производное).
+- **Группы каталога**: `sockets` — socket, socket_ip44, socket_power, socket_380,
+  PRO: floor_socket, ceiling_socket, furniture_socket, socket_tv, socket_ip,
+  socket_usb, socket_hdmi, socket_phone, socket_audio (+ socket_thermo на тёплых
+  полах); `switches` — light_switch, light_switch_double, PRO: light_switch_triple,
+  light_dimmer, light_switch_through, light_switch_through_double,
+  light_switch_cross, light_switch_cross_double, light_switch_master + инструмент
+  `cable` («Соединительная линия», PRO).
+- **Связь «выключатель → светильник»** (`cable`) — коллекция `model.cables`
+  (класс `Cable extends GraphLines`; serialize = {id, matrix, vertexes, items, type,
+  color_custom, length, on_arc}, план — рантайм-поле "light_connections"). Вершины —
+  предметы: выключатель `{id: "<itemId>|s|<subId>", type: "switch"}` (id группы и
+  под-розетки соединяет `$SocketsGroup.generateIdSocket`; point = center под-розетки),
+  светильник `{id: "<itemId>", type: "lamp"}` (point = pc; ленты/шины — типы
+  "led_strip"/"line_strip"/"strip_light"), промежуточные узлы type "node".
+  Обратные ссылки: у под-розетки `cables.cable_id` — МАССИВ (socket_group — multi),
+  у светильника — скаляр; нормализация модели приводит легаси-скаляр под-розетки к
+  объектной форме. Лимит связей на под-розетку — число клавиш (switches_list:
+  1/2/3, dimmer 1000); у светильника одно подключение; правило «выключатель уже в
+  дереве светильника» (cabling_already_connect_group). Дуга (`on_arc`) — пунктир,
+  color_custom пуст — серый, с выключателем — чёрный.
+- Лист «Электропроводка» (`plan_cables`): коробки electric_box/electric_box_wall/
+  electric_kup (PRO) и коллекции `cables_socket`, `cables_warm_floor`,
+  `cables_conditioner` (классы CableSocket/CableWarnFloor/CableConditioner) — этап 88
+  не покрывает (следующий PR). Лист «Электрощиток» (`plan_shield`): shield_din,
+  shield_module_* (38 позиций), shield_wire_* (фаза/ноль/земля) и коллекция
+  `shields` — следующий PR. Выводы проводов (группа `wires`: wire, wire_light,
+  wire_oven, wire_stove, wire_conditioner, wire_lowcurrent, floor_wire, ceiling_wire)
+  — предметы-группы того же формата на листе «Розетки» — следующий PR.

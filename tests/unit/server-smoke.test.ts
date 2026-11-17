@@ -34,6 +34,7 @@ const EXPECTED_TOOLS = [
   "led_strip_add", "led_strip_update", "led_strip_delete",
   "stripe_add", "stripe_update", "stripe_delete",
   "line_light_add", "line_light_update", "line_light_delete",
+  "cable_add", "cable_delete",
   // §7.4e — проем в полу, терраса и участок (этап 64)
   "floor_hole_add", "floor_hole_update", "floor_hole_delete",
   "terrace_add", "terrace_border_update", "terrace_border_delete",

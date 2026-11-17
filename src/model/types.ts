@@ -85,8 +85,10 @@ export type ItemProps = {
   height: number;
   self_height?: number;
   /** Подъём над полом, см — форма редактора {value, display} (эталон ui-ref-stair-stair_spot);
-   *  числовая форма из старых моделей читается, новые предметы пишут объект. */
-  over_floor?: number | { value: number; display: boolean } | null;
+   *  числовая форма из старых моделей читается, новые предметы пишут объект.
+   *  У розеток/выключателей (этап 88) редактор дописывает vd = value (производное,
+   *  эталоны ui-ref-elec-*: {value, display, vd}). */
+  over_floor?: number | { value: number; display: boolean; vd?: number } | null;
   plan: Record<string, number>;
   id_room?: string | null;
   id_wall?: string | null;
@@ -347,6 +349,42 @@ export type LineStrip = {
   [key: string]: unknown;
 };
 
+/**
+ * Соединительный провод «выключатель → светильник» (лист «Выключатели», инструмент
+ * cable, model.cables, этап 88, 2026-11-17). Класс Cable extends GraphLines
+ * (бандл app.3.0): serialize = {id, matrix, vertexes, items, type, color_custom,
+ * length, on_arc} — граф того же формата, что pipes/pipes_gas, БЕЗ props и plan
+ * (plan "light_connections" — конструктор). Вершины — предметы:
+ * - выключатель — вершина {id: "<itemId>|s|<subSocketId>", type: "switch"},
+ *   point = center под-розетки (id группы и под-розетки соединены суффиксом "|s|",
+ *   $SocketsGroup.generateIdSocket);
+ * - светильник — вершина {id: "<lampItemId>", type: "lamp"} (led_strip → "led_strip",
+ *   line_light → "line_strip", трековые шины → "strip_light"), point = pc предмета;
+ * - промежуточные узлы type "node" (произвольный путь).
+ * items — карта id вершины → тип ("switch"/"lamp"/"node"/…). Длина — метры по рёбрам
+ * (2 знака). on_arc 1 — дуга (пунктир), color_custom "" — цвет по умолчанию.
+ * Обратные ссылки: у под-розетки выключателя cables.cable_id — МАССИВ (socket_group —
+ * multi), у светильника cables.cable_id — скаляр.
+ */
+export type CableVertex = {
+  id: string;
+  point: Point;
+  type: "switch" | "lamp" | "node" | "led_strip" | "line_strip" | "strip_light" | (string & {});
+  [key: string]: unknown;
+};
+
+export type Cable = {
+  id: string;
+  matrix: ({ length: number } | null)[][];
+  vertexes: CableVertex[];
+  items: Record<string, string>;
+  type: "cable" | (string & {});
+  color_custom: string;
+  length: number;
+  on_arc: number;
+  [key: string]: unknown;
+};
+
 export type Model = {
   v: number;
   id: string;
@@ -377,6 +415,8 @@ export type Model = {
   stripes_light?: Record<string, StripLight>;
   /** Линейное освещение (лист «Освещение» → line_light); у старых моделей может отсутствовать. */
   line_strips?: Record<string, LineStrip>;
+  /** Соединительные провода «выключатель → светильник» (лист «Выключатели» → cable); у старых моделей может отсутствовать. */
+  cables?: Record<string, Cable>;
   rulers: Record<string, unknown>;
   comments: Record<string, unknown>;
   total_height: number;
