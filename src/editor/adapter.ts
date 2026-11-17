@@ -44,6 +44,12 @@ export type NormalizeResult = {
   walls?: NormalizedWall[];
   /** Счётчики ошибок редактора из copy("server"). */
   errors?: Record<string, number> | null;
+  /**
+   * Статус повторного пересчёта комнат сохранения (ревью 139 m2):
+   * "ok" — пересчёт прошёл, иначе — краткий код ошибки редактора
+   * (без пользовательских данных). Пусто у старых моков/страниц.
+   */
+  roomsRebuild?: string;
 };
 
 export type EditorSaveResult = {
@@ -262,6 +268,7 @@ export function buildHandle(
           // старые моки/страницы без этих полей — пустые значения по умолчанию
           walls: (res as { walls?: NormalizedWall[] }).walls ?? [],
           errors: (res as { errors?: Record<string, number> | null }).errors ?? null,
+          roomsRebuild: (res as { roomsRebuild?: string }).roomsRebuild ?? "ok",
         };
         last = result;
         const copyWalls = Object.keys((result.model as { walls?: Record<string, unknown> })?.walls ?? {}).length;
