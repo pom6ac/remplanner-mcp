@@ -1003,31 +1003,66 @@ export const DANGLING_MATCH_TOL_CM = 0.5;
  * - исходные точки унаследованных концов (переименование, разрез и слияние стен
  *   не смещают свободный конец);
  * - положения тех же концов (по wallId.node) в рабочей модели ПОСЛЕ операции —
- *   перенос/укорочение/разрез/слияние стены уносят её висячий конец с собой,
- *   если операция эту стену затронула.
+ *   перенос/укорочение/слияние стены уносят её висячий конец с собой, если
+ *   операция эту стену затронула. Ревью 111 R10: позиция переносится только если
+ *   конец ПОСЛЕ операции остался несоединённым — внутренние узлы разреза при
+ *   split ожидаемо соединены, и наследование свободного конца по прежнему
+ *   wallId.node на них не переносится (иначе разрыв стыка после split
+ *   оправдывается позицией внутреннего узла).
  * Точки, появившиеся только из-за операции (разрыв стыка, новая свободная стена),
  * в множество не попадают — guard отклоняет действительно новые дефекты.
  * Чистая функция без сети: сопоставление guard'а applyWalls проверяется юнит-тестами.
  */
 export function expectedDanglingEndPoints(
   before: ReadonlyArray<{ wallId: string; node: "p1" | "p2"; point: Point }>,
-  afterWalls: ReadonlyArray<{ id: string; p1: Point; p2: Point }>,
+  afterWalls: ReadonlyArray<{ id: string; p1: Point; p2: Point; depth: number }>,
 ): Point[] {
   const out: Point[] = before.map((d) => ({ x: d.point.x, y: d.point.y }));
+  const stillDangling = new Set(findUnattachedEnds(afterWalls).map((d) => `${d.wallId}.${d.node}`));
   for (const d of before) {
+    if (!stillDangling.has(`${d.wallId}.${d.node}`)) continue;
     const w = afterWalls.find((x) => x.id === d.wallId);
-    if (w) out.push({ x: w[d.node].x, y: w[d.node].y });
+    if (!w) continue;
+    const after = w[d.node];
+    // конец на месте — исходная точка уже в множестве: каждая точка множества
+    // означает один физический конец (сопоставление один-к-одному, см. ниже)
+    if (dist(after, d.point) > 1e-9) out.push({ x: after.x, y: after.y });
   }
   return out;
 }
 
-/** Конец унаследован, если среди ожидаемых точек есть его точка с допуском. */
-export function isDanglingEndInherited(
-  point: Point,
+/**
+ * Концы после операции, не оправданные унаследованными физическими концами
+ * (ревью 111 R10): сопоставление один-к-одному (алгоритм Куна по двудольному
+ * графу «конец после операции — ожидаемая точка», размеры малы). Независимый
+ * `some` для каждого конца позволял одной ожидаемой точке оправдать сразу
+ * два новых висячих конца.
+ */
+export function unmatchedDanglingEnds(
+  dangling: ReadonlyArray<DanglingEnd>,
   expected: ReadonlyArray<Point>,
   tolCm = DANGLING_MATCH_TOL_CM,
-): boolean {
-  return expected.some((p) => dist(p, point) <= tolCm);
+): DanglingEnd[] {
+  const adjacency = dangling.map((d) => {
+    const js: number[] = [];
+    for (let j = 0; j < expected.length; j++) {
+      if (dist(d.point, expected[j]!) <= tolCm) js.push(j);
+    }
+    return js;
+  });
+  const owner = new Array<number>(expected.length).fill(-1);
+  const tryAssign = (i: number, seen: boolean[]): boolean => {
+    for (const j of adjacency[i]!) {
+      if (seen[j]) continue;
+      seen[j] = true;
+      if (owner[j] === -1 || tryAssign(owner[j]!, seen)) {
+        owner[j] = i;
+        return true;
+      }
+    }
+    return false;
+  };
+  return dangling.filter((_, i) => !tryAssign(i, new Array<boolean>(expected.length).fill(false)));
 }
 
 // ---------- грани l1/l2/r1/r2 (обязательны перед $Project.restore) ----------

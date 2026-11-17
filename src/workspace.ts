@@ -9,7 +9,7 @@ import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, Edit
 import type { Model, Point } from "./model/types.ts";
 import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
-import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, isDanglingEndInherited, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
+import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmatchedDanglingEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
 import { dist, closestPoint, pointInPolygon, segmentsCross, type Polygon as GeoPolygon } from "./model/geometry.ts";
 import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey } from "./model/pipes.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
@@ -1322,10 +1322,14 @@ export class Workspace {
       // с допуском, с учётом ожидаемого переноса/разреза/слияния стены операцией —
       // expectedDanglingEndPoints), а не по `wallId.node`: нормализатор редактора
       // может перенумеровывать стены и менять направление оси, ключ наследования —
-      // физическое положение конца, а не идентификаторы
+      // физическое положение конца, а не идентификаторы.
+      // ревью 111 R10: сопоставление один-к-одному — каждая унаследованная точка
+      // оправдывает не более одного конца после операции; позиция конца по
+      // wallId.node переносится только если конец остался несоединённым
+      // (внутренние узлы разреза при split ожидаемо соединены).
       const danglingAll = findUnattachedEnds(norm.walls ?? []);
       const expectedEnds = expectedDanglingEndPoints(beforeDangling, Object.values(clone.walls));
-      const dangling = danglingAll.filter((d) => !isDanglingEndInherited(d.point, expectedEnds));
+      const dangling = unmatchedDanglingEnds(danglingAll, expectedEnds);
       if (dangling.length > 0) {
         throw new McpError("INVALID_GEOMETRY", `после нормализации появились новые несоединённые концы стен (${dangling.slice(0, 5).map((d) => `${d.wallId}.${d.node}`).join(", ")}) — мутация отменена`, {
           details: { unattached: dangling, unattached_inherited: [...beforeDanglingKeys] },
