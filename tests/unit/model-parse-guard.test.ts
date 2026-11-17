@@ -171,7 +171,7 @@ test("parse-guard: will_delete по id — удаление + добавлени
     return true;
   });
   const res: SaveOutcome = await ws.save();
-  assert.deepEqual(res.will_delete, { walls: 0, openings: 1, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0, warm_floors: 0, pipes_warm_floor: 0, pipes_conditioner: 0, pipes_heat: 0, pipes_ventilation: 0 });
+  assert.deepEqual(res.will_delete, { walls: 0, openings: 1, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0, cables: 0, rulers: 0, comments: 0, warm_floors: 0, pipes_warm_floor: 0, pipes_conditioner: 0, pipes_heat: 0, pipes_ventilation: 0 });
   assert.ok(res.warnings.some((w) => w.includes("srv_old")), res.warnings.join("; "));
   const lostHole = res.warnings.find((w) => /проём/.test(w)) ?? "";
   assert.ok(/apuny6wral|pbwydi1o66/.test(lostHole), `в предупреждении id удалённого проёма: ${lostHole}`);
@@ -196,8 +196,12 @@ test("parse-guard: project_save предупреждает, сколько об�
   // при записи он пропадёт с сервера, project_save обязан об этом предупредить
   ws.apply("item_delete", (m) => { delete m.items["srv2"]; return true; });
   const res: SaveOutcome = await ws.save();
-  assert.deepEqual(res.will_delete, { walls: 0, openings: 0, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0, warm_floors: 0, pipes_warm_floor: 0, pipes_conditioner: 0, pipes_heat: 0, pipes_ventilation: 0 });
+  assert.deepEqual(res.will_delete, { walls: 0, openings: 0, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0, cables: 0, rulers: 0, comments: 0, warm_floors: 0, pipes_warm_floor: 0, pipes_conditioner: 0, pipes_heat: 0, pipes_ventilation: 0 });
   assert.ok(res.warnings.some((w) => w.includes("1") && w.includes("предмет")), res.warnings.join("; "));
+  // публичные ключи will_delete — словарь compact model_get: gas_lines есть, pipes_gas нет
+  const willDelete = res.will_delete as unknown as Record<string, number>;
+  assert.ok("gas_lines" in willDelete, "will_delete содержит gas_lines");
+  assert.ok(!("pipes_gas" in willDelete), "will_delete не содержит внутреннего pipes_gas");
 });
 
 // Ревью v0.1.1 финал F-1: смена идентификатора стены (нормализация редактора
