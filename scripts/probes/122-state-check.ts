@@ -49,7 +49,11 @@ const strip = (m: any): string => {
     const e = Object.entries<any>(c[key]).map(([rid, r]) => [rid, si(r)] as const).sort((u, v) => JSON.stringify(u[1]).localeCompare(JSON.stringify(v[1])));
     c[key] = Object.fromEntries(e.map(([, v], i) => [`R${i}`, v]));
   }
-  for (const r of Object.values<any>(c.rooms2 ?? {})) { delete r.warms_walls; for (const z of r.zones ?? []) delete z.number_by_area; }
+  // R7 (ревью 123): warms_walls исключается только если это доказанно пустые
+  // заглушки {exist:false}; реальное содержимое тёплой стены сверяется строго
+  const emptyWarmsWalls = (v: any): boolean =>
+    Array.isArray(v) && v.every((e) => e !== null && typeof e === "object" && Object.keys(e).length === 1 && e.exist === false);
+  for (const r of Object.values<any>(c.rooms2 ?? {})) { if (emptyWarmsWalls(r.warms_walls)) delete r.warms_walls; for (const z of r.zones ?? []) delete z.number_by_area; }
   return JSON.stringify(nm(c));
 };
 

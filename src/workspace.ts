@@ -11,7 +11,7 @@ import type { RoomPolygon } from "./model/items.ts";
 import { roomPolygons } from "./model/items.ts";
 import { prepareForRestore, findUnattachedEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, type WallAxisSegment } from "./model/walls.ts";
 import { dist, closestPoint, pointInPolygon, segmentsCross, type Polygon as GeoPolygon } from "./model/geometry.ts";
-import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey, PIPE_COLLECTIONS } from "./model/pipes.ts";
+import { PIPE_TYPE_BY_KIND, PIPE_MULTI_SPOTS, pipeLinkKey, PIPE_COLLECTIONS, CLIMATE_PIPE_KINDS } from "./model/pipes.ts";
 import { warmFloorMismatches } from "./model/climate.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { borderMismatches } from "./model/terraces.ts";
@@ -990,6 +990,14 @@ function regionMaxDistance(a: GeoPolygon, b: GeoPolygon): number {
 type PipeLinkItem = { name?: string; pipes?: Record<string, unknown> };
 
 /**
+ * Типы всех трубных линий модели: водоснабжение (model.pipes) и климат
+ * (pipes_warm_floor/pipes_conditioner/pipes_heat/pipes_ventilation, ревью 124 R2).
+ */
+const ALL_PIPE_TYPES = [...Object.values(PIPE_TYPE_BY_KIND), ...Object.values(CLIMATE_PIPE_KINDS).map((c) => c.type)];
+/** Виды труб водоснабжения: только для них действуют scalar/multi правила воды. */
+const WATER_PIPE_KEYS = new Set(Object.values(PIPE_TYPE_BY_KIND).map(pipeLinkKey));
+
+/**
  * Сверка подключений труба↔предмет в обе стороны (ревью 79 №5, ревью 81 5-R):
  * у каждой вершины-предмета трубы props.pipes[`${type}_id`] должен указывать на неё,
  * и каждая обратная ссылка предмета — на существующую трубу того же вида, чьи
@@ -997,29 +1005,35 @@ type PipeLinkItem = { name?: string; pipes?: Record<string, unknown> };
  * с ожидаемыми (expectedItems) ПОЛНОСТЬЮ: нет лишних, нет пропущенных, вид трубы
  * совпадает с ключом, scalar у обычных выводов / массив у multi (ревью 81 5-R —
  * раньше второе направление смотрело expectedItems и пропускало лишние и висячие
- * ссылки). Общий слой газовой/водяной сверки не трогает (у газа обратных ссылок
- * нет) — вызывается только для model.pipes.
+ * ссылки). Ревью 124 R2: общий слой распространён на трубы климата (CLIMATE_PIPE_KINDS)
+ * через реестр ALL_PIPE_TYPES — обе стороны, normalize и после save; scalar/multi
+ * правила воды (PIPE_MULTI_SPOTS) на климатические связи НЕ переносятся. Общий слой
+ * газовой/водяной сверки не трогает (у газа обратных ссылок нет). opts.onlyKeys
+ * ограничивает сверку подмножеством видов (например, только климат).
  */
 function pipeConnectionMismatches(
   expectedPipes: Record<string, GasLineSig>,
   expectedItems: Record<string, PipeLinkItem>,
   gotPipes: Record<string, GasLineSig>,
   gotItems: Record<string, PipeLinkItem>,
+  opts: { onlyKeys?: Set<string> } = {},
 ): string[] {
   const out: string[] = [];
-  const pipeKeys = new Set(Object.values(PIPE_TYPE_BY_KIND).map(pipeLinkKey));
+  const pipeKeys = new Set(ALL_PIPE_TYPES.map(pipeLinkKey));
+  /** Активные виды ссылки: весь реестр или подмножество (климат). */
+  const activeKeys = opts.onlyKeys ?? pipeKeys;
   /** Вид трубы по ключу ссылки (water_pipe_id → water_pipe); null — ключ не труба. */
   const pipeTypeOfKey = (key: string): string | null => {
-    for (const type of Object.values(PIPE_TYPE_BY_KIND)) {
+    for (const type of ALL_PIPE_TYPES) {
       if (key === pipeLinkKey(type)) return type;
     }
     return null;
   };
-  /** Ссылки предмета на трубы: ключ → множество id (только ключи труб, только строки). */
+  /** Ссылки предмета на трубы: ключ → множество id (только активные ключи труб, только строки). */
   const linksOf = (item: PipeLinkItem | undefined): Map<string, Set<string>> => {
     const out = new Map<string, Set<string>>();
     for (const [key, ref] of Object.entries(item?.pipes ?? {})) {
-      if (!pipeKeys.has(key)) continue;
+      if (!activeKeys.has(key)) continue;
       const ids = (Array.isArray(ref) ? ref : [ref]).filter((x): x is string => typeof x === "string" && x !== "");
       out.set(key, new Set(ids));
     }
@@ -1028,7 +1042,7 @@ function pipeConnectionMismatches(
   // направление 1: труба → props.pipes предмета (ревью 79 №5a)
   for (const [id, p] of Object.entries(expectedPipes)) {
     const key = pipeLinkKey(p.type ?? "");
-    if (!pipeKeys.has(key)) continue;
+    if (!activeKeys.has(key)) continue;
     for (const v of p.vertexes ?? []) {
       const vid = v.id;
       if ((v.type ?? "node") === "node" || typeof vid !== "string") continue;
@@ -1077,11 +1091,12 @@ function pipeConnectionMismatches(
     }
   }
   // направление 3: вид ссылки — scalar у обычного вывода, массив у multi
-  // (ревью 81 5-R: допустимость scalar/array)
+  // (ревью 81 5-R: допустимость scalar/array; ревью 124 R2: правила воды — только
+  // для водных ключей, климатические ссылки scalar/multi-контрактом воды не сверяются)
   for (const [itemId, item] of Object.entries(gotItems)) {
     const name = (item as { name?: string }).name;
     for (const [key, ref] of Object.entries(item.pipes ?? {})) {
-      if (!pipeKeys.has(key) || ref === undefined || ref === null || ref === "") continue;
+      if (!WATER_PIPE_KEYS.has(key) || ref === undefined || ref === null || ref === "") continue;
       const isMulti = typeof name === "string" && PIPE_MULTI_SPOTS.has(name);
       if (isMulti && !Array.isArray(ref)) {
         out.push(`${itemId}: у multi-предмета «${name}» ссылка ${key} должна быть массивом труб (на сервере скаляр)`);
@@ -1191,18 +1206,34 @@ export function itemIdsForSheet(model: Model, sheet: string): string[] {
  * (pipes_warm_floor/pipes_conditioner/pipes_heat/pipes_ventilation — общий слой
  * газовых графов). Возвращает список человекочитаемых расхождений. Аргументы —
  * модели или их фрагменты (ожидание после save — фрагмент нормализованной модели).
+ * Ревью 124 R1: mode normalize — привязка контуров к комнатам по геометрии
+ * (ID комнат штатно регенерируется); save — строго. Ревью 124 R2: обратные ссылки
+ * предметов на трубы климата сверяются в обе стороны (общий слой
+ * pipeConnectionMismatches, только ключи климата — правила воды не переносятся).
  */
-function climateGraphMismatches(local: Model, norm: Record<string, unknown>): string[] {
+function climateGraphMismatches(
+  local: Model,
+  norm: Record<string, unknown>,
+  opts: {
+    mode?: "normalize" | "save";
+    roomsExpected?: Record<string, unknown>;
+    roomsGot?: Record<string, unknown>;
+    itemsExpected?: Record<string, PipeLinkItem>;
+    itemsGot?: Record<string, PipeLinkItem>;
+  } = {},
+): string[] {
   const out: string[] = [];
   const wfLost = missingIds(new Set(Object.keys(local.warm_floors ?? {})), new Set(Object.keys((norm as { warm_floors?: Record<string, unknown> }).warm_floors ?? {})));
   const wfMism = warmFloorMismatches(
     structuredClone(local.warm_floors ?? {}) as Record<string, import("./model/types.ts").WarmFloor>,
     (norm as { warm_floors?: Record<string, unknown> }).warm_floors ?? {},
+    { mode: opts.mode ?? "save", roomsExpected: opts.roomsExpected, roomsGot: opts.roomsGot },
   );
   if (wfLost.length > 0 || wfMism.length > 0) {
     out.push(`контуры тёплого пола: потеряны ${JSON.stringify(wfLost)}; расхождения ${JSON.stringify(wfMism)}`);
   }
-  for (const coll of ["pipes_warm_floor", "pipes_conditioner", "pipes_heat", "pipes_ventilation"] as const) {
+  const climateColls = ["pipes_warm_floor", "pipes_conditioner", "pipes_heat", "pipes_ventilation"] as const;
+  for (const coll of climateColls) {
     const ws = structuredClone((local as Record<string, unknown>)[coll] ?? {}) as Record<string, GasLineSig>;
     const normColl = ((norm as Record<string, unknown>)[coll] ?? {}) as Record<string, unknown>;
     const lost = missingIds(new Set(Object.keys(ws)), new Set(Object.keys(normColl)));
@@ -1210,6 +1241,22 @@ function climateGraphMismatches(local: Model, norm: Record<string, unknown>): st
     if (lost.length > 0 || graphNorm.length > 0) {
       out.push(`${coll}: потеряны ${JSON.stringify(lost)}; расхождения ${JSON.stringify(graphNorm)}`);
     }
+  }
+  if (opts.itemsExpected && opts.itemsGot) {
+    const mergeColls = (src: Record<string, unknown>): Record<string, GasLineSig> => {
+      const merged: Record<string, GasLineSig> = {};
+      for (const coll of climateColls) Object.assign(merged, (src[coll] ?? {}) as Record<string, GasLineSig>);
+      return merged;
+    };
+    const onlyKeys = new Set(Object.values(CLIMATE_PIPE_KINDS).map((c) => pipeLinkKey(c.type)));
+    const conn = pipeConnectionMismatches(
+      mergeColls(local as unknown as Record<string, unknown>),
+      opts.itemsExpected,
+      mergeColls(norm),
+      opts.itemsGot,
+      { onlyKeys },
+    );
+    if (conn.length > 0) out.push(`подключения труб климата: ${JSON.stringify(conn)}`);
   }
   return out;
 }
@@ -1408,11 +1455,13 @@ export class Workspace {
         structuredClone(this.modelInternal!.items ?? {}) as Record<string, { pc?: Point; width?: number; height?: number; angle?: number }>,
       );
       // ревью 79 №5: подключения труба↔предмет сверяются в обе стороны и при нормализации
+      // (только водные ключи — климат сверяет climateGraphMismatches, ревью 124 R2)
       const pipeConnNorm = pipeConnectionMismatches(
         structuredClone(this.modelInternal!.pipes ?? {}) as Record<string, GasLineSig>,
         this.modelInternal!.items as Record<string, PipeLinkItem>,
         normPipes as Record<string, GasLineSig>,
         (norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {},
+        { onlyKeys: WATER_PIPE_KEYS },
       );
       if (lostPipesNorm.length > 0 || pipesGraphNorm.length > 0 || pipeConnNorm.length > 0) {
         throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил трубы водоснабжения — мутация отменена`, {
@@ -1495,8 +1544,15 @@ export class Workspace {
         "normalize",
       );
       // этап 122: контуры тёплого пола и трубы климата после нормализации не теряются
-      // (общий слой графов — семантическая сверка; у контуров — polygon/кольцо/площадь)
-      const climateNorm = climateGraphMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
+      // (общий слой графов — семантическая сверка; у контуров — polygon/кольцо/площадь;
+      // ревью 124 R1/R2: привязка к комнатам по геометрии, обратные ссылки на трубы климата)
+      const climateNorm = climateGraphMismatches(this.modelInternal!, norm.model as Record<string, unknown>, {
+        mode: "normalize",
+        roomsExpected: (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined,
+        roomsGot: ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+        itemsExpected: this.modelInternal!.items as unknown as Record<string, PipeLinkItem>,
+        itemsGot: (norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {},
+      });
       warnings.push(...finishNorm.warnings);
       // этап 113: размеры и комментарии после нормализации не теряются и не искажаются
       const dimsNorm = dimsMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
@@ -1791,11 +1847,13 @@ export class Workspace {
       structuredClone(this.modelInternal!.items ?? {}) as Record<string, { pc?: Point; width?: number; height?: number; angle?: number }>,
     );
     // ревью 79 №5: подключения труба↔предмет сверяются в обе стороны до записи
+    // (только водные ключи — климат сверяет climateGraphMismatches, ревью 124 R2)
     const pipesConnNorm = pipeConnectionMismatches(
       structuredClone(this.modelInternal!.pipes ?? {}) as Record<string, GasLineSig>,
       this.modelInternal!.items as Record<string, PipeLinkItem>,
       (norm.model as { pipes?: Record<string, GasLineSig> }).pipes ?? {},
       (norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {},
+      { onlyKeys: WATER_PIPE_KEYS },
     );
     // этап 64: потери границ и проёмов пола при нормализации
     const bordersNorm = checkBordersAfterNormalize(this.modelInternal!, norm.model as Model);
@@ -1860,7 +1918,13 @@ export class Workspace {
     // этап 113: размеры и комментарии до записи сверяются с нормализованной моделью
     const dimsNorm = dimsMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
     // этап 122: сущности климата до записи сверяются с нормализованной моделью
-    const climateNorm = climateGraphMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
+    const climateNorm = climateGraphMismatches(this.modelInternal!, norm.model as Record<string, unknown>, {
+      mode: "normalize",
+      roomsExpected: (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined,
+      roomsGot: ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+      itemsExpected: this.modelInternal!.items as unknown as Record<string, PipeLinkItem>,
+      itemsGot: (norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {},
+    });
     // ревью 66 №3: роли стен (ограждение террасы) не должны меняться при нормализации
     const expectedWalls = structuredClone((norm.model as { walls?: Record<string, { role?: string; p1: Point; p2: Point }> }).walls ?? {});
     const rolesNorm = wallRoleMismatches(this.modelInternal!.walls as unknown as Record<string, { role?: string; p1: Point; p2: Point }>, expectedWalls);
@@ -1964,11 +2028,13 @@ export class Workspace {
       const pipesAfter = (after.model["pipes"] as Record<string, unknown> | undefined) ?? {};
       const pipeMismatch = gasLineGraphMismatches(expectedPipes, pipesAfter, "труба");
       // ревью 79 №5a: обратные ссылки props.pipes и прямые ссылки предметов — обе стороны
+      // (только водные ключи — климат сверяет climateGraphMismatches, ревью 124 R2)
       const pipeConnAfter = pipeConnectionMismatches(
         expectedPipes,
         expectedItems as Record<string, PipeLinkItem>,
         pipesAfter as Record<string, GasLineSig>,
         (itemsAfter as Record<string, PipeLinkItem>) ?? {},
+        { onlyKeys: WATER_PIPE_KEYS },
       );
       // этап 64: границы террас/участка и проёмы в полу после save — по нормализованной семантике
       const bordersAfter = {
@@ -2059,6 +2125,11 @@ export class Workspace {
       const climateAfter = climateGraphMismatches(
         climateExpected as unknown as Model,
         after.model as Record<string, unknown>,
+        {
+          mode: "save",
+          itemsExpected: structuredClone((norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {}),
+          itemsGot: (itemsAfter as Record<string, PipeLinkItem>) ?? {},
+        },
       );
       const roomsLost = normRooms > 0 && roomsAfter === 0;
       if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && !roomsLost) {

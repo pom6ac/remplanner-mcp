@@ -92,11 +92,14 @@ function strip(m: any): string {
     }
   }
   // производные пути, которые редактор дописывает при каждом пересчёте комнат
-  // (исключение перечислено в spec этапа 122): warms_walls — пустые заглушки
-  // листа «Тёплые полы» ({exist:false}, пользовательского содержимого нет),
+  // (исключение перечислено в spec этапа 122): warms_walls — ТОЛЬКО доказанно пустые
+  // заглушки листа «Тёплые полы» (массив из {exist:false}, R7 ревью 123: иначе сверять
+  // строго — потеря реального содержимого тёплой стены не маскируется),
   // zones[].number_by_area — автоматическая нумерация комнат
+  const emptyWarmsWalls = (v: unknown): boolean =>
+    Array.isArray(v) && v.every((e) => e !== null && typeof e === "object" && Object.keys(e).length === 1 && (e as { exist?: unknown }).exist === false);
   for (const r of Object.values<any>(c.rooms2 ?? {})) {
-    delete r.warms_walls;
+    if (emptyWarmsWalls(r.warms_walls)) delete r.warms_walls;
     for (const z of r.zones ?? []) delete z.number_by_area;
   }
   return JSON.stringify(norm(c));
@@ -230,8 +233,11 @@ async function main() {
     // 3. validate → save → reopen → сверка
     const v = await call(client, "model_validate", {});
     console.log("validate: проблем", (v.problems ?? []).length, JSON.stringify((v.problems ?? []).slice(0, 5)));
-    const saveRes = await call(client, "project_save", {});
+    // R5 (ревью 123): persisted ставится ДО вызова project_save — вызов способен
+    // записать модель и выбросить ошибку при GET-верификации; catch обязан
+    // восстанавливать при любом исходе после первой попытки записи
     persisted = true;
+    const saveRes = await call(client, "project_save", {});
     console.log("save:", JSON.stringify({ verified: saveRes.verified, rounds: saveRes.rounds, warnings: saveRes.warnings }));
     if (!saveRes.verified) throw new Error("save не verified");
 
@@ -289,15 +295,23 @@ async function main() {
   } catch (e) {
     console.error("FAIL:", String((e as Error).message ?? e).slice(0, 800));
     if (process.env.RP_DEBUG) console.error((e as Error).stack);
-    // аварийное восстановление: удалить созданное пробой
+    // аварийное восстановление (R5, ревью 123): при любой ошибке после первой попытки
+    // записи — перечитать модель, удалить созданное пробой, сохранить и сверить data
+    // с бэкапом (не считать удаление созданных ID полной заменой сверки)
     try {
-      if (persisted) {
+      if (persisted && before) {
         await call(client, "project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
         for (const ref of created.pipes) await call(client, "pipe_delete", { pipe_id: ref.split("/")[1] }).catch(() => {});
         for (const id of created.warmFloors) await call(client, "warm_floor_delete", { warm_floor_id: id }).catch(() => {});
         for (const id of created.items) await call(client, "item_delete", { item_id: id }).catch(() => {});
         const r = await call(client, "project_save", {});
-        console.log("аварийное восстановление:", r.verified ? "OK" : "не verified");
+        const afterFail = await call(client, "model_get", { detail: "full" });
+        const restored = strip(afterFail) === strip(before);
+        console.log("аварийное восстановление:", r.verified ? "save OK" : "save не verified", "; сверка с бэкапом:", restored ? "OK — модель совпала" : "РАСХОЖДЕНИЕ");
+        if (!restored) {
+          writeFileSync(".orca-reports/backup-dev-122-after.json", JSON.stringify({ model: afterFail }, null, 1));
+          console.error("различающиеся пути:", diffKeysOf(before, afterFail).slice(0, 20).join(" | "));
+        }
       }
     } catch (e2) {
       console.error("RESTORE-FAIL:", String((e2 as Error).message ?? e2).slice(0, 400));

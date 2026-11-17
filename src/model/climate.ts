@@ -3,7 +3,7 @@ import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
 import { McpError } from "../errors.ts";
-import { pointInPolygon } from "./geometry.ts";
+import { pointInPolygon, polygonInsidePolygon } from "./geometry.ts";
 import { roomPolygons } from "./items.ts";
 
 /**
@@ -87,7 +87,12 @@ function rectPoints(a: Point, b: Point): Point[] {
   ];
 }
 
-/** Комната, содержащая прямоугольник целиком (по центру и вершинам), или null. */
+/**
+ * Комната, содержащая прямоугольник целиком (ревью 124 R4 — общий предикат
+ * polygonInsidePolygon, как у проёмов в полу: все вершины, все рёбра и середины
+ * рёбер внутри — вогнутая Г-/П-образная комната не пропускает контур через вырез),
+ * или null.
+ */
 function containingRoom(model: Model, pts: Point[]): string | null {
   const rooms = roomPolygons(model);
   if (rooms.length === 0) {
@@ -96,7 +101,7 @@ function containingRoom(model: Model, pts: Point[]): string | null {
   const cx = (Math.min(...pts.map((p) => p.x)) + Math.max(...pts.map((p) => p.x))) / 2;
   const cy = (Math.min(...pts.map((p) => p.y)) + Math.max(...pts.map((p) => p.y))) / 2;
   const center = { x: cx, y: cy };
-  const found = rooms.find((room) => pointInPolygon(room.polygon, center) && pts.every((p) => pointInPolygon(room.polygon, p)));
+  const found = rooms.find((room) => pointInPolygon(room.polygon, center) && polygonInsidePolygon(pts, room.polygon));
   if (!found) {
     throw new McpError("OUTSIDE_ROOM", "контур тёплого пола выходит за границы помещения — он должен лежать внутри одной комнаты", {
       details: { kind: "outside_room" },
@@ -254,16 +259,35 @@ export function deleteWarmFloor(model: Model, warmFloorId: string): void {
 
 /**
  * Двусторонняя сверка контуров тёплого пола: идентичности в обе стороны, polygon
- * (вершины с допуском), кольцевая матрица (наличие рёбер), узлы (тип/точка), items,
- * type, props, id_room; length/area/length_pipes — с допуском (производные).
+ * (вершины с допуском), кольцевая матрица (наличие рёбер), узлы (тип/точка/ID —
+ * ревью 124 R3: полный состав vertexes, сопоставление по геометрии, согласованность
+ * с items и polygon/matrix, props.id), items, type, props; length/area/length_pipes —
+ * с допуском (производные). Привязка к комнате (ревью 124 R1) — двухрежимно:
+ * normalize — ID комнат редактор штатно регенерирует/делит/сливает, принадлежность
+ * сверяется по геометрии (id_room указывает на комнату, чей полигон содержит контур);
+ * save — строго (id_room нормализованного ожидания против сервера).
  */
+export interface WarmFloorMismatchOptions {
+  mode?: "normalize" | "save";
+  /** Комнаты ожидания (rooms2/rooms1) — для геометрической сверки в режиме normalize. */
+  roomsExpected?: Record<string, unknown>;
+  /** Комнаты факта (rooms2/rooms1) — для геометрической сверки в режиме normalize. */
+  roomsGot?: Record<string, unknown>;
+}
+
 export function warmFloorMismatches(
   expected: Record<string, WarmFloor>,
   got: Record<string, unknown>,
+  opts: WarmFloorMismatchOptions = {},
 ): string[] {
   const out: string[] = [];
   const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
     a !== undefined && b !== undefined && Math.abs(a - b) <= tol;
+  const roomPolygonOf = (rooms: Record<string, unknown> | undefined, id: string | null | undefined): Point[] | null => {
+    if (!rooms || !id) return null;
+    const r = rooms[id] as { polygon?: Point[] } | undefined;
+    return r && Array.isArray(r.polygon) ? r.polygon : null;
+  };
   for (const [id, w0] of Object.entries(expected)) {
     const g = got[id] as WarmFloor | undefined;
     if (!g) {
@@ -289,19 +313,48 @@ export function warmFloorMismatches(
         if (e0 !== e) out.push(`${id}: ребро кольца ${i}–${j} ${e0 ? "потеряно" : "добавлено"} на сервере`);
       }
     }
-    if (p0.length === p.length) {
-      for (let i = 0; i < n; i++) {
-        const v0 = w0.vertexes?.[i];
-        const v = g.vertexes?.[i];
-        if (!v0 || !v) continue;
-        if ((v0.type ?? "node") !== (v.type ?? "node")) out.push(`${id}: тип узла ${i} изменился`);
-        if (!near(v.point?.x, v0.point?.x, WARM_FLOOR_TOL * 5) || !near(v.point?.y, v0.point?.y, WARM_FLOOR_TOL * 5)) {
-          out.push(`${id}: узел ${i} сместился (на сервере ${v.point?.x},${v.point?.y}; ожидалось ${v0.point?.x},${v0.point?.y})`);
+    // ревью 124 R3: полный состав vertexes — число узлов, ID (сопоставление по
+    // геометрии, устойчивое к перестановке), тип; согласованность с items и с
+    // polygon/matrix. Пропуск отсутствующих узлов раньше маскировал удаление всех
+    // вершин и подмену ID.
+    const vs0 = w0.vertexes ?? [];
+    const vs = g.vertexes ?? [];
+    const it0 = w0.items ?? {};
+    const it = g.items ?? {};
+    if (vs0.length !== vs.length || vs0.length !== p0.length || vs.length !== p.length) {
+      out.push(`${id}: состав узлов не согласован (ожидалось ${vs0.length} узлов / ${p0.length} polygon; на сервере ${vs.length} узлов / ${p.length} polygon)`);
+    } else {
+      const used = new Set<number>();
+      for (let i = 0; i < vs0.length; i++) {
+        const v0 = vs0[i]!;
+        const j = vs.findIndex((v, k) => !used.has(k) && near(v.point?.x, v0.point?.x, WARM_FLOOR_TOL * 5) && near(v.point?.y, v0.point?.y, WARM_FLOOR_TOL * 5));
+        if (j < 0) {
+          out.push(`${id}: узел ${i} (${v0.point?.x},${v0.point?.y}) исчез или сместился на сервере`);
+          continue;
         }
+        used.add(j);
+        if ((vs[j]!.id ?? "") !== (v0.id ?? "")) out.push(`${id}: ID узла ${i} подменён (на сервере «${vs[j]!.id ?? ""}»; ожидалось «${v0.id ?? ""}»)`);
+        if ((vs[j]!.type ?? "node") !== (v0.type ?? "node")) out.push(`${id}: тип узла ${i} изменился`);
       }
     }
-    const items0 = w0.items ?? {};
-    const items = g.items ?? {};
+    // ревью 124 R3: согласованность items ↔ vertexes и polygon ↔ matrix на обеих сторонах
+    if (JSON.stringify(Object.keys(it0).sort()) !== JSON.stringify(vs0.map((v) => v.id ?? "").sort())) {
+      out.push(`${id}: items рабочей копии не согласованы с vertexes`);
+    }
+    if (JSON.stringify(Object.keys(it).sort()) !== JSON.stringify(vs.map((v) => v.id ?? "").sort())) {
+      out.push(`${id}: items на сервере не согласованы с vertexes`);
+    }
+    const mg = g.matrix?.length ?? 0;
+    if (p.length > 0 && mg !== p.length) {
+      out.push(`${id}: матрица на сервере не согласована с polygon (${mg}×? против ${p.length} вершин)`);
+    } else if (mg === p.length && p.length > 0) {
+      for (let i = 0; i < p.length; i++) {
+        const e = (g.matrix?.[i]?.[(i + 1) % p.length] ?? null) !== null || (g.matrix?.[(i + 1) % p.length]?.[i] ?? null) !== null;
+        if (!e) out.push(`${id}: кольцо на сервере разорвано между вершинами ${i} и ${(i + 1) % p.length}`);
+      }
+    }
+    const items0 = it0;
+    const items = it;
     if (JSON.stringify(Object.keys(items0).sort()) !== JSON.stringify(Object.keys(items).sort())) {
       out.push(`${id}: состав items изменился`);
     } else {
@@ -310,9 +363,28 @@ export function warmFloorMismatches(
       }
     }
     if ((g.type ?? "") !== (w0.type ?? "")) out.push(`${id}: тип изменился (на сервере «${g.type ?? ""}»; ожидалось «${w0.type ?? ""}»)`);
-    if ((g.id_room ?? null) !== (w0.id_room ?? null)) out.push(`${id}: id_room изменился (на сервере «${g.id_room ?? null}»; ожидалось «${w0.id_room ?? null}»)`);
+    // ревью 124 R1: привязка к комнате — двухрежимно. save — строго; normalize —
+    // ID комнат штатно регенерируется при пересчёте (split/merge/перенос стены),
+    // сверяем геометрию: id_room указывает на комнату, чей полигон содержит контур.
+    if (opts.mode === "normalize") {
+      const expRoom = roomPolygonOf(opts.roomsExpected, w0.id_room);
+      const gotRoom = roomPolygonOf(opts.roomsGot, g.id_room);
+      if (w0.id_room === undefined && g.id_room === undefined) {
+        // привязки не было и не появилось — штатно
+      } else if (!g.id_room || !gotRoom) {
+        out.push(`${id}: id_room указывает на несуществующую комнату (на сервере «${g.id_room ?? null}»)`);
+      } else if (!polygonInsidePolygon(g.polygon ?? [], gotRoom)) {
+        out.push(`${id}: контур на сервере вне комнаты ${g.id_room}, на которую указывает id_room`);
+      } else if (!expRoom || !polygonInsidePolygon(w0.polygon ?? [], expRoom)) {
+        out.push(`${id}: привязка рабочей копии не подтверждается геометрией (комната ${w0.id_room ?? "нет"})`);
+      }
+    } else if ((g.id_room ?? null) !== (w0.id_room ?? null)) {
+      out.push(`${id}: id_room изменился (на сервере «${g.id_room ?? null}»; ожидалось «${w0.id_room ?? null}»)`);
+    }
     if (!near(g.length, w0.length, WARM_FLOOR_TOL)) out.push(`${id}: периметр изменился (на сервере ${g.length}; ожидалось ${w0.length})`);
     if (!near(g.area, w0.area, WARM_FLOOR_TOL)) out.push(`${id}: площадь изменилась (на сервере ${g.area}; ожидалось ${w0.area})`);
+    // ревью 124 R3: props.id — часть идентичности контура, подмена не «verified»
+    if ((g.props?.id ?? "") !== (w0.props?.id ?? "")) out.push(`${id}: props.id изменился (на сервере «${g.props?.id ?? ""}»; ожидалось «${w0.props?.id ?? ""}»)`);
     if ((g.props?.name ?? "") !== (w0.props?.name ?? "")) out.push(`${id}: props.name изменился (на сервере «${g.props?.name ?? ""}»; ожидалось «${w0.props?.name ?? ""}»)`);
     if (w0.step !== undefined && !near(g.step, w0.step, 0.01)) out.push(`${id}: шаг изменился (на сервере ${g.step}; ожидалось ${w0.step})`);
     if (w0.type_water !== undefined && g.type_water !== w0.type_water) out.push(`${id}: type_water изменился (на сервере «${g.type_water ?? ""}»; ожидалось «${w0.type_water}»)`);

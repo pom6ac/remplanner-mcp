@@ -372,9 +372,12 @@ function saveMock(server: SaveServer, afterSave: (s: SaveServer) => void, transf
     session: { cookies: [] },
     loadModel: async () => ({ saveId: server.saveId, model: structuredClone(server.model), dataEmpty: false }) as never,
     openEditor: async () => editor,
-    writeBackup: async () => "/tmp/x",
   } as unknown as WorkspaceDeps;
-  return new Workspace(deps);
+  // R6 (ревью 123): подменяется сам метод writeBackup — подмена в deps не работает,
+  // Workspace.save вызывает this.writeBackup()
+  const ws = new Workspace(deps);
+  ws.writeBackup = () => "/tmp/mock-not-written";
+  return ws;
 }
 
 function climateScenario(): { model: Model; wf: WarmFloor; pipe: Pipe } {

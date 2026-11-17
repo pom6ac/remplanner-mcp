@@ -179,6 +179,54 @@ export function isClockwise(poly: Polygon): boolean {
 }
 
 /**
+ * Полигон целиком внутри полигона (ревью 68 №2): все вершины внутри/на границе,
+ * плюс каждое ребро внутреннего полигона разбивается точками пересечения с рёбрами
+ * внешнего (включая касания в вершинах и коллинеарные наложения) — середина каждого
+ * интервала должна быть внутри/на границе. Проверка середин ловит проход ребра через
+ * вершину вогнутой комнаты наружу: пересечение в вершине само по себе не исключается
+ * (касание изнутри законно), но за вершиной интервалы вне комнаты дают отказ.
+ * Общий предикат контуров: проёмы в полу (floorhole), тёплый пол (climate).
+ */
+export function polygonInsidePolygon(inner: Polygon, outer: Polygon): boolean {
+  for (const v of inner) {
+    if (!pointInPolygon(outer, v)) return false;
+  }
+  const T_EPS = 1e-9;
+  for (let i = 0; i < inner.length; i++) {
+    const a = inner[i]!;
+    const b = inner[(i + 1) % inner.length]!;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const edge: Segment = { p1: a, p2: b };
+    // параметр точки p на ребре (ребро невырожденное — размеры проверены)
+    const tOf = (p: Point): number => (Math.abs(dx) >= Math.abs(dy) ? (p.x - a.x) / dx : (p.y - a.y) / dy);
+    const ts: number[] = [0, 1];
+    for (let j = 0; j < outer.length; j++) {
+      const roomEdge: Segment = { p1: outer[j]!, p2: outer[(j + 1) % outer.length]! };
+      const p = lineIntersection(edge, roomEdge);
+      if (p) {
+        const t = tOf(p);
+        if (t > T_EPS && t < 1 - T_EPS && pointOnSegment(roomEdge, p, 1e-6)) ts.push(t);
+      } else {
+        // параллельны: коллинеарная накладка — концы ребра комнаты на ребре проёма
+        for (const q of [roomEdge.p1, roomEdge.p2]) {
+          if (!pointOnSegment(edge, q, 1e-6)) continue;
+          const t = tOf(q);
+          if (t > T_EPS && t < 1 - T_EPS) ts.push(t);
+        }
+      }
+    }
+    ts.sort((x, y) => x - y);
+    for (let k = 0; k + 1 < ts.length; k++) {
+      if (ts[k + 1]! - ts[k]! < T_EPS) continue;
+      const mid = { x: a.x + (dx * (ts[k]! + ts[k + 1]!)) / 2, y: a.y + (dy * (ts[k]! + ts[k + 1]!)) / 2 };
+      if (!pointInPolygon(outer, mid)) return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Площадь пересечения двух полигонов, см² (Sutherland–Hodgman: subject режется
  * внутренностью clip; clip ожидается выпуклым — тело стены, прямоугольник колонны).
  * Касание даёт ~0.
