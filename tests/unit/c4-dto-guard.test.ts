@@ -11,6 +11,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const dtoDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "dto");
+const saveDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "save");
 const srcDir = resolve(dtoDir, "..");
 
 function collect(dir: string, out: string[] = []): string[] {
@@ -29,12 +30,16 @@ const FORBIDDEN = [
   /^config\.ts$/, /^credentials\.ts$/, /^fs-safe\.ts$/, /^cli\.ts$/, /^server\.ts$/,
 ];
 
+// Запрещённые runtime-зависимости save-оркестрации (194-fix-c2s, ревью 193 №8):
+// сервер и workspace (workspace и так импортирует src/save, обратное — цикл).
+const FORBIDDEN_SAVE = [/^server\//, /^workspace\.ts$/];
+
 const RE = /(?:^|\n)(import|export)([\s\S]*?)from\s*"(\.[^"]+)"/g;
 
 type SourceFile = { name: string; dir: string; code: string };
 
 /** Нарушения в наборе файлов: цель импорта — путь от src относительно dir файла. */
-function violationsOf(files: SourceFile[]): string[] {
+function violationsOf(files: SourceFile[], forbidden: RegExp[] = FORBIDDEN, why = "DTO не зависит от сервера, workspace, сети и браузера"): string[] {
   const violations: string[] = [];
   for (const { name, dir, code } of files) {
     for (const m of code.matchAll(RE)) {
@@ -43,8 +48,8 @@ function violationsOf(files: SourceFile[]): string[] {
       const target = relative(srcDir, resolve(dir, m[3]!))!;
       const isTypeImport = kw === "import" && /^\s*type\b/.test(body);
       if (isTypeImport) continue;
-      if (FORBIDDEN.some((re) => re.test(target))) {
-        violations.push(`${name}: runtime-импорт "${m[3]}" (DTO не зависит от сервера, workspace, сети и браузера)`);
+      if (forbidden.some((re) => re.test(target))) {
+        violations.push(`${name}: runtime-импорт "${m[3]}" (${why})`);
       }
     }
   }
@@ -60,6 +65,16 @@ test("src/dto: нет runtime-импортов server/workspace/сети/бра�
     code: readFileSync(f, "utf8"),
   }));
   assert.deepEqual(violationsOf(files), [], `запрещённые импорты в src/dto:\n${violationsOf(files).join("\n")}`);
+});
+
+test("src/save: нет runtime-импортов server/workspace (сторож 194-fix-c2s, ревью 193 №8)", () => {
+  const files = collect(saveDir).map((f) => ({
+    name: relative(saveDir, f)!,
+    dir: dirname(f),
+    code: readFileSync(f, "utf8"),
+  }));
+  const violations = violationsOf(files, FORBIDDEN_SAVE, "save-оркестрация не зависит от сервера и workspace (workspace импортирует src/save, обратное — цикл)");
+  assert.deepEqual(violations, [], `запрещённые импорты в src/save:\n${violations.join("\n")}`);
 });
 
 test("сторож ловит запрещённые импорты (самотест ревью 188 №1)", () => {

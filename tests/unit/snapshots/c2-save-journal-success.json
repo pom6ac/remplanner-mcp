@@ -1,0 +1,112 @@
+[
+  {
+    "at": 1,
+    "op": "loadModel",
+    "object_id": "201",
+    "plan_id": "1",
+    "save_id": "s1"
+  },
+  {
+    "at": 2,
+    "op": "loadModel",
+    "object_id": "201",
+    "plan_id": "1",
+    "save_id": "s1"
+  },
+  {
+    "at": 3,
+    "op": "backup.write",
+    "path": "201-1-<stamp>.json",
+    "backup_files_before": 0
+  },
+  {
+    "at": 4,
+    "op": "openEditor",
+    "object_id": "201",
+    "plan_id": "1",
+    "anonymous": false
+  },
+  {
+    "at": 5,
+    "op": "editor.compatInfo",
+    "object_id": null,
+    "plan_id": null
+  },
+  {
+    "at": 6,
+    "op": "editor.normalize",
+    "model": {
+      "walls": 5,
+      "holes": 2,
+      "items": 0,
+      "pillars": 0,
+      "rigels": 0
+    }
+  },
+  {
+    "at": 7,
+    "op": "editor.save",
+    "attempt": 1
+  },
+  {
+    "at": 8,
+    "op": "editor.save.result",
+    "ok": true,
+    "conflict": false,
+    "save_id": "s2"
+  },
+  {
+    "at": 9,
+    "op": "loadModel",
+    "object_id": "201",
+    "plan_id": "1",
+    "save_id": "s2"
+  },
+  {
+    "at": 10,
+    "op": "save.outcome",
+    "save_id": "s2",
+    "save_id_before": "s1",
+    "backup_path": "201-1-<stamp>.json",
+    "verified": true,
+    "rounds": 1,
+    "will_delete": {
+      "walls": 0,
+      "openings": 0,
+      "items": 0,
+      "pillars": 0,
+      "rigels": 0,
+      "gas_lines": 0,
+      "pipes": 0,
+      "terrace_borders": 0,
+      "territory_borders": 0,
+      "level_holes": 0,
+      "led_strips": 0,
+      "stripes_light": 0,
+      "line_strips": 0,
+      "cables": 0,
+      "rulers": 0,
+      "comments": 0,
+      "warm_floors": 0,
+      "pipes_warm_floor": 0,
+      "pipes_conditioner": 0,
+      "pipes_heat": 0,
+      "pipes_ventilation": 0
+    },
+    "warnings": []
+  },
+  {
+    "at": 11,
+    "op": "backup.files",
+    "count": 1,
+    "all_match_prefix": true
+  },
+  {
+    "at": 12,
+    "op": "workspace.state",
+    "dirty": false,
+    "save_id": "s2",
+    "walls": 5,
+    "history_steps": 0
+  }
+]
