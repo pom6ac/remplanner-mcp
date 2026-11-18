@@ -3,14 +3,14 @@
 // 68-3 — ответы terrace_add/terrace_border_update/territory_add/territory_border_update в мм.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { clearEntityCollections, replaceEntityCollections } from "../../src/model/collections.ts";
+import { PLANS_DIR } from "../../src/config.ts";
 import type { Model } from "../../src/model/types.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -65,9 +65,10 @@ test("rev68 M1: clear сохраняет неизвестные поля мод�
 
 test("rev68 M1: import модели без обязательных коллекций — инвариант восстановлен, validate и add работают", async () => {
   const { client } = await start();
-  const dir = mkdtempSync(join(tmpdir(), "rev69-"));
-  const planPath = join(dir, "bare.plan");
-  writeFileSync(planPath, JSON.stringify({ v: 1, id: "x", plan_id: "1", total_height: 270, terrace_borders: { t1: { id: "t1", p1: { x: 600, y: 100 }, p2: { x: 900, y: 100 } } } }));
+  // 213 plans-root: путь импорта — относительно корня plans
+  const planPath = "rev69-bare.plan";
+  mkdirSync(PLANS_DIR, { recursive: true });
+  writeFileSync(join(PLANS_DIR, planPath), JSON.stringify({ v: 1, id: "x", plan_id: "1", total_height: 270, terrace_borders: { t1: { id: "t1", p1: { x: 600, y: 100 }, p2: { x: 900, y: 100 } } } }));
   await call(client, "project_import_plan", { path: planPath, replace: true });
   const m = (await call(client, "model_get", { detail: "full" })) as unknown as Model;
   for (const key of ["walls", "items", "pillars", "rulers", "comments"]) {
@@ -77,6 +78,7 @@ test("rev68 M1: import модели без обязательных коллек
   assert.equal(validate.ok, true, JSON.stringify(validate));
   await call(client, "pillar_add", { center: { x: 1000, y: 1000 }, width_mm: 200, height_mm: 200 });
   await client.close();
+  rmSync(join(PLANS_DIR, planPath), { force: true });
 });
 
 test("rev68 M1: replaceEntityCollections — null/не-объект источника для обязательной коллекции даёт пустой объект", () => {

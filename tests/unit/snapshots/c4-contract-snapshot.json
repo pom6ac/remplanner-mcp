@@ -2547,14 +2547,14 @@
   },
   {
    "name": "project_export_plan",
-   "description": "Экспортировать текущую планировку в файл .plan (JSON модели; scope full — со всеми полями модели). Файл можно позже импортировать project_import_plan.",
+   "description": "Экспортировать текущую планировку в файл .plan (JSON модели; scope full — со всеми полями модели). path — путь ОТНОСИТЕЛЬНО корневого каталога plans (~/.remplanner-mcp/plans, рядом с backups/renders), например kitchen.plan или 2026/kitchen.plan; подкаталоги создаются сами. Абсолютный путь принимается, только если он внутри каталога plans. Выход за корень (..), символические ссылки (в любом компоненте пути и на сам корень plans), пути вида ~/…, расширение кроме .plan отклоняются. Файл можно позже импортировать project_import_plan.",
    "inputSchema": {
     "type": "object",
     "properties": {
      "path": {
       "type": "string",
       "minLength": 1,
-      "description": "путь к файлу (.plan)"
+      "description": "путь к файлу (.plan) относительно каталога plans (~/.remplanner-mcp/plans), например kitchen.plan или 2026/kitchen.plan; абсолютный — только внутри plans; .., ~/… и symlink запрещены"
      },
      "scope": {
       "description": "current — компактная модель, full — полная (по умолчанию full)",
@@ -2573,13 +2573,14 @@
   },
   {
    "name": "project_import_plan",
-   "description": "Импортировать планировку из файла .plan (JSON модели) вместо текущей. Требует явного replace: true — операция затирает несохранённые правки. После импорта правки НЕ сохранены: project_save отдельно.",
+   "description": "Импортировать планировку из файла .plan (JSON модели) вместо текущей. path — путь ОТНОСИТЕЛЬНО корневого каталога plans (~/.remplanner-mcp/plans), как в project_export_plan; абсолютный путь — только внутри plans; выход за корень (..), символические ссылки (в любом компоненте пути, на файл и на сам корень plans), пути вида ~/…, файлы с несколькими жёсткими ссылками (nlink>1) и расширение кроме .plan отклоняются. Требует явного replace: true — операция затирает несохранённые правки. После импорта правки НЕ сохранены: project_save отдельно.",
    "inputSchema": {
     "type": "object",
     "properties": {
      "path": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "путь к файлу (.plan) относительно каталога plans (~/.remplanner-mcp/plans), например kitchen.plan; абсолютный — только внутри plans; .., ~/… и symlink запрещены"
      },
      "replace": {
       "type": "boolean",
@@ -4542,12 +4543,14 @@
    }
   ],
   "project_export_plan_current": {
-   "path": "<HOME>/c4-contract-snapshot.plan",
+   "path": "<HOME>/plans/c4-contract-snapshot.plan",
+   "relative_path": "c4-contract-snapshot.plan",
    "scope": "current",
    "bytes": 2093
   },
   "project_export_plan_full": {
-   "path": "<HOME>/c4-contract-snapshot.plan",
+   "path": "<HOME>/plans/c4-contract-snapshot.plan",
+   "relative_path": "c4-contract-snapshot.plan",
    "scope": "full",
    "bytes": 2141
   },

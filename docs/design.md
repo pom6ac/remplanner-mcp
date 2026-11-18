@@ -195,8 +195,8 @@ tests/              # node --test
 | `project_rename` | `object_id`, `title` (≤ 40 символов) | `POST /client/ajax/object_edit_name/` (`object_id`, `name`) |
 | `project_delete` | — | **не реализуется**: в ЛК удаление требует координат реального клика; агент сообщает пользователю, как удалить вручную |
 | `project_save` | `comment?` | нормализация → проверка инвариантов → снимок в backups → `project.save`; `{save_id}` |
-| `project_export_plan` | `path`, `scope: current\|full` | файл `.plan` (JSON или ZIP) |
-| `project_import_plan` | `path`, `object_id` | заменяет текущую планировку содержимым файла (с подтверждением `replace: true`) |
+| `project_export_plan` | `path`, `scope: current\|full` | файл `.plan` (JSON) внутри `~/.remplanner-mcp/plans`; `path` относительно корня (абсолютный — только внутри), `..`/symlink/`~/…`/не-`.plan` отклоняются; ответ `{path, relative_path, scope, bytes}` |
+| `project_import_plan` | `path`, `replace: true` | заменяет текущую планировку содержимым файла; ограничения пути как у export плюс `nlink>1` отклоняется; ответ `{imported, relative_path, walls}` |
 | `project_clear` | `confirm: true` | очищает текущую планировку |
 | `floor_list` / `plan_list` | — | этажи и планировки проекта (PRO для нескольких) |
 | `undo` / `redo` | `steps?` | история рабочей копии в памяти сервера |
