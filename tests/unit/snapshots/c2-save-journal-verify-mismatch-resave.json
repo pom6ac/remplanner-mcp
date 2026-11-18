@@ -105,7 +105,6 @@
       "finish_mismatches",
       "gas_line_mismatches",
       "got_walls",
-      "hint",
       "item_mismatches",
       "led_strip_mismatches",
       "level_hole_mismatches",

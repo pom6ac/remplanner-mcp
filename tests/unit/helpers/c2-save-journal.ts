@@ -32,6 +32,8 @@ export type RecordingOptions = {
   failSave?: boolean;
   /** afterSave вызывается после каждой записи сервера (порча для verify mismatch). */
   afterSave?: (server: SaveServer, saveCount: number) => void;
+  /** editor.save отвечает ok, но без save_id (сайт не вернул id записи, ревью 199 №2в). */
+  saveWithoutId?: boolean;
   /** Список комнат от редактора в результате normalize (norm.rooms, 194-fix-c2s). */
   normalizeRooms?: EditorRoom[];
 };
@@ -120,8 +122,9 @@ export function recordingDeps(
       server.model = structuredClone(lastNormalized ?? fixtureModel()) as unknown as Model;
       server.saveId = "s2";
       opts.afterSave?.(server, saveCount);
-      record({ op: "editor.save.result", ok: true, conflict: false, save_id: server.saveId });
-      return { ok: true, saveId: server.saveId, conflict: false };
+      const saveId = opts.saveWithoutId ? null : server.saveId;
+      record({ op: "editor.save.result", ok: true, conflict: false, save_id: saveId });
+      return { ok: true, saveId, conflict: false };
     },
     async renderPng() { return Buffer.from(""); },
     async compatInfo() {
