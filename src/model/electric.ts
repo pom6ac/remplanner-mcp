@@ -1,4 +1,4 @@
-import type { Model, Cable, CableVertex, ItemProps, Point } from "./types.ts";
+import type { Model, Cable, CableVertex, ItemProps, Point, Wall } from "./types.ts";
 import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
@@ -141,13 +141,37 @@ function finitePoint(name: string, p: MmPoint): void {
 }
 
 /**
+ * Внутренняя нормаль стены — в сторону помещения (как у againstWallPlacement:
+ * внутренняя сторона та, где центр комнаты); без комнат — сторона pc предмета.
+ */
+function wallInwardNormal(model: Model, wall: Wall, item: ItemProps): Point {
+  const nl = leftNormal(wall.p2.x - wall.p1.x, wall.p2.y - wall.p1.y);
+  const wallMid = { x: (wall.p1.x + wall.p2.x) / 2, y: (wall.p1.y + wall.p2.y) / 2 };
+  const rooms = roomPolygons(model);
+  const room = rooms.find((r) => r.roomId === item.id_room) ?? rooms[0];
+  const target = room ? { x: room.polygon.reduce((s, p) => s + p.x, 0) / room.polygon.length, y: room.polygon.reduce((s, p) => s + p.y, 0) / room.polygon.length } : null;
+  const toRoom = target ? sub(target, wallMid) : sub(item.pc, wallMid);
+  return nl.x * toRoom.x + nl.y * toRoom.y > 0 ? nl : scale(nl, -1);
+}
+
+/**
  * Пересчитать точки под-розетки после постановки/переноса группы (транзитивный
  * пересчёт затронутых привязок): real_center = pc группы, center/center_prs —
  * на 7 см внутрь помещения от оси стены (пробы 88: у розетки pc в 7 см от оси —
  * center совпадает; у выключателя высотой 18 pc в 9 см — center в 7 см).
  * Направление внутрь — по нормали стены к центру комнаты (как у addItem).
+ *
+ * Перенос (oldPc): смещения под-розеток относительно pc переносятся с доворотом
+ * на изменение угла. Режим resnapToWall (ревью 203 №8 — перенос against_wall на
+ * другую стену): взаимное расположение под-розеток сохраняется, как у item_add
+ * той же группы — вдоль-составляющая смещения относительно новой оси стены
+ * переносится, нормальная ставится от новой стены (center на 7 см внутрь от
+ * лица стены, real_center на оси pc). Иначе многоэлементная группа схлопывается
+ * в одну точку.
  */
-export function refreshSocketGroupSubs(model: Model, item: ItemProps, oldPc?: Point, oldAngle?: number): void {
+export function refreshSocketGroupSubs(
+  model: Model, item: ItemProps, oldPc?: Point, oldAngle?: number, resnapToWall = false,
+): void {
   const subs = item.socket_group as SocketGroupSub[] | undefined;
   if (!Array.isArray(subs)) return;
   if (oldPc) {
@@ -160,24 +184,38 @@ export function refreshSocketGroupSubs(model: Model, item: ItemProps, oldPc?: Po
       const dy = p.y - oldPc.y;
       return { x: item.pc.x + dx * cos - dy * sin, y: item.pc.y + dx * sin + dy * cos };
     };
+    const wall = resnapToWall && item.id_wall ? model.walls[item.id_wall] : undefined;
+    if (!wall) {
+      for (const s of subs) {
+        if (s.real_center) s.real_center = rotate(s.real_center);
+        if (s.center) s.center = rotate(s.center);
+        if (s.center_prs) s.center_prs = { ...s.center };
+      }
+      return;
+    }
+    const u = scale(sub(wall.p2, wall.p1), 1 / (Math.hypot(wall.p2.x - wall.p1.x, wall.p2.y - wall.p1.y) || 1));
+    const inward = wallInwardNormal(model, wall, item);
+    const alongOf = (p: Point): number => {
+      const r = rotate(p);
+      return (r.x - item.pc.x) * u.x + (r.y - item.pc.y) * u.y;
+    };
     for (const s of subs) {
-      if (s.real_center) s.real_center = rotate(s.real_center);
-      if (s.center) s.center = rotate(s.center);
+      if (s.real_center) {
+        s.real_center = { x: r2(item.pc.x + u.x * alongOf(s.real_center)), y: r2(item.pc.y + u.y * alongOf(s.real_center)) };
+      }
+      if (s.center) {
+        const along = alongOf(s.center);
+        s.center = {
+          x: r2(item.pc.x + u.x * along + inward.x * (7 - item.height / 2)),
+          y: r2(item.pc.y + u.y * along + inward.y * (7 - item.height / 2)),
+        };
+      }
       if (s.center_prs) s.center_prs = { ...s.center };
     }
     return;
   }
   const wall = item.id_wall ? model.walls[item.id_wall] : undefined;
-  let inward: Point | null = null;
-  if (wall) {
-    const nl = leftNormal(wall.p2.x - wall.p1.x, wall.p2.y - wall.p1.y);
-    const wallMid = { x: (wall.p1.x + wall.p2.x) / 2, y: (wall.p1.y + wall.p2.y) / 2 };
-    const rooms = roomPolygons(model);
-    const room = rooms.find((r) => r.roomId === item.id_room) ?? rooms[0];
-    const target = room ? { x: room.polygon.reduce((s, p) => s + p.x, 0) / room.polygon.length, y: room.polygon.reduce((s, p) => s + p.y, 0) / room.polygon.length } : null;
-    const toRoom = target ? sub(target, wallMid) : sub(item.pc, wallMid);
-    inward = nl.x * toRoom.x + nl.y * toRoom.y > 0 ? nl : scale(nl, -1);
-  }
+  const inward = wall ? wallInwardNormal(model, wall, item) : null;
   for (const s of subs) {
     s.real_center = { ...item.pc };
     // center — на 7 см внутрь от лица стены: pc стоит на height/2 внутрь,

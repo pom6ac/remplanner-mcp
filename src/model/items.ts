@@ -489,10 +489,11 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   // этап 88: транзитивный пересчёт затронутых привязок электрики — под-розетки
   // группы (перенос/поворот) и вершины связей, ссылающиеся на предмет
   if (Array.isArray(props.socket_group) && (params.center !== undefined || params.angleDeg !== undefined)) {
-    // ревью 198 №1/№2: перенос against_wall (пришёл idWall) — под-элементы
-    // пересчитываются с нуля по новой стене, как при item_add; обычный
-    // перенос/поворот — прежние смещения переносятся с доворотом на изменение угла
-    if (params.idWall !== undefined) refreshSocketGroupSubs(model, props);
+    // ревью 198 №1/№2, 203 №8: перенос against_wall (пришёл idWall) — под-элементы
+    // пересчитываются с сохранением взаимного расположения (шаг): вдоль-составляющая
+    // смещения переносится, нормальная ставится от новой стены, как у item_add;
+    // обычный перенос/поворот — прежние смещения переносятся с доворотом
+    if (params.idWall !== undefined) refreshSocketGroupSubs(model, props, oldPc, oldAngle, true);
     else refreshSocketGroupSubs(model, props, oldPc, oldAngle);
   }
   if (params.center !== undefined || params.angleDeg !== undefined) {

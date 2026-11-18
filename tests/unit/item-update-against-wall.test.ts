@@ -110,3 +110,46 @@ test("item_update against_wall == item_add: pc, угол, id_wall, новые р
   assert.deepEqual(movedSub.center, addedSub.center);
   await client.close();
 });
+
+test("ревью 203 №8: перенос against_wall многоэлементной socket_group сохраняет шаг под-розеток", async () => {
+  const { client, ctx } = await start();
+  (ctx.workspace().model.rooms2 as unknown) = {
+    r1: { polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }], area: 12 },
+  };
+  // группа из двух под-розеток: item_add даёт одну, вторую редактор создаёт кликом
+  // рядом (шаг 7 см вдоль стены, docs/remplanner-features.md) — воспроизводим это
+  await call(client, "item_add", {
+    name: "socket",
+    position: { against_wall: { wall_id: "W2", offset_mm: 500, gap_mm: 0 } },
+    depth_mm: 180,
+  });
+  const group = itemsOf(ctx)[itemsOf(ctx).length - 1]!;
+  const subs = group.socket_group as { id: string; center: { x: number; y: number }; real_center: { x: number; y: number }; center_prs: { x: number; y: number } }[];
+  assert.equal(subs.length, 1);
+  const clone = structuredClone(subs[0]!);
+  clone.id = "_sub2";
+  clone.center = { x: clone.center.x, y: clone.center.y + 7 };
+  clone.real_center = { x: clone.real_center.x, y: clone.real_center.y + 7 };
+  clone.center_prs = { ...clone.center };
+  subs.push(clone);
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }): number => Math.hypot(a.x - b.x, a.y - b.y);
+  const stepBefore = dist(subs[0]!.center, subs[1]!.center);
+  assert.equal(stepBefore, 7);
+
+  // перенос на другую стену (W1 — верхняя) — под-розетки не схлопываются в одну точку
+  await call(client, "item_update", {
+    item_id: "I1",
+    position: { against_wall: { wall_id: "W1", offset_mm: 1000, gap_mm: 0 } },
+    depth_mm: 180,
+  });
+  const moved = itemsOf(ctx)[itemsOf(ctx).length - 1]!;
+  const after = moved.socket_group as typeof subs;
+  assert.equal(after.length, 2);
+  assert.equal(dist(after[0]!.center, after[1]!.center), stepBefore, "шаг между под-элементами сохранён");
+  assert.equal(dist(after[0]!.real_center, after[1]!.real_center), stepBefore, "шаг real_center сохранён");
+  // обе на внутренней стороне новой стены (у верхней стены y не больше pc.y)
+  for (const s of after) {
+    assert.ok(s.center.y <= moved.pc.y + 1e-9, "под-элемент со стороны стены (внутри помещения)");
+  }
+  await client.close();
+});
