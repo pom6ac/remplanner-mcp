@@ -279,6 +279,11 @@ test("againstWallCenter: та же формула модельного слоя,
   assert.deepEqual(againstWallCenter(v, { offset_mm: 250, gap_mm: 0 }, 80, 60, roomsH), { center: { x: 400, y: 650 }, angleDeg: 90 });
   // offset больше длины — как в item_add, без clamp (эталон — item_add, он не режет)
   assert.deepEqual(againstWallCenter(h, { offset_mm: 5000 }, 80, 60, roomsH), { center: { x: 5400, y: 400 }, angleDeg: 0 });
+  // ревью 198 №3: обратная ориентация p1→p2 (стена справа налево) — угол
+  // нормируется в 0, а не 180 (нормировка в (−90; 90]), нормаль к той же комнате
+  const hRev = wall("h-rev", 100, 0, 0, 0);
+  assert.deepEqual(againstWallCenter(hRev, { offset_mm: 500, gap_mm: 100 }, 80, 60, roomsH), { center: { x: 100, y: 500 }, angleDeg: 0 });
+  assert.deepEqual(againstWallCenter(hRev, { offset_mm: 200, from: "end" }, 80, 60, roomsH), { center: { x: 600, y: 400 }, angleDeg: 0 });
 });
 
 test("againstWallCenter == addItem againstWall: одна формула на разных стенах, ориентациях p1→p2, from и gap (±1 мм)", () => {
