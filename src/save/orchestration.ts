@@ -652,9 +652,20 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
       host.onVerified(toModel(structuredClone(after.model)));
     } else if (attempt === 1) {
-      const coverageAfter = wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
+      // ревью 193 №5: отката сервера нет — на нём записана версия с расхождениями
+      // (последний save_id). Рабочая копия остаётся с желаемой моделью и dirty:true,
+      // но запоминает фактически записанный save_id: повторный project_save без
+      // force перезапишет серверную запись без ложного SAVE_CONFLICT на свою же.
+      const serverSaveId = after.save_id || saveRes.saveId || p.saveId;
+      p.saveId = serverSaveId;
       throw new McpError("SITE_ERROR", "после сохранения модель на сервере не совпала с рабочей копией", {
         details: {
+          // ревью 193 №5: файл состояния ДО save и текущая запись сервера —
+          // восстановление только из backup (автоматического отката нет);
+          // сервер НЕ откатан, текст-подсказка об этом
+          backup_path: backupPath,
+          server_save_id: serverSaveId,
+          hint: "на сервере сохранена версия с расхождениями; рабочая копия не изменена; повторите project_save или восстановите из backup_path",
           expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length,
           coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>) * 10),
           axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,

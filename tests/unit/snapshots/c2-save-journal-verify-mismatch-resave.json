@@ -2,27 +2,27 @@
   {
     "at": 1,
     "op": "loadModel",
-    "object_id": "205",
+    "object_id": "211",
     "plan_id": "1",
     "save_id": "s1"
   },
   {
     "at": 2,
     "op": "loadModel",
-    "object_id": "205",
+    "object_id": "211",
     "plan_id": "1",
     "save_id": "s1"
   },
   {
     "at": 3,
     "op": "backup.write",
-    "path": "205-1-<stamp>.json",
+    "path": "211-1-<stamp>.json",
     "backup_files_before": 0
   },
   {
     "at": 4,
     "op": "openEditor",
-    "object_id": "205",
+    "object_id": "211",
     "plan_id": "1",
     "anonymous": false
   },
@@ -58,7 +58,7 @@
   {
     "at": 9,
     "op": "loadModel",
-    "object_id": "205",
+    "object_id": "211",
     "plan_id": "1",
     "save_id": "s2"
   },
@@ -77,7 +77,7 @@
   {
     "at": 12,
     "op": "loadModel",
-    "object_id": "205",
+    "object_id": "211",
     "plan_id": "1",
     "save_id": "s2"
   },
@@ -91,6 +91,7 @@
     "details_keys": [
       "axis_segments_after",
       "axis_segments_before",
+      "backup_path",
       "border_mismatches",
       "cables_connection_mismatches",
       "cables_link_form_mismatches",
@@ -104,6 +105,7 @@
       "finish_mismatches",
       "gas_line_mismatches",
       "got_walls",
+      "hint",
       "item_mismatches",
       "led_strip_mismatches",
       "level_hole_mismatches",
@@ -115,6 +117,7 @@
       "room_mismatches",
       "rooms_expected",
       "rooms_on_server",
+      "server_save_id",
       "socket_group_derived_mismatches",
       "socket_group_mismatches",
       "stripes_light_mismatches",
@@ -126,8 +129,115 @@
     "at": 14,
     "op": "workspace.state",
     "dirty": true,
-    "save_id": "s1",
+    "save_id": "s2",
     "walls": 5,
     "history_steps": 1
+  },
+  {
+    "at": 15,
+    "op": "editor.close"
+  },
+  {
+    "at": 16,
+    "op": "loadModel",
+    "object_id": "211",
+    "plan_id": "1",
+    "save_id": "s2"
+  },
+  {
+    "at": 17,
+    "op": "backup.write",
+    "path": "211-1-<stamp>.json",
+    "backup_files_before": 1
+  },
+  {
+    "at": 18,
+    "op": "openEditor",
+    "object_id": "211",
+    "plan_id": "1",
+    "anonymous": false
+  },
+  {
+    "at": 19,
+    "op": "editor.compatInfo",
+    "object_id": null,
+    "plan_id": null
+  },
+  {
+    "at": 20,
+    "op": "editor.normalize",
+    "model": {
+      "walls": 5,
+      "holes": 2,
+      "items": 0,
+      "pillars": 0,
+      "rigels": 0
+    }
+  },
+  {
+    "at": 21,
+    "op": "editor.save",
+    "attempt": 3
+  },
+  {
+    "at": 22,
+    "op": "editor.save.result",
+    "ok": true,
+    "conflict": false,
+    "save_id": "s2"
+  },
+  {
+    "at": 23,
+    "op": "loadModel",
+    "object_id": "211",
+    "plan_id": "1",
+    "save_id": "s2"
+  },
+  {
+    "at": 24,
+    "op": "save.outcome",
+    "save_id": "s2",
+    "save_id_before": "s2",
+    "backup_path": "211-1-<stamp>.json",
+    "verified": true,
+    "rounds": 1,
+    "will_delete": {
+      "walls": 0,
+      "openings": 0,
+      "items": 0,
+      "pillars": 0,
+      "rigels": 0,
+      "gas_lines": 0,
+      "pipes": 0,
+      "terrace_borders": 0,
+      "territory_borders": 0,
+      "level_holes": 0,
+      "led_strips": 0,
+      "stripes_light": 0,
+      "line_strips": 0,
+      "cables": 0,
+      "rulers": 0,
+      "comments": 0,
+      "warm_floors": 0,
+      "pipes_warm_floor": 0,
+      "pipes_conditioner": 0,
+      "pipes_heat": 0,
+      "pipes_ventilation": 0
+    },
+    "warnings": []
+  },
+  {
+    "at": 25,
+    "op": "backup.files",
+    "count": 2,
+    "all_match_prefix": true
+  },
+  {
+    "at": 26,
+    "op": "workspace.state",
+    "dirty": false,
+    "save_id": "s2",
+    "walls": 5,
+    "history_steps": 0
   }
 ]

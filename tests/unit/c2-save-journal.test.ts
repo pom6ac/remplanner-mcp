@@ -126,7 +126,7 @@ test("c2s: журнал несовпадения сверки после save �
   checkSnapshot("verify-retry", ws);
 });
 
-test("c2s: журнал устойчивого несовпадения сверки — две попытки, SITE_ERROR, откат рабочей копии", async () => {
+test("c2s: журнал устойчивого несовпадения сверки — две попытки, SITE_ERROR, рабочая копия сохранена (ревью 193 №5)", async () => {
   const server: SaveServer = { saveId: "s1", model: fixtureModel() };
   let ws: JournalWorkspace;
   const recording = recordingDeps(server, {
@@ -147,10 +147,57 @@ test("c2s: журнал устойчивого несовпадения свер
     assert.equal(e.code, "SITE_ERROR");
     recordError(ws, e);
   }
-  // откат: каноническая копия не заменена серверной, dirty сохраняется
+  // рабочая копия не заменена серверной (отката сервера нет): модель и dirty сохраняются,
+  // но save_id — тот, что реально записан на сервере (s2), иначе повторный save
+  // без force получает SAVE_CONFLICT на собственную запись (ревью 193 №5)
   assert.equal(JSON.stringify(ws.model), modelBefore, "рабочая модель не заменена после неудачной сверки");
+  assert.equal(ws.project!.dirty, true, "рабочая копия остаётся несохранённой");
+  assert.equal(ws.project!.saveId, "s2", "запомнен save_id, реально записанный на сервере");
   recordState(ws);
-  checkSnapshot("verify-mismatch-rollback", ws);
+  checkSnapshot("verify-mismatch-working-copy-kept", ws);
+});
+
+test("c2s: журнал повторного save без force после устойчивого расхождения — успех без SAVE_CONFLICT (ревью 193 №5)", async () => {
+  const server: SaveServer = { saveId: "s1", model: fixtureModel() };
+  let ws: JournalWorkspace;
+  // сервер искажает запись только в первых двух попытках: первый save уходит
+  // в устойчивое расхождение, повторный save уже верифицируется
+  const recording = recordingDeps(server, {
+    afterSave: (s, n) => {
+      if (n <= 2) {
+        const walls = s.model.walls as Record<string, unknown>;
+        delete walls[Object.keys(walls)[0]!];
+      }
+    },
+  }, (e) => ws.record(e));
+  ws = new JournalWorkspace(recording.deps);
+  await ws.open("211", "1");
+  addExtraWall(ws);
+  const modelBefore = JSON.stringify(ws.model);
+  try {
+    await ws.save();
+    assert.fail("ожидался SITE_ERROR");
+  } catch (e) {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    recordError(ws, e);
+  }
+  // рабочая копия с желаемой моделью и dirty:true запомнила серверный save_id (s2)
+  assert.equal(JSON.stringify(ws.model), modelBefore, "рабочая модель не заменена после неудачной сверки");
+  assert.equal(ws.project!.saveId, "s2");
+  assert.equal(ws.project!.dirty, true);
+  recordState(ws);
+  // редактор закрыт (как в реальной сессии между вызовами project_save):
+  // повторный save без force не должен получать SAVE_CONFLICT на собственную запись
+  await ws.close();
+  const outcome = await ws.save();
+  recordOutcome(ws, outcome);
+  recordBackupFiles(ws);
+  recordState(ws);
+  assert.equal(outcome.verified, true);
+  assert.equal(outcome.rounds, 1);
+  assert.equal(ws.project!.dirty, false);
+  checkSnapshot("verify-mismatch-resave", ws);
 });
 
 test("c2s: журнал save без изменений (dirty=false) — та же последовательность сверок", async () => {
