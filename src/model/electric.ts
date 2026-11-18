@@ -5,7 +5,7 @@ import type { MmPoint } from "./walls.ts";
 import { McpError } from "../errors.ts";
 import { add, leftNormal, scale, sub } from "./geometry.ts";
 import { gasLineLengthM } from "./pipes.ts";
-import { roomPolygons } from "./rooms.ts";
+import { roomPolygons, inwardSideByProbe } from "./rooms.ts";
 
 /**
  * Электрика (этап 88, 2026-11-17): розетки и выключатели листов «Розетки» и
@@ -141,17 +141,24 @@ function finitePoint(name: string, p: MmPoint): void {
 }
 
 /**
- * Внутренняя нормаль стены — в сторону помещения (как у againstWallPlacement:
- * внутренняя сторона та, где центр комнаты); без комнат — сторона pc предмета.
+ * Внутренняя нормаль стены — тем же правилом пробной точки, что у
+ * againstWallPlacement (общий хелпер inwardSideByProbe, ревью 209 №3): якорь —
+ * проекция pc на ось стены, pc уже стоит с внутренней стороны, и на вогнутом
+ * ребре невыпуклой комнаты (центр её вершин лежит снаружи) это единственный
+ * надёжный ориентир. Обе или ни одна проба в комнате (перегородка, стена вне
+ * помещений) — сторона pc предмета, как раньше сторона его комнаты.
  */
 function wallInwardNormal(model: Model, wall: Wall, item: ItemProps): Point {
-  const nl = leftNormal(wall.p2.x - wall.p1.x, wall.p2.y - wall.p1.y);
+  const dir = sub(wall.p2, wall.p1);
+  const u = scale(dir, 1 / (Math.hypot(dir.x, dir.y) || 1));
+  const nl = leftNormal(dir.x, dir.y);
   const wallMid = { x: (wall.p1.x + wall.p2.x) / 2, y: (wall.p1.y + wall.p2.y) / 2 };
-  const rooms = roomPolygons(model);
-  const room = rooms.find((r) => r.roomId === item.id_room) ?? rooms[0];
-  const target = room ? { x: room.polygon.reduce((s, p) => s + p.x, 0) / room.polygon.length, y: room.polygon.reduce((s, p) => s + p.y, 0) / room.polygon.length } : null;
-  const toRoom = target ? sub(target, wallMid) : sub(item.pc, wallMid);
-  return nl.x * toRoom.x + nl.y * toRoom.y > 0 ? nl : scale(nl, -1);
+  const along = (item.pc.x - wallMid.x) * u.x + (item.pc.y - wallMid.y) * u.y;
+  const anchor = add(wallMid, scale(u, along));
+  const byProbe = inwardSideByProbe(wall, nl, anchor, roomPolygons(model));
+  if (byProbe) return byProbe;
+  const toPc = sub(item.pc, wallMid);
+  return nl.x * toPc.x + nl.y * toPc.y > 0 ? nl : scale(nl, -1);
 }
 
 /**
@@ -159,7 +166,8 @@ function wallInwardNormal(model: Model, wall: Wall, item: ItemProps): Point {
  * пересчёт затронутых привязок): real_center = pc группы, center/center_prs —
  * на 7 см внутрь помещения от оси стены (пробы 88: у розетки pc в 7 см от оси —
  * center совпадает; у выключателя высотой 18 pc в 9 см — center в 7 см).
- * Направление внутрь — по нормали стены к центру комнаты (как у addItem).
+ * Направление внутрь — правилом пробной точки из againstWallPlacement
+ * (wallInwardNormal, ревью 209 №3).
  *
  * Перенос (oldPc): смещения под-розеток относительно pc переносятся с доворотом
  * на изменение угла. Режим resnapToWall (ревью 203 №8 — перенос against_wall на
