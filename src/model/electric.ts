@@ -5,7 +5,7 @@ import type { MmPoint } from "./walls.ts";
 import { McpError } from "../errors.ts";
 import { add, leftNormal, scale, sub } from "./geometry.ts";
 import { gasLineLengthM } from "./pipes.ts";
-import { roomPolygons } from "./items.ts";
+import { roomPolygons } from "./rooms.ts";
 
 /**
  * Электрика (этап 88, 2026-11-17): розетки и выключатели листов «Розетки» и

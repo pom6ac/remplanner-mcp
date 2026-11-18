@@ -2,7 +2,7 @@ import type { Model, Point, Rigel, RigelEndpoint, RigelLink } from "./types.ts";
 import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
-import { wallFaces } from "./walls.ts";
+import { wallFaces } from "./wall-geometry.ts";
 import { McpError } from "../errors.ts";
 import { assignCandidate } from "./assign.ts";
 import { dist, closestPoint, lineIntersection, offsetSegment, pointOnSegment, type Segment } from "./geometry.ts";

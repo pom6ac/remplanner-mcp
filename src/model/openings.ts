@@ -3,7 +3,7 @@ import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import { pointsAroundCenter, pointAtLength, projectionLength, type Segment } from "./geometry.ts";
 import type { MmPoint } from "./walls.ts";
-import { wallFaces } from "./walls.ts";
+import { wallFaces } from "./wall-geometry.ts";
 import { McpError } from "../errors.ts";
 import { assignCandidate } from "./assign.ts";
 
