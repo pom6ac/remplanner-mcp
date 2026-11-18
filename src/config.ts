@@ -27,6 +27,12 @@ export const STATE_ANON_PATH = join(HOME_DIR, "state.anon.json");
 export const CACHE_DIR = join(HOME_DIR, "cache");
 export const RENDERS_DIR = join(HOME_DIR, "renders");
 export const BACKUPS_DIR = join(HOME_DIR, "backups");
+/**
+ * B3 (аудит 65, решение пользователя): корень файлов .plan для
+ * project_export_plan/project_import_plan — рядом с backups/renders.
+ * Пути инструментов интерпретируются относительно этого каталога.
+ */
+export const PLANS_DIR = join(HOME_DIR, "plans");
 
 /** Пауза между запросами к сайту, мс (≤ 30 запросов в минуту). */
 export const MIN_REQUEST_INTERVAL_MS = 2100;

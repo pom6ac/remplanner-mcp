@@ -8,8 +8,7 @@
 // 3) count (modelCounts) считает все коллекции реестра.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, readFileSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, readFileSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -18,11 +17,32 @@ import { ServerContext } from "../../src/server/context.ts";
 import { MODEL_ENTITY_COLLECTIONS, MODEL_REQUIRED_COLLECTIONS, PUBLIC_COLLECTION_KEYS, entityCounts, hasEntities } from "../../src/model/collections.ts";
 import { modelCounts, modelIsContentEmpty } from "../../src/workspace.ts";
 import { compactModel } from "../../src/model/compact.ts";
+import { PLANS_DIR } from "../../src/config.ts";
 import type { ModelEntityCollection } from "../../src/model/collections.ts";
 import type { Model, GasLine, LevelHole, LedStrip, LineStrip, Pipe, StripLight, WarmFloor, FixtureEnvelope } from "../../src/model/types.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const FIXTURE = join(ROOT, "tests/fixtures/anon-rect-4000x3000.json");
+
+// 213 plans-root: путь import/export — относительно корня plans; фикстура и
+// модель копируются в корень plans под именами .plan
+const FIXTURE_REL = "c1-fixture.plan";
+const FULL_REL = "c1-full.plan";
+const fixtureRel = (): string => {
+  mkdirSync(PLANS_DIR, { recursive: true });
+  const p = join(PLANS_DIR, FIXTURE_REL);
+  writeFileSync(p, readFileSync(FIXTURE));
+  return FIXTURE_REL;
+};
+const fullRel = (): string => {
+  mkdirSync(PLANS_DIR, { recursive: true });
+  writeFileSync(join(PLANS_DIR, FULL_REL), JSON.stringify({ model: fullPlanModel() }));
+  return FULL_REL;
+};
+const cleanupPlans = (): void => {
+  rmSync(join(PLANS_DIR, FIXTURE_REL), { force: true });
+  rmSync(join(PLANS_DIR, FULL_REL), { force: true });
+};
 
 type ToolCallResult = { isError?: boolean; content?: { type: string; text?: string }[] };
 const text = (r: unknown): string => ((r as ToolCallResult).content as { text: string }[])[0]!.text;
@@ -193,9 +213,7 @@ test("c1: публичные ключи счётчиков — словарь co
 
 test("c1: project_import_plan заменяет ВСЕ коллекции импортированными (включая ригель и газ)", async () => {
   const { client } = await start();
-  const dir = mkdtempSync(join(tmpdir(), "c1-"));
-  const planPath = join(dir, "full.plan");
-  writeFileSync(planPath, JSON.stringify({ model: fullPlanModel() }));
+  const planPath = fullRel();
   try {
     await call(client, "project_import_plan", { path: planPath, replace: true });
     const m = (await call(client, "model_get", { detail: "full" })) as unknown as Model;
@@ -206,7 +224,7 @@ test("c1: project_import_plan заменяет ВСЕ коллекции имп�
     assert.equal(Object.keys(m.rigels ?? {}).length, 1, "ригель импортирован");
     assert.equal(Object.keys((m as unknown as Record<string, Record<string, unknown>>).pipes_gas ?? {}).length, 1, "газовая линия импортирована");
     // повторный импорт фикстуры (без новых коллекций) убирает их из модели
-    await call(client, "project_import_plan", { path: FIXTURE, replace: true });
+    await call(client, "project_import_plan", { path: fixtureRel(), replace: true });
     const after = (await call(client, "model_get", { detail: "full" })) as unknown as Model;
     const fx = fixtureModel();
     for (const key of MODEL_ENTITY_COLLECTIONS) {
@@ -214,14 +232,13 @@ test("c1: project_import_plan заменяет ВСЕ коллекции имп�
     }
   } finally {
     await client.close();
+    cleanupPlans();
   }
 });
 
 test("c1: project_clear очищает ВСЕ коллекции (включая ригель и газ); undo восстанавливает", async () => {
   const { client } = await start();
-  const dir = mkdtempSync(join(tmpdir(), "c1-"));
-  const planPath = join(dir, "full.plan");
-  writeFileSync(planPath, JSON.stringify({ model: fullPlanModel() }));
+  const planPath = fullRel();
   try {
     await call(client, "project_import_plan", { path: planPath, replace: true });
     await call(client, "project_clear", { confirm: true });
@@ -240,5 +257,6 @@ test("c1: project_clear очищает ВСЕ коллекции (включая
     for (const key of MODEL_ENTITY_COLLECTIONS) assert.equal(counts[key], 1, `${key} после undo = ${counts[key]}`);
   } finally {
     await client.close();
+    cleanupPlans();
   }
 });

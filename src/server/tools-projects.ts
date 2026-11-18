@@ -1,11 +1,12 @@
-import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { SCENARIO_HINT, mmInt, mmPoint } from "./context.ts";
 import type { ServerContext } from "./context.ts";
 import { ok, tool, type ToolDefLike as ToolDef } from "./toolkit.ts";
 import { McpError } from "../errors.ts";
-import { inspectPath, writePrivateFile } from "../fs-safe.ts";
+import { ensurePrivateDir, inspectPath, writePrivateFile } from "../fs-safe.ts";
+import { PLANS_DIR } from "../config.ts";
 import type { Model } from "../model/types.ts";
 import { clearEntityCollections, replaceEntityCollections, MODEL_ENTITY_COLLECTIONS } from "../model/collections.ts";
 import { MAX_PLAN_FILE_BYTES, MAX_SERVICE_COMMENT_CHARS } from "../limits.ts";
@@ -70,6 +71,75 @@ function planFileError(e: unknown, p: string, kind: "import" | "export" = "impor
     return new McpError("INVALID_ARGUMENT", `JSON слишком глубоко вложен: ${shown}`);
   }
   return e as McpError;
+}
+
+/**
+ * B3 (аудит 65, решение пользователя): политика корневого каталога import/export.
+ * `path` инструментов — путь ОТНОСИТЕЛЬНО корня plans (PLANS_DIR, рядом с
+ * backups/renders). Абсолютный путь принимается, только если после resolve он
+ * внутри корня. Отказ (INVALID_ARGUMENT) при: выходе за корень (`..`, абсолютный
+ * путь вне корня), symlink в любом существующем компоненте пути внутри корня
+ * или на сам файл (realpath каждого существующего компонента остаётся внутри
+ * realpath корня), расширении не `.plan`, пустом имени. Корень создаётся при
+ * первом использовании (0700, ensurePrivateDir).
+ */
+export type ResolvedPlanPath = {
+  /** абсолютный путь внутри корня plans (после resolve) */
+  absolute: string;
+  /** путь относительно корня plans, как его задал пользователь (нормализован) */
+  relative: string;
+};
+
+const containsInside = (root: string, p: string): boolean => {
+  const rel = relative(root, p);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+};
+
+export function resolvePlanPath(input: string): ResolvedPlanPath {
+  const shown = shownPath(input);
+  if (input.trim() === "") {
+    throw new McpError("INVALID_ARGUMENT", "путь к плану пустой");
+  }
+  if (basename(input) === ".plan") {
+    throw new McpError("INVALID_ARGUMENT", "путь к плану без имени файла: " + shown);
+  }
+  if (!input.toLowerCase().endsWith(".plan")) {
+    throw new McpError("INVALID_ARGUMENT", `расширение файла плана должно быть .plan: ${shown}`);
+  }
+  ensurePrivateDir(PLANS_DIR);
+  const realRoot = realpathSync(PLANS_DIR);
+  // resolve принимает и относительный (к корню), и абсолютный вход;
+  // абсолютный вне корня сразу даёт rel с ".."
+  const candidate = resolve(PLANS_DIR, input);
+  const rel = relative(PLANS_DIR, candidate);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    throw new McpError("INVALID_ARGUMENT", `путь выходит за корень plans (.. и пути вне корня запрещены): ${shown}`);
+  }
+  // symlink в любом существующем компоненте пути (от корня до файла) — отказ;
+  // несуществующий хвост пропускаем (его создаст export), ENOTDIR — как ENOENT
+  let deepest = PLANS_DIR;
+  for (const part of rel.split(sep)) {
+    const cur = join(deepest, part);
+    let st;
+    try {
+      st = lstatSync(cur);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") break;
+      throw e;
+    }
+    if (st.isSymbolicLink()) {
+      throw new McpError("INVALID_ARGUMENT", `путь содержит символическую ссылку, операция отклонена: ${shown}`);
+    }
+    deepest = cur;
+  }
+  // realpath каждого существующего компонента — внутри realpath корня
+  // (страховка от mount/symlink-трюков на уровне ФС)
+  const realDeepest = realpathSync(deepest);
+  if (!containsInside(realRoot, realDeepest) && realDeepest !== realRoot) {
+    throw new McpError("INVALID_ARGUMENT", `реальный путь выходит за корень plans: ${shown}`);
+  }
+  return { absolute: candidate, relative: rel };
 }
 
 /**
@@ -215,38 +285,66 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
 
     project_export_plan: tool(
       "Экспортировать текущую планировку в файл .plan (JSON модели; scope full — со всеми полями модели). " +
+        "path — путь ОТНОСИТЕЛЬНО корневого каталога plans (~/.remplanner-mcp/plans, рядом с backups/renders), " +
+        "например kitchen.plan или 2026/kitchen.plan; подкаталоги создаются сами. " +
+        "Абсолютный путь принимается, только если он внутри каталога plans. Выход за корень (..), " +
+        "символические ссылки и расширение кроме .plan отклоняются. " +
         "Файл можно позже импортировать project_import_plan.",
       {
-        path: z.string().min(1).describe("путь к файлу (.plan)"),
+        path: z.string().min(1).describe(
+          "путь к файлу (.plan) относительно каталога plans (~/.remplanner-mcp/plans), например kitchen.plan или 2026/kitchen.plan; " +
+            "абсолютный — только внутри plans; .. и symlink запрещены",
+        ),
         scope: z.enum(["current", "full"]).optional().describe("current — компактная модель, full — полная (по умолчанию full)"),
       },
       async (args) => {
         const ws = ctx.workspace();
         const scope = (args["scope"] as string | undefined) ?? "full";
+        let resolved: ResolvedPlanPath;
+        try {
+          resolved = resolvePlanPath(args["path"] as string);
+        } catch (e) {
+          if (e instanceof McpError) throw e;
+          throw planFileError(e, args["path"] as string, "export");
+        }
         // RAW EDITOR PAYLOAD (src/dto/model-payload.ts): обе ветки — сырая модель
         // сайта в см, формат принадлежит сайту; scope=current — модель без обёртки,
         // scope=full — {model, saved_at}
         const payload = scope === "current" ? ws.model : { model: ws.model, saved_at: new Date().toISOString() };
         try {
+          // подкаталоги внутри корня plans создаются (0700)
+          ensurePrivateDir(dirname(resolved.absolute));
           // B3/B4 (аудит 65): атомарная запись, 0600, отказ на symlink/не-обычную цель.
-          writePrivateFile(args["path"] as string, JSON.stringify(payload, null, 1));
+          writePrivateFile(resolved.absolute, JSON.stringify(payload, null, 1));
         } catch (e) {
           if (e instanceof McpError) throw e;
-          throw planFileError(e, args["path"] as string, "export");
+          throw planFileError(e, resolved.relative, "export");
         }
-        return ok({ path: args["path"], scope, bytes: JSON.stringify(payload).length });
+        return ok({ path: resolved.absolute, relative_path: resolved.relative, scope, bytes: JSON.stringify(payload).length });
       },
     ),
 
     project_import_plan: tool(
       "Импортировать планировку из файла .plan (JSON модели) вместо текущей. " +
+        "path — путь ОТНОСИТЕЛЬНО корневого каталога plans (~/.remplanner-mcp/plans), как в project_export_plan; " +
+        "абсолютный путь — только внутри plans; выход за корень (..), символические ссылки и расширение кроме .plan отклоняются. " +
         "Требует явного replace: true — операция затирает несохранённые правки. После импорта правки НЕ сохранены: project_save отдельно.",
       {
-        path: z.string().min(1),
+        path: z.string().min(1).describe(
+          "путь к файлу (.plan) относительно каталога plans (~/.remplanner-mcp/plans), например kitchen.plan; " +
+            "абсолютный — только внутри plans; .. и symlink запрещены",
+        ),
         replace: z.literal(true).describe("подтверждение замены текущей планировки"),
       },
       async (args) => {
-        const model = readPlanFile(args["path"] as string);
+        let resolved: ResolvedPlanPath;
+        try {
+          resolved = resolvePlanPath(args["path"] as string);
+        } catch (e) {
+          if (e instanceof McpError) throw e;
+          throw planFileError(e, args["path"] as string);
+        }
+        const model = readPlanFile(resolved.absolute);
         const ws = ctx.workspace();
         ws.apply("import_plan", (m) => {
           // ревью 66 №2: замена по общему реестру коллекций — новые сущности
@@ -254,7 +352,7 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
           replaceEntityCollections(m, model);
           return true;
         });
-        return ok({ imported: args["path"], walls: Object.keys(ws.model.walls).length, hint: SCENARIO_HINT });
+        return ok({ imported: resolved.absolute, relative_path: resolved.relative, walls: Object.keys(ws.model.walls).length, hint: SCENARIO_HINT });
       },
     ),
 
