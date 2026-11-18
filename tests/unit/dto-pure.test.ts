@@ -322,6 +322,96 @@ test("againstWallCenter == addItem againstWall: одна формула на р�
   }
 });
 
+// ---------- ревью 198 №4: сторона стены по попаданию пробной точки в комнату ----------
+
+// комнаты A 0..400×0..300 и B 400..600×0..100 см; B — маленькая комната справа
+const roomA: RoomPolygon = {
+  roomId: "roomA",
+  polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }],
+  areaCm2: 120_000,
+  axisAreaCm2: null,
+};
+const roomB: RoomPolygon = {
+  roomId: "roomB",
+  polygon: [{ x: 400, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 100 }, { x: 400, y: 100 }],
+  areaCm2: 20_000,
+  axisAreaCm2: null,
+};
+const bothRooms = [roomA, roomB];
+
+test("ревью 198 №4: стена маленькой комнаты B — нормаль в B (пробная точка в полигоне), item_add и item_update совпадают", () => {
+  // стена B (400,100)→(600,100), предмет 40×40 см, offset_mm 500, gap_mm 0:
+  // вдоль 50 + 20 = 70 см от начала → x = 470; полутолщина 10 + полуглубина 20
+  // в сторону B → y = 70 (внутри B). Раньше нормаль бралась от центра самой
+  // большой комнаты A → (470,130) вне обеих комнат → OUTSIDE_ROOM
+  const wb = wall("wb", 400, 100, 600, 100);
+  const added = addItem(model({ walls: { wb } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wb", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, bothRooms);
+  assert.deepEqual(added.pc, { x: 470, y: 70 });
+  assert.equal(added.angle, 0);
+  assert.equal(added.id_room, "roomB");
+  // та же стена с обратной ориентацией p1→p2: x = 600 − 70 = 530, угол тот же 0
+  const wbRev = wall("wb-rev", 600, 100, 400, 100);
+  const addedRev = addItem(model({ walls: { "wb-rev": wbRev } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wb-rev", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, bothRooms);
+  assert.deepEqual(addedRev.pc, { x: 530, y: 70 });
+  assert.equal(addedRev.angle, 0);
+  // item_update (againstWallCenter) — ровно те же значения, что у item_add
+  assert.deepEqual(againstWallCenter(wb, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
+    { center: { x: 4700, y: 700 }, angleDeg: 0 });
+  assert.deepEqual(againstWallCenter(wbRev, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
+    { center: { x: 5300, y: 700 }, angleDeg: 0 });
+});
+
+test("ревью 198 №4: стена большой комнаты — сторона помещения как раньше", () => {
+  // стена A (0,0)→(400,0): пробная точка со стороны A попадает в полигон A —
+  // тот же выбор, что давало старое правило «центр самой большой комнаты»
+  const wa = wall("wa", 0, 0, 400, 0);
+  const added = addItem(model({ walls: { wa } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wa", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, bothRooms);
+  assert.deepEqual(added.pc, { x: 70, y: 30 });
+  assert.equal(added.angle, 0);
+  assert.deepEqual(againstWallCenter(wa, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
+    { center: { x: 700, y: 300 }, angleDeg: 0 });
+});
+
+test("ревью 198 №4: внутренняя перегородка A|B — обе нормали дают комнату, детерминированный выбор как раньше (самая большая)", () => {
+  // перегородка (400,0)→(400,100): пробные точки попадают в A (слева) и в B
+  // (справа) — правило не определено геометрией, сохраняем прежнее: комната
+  // с центром самой большой комнаты (A) → предмет в A
+  const wp = wall("wp", 400, 0, 400, 100);
+  const added = addItem(model({ walls: { wp } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wp", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, bothRooms);
+  assert.deepEqual(added.pc, { x: 370, y: 70 });
+  assert.equal(added.angle, 90);
+  assert.equal(added.id_room, "roomA");
+  assert.deepEqual(againstWallCenter(wp, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
+    { center: { x: 3700, y: 700 }, angleDeg: 90 });
+});
+
+test("ревью 198 №4: пробные точки вне обеих комнат — прежнее поведение, OUTSIDE_ROOM без падения", () => {
+  // стена правее комнаты B (600,100)→(800,100): ни одна пробная точка не в
+  // комнате → прежнее правило (самая большая комната) → точка вне помещений
+  const wo = wall("wo", 600, 100, 800, 100);
+  assert.throws(() => addItem(model({ walls: { wo } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wo", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, bothRooms), (e: unknown) => e instanceof McpError && e.code === "OUTSIDE_ROOM");
+});
+
 test("itemsInRoom: индексы предметов внутри комнаты, roomIndex вне диапазона — пусто", () => {
   const m = model({ items: { in1: item("in1", 200, 300), out1: item("out1", 600, 600) } });
   assert.deepEqual([...itemsInRoom(m, [room], 0)], [0]);
