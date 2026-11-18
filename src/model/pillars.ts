@@ -2,7 +2,7 @@ import type { Model, Pillar, PillarEdge, Point } from "./types.ts";
 import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
-import { wallFaces } from "./walls.ts";
+import { wallFaces } from "./wall-geometry.ts";
 import { McpError } from "../errors.ts";
 import { assignCandidate } from "./assign.ts";
 import { lineIntersection, overlapArea, pointInPolygon, type Polygon } from "./geometry.ts";

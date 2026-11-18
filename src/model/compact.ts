@@ -3,7 +3,7 @@ import { cmToMm, round0 } from "./units.ts";
 import type { RoomPolygon } from "./items.ts";
 import { roomPolygons } from "./items.ts";
 import { holeOffsetFromStart } from "./openings.ts";
-import { wallFaces } from "./walls.ts";
+import { wallFaces } from "./wall-geometry.ts";
 import { projectionLength, type Segment } from "./geometry.ts";
 import { parseSwitchVertexId } from "./electric.ts";
 
