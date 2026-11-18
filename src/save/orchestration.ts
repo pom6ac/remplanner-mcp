@@ -652,9 +652,25 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
       host.onVerified(toModel(structuredClone(after.model)));
     } else if (attempt === 1) {
-      const coverageAfter = wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>);
+      // ревью 193 №5, 199 №1: отката сервера нет — на нём записана версия с
+      // расхождениями. Рабочая копия остаётся с желаемой моделью и dirty:true.
+      // save_id берём только из ответа СВОЕЙ записи (saveRes.saveId): id из
+      // GET-сверки мог принять чужую запись (гонка между save и GET) — тогда
+      // повторный project_save без force молча затёр бы чужую правку. Если
+      // ответ save не вернул id — остаётся прежний p.saveId: ложный
+      // SAVE_CONFLICT безопаснее молчаливой перезаписи, обходится force.
+      p.saveId = saveRes.saveId || p.saveId;
       throw new McpError("SITE_ERROR", "после сохранения модель на сервере не совпала с рабочей копией", {
+        // ревью 199 №3/№4: подсказка — в штатном поле hint (как у остальных
+        // ошибок save), не в details. backup_path — снимок рабочей копии ДО
+        // save, а не прежней версии сервера: восстановление из него равносильно
+        // повторному project_save; прежняя версия сервера локально не хранится.
+        hint: "на сервере версия с расхождениями; рабочая копия не изменена (её копия в backup_path); повторите project_save",
         details: {
+          // server_save_id — диагностическое поле: какая запись сейчас на сервере
+          // по GET-сверке (может быть уже чужой, см. выше про гонку)
+          backup_path: backupPath,
+          server_save_id: after.save_id,
           expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length,
           coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>) * 10),
           axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,

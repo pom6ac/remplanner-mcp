@@ -13,6 +13,7 @@ import { McpError } from "../../src/errors.ts";
 import {
   JournalWorkspace, recordingDeps, fixtureModel, addExtraWall, pinExtraWallId,
   recordOutcome, recordError, recordState, recordBackupFiles, recordVerifiedState, journalSnapshot,
+  sanitizeBackupPath,
   type RecordingOptions, type SaveServer,
 } from "./helpers/c2-save-journal.ts";
 
@@ -126,7 +127,7 @@ test("c2s: журнал несовпадения сверки после save �
   checkSnapshot("verify-retry", ws);
 });
 
-test("c2s: журнал устойчивого несовпадения сверки — две попытки, SITE_ERROR, откат рабочей копии", async () => {
+test("c2s: журнал устойчивого несовпадения сверки — две попытки, SITE_ERROR, рабочая копия сохранена (ревью 193 №5)", async () => {
   const server: SaveServer = { saveId: "s1", model: fixtureModel() };
   let ws: JournalWorkspace;
   const recording = recordingDeps(server, {
@@ -139,6 +140,53 @@ test("c2s: журнал устойчивого несовпадения свер
   await ws.open("205", "1");
   addExtraWall(ws);
   const modelBefore = JSON.stringify(ws.model);
+  let mismatch: McpError | null = null;
+  try {
+    await ws.save();
+    assert.fail("ожидался SITE_ERROR");
+  } catch (e) {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    mismatch = e;
+    recordError(ws, e);
+  }
+  // рабочая копия не заменена серверной (отката сервера нет): модель и dirty сохраняются,
+  // но save_id — из ответа собственной записи (s2), иначе повторный save
+  // без force получает SAVE_CONFLICT на собственную запись (ревью 193 №5, 199 №1)
+  assert.equal(JSON.stringify(ws.model), modelBefore, "рабочая модель не заменена после неудачной сверки");
+  assert.equal(ws.project!.dirty, true, "рабочая копия остаётся несохранённой");
+  assert.equal(ws.project!.saveId, "s2", "запомнен save_id из ответа собственной записи");
+  // значения details (ревью 199 №5): server_save_id — что реально на сервере,
+  // backup_path — файл, записанный backup.write; подсказка без обещания отката
+  assert.equal(mismatch!.details && (mismatch!.details as Record<string, unknown>)["server_save_id"], "s2");
+  const backupWritten = ws.journal.findLast((e) => e.op === "backup.write")!.path as string;
+  assert.equal(sanitizeBackupPath((mismatch!.details as Record<string, unknown>)["backup_path"] as string), backupWritten);
+  // подсказка — в штатном поле hint (ревью 199 №4), без «восстановить из backup»
+  assert.equal(typeof mismatch!.hint, "string");
+  assert.ok(!("hint" in (mismatch!.details as object)));
+  assert.doesNotMatch(mismatch!.hint!, /восстанов/);
+  assert.doesNotMatch(JSON.stringify(mismatch!.toJSON()), /откат/i, "текст ошибки не обещает отката сервера");
+  recordState(ws);
+  checkSnapshot("verify-mismatch-working-copy-kept", ws);
+});
+
+test("c2s: журнал повторного save без force после устойчивого расхождения — успех без SAVE_CONFLICT (ревью 193 №5)", async () => {
+  const server: SaveServer = { saveId: "s1", model: fixtureModel() };
+  let ws: JournalWorkspace;
+  // сервер искажает запись только в первых двух попытках: первый save уходит
+  // в устойчивое расхождение, повторный save уже верифицируется
+  const recording = recordingDeps(server, {
+    afterSave: (s, n) => {
+      if (n <= 2) {
+        const walls = s.model.walls as Record<string, unknown>;
+        delete walls[Object.keys(walls)[0]!];
+      }
+    },
+  }, (e) => ws.record(e));
+  ws = new JournalWorkspace(recording.deps);
+  await ws.open("211", "1");
+  addExtraWall(ws);
+  const modelBefore = JSON.stringify(ws.model);
   try {
     await ws.save();
     assert.fail("ожидался SITE_ERROR");
@@ -147,10 +195,163 @@ test("c2s: журнал устойчивого несовпадения свер
     assert.equal(e.code, "SITE_ERROR");
     recordError(ws, e);
   }
-  // откат: каноническая копия не заменена серверной, dirty сохраняется
+  // рабочая копия с желаемой моделью и dirty:true запомнила серверный save_id (s2)
   assert.equal(JSON.stringify(ws.model), modelBefore, "рабочая модель не заменена после неудачной сверки");
+  assert.equal(ws.project!.saveId, "s2");
+  assert.equal(ws.project!.dirty, true);
   recordState(ws);
-  checkSnapshot("verify-mismatch-rollback", ws);
+  // редактор закрыт (как в реальной сессии между вызовами project_save):
+  // повторный save без force не должен получать SAVE_CONFLICT на собственную запись.
+  // Путь с открытым редактором здесь не закреплён: и до ревью 193 №5 он завершался
+  // ok без pre-check по save_id (чужой конфликт ловит сверка контента)
+  await ws.close();
+  const outcome = await ws.save();
+  recordOutcome(ws, outcome);
+  recordBackupFiles(ws);
+  recordState(ws);
+  assert.equal(outcome.verified, true);
+  assert.equal(outcome.rounds, 1);
+  assert.equal(ws.project!.dirty, false);
+  checkSnapshot("verify-mismatch-resave", ws);
+});
+
+// --- ревью 199 №1/№2: источник save_id после mismatch — только ответ собственной
+// записи (saveRes.saveId), не GET-сверка; чужая запись между своим save и GET
+// не должна попадать в рабочую копию и затираться повторным save без force ---
+
+test("c2s: mismatch → чужая запись → повторный save без force — SAVE_CONFLICT, чужая правка не затёрта (ревью 199 №2а)", async () => {
+  const server: SaveServer = { saveId: "s1", model: fixtureModel() };
+  let ws: JournalWorkspace;
+  // сервер искажает запись в обеих попытках — устойчивое расхождение
+  const recording = recordingDeps(server, {
+    afterSave: (s) => {
+      const walls = s.model.walls as Record<string, unknown>;
+      delete walls[Object.keys(walls)[0]!];
+    },
+  }, (e) => ws.record(e));
+  ws = new JournalWorkspace(recording.deps);
+  await ws.open("212", "1");
+  addExtraWall(ws);
+  try {
+    await ws.save();
+    assert.fail("ожидался SITE_ERROR");
+  } catch (e) {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    recordError(ws, e);
+  }
+  // рабочая копия запомнила save_id собственной записи (s2)
+  assert.equal(ws.project!.saveId, "s2");
+  assert.equal(ws.project!.dirty, true);
+  recordState(ws);
+  // редактор закрыт; после нашего неуспешного save чужая вкладка записала свой вариант
+  await ws.close();
+  server.saveId = "s3";
+  try {
+    await ws.save();
+    assert.fail("ожидался SAVE_CONFLICT");
+  } catch (e) {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SAVE_CONFLICT");
+    recordError(ws, e);
+  }
+  // чужая правка не затёрта: рабочая копия не ушла в запись (dirty:true, save_id s2)
+  assert.equal(ws.project!.dirty, true);
+  assert.equal(ws.project!.saveId, "s2");
+  recordState(ws);
+  checkSnapshot("verify-mismatch-foreign-resave-conflict", ws);
+});
+
+test("c2s: гонка — чужая запись между ответом save и GET-сверкой; save_id не берётся из GET (ревью 199 №2б)", async () => {
+  const server: SaveServer = { saveId: "s1", model: fixtureModel() };
+  let ws: JournalWorkspace;
+  // сервер искажает только первую запись: вторая попытка пишет чисто, но между
+  // ответом save и GET-сверкой чужая вкладка записывает свой вариант (s3 + сдвиг стены)
+  const recording = recordingDeps(server, {
+    afterSave: (s, n) => {
+      if (n === 1) {
+        const walls = s.model.walls as Record<string, unknown>;
+        delete walls[Object.keys(walls)[0]!];
+      }
+    },
+  }, (e) => ws.record(e));
+  let loads = 0;
+  const baseLoad = recording.deps.loadModel.bind(recording.deps);
+  recording.deps.loadModel = async (s, objectId, planId) => {
+    loads++;
+    if (loads === 4) {
+      // четвёртая загрузка (1 — open, 2 — сверка до записи, 3 — GET после
+      // попытки 1, 4 — GET после попытки 2): чужая запись ушла на сервер
+      // между ответом save и сверкой
+      server.saveId = "s3";
+      const walls = server.model.walls as Record<string, { p1: { x: number; y: number } }>;
+      walls[Object.keys(walls)[0]!]!.p1.x += 77;
+    }
+    return baseLoad(s, objectId, planId);
+  };
+  ws = new JournalWorkspace(recording.deps);
+  await ws.open("213", "1");
+  addExtraWall(ws);
+  let raceMismatch: McpError | null = null;
+  try {
+    await ws.save();
+    assert.fail("ожидался SITE_ERROR");
+  } catch (e) {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    raceMismatch = e;
+    recordError(ws, e);
+  }
+  // save_id — из ответа собственной записи (s2), а не из GET-сверки (s3):
+  // иначе повторный save без force молча затёр бы чужую правку
+  assert.equal(ws.project!.saveId, "s2");
+  assert.equal(ws.project!.dirty, true);
+  // details.server_save_id — диагностическое поле: что сейчас на сервере (s3)
+  assert.equal((raceMismatch!.details as Record<string, unknown>)["server_save_id"], "s3");
+  recordState(ws);
+  // редактор закрыт: повторный save без force обязан получить SAVE_CONFLICT
+  await ws.close();
+  try {
+    await ws.save();
+    assert.fail("ожидался SAVE_CONFLICT");
+  } catch (e) {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SAVE_CONFLICT");
+    recordError(ws, e);
+  }
+  assert.equal(ws.project!.dirty, true);
+  assert.equal(ws.project!.saveId, "s2");
+  recordState(ws);
+  checkSnapshot("verify-mismatch-race-foreign", ws);
+});
+
+test("c2s: ответ save без save_id при устойчивом расхождении — save_id рабочей копии не меняется (ревью 199 №2в)", async () => {
+  const server: SaveServer = { saveId: "s1", model: fixtureModel() };
+  let ws: JournalWorkspace;
+  const recording = recordingDeps(server, {
+    saveWithoutId: true,
+    afterSave: (s) => {
+      const walls = s.model.walls as Record<string, unknown>;
+      delete walls[Object.keys(walls)[0]!];
+    },
+  }, (e) => ws.record(e));
+  ws = new JournalWorkspace(recording.deps);
+  await ws.open("214", "1");
+  addExtraWall(ws);
+  try {
+    await ws.save();
+    assert.fail("ожидался SITE_ERROR");
+  } catch (e) {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    recordError(ws, e);
+  }
+  // ответ save не вернул save_id — остаётся прежний (s1), а не id из GET-сверки:
+  // ложный SAVE_CONFLICT при повторном save безопаснее чужого save_id
+  assert.equal(ws.project!.saveId, "s1");
+  assert.equal(ws.project!.dirty, true);
+  recordState(ws);
+  checkSnapshot("verify-mismatch-save-without-id", ws);
 });
 
 test("c2s: журнал save без изменений (dirty=false) — та же последовательность сверок", async () => {

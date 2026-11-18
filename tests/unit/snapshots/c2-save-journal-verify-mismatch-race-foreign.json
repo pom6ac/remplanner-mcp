@@ -2,27 +2,27 @@
   {
     "at": 1,
     "op": "loadModel",
-    "object_id": "205",
+    "object_id": "213",
     "plan_id": "1",
     "save_id": "s1"
   },
   {
     "at": 2,
     "op": "loadModel",
-    "object_id": "205",
+    "object_id": "213",
     "plan_id": "1",
     "save_id": "s1"
   },
   {
     "at": 3,
     "op": "backup.write",
-    "path": "205-1-<stamp>.json",
+    "path": "213-1-<stamp>.json",
     "backup_files_before": 0
   },
   {
     "at": 4,
     "op": "openEditor",
-    "object_id": "205",
+    "object_id": "213",
     "plan_id": "1",
     "anonymous": false
   },
@@ -58,7 +58,7 @@
   {
     "at": 9,
     "op": "loadModel",
-    "object_id": "205",
+    "object_id": "213",
     "plan_id": "1",
     "save_id": "s2"
   },
@@ -77,9 +77,9 @@
   {
     "at": 12,
     "op": "loadModel",
-    "object_id": "205",
+    "object_id": "213",
     "plan_id": "1",
-    "save_id": "s2"
+    "save_id": "s3"
   },
   {
     "at": 13,
@@ -91,6 +91,7 @@
     "details_keys": [
       "axis_segments_after",
       "axis_segments_before",
+      "backup_path",
       "border_mismatches",
       "cables_connection_mismatches",
       "cables_link_form_mismatches",
@@ -115,6 +116,7 @@
       "room_mismatches",
       "rooms_expected",
       "rooms_on_server",
+      "server_save_id",
       "socket_group_derived_mismatches",
       "socket_group_mismatches",
       "stripes_light_mismatches",
@@ -126,7 +128,35 @@
     "at": 14,
     "op": "workspace.state",
     "dirty": true,
-    "save_id": "s1",
+    "save_id": "s2",
+    "walls": 5,
+    "history_steps": 1
+  },
+  {
+    "at": 15,
+    "op": "editor.close"
+  },
+  {
+    "at": 16,
+    "op": "loadModel",
+    "object_id": "213",
+    "plan_id": "1",
+    "save_id": "s3"
+  },
+  {
+    "at": 17,
+    "op": "save.error",
+    "code": "SAVE_CONFLICT",
+    "save_attempts": 2,
+    "retries": 1,
+    "delays_ms": 0,
+    "details_keys": []
+  },
+  {
+    "at": 18,
+    "op": "workspace.state",
+    "dirty": true,
+    "save_id": "s2",
     "walls": 5,
     "history_steps": 1
   }
