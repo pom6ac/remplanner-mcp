@@ -128,8 +128,6 @@ const ENTITY_DELETE_LABELS: Record<Exclude<ModelEntityCollection, "walls">, stri
   pipes_ventilation: "воздуховоды",
 };
 
-const idList = (ids: string[]): string => `${ids.slice(0, 10).join(", ")}${ids.length > 10 ? ", …" : ""}`;
-
 /**
  * Сохранение: сверка save_id с сервером (SAVE_CONFLICT при расхождении, минуя force),
  * снимок в backups/, нормализация редактором, project.save, проверка по GET
