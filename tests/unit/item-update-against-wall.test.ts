@@ -10,6 +10,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { join } from "node:path";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { updateItem } from "../../src/model/items.ts";
 import type { ItemProps } from "../../src/model/types.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -149,7 +150,90 @@ test("ревью 203 №8: перенос against_wall многоэлемент�
   assert.equal(dist(after[0]!.real_center, after[1]!.real_center), stepBefore, "шаг real_center сохранён");
   // обе на внутренней стороне новой стены (у верхней стены y не больше pc.y)
   for (const s of after) {
-    assert.ok(s.center.y <= moved.pc.y + 1e-9, "под-элемент со стороны стены (внутри помещения)");
+    assert.ok(s.center.y <= moved.pc.y + 1e-9, "под-элемент со стороны стены (внутри)");
   }
+  await client.close();
+});
+
+test("ревью 203 №3: angle_deg вместе с against_wall игнорируется — угол как у item_add", async () => {
+  const { client, ctx } = await start();
+  (ctx.workspace().model.rooms2 as unknown) = {
+    r1: { polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }], area: 12 },
+  };
+  // эталоны: item_add с angle_deg и against_wall — угол задаёт стена
+  await call(client, "item_add", {
+    name: "sofa",
+    position: { against_wall: { wall_id: "W1", offset_mm: 1000, gap_mm: 0 } },
+    width_mm: 800, depth_mm: 600, angle_deg: 45,
+  });
+  await call(client, "item_add", {
+    name: "socket",
+    position: { against_wall: { wall_id: "W1", offset_mm: 1500, gap_mm: 0 } },
+    depth_mm: 180, angle_deg: 45,
+  });
+  // предметы для переноса — у другой стены
+  await call(client, "item_add", { name: "sofa", position: { against_wall: { wall_id: "W2", offset_mm: 500, gap_mm: 0 } } });
+  await call(client, "item_add", { name: "socket", position: { against_wall: { wall_id: "W2", offset_mm: 500, gap_mm: 0 } }, depth_mm: 180 });
+  // перенос с angle_deg: 45 — угол тот же, что у item_add (не 45 и не 45+180)
+  await call(client, "item_update", {
+    item_id: "I3",
+    position: { against_wall: { wall_id: "W1", offset_mm: 1000, gap_mm: 0 } },
+    width_mm: 800, depth_mm: 600, angle_deg: 45,
+  });
+  await call(client, "item_update", {
+    item_id: "I4",
+    position: { against_wall: { wall_id: "W1", offset_mm: 1500, gap_mm: 0 } },
+    depth_mm: 180, angle_deg: 45,
+  });
+  const [addedSofa, addedSocket, movedSofa, movedSocket] = itemsOf(ctx);
+  assert.ok(addedSofa && addedSocket && movedSofa && movedSocket);
+  // верхняя стена W1: ось 0 → мебель 0, пристенная электрика «ось + 180» → 180
+  assert.equal(addedSofa.angle, 0, "item_add sofa: angle_deg при against_wall игнорируется");
+  assert.equal(addedSocket.angle, 180, "item_add socket: угол «ось + 180»");
+  assert.equal(movedSofa.angle, addedSofa.angle, "item_update sofa: angle_deg игнорируется");
+  assert.equal(movedSocket.angle, addedSocket.angle, "item_update socket: angle_deg игнорируется");
+  await client.close();
+});
+
+test("ревью 203 №3: against_wall при пустом rooms2 — OUTSIDE_ROOM проверяется по комнатам кеша workspace", async () => {
+  const { client, ctx } = await start();
+  const ws = ctx.workspace();
+  // rooms2 пуст (модель ещё не нормализовалась) — комнаты только в кешe нормализации
+  (ws.model.rooms2 as unknown) = {};
+  (ws as unknown as { roomsCache: unknown }).roomsCache = [{
+    id: "r1", name: null, area: 12, area_m2: 12, height: null,
+    polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }],
+  }];
+  await call(client, "item_add", { name: "sofa", position: { against_wall: { wall_id: "W2", offset_mm: 500, gap_mm: 0 } } });
+  // перенос: расчёт позиции и проверка OUTSIDE_ROOM — по одним и тем же комнатам
+  // (кеш workspace); падение означало бы проверку по пустому rooms2 модели
+  await call(client, "item_update", {
+    item_id: "I1",
+    position: { against_wall: { wall_id: "W1", offset_mm: 1000, gap_mm: 0 } },
+  });
+  const moved = itemsOf(ctx)[0]!;
+  assert.equal(moved.id_room, "r1", "id_room из переданных комнат");
+  await client.close();
+});
+
+test("ревью 203 №3: updateItem проверяет точку по явным rooms, не только по rooms2 модели", async () => {
+  const { client, ctx } = await start();
+  const ws = ctx.workspace();
+  (ws.model.rooms2 as unknown) = {};
+  (ws as unknown as { roomsCache: unknown }).roomsCache = [{
+    id: "r1", name: null, area: 12, area_m2: 12, height: null,
+    polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }],
+  }];
+  await call(client, "item_add", { name: "sofa", position: { center: { x: 2000, y: 1500 } } });
+  const item = itemsOf(ctx)[0]!;
+  const model = ctx.workspace().model; // apply меняет modelInternal — берём актуальный
+  // прямая запись в модель: центр внутри комнаты, переданной явно, при пустом rooms2 —
+  // без OUTSIDE_ROOM (мутация «игнор params.rooms» краснеет)
+  updateItem(model, {
+    itemId: item.id,
+    center: { x: 2500, y: 1500 },
+    rooms: [{ roomId: "r1", polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }], areaCm2: 120_000, axisAreaCm2: null }],
+  });
+  assert.deepEqual(model.items[item.id]!.pc, { x: 250, y: 150 });
   await client.close();
 });
