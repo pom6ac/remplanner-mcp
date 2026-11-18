@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SCENARIO_HINT, mmInt, mmIntSigned, mm, mmPoint } from "./context.ts";
+import { SCENARIO_HINT } from "./context.ts";
 import type { ServerContext } from "./context.ts";
 import { ok, tool, type ToolDefLike } from "./toolkit.ts";
 import {
@@ -8,16 +8,16 @@ import {
 } from "../model/walls.ts";
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
-import { demolish, demolishCancel, PARTITION_MATERIALS, PARTITION_PRO_MATERIALS, partitionMaterialKey } from "../model/demolition.ts";
+import { demolish, demolishCancel } from "../model/demolition.ts";
 import { McpError } from "../errors.ts";
-import { addRigel, updateRigel, deleteRigel, RIGEL_CEILING_TYPES } from "../model/rigels.ts";
-import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, findPipe, type PipeKind, type ClimatePipeKind } from "../model/pipes.ts";
-import { addWarmFloor, updateWarmFloor, deleteWarmFloor, WARM_FLOOR_TYPE_BY_KIND } from "../model/climate.ts";
-import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, LIGHT_COLLECTION_BY_KIND, type LightKind } from "../model/lighting.ts";
+import { addRigel, updateRigel, deleteRigel } from "../model/rigels.ts";
+import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind, type ClimatePipeKind } from "../model/pipes.ts";
+import { addWarmFloor, updateWarmFloor, deleteWarmFloor } from "../model/climate.ts";
+import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, type LightKind } from "../model/lighting.ts";
 import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.ts";
 import {
   addRuler, updateRuler, deleteRuler, addComment, updateComment, deleteComment,
-  dimsList, commentsList, resolveRuler, resolveComment, unescapeCommentText, type DimSheet,
+  dimsList, commentsList, resolveRuler, resolveComment, unescapeCommentText,
 } from "../model/dims.ts";
 import { cmToMm } from "../model/units.ts";
 import type { LedStrip, StripLight, LineStrip } from "../model/types.ts";
@@ -39,217 +39,32 @@ import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
 } from "../model/terraces.ts";
 import { addBalcony, updateBalcony, deleteBalcony, balconyWall } from "../model/balcony.ts";
-import type { TerraceBorder } from "../model/types.ts";
-import { addItem, updateItem, deleteItem, itemsList, roomPolygons, type RoomPolygon } from "../model/items.ts";
+import { addItem, updateItem, deleteItem } from "../model/items.ts";
 import { compactModel, wallLengthMm } from "../model/compact.ts";
 import { validateModel } from "../model/validate.ts";
 import { renderPlanToFile } from "../render.ts";
-import type { Model, Wall, ItemProps } from "../model/types.ts";
+import type { Model, ItemProps } from "../model/types.ts";
+// DTO-слой (аудит 65 C4): zod-примитивы, ссылки/метки model_get и преобразования
+// editor↔public вынесены в src/dto; tools-*.ts — регистрация + workspace + DTO.
+import { mmInt, mmIntSigned, mm, mmPoint } from "../dto/units.ts";
+import { throwNotFound } from "../dto/common.ts";
+import { resolveWall, wallRef, thickness, resolveWallMaterial } from "../dto/walls.ts";
+import { swing, resolveOpeningWall, openingAddArgs, openingUpdateParams } from "../dto/openings.ts";
+import { position, positionMove, resolveItem, normalizePosition, againstWallCenter, itemsInRoom, catalogFoundView, catalogEntryView } from "../dto/items.ts";
+import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGasLine, resolvePipe, resolveWarmFloor, resolveLightLine, resolveFloorHole } from "../dto/structures.ts";
+import { resolveBorder, borderResponse } from "../dto/borders.ts";
+import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInternal, sheetPublic, commentTextWarnings } from "../dto/dims.ts";
+import { rawEditorPayload } from "../dto/model-payload.ts";
 
 // T19: инструменты стен, проёмов, предметов, каталога и чтения (design §7.2–7.4, §7.6).
 
-/** Стена по site-id или компактной метке W1…Wn (порядок совпадает с model_get). */
-function resolveWall(model: Model, ref: string): Wall {
-  if (model.walls[ref]) return model.walls[ref]!;
-  const m = /^W(\d+)$/.exec(ref);
-  if (m) {
-    const walls = Object.values(model.walls);
-    const wall = walls[Number(m[1]) - 1];
-    if (wall) return wall;
-  }
-  throw Object.assign(new Error(`стена ${ref} не найдена (id сайта или метка W<n> из model_get)`), { code: "NOT_FOUND" });
-}
+// T19: инструменты стен, проёмов, предметов, каталога и чтения (design §7.2–7.4, §7.6).
 
-function throwNotFound(message: string): never {
-  throw Object.assign(new Error(message), { code: "NOT_FOUND" });
-}
-
-/** Колонна по site-id или метке P1…P_n. */
-function resolvePillar(model: Model, ref: string): import("../model/types.ts").Pillar {
-  if (model.pillars[ref]) return model.pillars[ref]!;
-  const m = /^P(\d+)$/.exec(ref);
-  if (m) {
-    const pillars = Object.values(model.pillars);
-    const pillar = pillars[Number(m[1]) - 1];
-    if (pillar) return pillar;
-  }
-  return throwNotFound(`колонна ${ref} не найдена (id сайта или метка P<n> из model_get)`);
-}
-
-/** Ригель по site-id или метке B1…B_n. */
-function resolveRigel(model: Model, ref: string): import("../model/types.ts").Rigel {
-  const rigels = model.rigels ?? {};
-  if (rigels[ref]) return rigels[ref]!;
-  const m = /^B(\d+)$/.exec(ref);
-  if (m) {
-    const list = Object.values(rigels);
-    const rigel = list[Number(m[1]) - 1];
-    if (rigel) return rigel;
-  }
-  return throwNotFound(`ригель ${ref} не найден (id сайта или метка B<n> из model_get)`);
-}
-
-/** Предмет по site-id или метке I1…I_n. */
-function resolveItem(model: Model, ref: string): ItemProps {
-  if (model.items[ref]) return model.items[ref]!;
-  const m = /^I(\d+)$/.exec(ref);
-  if (m) {
-    const items = Object.values(model.items);
-    const item = items[Number(m[1]) - 1];
-    if (item) return item;
-  }
-  return throwNotFound(`предмет ${ref} не найден (id сайта или метка I<n> из model_get)`);
-}
-
-/** Граница террасы/участка по site-id или метке TB<n>/XB<n> из model_get. */
-function resolveBorder(model: Model, key: "terrace_borders" | "territory_borders", label: string, ref: string): TerraceBorder {
-  const borders = (model[key] ?? {}) as Record<string, TerraceBorder>;
-  if (borders[ref]) return borders[ref]!;
-  const m = new RegExp(`^${label}(\\d+)$`).exec(ref);
-  if (m) {
-    const list = Object.values(borders);
-    const border = list[Number(m[1]) - 1];
-    if (border) return border;
-  }
-  return throwNotFound(`граница ${ref} не найдена (id сайта или метка ${label}<n> из model_get)`);
-}
-
-/** Конец границы в публичном ответе: мм (ревью 68 №3 — как во всём MCP). */
-function mmPointOf(p: { x: number; y: number }): { x: number; y: number } {
-  return { x: Math.round(p.x * 10), y: Math.round(p.y * 10) };
-}
-
-/** Граница для публичного ответа: концы в мм. */
-function borderResponse(b: TerraceBorder): { id: string; p1: { x: number; y: number }; p2: { x: number; y: number } } {
-  return { id: b.id, p1: mmPointOf(b.p1), p2: mmPointOf(b.p2) };
-}
-
-/** Проём в полу по site-id или метке FH1…FH_n из model_get. */
-function resolveFloorHole(model: Model, ref: string): { id: string } {
-  const holes = model.level_holes ?? {};
-  if (holes[ref]) return holes[ref]!;
-  const m = /^FH(\d+)$/.exec(ref);
-  if (m) {
-    const list = Object.values(holes);
-    const hole = list[Number(m[1]) - 1];
-    if (hole) return hole;
-  }
-  return throwNotFound(`проём в полу ${ref} не найден (id сайта или метка FH<n> из model_get)`);
-}
-
-/** Газовая линия по site-id или метке G1…G_n. */
-function resolveGasLine(model: Model, ref: string): import("../model/types.ts").GasLine {
-  const lines = model.pipes_gas ?? {};
-  if (lines[ref]) return lines[ref]!;
-  const m = /^G(\d+)$/.exec(ref);
-  if (m) {
-    const list = Object.values(lines);
-    const line = list[Number(m[1]) - 1];
-    if (line) return line;
-  }
-  return throwNotFound(`газовая линия ${ref} не найдена (id сайта или метка G<n> из model_get)`);
-}
-
-/** Труба (вода или климата) по site-id или метке TP/PW/PC/PH/PV<n> (этапы 78, 122). */
-function resolvePipe(model: Model, ref: string): { coll: string; id: string; pipe: import("../model/types.ts").Pipe } {
-  const found = findPipe(model, ref);
-  if (found) return { coll: found.coll, id: found.pipe.id, pipe: found.pipe };
-  const m = /^(TP|PW|PC|PH|PV)(\d+)$/.exec(ref);
-  if (m) {
-    const collKey = ({ TP: "pipes", PW: "pipes_warm_floor", PC: "pipes_conditioner", PH: "pipes_heat", PV: "pipes_ventilation" } as Record<string, string>)[m[1]!]!;
-    const list = Object.values((model as unknown as Record<string, Record<string, import("../model/types.ts").Pipe>>)[collKey] ?? {});
-    const pipe = list[Number(m[2]) - 1];
-    if (pipe) return { coll: collKey, id: pipe.id, pipe };
-  }
-  return throwNotFound(`труба ${ref} не найдена (id сайта или метка TP/PW/PC/PH/PV<n> из model_get)`);
-}
-
-/** Контур тёплого пола по site-id или метке WF<n> из model_get (этап 122). */
-function resolveWarmFloor(model: Model, ref: string): import("../model/types.ts").WarmFloor {
-  const wfs = model.warm_floors ?? {};
-  if (wfs[ref]) return wfs[ref]!;
-  const m = /^WF(\d+)$/.exec(ref);
-  if (m) {
-    const list = Object.values(wfs);
-    const wf = list[Number(m[1]) - 1];
-    if (wf) return wf;
-  }
-  return throwNotFound(`контур тёплого пола ${ref} не найден (id сайта или метка WF<n> из model_get)`);
-}
-
-/** Световая линия по site-id или метке LS/SL/LL1…_n из model_get (этап 84). */
-function resolveLightLine(model: Model, kind: LightKind, ref: string): LedStrip | StripLight | LineStrip {
-  const label = kind === "led" ? "LS" : kind === "line" ? "LL" : "SL";
-  const lines = model[LIGHT_COLLECTION_BY_KIND[kind]] ?? {};
-  if (lines[ref]) return lines[ref]!;
-  const m = new RegExp(`^${label}(\\d+)$`).exec(ref);
-  if (m) {
-    const list = Object.values(lines);
-    const line = list[Number(m[1]) - 1];
-    if (line) return line;
-  }
-  return throwNotFound(`световая линия ${ref} не найдена (id сайта или метка ${label}<n> из model_get)`);
-}
-
-const wallRef = z.string().min(1).describe("id стены сайта или метка W<n> из model_get");
-
-// ---------- Публичные enum раздела «Размеры и комментарии» (этап 116, ревью 115 R4) ----------
-// Без формата редактора: offset_side auto|left|right (внутри a|l|r), sheet
-// plan|furniture (внутри a|furniture); тип привязки комментария free|item —
-// семантика сайта. Преобразование только на границе API.
-
-const dimOffsetSide = z.enum(["auto", "left", "right"]).optional().describe("сторона отступа: auto — авто (по умолчанию), left/right — слева/справа по ходу p1→p2");
-const dimSheet = z.enum(["plan", "furniture"]).optional().describe("лист: plan (исходный план, по умолчанию) или furniture (мебель)");
-
-const OFFSET_SIDE_INTERNAL = { auto: "a", left: "l", right: "r" } as const;
-
-function offsetSideInternal(v: string | undefined): "a" | "l" | "r" | undefined {
-  return v === undefined ? undefined : OFFSET_SIDE_INTERNAL[v as keyof typeof OFFSET_SIDE_INTERNAL];
-}
-
-function offsetSidePublic(v: string | undefined): string {
-  return v === "l" ? "left" : v === "r" ? "right" : "auto";
-}
-
-function sheetInternal(v: string | undefined): DimSheet | undefined {
-  return v === undefined ? undefined : v === "furniture" ? "furniture" : "a";
-}
-
-function sheetPublic(v: string | undefined): string {
-  return v === "furniture" ? "furniture" : "plan";
-}
-
-/** Канонизация текста комментария (этап 116, ревью 115 R1): ввод с " и `
- *  канонизируется к виду редактора после restore; отличие от ввода — warning. */
-function commentTextWarnings(input: string | undefined, stored: string): string[] {
-  const shown = unescapeCommentText(stored);
-  return input !== undefined && shown !== input
-    ? [`текст канонизирован под формат редактора (обратный апостроф «\`» → «'», двойные кавычки «"» → «''»): «${shown}»`]
-    : [];
-}
-
-const thickness = z.union([mmInt, z.object({
-  top: mmInt, right: mmInt, bottom: mmInt, left: mmInt,
-})]).describe("толщина в мм: одно число или {top,right,bottom,left}");
-
-const swing = z.object({
-  hinge: z.enum(["start", "end"]).describe("у какого конца оси петля"),
-  into: z.enum(["left", "right"]).describe("куда открывается дверь (left — левая грань по направлению оси)"),
-});
-
-const position = z.union([
-  z.object({ center: mmPoint }),
-  z.object({ against_wall: z.object({
-    wall_id: wallRef,
-    offset_mm: mmInt.describe("смещение центра предмета от начала стены (учитывая from)"),
-    from: z.enum(["start", "end"]).optional(),
-    gap_mm: mm.optional().describe("зазор до внутренней грани стены (0 — вплотную, по умолчанию)"),
-  }) }),
-  z.object({ in_room: z.object({
-    room_id: z.string().min(1).describe("метка комнаты R<n> из model_get"),
-    corner: z.enum(["nw", "ne", "se", "sw", "center"]),
-  }) }),
-]);
+// ---------- Публичные enum и преобразования editor↔public вынесены в src/dto ----------
+// units.ts — мм-примитивы; walls.ts — wallRef/thickness/материалы; openings.ts —
+// swing и аргументы проёмов; items.ts — позиции/каталог; structures.ts —
+// колонны/ригели/трубы/свет/проёмы пола; borders.ts — терраса и участок;
+// dims.ts — размеры/комментарии; model-payload.ts — сырой payload редактора.
 
 export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   const wsOf = () => ctx.workspace();
@@ -273,26 +88,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   };
 
   /**
-   * Выбор материала и плана по kind (ревью 129 C7a — одна функция вместо копипасты
-   * в wall_add/walls_add_polyline/wall_update). kind=partition: нормализация к
-   * публичному ключу (строгий enum, ревью 105 R6) и флаг PRO-гейта — c_glass проходит
-   * тот же гейт, что и glass. kind=initial: материал c_* перегородок отклоняется
-   * (ревью 129 C4 — обход PRO-гейта c_glass/c_bar).
+   * Выбор материала и плана по kind — чистая часть в src/dto/walls.ts
+   * (ревью 129 C7a/C4); здесь — только PRO-гейт тарифа по флагу resolved.pro.
    */
-  const resolveWallMaterial = (kind: "initial" | "partition" | undefined, material: string | undefined): { plan: "a" | "c"; material: string; pro: boolean } => {
-    if (kind === "partition") {
-      const key = partitionMaterialKey(material ?? "pgb");
-      return { plan: "c", material: PARTITION_MATERIALS[key], pro: PARTITION_PRO_MATERIALS.has(key) };
-    }
-    const mat = material ?? "a_block";
-    if (/^c_/.test(mat)) {
-      throw new McpError("INVALID_ARGUMENT", `материал «${mat}» — материал перегородок листа «Перегородки», у исходных стен (plan:"a") свои материалы`, {
-        hint: "для исходных стен используйте a_block и другие a_*; перегородка — wall_add с kind=partition",
-        details: { kind: "initial_material_invalid", material: mat },
-      });
-    }
-    return { plan: "a", material: mat, pro: false };
-  };
 
   const compactEntity = (model: Model, predicate: (c: ReturnType<typeof compactModel>) => unknown) => {
     // комнаты — из кеша workspace (нормализованная модель), если в model.rooms2 их ещё нет
@@ -616,30 +414,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
-        const hole = ws.apply("opening_add", (m) => addOpening(m, {
-          wallId: resolveWall(m, a["wall_id"] as string).id,
-          type: a["type"] as string,
-          offsetMm: a["offset_mm"] as number | undefined,
-          from: a["from"] as "start" | "end" | undefined,
-          centerMm: a["center_mm"] as number | undefined,
-          widthMm: a["width_mm"] as number | undefined,
-          heightMm: a["height_mm"] as number | undefined,
-          sillHeightMm: a["sill_height_mm"] as number | undefined,
-          swing: a["swing"] as { hinge: "start" | "end"; into: "left" | "right" } | undefined,
-          casing: a["casing"] as boolean | undefined,
-          casements: a["casements"] as number | undefined,
-          slopeAngleDeg: a["slope_angle_deg"] as number | undefined,
-          sillThicknessMm: a["sill_thickness_mm"] as number | undefined,
-          sillOverhangMm: a["sill_overhang_mm"] as number | undefined,
-          sillOvermeasureMm: a["sill_overmeasure_mm"] as number | undefined,
-          windowWidthMm: a["window_width_mm"] as number | undefined,
-          windowHeightMm: a["window_height_mm"] as number | undefined,
-          doorWidthMm: a["door_width_mm"] as number | undefined,
-          doorHeightMm: a["door_height_mm"] as number | undefined,
-          doorPosition: a["door_position"] as "left" | "right" | undefined,
-          impostHeightMm: a["impost_height_mm"] as number | undefined,
-          replacesHoleId: a["replaces"] as string | undefined,
-        }));
+        const hole = ws.apply("opening_add", (m) =>
+          addOpening(m, openingAddArgs(resolveWall(m, a["wall_id"] as string).id, a)));
         return ok(compactEntity(ws.model, (c) =>
           c.walls.flatMap((w) => w.openings).find((o) => o.id === hole.id) ?? { id: hole.id, type: hole.type }));
       },
@@ -688,34 +464,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const hole = ws.apply("opening_update", (m) => {
           let wallId = a["wall_id"] as string | undefined;
           if (!wallId) {
-            const found = Object.values(m.walls).find((w) => (w.holes ?? {})[openingId]);
-            if (!found) throwNotFound(`проём ${openingId} не найден ни на одной стене`);
-            wallId = found.id;
+            wallId = resolveOpeningWall(m, openingId);
           }
-          return updateOpening(m, {
-            wallId: resolveWall(m, wallId).id,
-            holeId: openingId,
-            type: a["type"] as string | undefined,
-            offsetMm: a["offset_mm"] as number | undefined,
-            from: a["from"] as "start" | "end" | undefined,
-            centerMm: a["center_mm"] as number | undefined,
-            widthMm: a["width_mm"] as number | undefined,
-            heightMm: a["height_mm"] as number | undefined,
-            sillHeightMm: a["sill_height_mm"] as number | undefined,
-            swing: a["swing"] as { hinge: "start" | "end"; into: "left" | "right" } | undefined,
-            casing: a["casing"] as boolean | undefined,
-            casements: a["casements"] as number | undefined,
-            slopeAngleDeg: a["slope_angle_deg"] as number | undefined,
-            sillThicknessMm: a["sill_thickness_mm"] as number | undefined,
-            sillOverhangMm: a["sill_overhang_mm"] as number | undefined,
-            sillOvermeasureMm: a["sill_overmeasure_mm"] as number | undefined,
-            windowWidthMm: a["window_width_mm"] as number | undefined,
-            windowHeightMm: a["window_height_mm"] as number | undefined,
-            doorWidthMm: a["door_width_mm"] as number | undefined,
-            doorHeightMm: a["door_height_mm"] as number | undefined,
-            doorPosition: a["door_position"] as "left" | "right" | undefined,
-            impostHeightMm: a["impost_height_mm"] as number | undefined,
-          });
+          return updateOpening(m, openingUpdateParams(resolveWall(m, wallId).id, openingId, a));
         });
         return ok(compactEntity(ws.model, (c) =>
           c.walls.flatMap((w) => w.openings).find((o) => o.id === hole.id) ?? null));
@@ -779,11 +530,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           sheet: a["sheet"] as string | undefined,
           limit: (a["limit"] as number | undefined) ?? 20,
         });
-        return ok(found.map((t) => ({
-          name: t.name, title: t.title, group: t.group,
-          width_mm: t.width * 10, depth_mm: t.height * 10, height_mm: t.self_height * 10,
-          resizable: t.resizable ?? false,
-        })));
+        return ok(found.map(catalogFoundView));
       },
     ),
 
@@ -792,12 +539,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       { name: z.string().min(1).max(MAX_NAME_CHARS) },
       async (a) => {
         const entry = await ctx.toolEntry(a["name"] as string);
-        return ok({
-          name: entry.name, title: entry.title, group: entry.group, subgroup: entry.subgroup ?? null,
-          width_mm: entry.width * 10, depth_mm: entry.height * 10, height_mm: entry.self_height * 10,
-          resizable: entry.resizable ?? false, anchor: entry.anchor ?? null,
-          magnetized: entry.is_magnetized ?? false, can_be_outside: entry.can_be_outside ?? false,
-        });
+        return ok(catalogEntryView(entry));
       },
     ),
 
@@ -887,12 +629,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "При переносе/повороте привязанные размеры (dim_add attach) и комментарии предмета следуют за ним.",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
-        position: z.union([
-          z.object({ center: mmPoint }),
-          z.object({ against_wall: z.object({
-            wall_id: wallRef, offset_mm: mmInt, from: z.enum(["start", "end"]).optional(), gap_mm: mm.optional(),
-          }) }),
-        ]).optional(),
+        position: positionMove.optional(),
         angle_deg: mm.optional(),
         width_mm: mmInt.optional(),
         depth_mm: mmInt.optional(),
@@ -911,23 +648,14 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
               heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined });
           }
           if (pos && "against_wall" in pos) {
-            // перенос к стене: считаем точку и двигаем как center
+            // перенос к стене: точка на оси с зазором считает DTO-слой
             const aw = pos["against_wall"] as { wall_id: string; offset_mm: number; from?: "start" | "end"; gap_mm?: number };
             const wall = resolveWall(m, aw.wall_id);
-            const len = wallLengthMm(wall);
-            const off = aw.from === "end" ? len - aw.offset_mm : aw.offset_mm;
-            const t = Math.min(Math.max(off / len, 0), 1);
-            const px = wall.p1.x + (wall.p2.x - wall.p1.x) * t;
-            const py = wall.p1.y + (wall.p2.y - wall.p1.y) * t;
-            const dirx = (wall.p2.x - wall.p1.x) / len;
-            const diry = (wall.p2.y - wall.p1.y) / len;
-            const angleDeg = Math.atan2(diry, dirx) * 180 / Math.PI;
-            // нормаль в сторону комнаты подберёт gap при updateItem? — упрощённо: центр на оси + gap по нормали вправо
-            const gap = (aw.gap_mm ?? 0) / 10 + target.height / 2;
+            const at = againstWallCenter(wall, aw, target.height);
             return updateItem(m, {
               itemId: target.id,
-              center: { x: Math.round((px + diry * gap) * 10), y: Math.round((py - dirx * gap) * 10) },
-              angleDeg: a["angle_deg"] as number | undefined ?? Math.round(angleDeg),
+              center: at.center,
+              angleDeg: a["angle_deg"] as number | undefined ?? at.angleDeg,
               widthMm: a["width_mm"] as number | undefined, depthMm: a["depth_mm"] as number | undefined,
               heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined,
             });
@@ -1054,10 +782,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         end: mmPoint.describe("конец оси ригеля, мм"),
         depth_mm: mmInt.optional().describe("толщина на плане, мм (по умолчанию 300)"),
         height_mm: mmInt.optional().describe("опускание от потолка, мм (по умолчанию 300)"),
-        ceiling_type: z.enum([...RIGEL_CEILING_TYPES, ""]).optional()
-          .describe("тип отделки потолка: \"\" — без отделки или ключ инструмента листа потолка " +
-            "(stretch_ceiling, paint_ceiling, gypsum_ceiling и др. — группа ceiling_elements редактора); " +
-            "произвольные значения не принимаются"),
+        ceiling_type: ceilingType,
       },
       async (a) => {
         const ws = wsOf();
@@ -1082,7 +807,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         end: mmPoint.optional().describe("новый конец оси, мм"),
         depth_mm: mmInt.optional(),
         height_mm: mmInt.optional(),
-        ceiling_type: z.enum([...RIGEL_CEILING_TYPES, ""]).optional(),
+        ceiling_type: ceilingTypeNoDesc,
       },
       async (a) => {
         const ws = wsOf();
@@ -2177,7 +1902,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         const ws = wsOf();
         if ((a["detail"] as string | undefined) === "full") {
-          return ok(JSON.parse(JSON.stringify(ws.model)) as Record<string, unknown>);
+          // RAW EDITOR PAYLOAD (src/dto/model-payload.ts): сырая модель сайта в см,
+          // формат принадлежит сайту — escape hatch, не публичный компактный контракт
+          return ok(rawEditorPayload(ws.model));
         }
         return ok(compactModel(ws.model, ws.rooms()));
       },
@@ -2225,89 +1952,3 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   };
 }
 
-function normalizePosition(raw: Record<string, unknown>, model: Model, rooms?: RoomPolygon[]): Parameters<typeof addItem>[1]["position"] {
-  if ("center" in raw) return { center: raw["center"] as MmPoint };
-  if ("against_wall" in raw) {
-    const aw = raw["against_wall"] as Record<string, unknown>;
-    const wall = model.walls[aw["wall_id"] as string];
-    if (!wall) {
-      const m = /^W(\d+)$/.exec(aw["wall_id"] as string);
-      const walls = Object.values(model.walls);
-      const byLabel = m ? walls[Number(m[1]) - 1] : undefined;
-      if (!byLabel) throwNotFound(`стена ${String(aw["wall_id"])} не найдена`);
-      aw["wall_id"] = byLabel.id;
-    }
-    return { againstWall: {
-      wallId: aw["wall_id"] as string,
-      offsetMm: aw["offset_mm"] as number,
-      from: aw["from"] as "start" | "end" | undefined,
-      gapMm: aw["gap_mm"] as number | undefined,
-    } };
-  }
-  if ("in_room" in raw) {
-    const ir = raw["in_room"] as Record<string, unknown>;
-    const roomList = rooms ?? roomPolygons(model);
-    const idx = Number(/^R(\d+)$/.exec(ir["room_id"] as string)?.[1] ?? 0) - 1;
-    const room = roomList[idx];
-    if (!room) throwNotFound(`комната ${String(ir["room_id"])} не найдена (метки комнат — из model_get)`);
-    // модельный слой берёт первую комнату — для выбранной считаем точку угла сами (в мм)
-    const xs = room.polygon.map((p) => p.x);
-    const ys = room.polygon.map((p) => p.y);
-    const minX = Math.min(...xs) * 10, maxX = Math.max(...xs) * 10;
-    const minY = Math.min(...ys) * 10, maxY = Math.max(...ys) * 10;
-    void ir;
-    return { center: cornerPoint(ir["corner"] as string, minX, maxX, minY, maxY) };
-  }
-  throw Object.assign(new Error("position: нужен center | against_wall | in_room"), { code: "INVALID_ARGUMENT" });
-}
-
-function cornerPoint(corner: string, minX: number, maxX: number, minY: number, maxY: number): MmPoint {
-  // точный прижим в угол делал addItem; здесь — точка у угла с отступом полгабарита предмета,
-  // addItem сам проверит попадание в комнату (OUTSIDE_ROOM при ошибке)
-  const inset = 150; // мм от стен — предмет войдёт в комнату с типовыми габаритами
-  switch (corner) {
-    case "nw": return { x: minX + inset, y: minY + inset };
-    case "ne": return { x: maxX - inset, y: minY + inset };
-    case "se": return { x: maxX - inset, y: maxY - inset };
-    case "sw": return { x: minX + inset, y: maxY - inset };
-    default: return { x: Math.round((minX + maxX) / 2), y: Math.round((minY + maxY) / 2) };
-  }
-}
-
-/** Индексы предметов (в порядке compactModel) внутри комнаты с индексом roomIndex. */
-function itemsInRoom(model: Model, rooms: RoomPolygon[], roomIndex: number): Set<number> {
-  const compact = compactModel(model, rooms);
-  const siteItems = Object.values(model.items);
-  const out = new Set<number>();
-  compact.items.forEach((ci, i) => {
-    const site = siteItems[i];
-    void site;
-    void rooms;
-    if (ci && roomIndex >= 0) {
-      // принадлежность по точке центра: комнаты в том же порядке, что и в model_get
-      const inside = rooms[roomIndex] ? pointInside(model, rooms[roomIndex]!, compact.items[i]!) : false;
-      if (inside) out.add(i);
-    }
-  });
-  return out;
-}
-
-function pointInside(model: Model, room: { polygon: { x: number; y: number }[]; roomId: string | null }, item: { x_mm: number; y_mm: number }): boolean {
-  void model;
-  // roomPolygons возвращает полигон в см
-  const x = item.x_mm / 10;
-  const y = item.y_mm / 10;
-  let s = 0;
-  const poly = room.polygon;
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i]!, b = poly[(i + 1) % poly.length]!;
-    s += a.x * b.y - b.x * a.y;
-  }
-  if (Math.abs(s) < 1e-9) return false;
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const xi = poly[i]!.x, yi = poly[i]!.y, xj = poly[j]!.x, yj = poly[j]!.y;
-    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
-  }
-  return inside;
-}

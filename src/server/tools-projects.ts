@@ -72,7 +72,12 @@ function planFileError(e: unknown, p: string, kind: "import" | "export" = "impor
   return e as McpError;
 }
 
-/** Прочитать и разобрать файл .plan: JSON-объект с моделью ({model: …} или сама модель). */
+/**
+ * Прочитать и разобрать файл .plan: JSON-объект с моделью ({model: …} или сама модель).
+ * RAW EDITOR PAYLOAD (src/dto/model-payload.ts): формат сырого payload принадлежит
+ * сайту remplanner.ru (см↔мм — см. шапку model-payload.ts); совместимость между
+ * версиями сайта не гарантируется. Разбор — parseModelImport (B5).
+ */
 export function readPlanFile(p: string, options: { maxBytes?: number } = {}): Model {
   const maxBytes = options.maxBytes ?? MAX_PLAN_FILE_BYTES;
   // B3 (аудит 65): проверки до чтения — symlink, не-обычный файл, размер.
@@ -218,6 +223,9 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
       async (args) => {
         const ws = ctx.workspace();
         const scope = (args["scope"] as string | undefined) ?? "full";
+        // RAW EDITOR PAYLOAD (src/dto/model-payload.ts): обе ветки — сырая модель
+        // сайта в см, формат принадлежит сайту; scope=current — модель без обёртки,
+        // scope=full — {model, saved_at}
         const payload = scope === "current" ? ws.model : { model: ws.model, saved_at: new Date().toISOString() };
         try {
           // B3/B4 (аудит 65): атомарная запись, 0600, отказ на symlink/не-обычную цель.
