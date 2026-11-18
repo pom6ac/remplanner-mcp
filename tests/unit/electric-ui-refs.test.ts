@@ -300,7 +300,9 @@ test("ревью 203 №8: перенос socket_group из 2 под-розет�
   assert.equal(stepBefore, 7);
 
   // перенос на верхнюю стену — те же аргументы, что у tools-plan item_update against_wall
-  // (againstWallCenter возвращает центр в мм, updateItem принимает мм)
+  // (againstWallCenter возвращает центр в мм, updateItem принимает мм);
+  // resnapToWall: true — как в tools-plan (ревью 206 №11): проверяем resnap-путь,
+  // а не доворот по старому pc
   const top = m.walls[topWall(m)]!;
   const at = againstWallCenter(top, { offset_mm: 1000, gap_mm: 0 }, sw.width, sw.height, roomPolygons(m));
   updateItem(m, {
@@ -308,6 +310,7 @@ test("ревью 203 №8: перенос socket_group из 2 под-розет�
     center: at.center,
     angleDeg: socketGroupAngleDeg(at.angleDeg),
     idWall: top.id,
+    resnapToWall: true,
   });
   assert.equal(dist(subs[0]!.center, subs[1]!.center), stepBefore, "шаг center сохранён");
   assert.equal(dist(subs[0]!.real_center, subs[1]!.real_center), stepBefore, "шаг real_center сохранён");
