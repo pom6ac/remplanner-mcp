@@ -5,6 +5,7 @@ import { pointsAroundCenter, pointAtLength, projectionLength, type Segment } fro
 import type { MmPoint } from "./walls.ts";
 import { wallFaces } from "./walls.ts";
 import { McpError } from "../errors.ts";
+import { assignCandidate } from "./assign.ts";
 
 /**
  * Таблица «ключ каталога → hole.type / group / дефолты».
@@ -841,19 +842,6 @@ function normalizeHoleType(type: string): string {
 }
 
 /**
- * Переносит проверенного кандидата в модель, сохраняя identity объекта hole:
- * сначала удаляются ключи, которых у кандидата нет, затем присваиваются значения.
- * Вызывается один раз после всех проверок — до него модель не меняется (ревью 28, R3).
- */
-function assignHole(target: Hole, candidate: Hole): void {
-  const keys = new Set([...Object.keys(target), ...Object.keys(candidate)]);
-  for (const k of keys) {
-    if (k in candidate) (target as Record<string, unknown>)[k] = (candidate as Record<string, unknown>)[k];
-    else delete (target as Record<string, unknown>)[k];
-  }
-}
-
-/**
  * opening_update: меняет размеры/положение проёма с повторной проверкой коллизий.
  * Смена типа не поддерживается (ревью 30, N1/N2/N4: каждая версия конверсии рождала
  * новые регрессии): type, отличный от текущего (после нормализации legacy-алиаса
@@ -995,7 +983,7 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
     const pairCenter = holeOffsetCm(wall, pair) + pair.width / 2;
     if (Math.abs(newCenter - pairCenter) > 0.005) {
       const scratch = structuredClone(wall);
-      assignHole(scratch.holes[hole.id]!, candidate);
+      assignCandidate(scratch.holes[hole.id]!, candidate);
       const sp = scratch.holes[pair.id]!;
       if (sp.at !== undefined) {
         sp.at = r2(newCenter - sp.width / 2);
@@ -1016,10 +1004,10 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
             details: { kind: "replacement_pair_transfer_conflict", wall_id: wall.id, hole_id: hole.id, pair_id: pair.id },
           });
       }
-      assignHole(pair, scratch.holes[pair.id]!);
+      assignCandidate(pair, scratch.holes[pair.id]!);
     }
   }
-  assignHole(hole, candidate);
+  assignCandidate(hole, candidate);
   return hole;
 }
 

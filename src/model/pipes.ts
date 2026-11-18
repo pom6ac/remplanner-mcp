@@ -3,6 +3,7 @@ import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
 import { McpError } from "../errors.ts";
+import { assignCandidate } from "./assign.ts";
 import { dist } from "./geometry.ts";
 
 /**
@@ -115,15 +116,6 @@ function buildCandidate(id: string, p1: Point, p2: Point): GasLine {
   };
 }
 
-/** Переносит проверенного кандидата в объект модели, сохраняя identity (паттерн assignRigel). */
-function assignGasLine(target: GasLine, candidate: GasLine): void {
-  const keys = new Set([...Object.keys(target), ...Object.keys(candidate)]);
-  for (const k of keys) {
-    if (k in candidate) (target as Record<string, unknown>)[k] = (candidate as Record<string, unknown>)[k];
-    else delete (target as Record<string, unknown>)[k];
-  }
-}
-
 /**
  * gas_line_add: прямая труба от start до end (мм), коллекция model.pipes_gas.
  * Кандидат-копия до записи; при ошибке модель не меняется.
@@ -180,7 +172,7 @@ export function updateGasLine(
   if (params.end !== undefined) candidate.vertexes[1] = { ...candidate.vertexes[1]!, point: cmPoint(params.end) };
   validateAxis(candidate.vertexes[0]!.point, candidate.vertexes[1]!.point);
   candidate.length = gasLineLengthM(candidate);
-  assignGasLine(line, candidate);
+  assignCandidate(line, candidate);
   return line;
 }
 
@@ -518,7 +510,7 @@ export function updatePipe(
     v.point = cmPoint({ x: p.x, y: p.y });
   }
   candidate.length = gasLineLengthM(candidate);
-  assignGasLine(pipe as unknown as GasLine, candidate as unknown as GasLine);
+  assignCandidate(pipe as unknown as GasLine, candidate as unknown as GasLine);
   return pipe;
 }
 
