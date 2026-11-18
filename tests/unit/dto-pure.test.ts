@@ -17,6 +17,7 @@ import {
   resolveWarmFloor, resolveLightLine, resolveFloorHole,
 } from "../../src/dto/structures.ts";
 import { McpError } from "../../src/errors.ts";
+import { addItem } from "../../src/model/items.ts";
 import type { Model, Wall, ItemProps } from "../../src/model/types.ts";
 import type { RoomPolygon } from "../../src/model/items.ts";
 
@@ -261,18 +262,64 @@ test("normalizePosition: in_room — углы с отступом 150 мм и ц
   assert.throws(() => normalizePosition({}, m), (e: unknown) => (e as { code?: string }).code === "INVALID_ARGUMENT");
 });
 
-test("againstWallCenter: точка на оси + зазор по нормали (см модели), угол по оси, from=end", () => {
-  // горизонтальная стена 100 см (len 1000 мм): направление оси как в коде —
-  // приращение в см, делённое на длину в мм → (0.1, 0); нормаль — вправо от оси
+test("againstWallCenter: та же формула модельного слоя, что item_add against_wall (стена/полутолщина/сторона помещения)", () => {
+  // ревью 190/196: раньше дубль формулы в DTO считал нормаль вектором в 10 раз
+  // короче (мм↔см), не учитывал полутолщину стены, полуширину вдоль стены и брал
+  // нормаль «вправо» без учёта комнаты. Теперь значения — ровно как даёт
+  // againstWallPlacement (см addItem againstWall). Комната (100,200)–(500,500) см:
+  // для стены h (0,0)→(100,0) внутренняя сторона — +y (вниз, к комнате).
   const h = wall("h", 0, 0, 100, 0);
-  assert.deepEqual(againstWallCenter(h, { offset_mm: 500, gap_mm: 100 }, 20), { center: { x: 500, y: -20 }, angleDeg: 0 });
-  // from=end: 200 мм от конца = 800 мм от начала
-  assert.deepEqual(againstWallCenter(h, { offset_mm: 200, from: "end" }, 20), { center: { x: 800, y: -10 }, angleDeg: 0 });
-  // вертикальная стена: ось → +y, нормаль → +x; gap_mm 0 — только полгабарита предмета
+  const roomsH = [room];
+  // offset 500 мм + полуширина 40 см вдоль; полутолщина 10 + gap 10 + полуглубина 30 см по нормали
+  assert.deepEqual(againstWallCenter(h, { offset_mm: 500, gap_mm: 100 }, 80, 60, roomsH), { center: { x: 900, y: 500 }, angleDeg: 0 });
+  // from=end: 200 мм от конца = 400 мм от начала; gap 0 — только полутолщина + полуглубина
+  assert.deepEqual(againstWallCenter(h, { offset_mm: 200, from: "end" }, 80, 60, roomsH), { center: { x: 400, y: 400 }, angleDeg: 0 });
+  // вертикальная стена: ось → +y, внутренняя нормаль → +x; gap_mm 0
   const v = wall("v", 0, 0, 0, 100);
-  assert.deepEqual(againstWallCenter(v, { offset_mm: 250, gap_mm: 0 }, 20), { center: { x: 10, y: 250 }, angleDeg: 90 });
-  // offset больше длины — clamp на конец стены
-  assert.deepEqual(againstWallCenter(h, { offset_mm: 5000 }, 0), { center: { x: 1000, y: 0 }, angleDeg: 0 });
+  assert.deepEqual(againstWallCenter(v, { offset_mm: 250, gap_mm: 0 }, 80, 60, roomsH), { center: { x: 400, y: 650 }, angleDeg: 90 });
+  // offset больше длины — как в item_add, без clamp (эталон — item_add, он не режет)
+  assert.deepEqual(againstWallCenter(h, { offset_mm: 5000 }, 80, 60, roomsH), { center: { x: 5400, y: 400 }, angleDeg: 0 });
+  // ревью 198 №3: обратная ориентация p1→p2 (стена справа налево) — угол
+  // нормируется в 0, а не 180 (нормировка в (−90; 90]), нормаль к той же комнате
+  const hRev = wall("h-rev", 100, 0, 0, 0);
+  assert.deepEqual(againstWallCenter(hRev, { offset_mm: 500, gap_mm: 100 }, 80, 60, roomsH), { center: { x: 100, y: 500 }, angleDeg: 0 });
+  assert.deepEqual(againstWallCenter(hRev, { offset_mm: 200, from: "end" }, 80, 60, roomsH), { center: { x: 600, y: 400 }, angleDeg: 0 });
+});
+
+test("againstWallCenter == addItem againstWall: одна формула на разных стенах, ориентациях p1→p2, from и gap (±1 мм)", () => {
+  // эталон ревью 190/196: item_update against_wall ставит предмет в ту же точку
+  // и с тем же углом, что item_add against_wall
+  const walls = [
+    wall("top", 0, 0, 400, 0), // горизонтальная, комната снизу
+    wall("top-rev", 400, 0, 0, 0), // та же ось, обратная ориентация p1→p2 (угол 180 → 0)
+    wall("left", 0, 0, 0, 300), // вертикальная, комната справа
+    wall("diag", 0, 0, 200, 300), // наклонная
+  ];
+  const m = model({ walls: Object.fromEntries(walls.map((w) => [w.id, w])) });
+  const rooms: RoomPolygon[] = [{
+    roomId: "room1",
+    polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }],
+    areaCm2: 120_000,
+    axisAreaCm2: null,
+  }];
+  for (const w of walls) {
+    for (const from of [undefined, "start", "end"] as const) {
+      for (const gap_mm of [0, 50]) {
+        const added = addItem(m, {
+          name: "sofa",
+          position: { againstWall: { wallId: w.id, offsetMm: 1000, from, gapMm: gap_mm } },
+          widthMm: 800, depthMm: 600,
+        }, rooms);
+        const at = againstWallCenter(w, { offset_mm: 1000, from, gap_mm }, 80, 60, rooms);
+        assert.ok(Math.abs(added.pc.x * 10 - at.center.x) <= 1,
+          `${w.id} from=${from} gap=${gap_mm}: x ${added.pc.x * 10} vs ${at.center.x}`);
+        assert.ok(Math.abs(added.pc.y * 10 - at.center.y) <= 1,
+          `${w.id} from=${from} gap=${gap_mm}: y ${added.pc.y * 10} vs ${at.center.y}`);
+        assert.equal(added.angle, at.angleDeg,
+          `${w.id} from=${from} gap=${gap_mm}: angle ${added.angle} vs ${at.angleDeg}`);
+      }
+    }
+  }
 });
 
 test("itemsInRoom: индексы предметов внутри комнаты, roomIndex вне диапазона — пусто", () => {

@@ -11,7 +11,9 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Model, ItemProps, Cable } from "../../src/model/types.ts";
 import { addRoomRect, moveWall, deleteWall } from "../../src/model/walls.ts";
-import { addItem, updateItem, deleteItem } from "../../src/model/items.ts";
+import { roomPolygons } from "../../src/model/rooms.ts";
+import { addItem, updateItem, deleteItem, socketGroupAngleDeg } from "../../src/model/items.ts";
+import { againstWallCenter } from "../../src/dto/items.ts";
 import {
   addCable, deleteCable, cablesReferencingItem, refreshSocketGroupSubs,
   SWITCH_MAX_KEYS, CABLE_LAMP_ITEMS, STANDALONE_SOCKETS, parseSwitchVertexId,
@@ -280,6 +282,63 @@ test("88: refreshSocketGroupSubs перенос с поворотом — сме
   const dx = sub.center.x - 100, dy = sub.center.y - 100;
   assert.ok(Math.abs(Math.hypot(dx, dy) - 2) < 1e-6);
   assert.ok(Math.abs(dx - 2 * Math.sin((45 * Math.PI) / 180)) < 1e-6 || Math.abs(dx + 2 * Math.sin((45 * Math.PI) / 180)) < 1e-6);
+});
+
+test("ревью 203 №8: перенос socket_group из 2 под-розеток against_wall — шаг между под-элементами сохранён", () => {
+  const m = baseModel();
+  const sw = addItemByName(m, "light_switch", { againstWall: { wallId: rightWall(m), offsetMm: 500 } });
+  const subs = sw.socket_group as Array<{ id: string; center: { x: number; y: number }; real_center: { x: number; y: number }; center_prs: { x: number; y: number } }>;
+  // вторая под-розетка — кликом рядом, шаг 7 см вдоль стены (правая стена вертикальна)
+  const clone = structuredClone(subs[0]!);
+  clone.id = "_sub2";
+  clone.center = { x: clone.center.x, y: clone.center.y + 7 };
+  clone.real_center = { x: clone.real_center.x, y: clone.real_center.y + 7 };
+  clone.center_prs = { ...clone.center };
+  subs.push(clone);
+  const dist = (a: { x: number; y: number }, b: { x: number; y: number }): number => Math.hypot(a.x - b.x, a.y - b.y);
+  const stepBefore = dist(subs[0]!.center, subs[1]!.center);
+  assert.equal(stepBefore, 7);
+
+  // перенос на верхнюю стену — те же аргументы, что у tools-plan item_update against_wall
+  // (againstWallCenter возвращает центр в мм, updateItem принимает мм);
+  // resnapToWall: true — как в tools-plan (ревью 206 №11): проверяем resnap-путь,
+  // а не доворот по старому pc
+  const top = m.walls[topWall(m)]!;
+  const at = againstWallCenter(top, { offset_mm: 1000, gap_mm: 0 }, sw.width, sw.height, roomPolygons(m));
+  updateItem(m, {
+    itemId: sw.id,
+    center: at.center,
+    angleDeg: socketGroupAngleDeg(at.angleDeg),
+    idWall: top.id,
+    resnapToWall: true,
+  });
+  assert.equal(dist(subs[0]!.center, subs[1]!.center), stepBefore, "шаг center сохранён");
+  assert.equal(dist(subs[0]!.real_center, subs[1]!.real_center), stepBefore, "шаг real_center сохранён");
+  // обе под-розетки на внутренней стороне новой стены (center ближе к стене, чем pc)
+  for (const s of subs) assert.ok(s.center.y <= sw.pc.y + 1e-9, "под-элемент со стороны стены");
+  // эталон item_add: первая под-розетка там же, где поставила бы постановка с нуля
+  const fresh = baseModel();
+  const freshSw = addItemByName(fresh, "light_switch", { againstWall: { wallId: topWall(fresh), offsetMm: 1000 } });
+  const freshSub = (freshSw.socket_group as Array<{ center: { x: number; y: number } }>)[0]!;
+  assert.deepEqual(subs[0]!.center, freshSub.center);
+});
+
+test("ревью 203 №10: idWall сам по себе алгоритм пересчёта под-розеток не переключает — только явный resnapToWall", () => {
+  const m = baseModel();
+  const sw = addItemByName(m, "light_switch", { againstWall: { wallId: topWall(m), offsetMm: 500 } });
+  // перенос с поворотом и записью id_wall БЕЗ resnapToWall — обычный путь:
+  // смещение center относительно pc (0, -2) переносится с доворотом
+  // (угол группы 180 → 90, доворот −90°) → (-2, 0)
+  updateItem(m, { itemId: sw.id, center: { x: 2000, y: 1500 }, angleDeg: 90, idWall: topWall(m) });
+  const carried = (sw.socket_group as Array<{ center: { x: number; y: number } }>)[0]!;
+  assert.ok(Math.abs(carried.center.x - 198) < 1e-9 && Math.abs(carried.center.y - 150) < 1e-9,
+    `без флага: прежнее смещение с доворотом, получили ${JSON.stringify(carried.center)}`);
+  // тот же вызов С resnapToWall — нормальная составляющая ставится от стены заново:
+  // вдоль (-2, 0) остаётся, нормаль от верхней стены → center на 7 см от лица стены
+  updateItem(m, { itemId: sw.id, center: { x: 2000, y: 1500 }, angleDeg: 90, idWall: topWall(m), resnapToWall: true });
+  const resnapped = (sw.socket_group as Array<{ center: { x: number; y: number } }>)[0]!;
+  assert.ok(Math.abs(resnapped.center.x - 198) < 1e-9 && Math.abs(resnapped.center.y - 148) < 1e-9,
+    `с флагом: нормаль от новой стены, получили ${JSON.stringify(resnapped.center)}`);
 });
 
 // ---------- реестр коллекций и компакт ----------

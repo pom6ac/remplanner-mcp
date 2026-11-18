@@ -19,7 +19,7 @@ import {
   addRuler, updateRuler, deleteRuler, addComment, updateComment, deleteComment,
   dimsList, commentsList, resolveRuler, resolveComment, unescapeCommentText,
 } from "../model/dims.ts";
-import { cmToMm } from "../model/units.ts";
+import { cmToMm, mmToCm } from "../model/units.ts";
 import type { LedStrip, StripLight, LineStrip } from "../model/types.ts";
 import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
 import {
@@ -39,7 +39,7 @@ import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
 } from "../model/terraces.ts";
 import { addBalcony, updateBalcony, deleteBalcony, balconyWall } from "../model/balcony.ts";
-import { addItem, updateItem, deleteItem } from "../model/items.ts";
+import { addItem, updateItem, deleteItem, socketGroupAngleDeg } from "../model/items.ts";
 import { compactModel, wallLengthMm } from "../model/compact.ts";
 import { validateModel } from "../model/validate.ts";
 import { renderPlanToFile } from "../render.ts";
@@ -626,6 +626,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     item_update: tool(
       "Изменить предмет: переместить (center или against_wall), повернуть (angle_deg), изменить размеры. " +
+        "При against_wall угол задаёт стена (у пристенной электрики socket_group — «ось + 180», как в item_add), " +
+        "переданный angle_deg игнорируется — то же правило, что в item_add. " +
         "При переносе/повороте привязанные размеры (dim_add attach) и комментарии предмета следуют за ним.",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
@@ -648,14 +650,27 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
               heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined });
           }
           if (pos && "against_wall" in pos) {
-            // перенос к стене: точка на оси с зазором считает DTO-слой
+            // перенос к стене: та же формула модельного слоя, что у item_add
+            // against_wall (ревью 190/196 — один расчёт, без дубля в DTO)
             const aw = pos["against_wall"] as { wall_id: string; offset_mm: number; from?: "start" | "end"; gap_mm?: number };
             const wall = resolveWall(m, aw.wall_id);
-            const at = againstWallCenter(wall, aw, target.height);
+            const widthCm = a["width_mm"] !== undefined ? mmToCm(a["width_mm"] as number) : target.width;
+            const depthCm = a["depth_mm"] !== undefined ? mmToCm(a["depth_mm"] as number) : target.height;
+            const at = againstWallCenter(wall, aw, widthCm, depthCm, ws.rooms());
+            // ревью 198 №1/№2/№6/№7: как в item_add against_wall — у socket_group
+            // угол «ось + 180», id_wall = новая стена, angle_deg с against_wall
+            // игнорируется, OUTSIDE_ROOM проверяется по тем же комнатам (кеш
+            // workspace), по которым считалась позиция
+            const socketGroup = Array.isArray(target.socket_group);
             return updateItem(m, {
               itemId: target.id,
               center: at.center,
-              angleDeg: a["angle_deg"] as number | undefined ?? at.angleDeg,
+              angleDeg: socketGroup ? socketGroupAngleDeg(at.angleDeg) : at.angleDeg,
+              idWall: wall.id,
+              // ревью 203 №10: режим пересчёта под-розеток — явный флаг, а не
+              // скрытая связь «пришёл idWall»
+              resnapToWall: true,
+              rooms: ws.rooms(),
               widthMm: a["width_mm"] as number | undefined, depthMm: a["depth_mm"] as number | undefined,
               heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined,
             });
