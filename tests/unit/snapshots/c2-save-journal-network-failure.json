@@ -1,0 +1,77 @@
+[
+  {
+    "at": 1,
+    "op": "loadModel",
+    "object_id": "203",
+    "plan_id": "1",
+    "save_id": "s1"
+  },
+  {
+    "at": 2,
+    "op": "loadModel",
+    "object_id": "203",
+    "plan_id": "1",
+    "save_id": "s1"
+  },
+  {
+    "at": 3,
+    "op": "backup.write",
+    "path": "203-1-<stamp>.json",
+    "backup_files_before": 0
+  },
+  {
+    "at": 4,
+    "op": "openEditor",
+    "object_id": "203",
+    "plan_id": "1",
+    "anonymous": false
+  },
+  {
+    "at": 5,
+    "op": "editor.compatInfo",
+    "object_id": null,
+    "plan_id": null
+  },
+  {
+    "at": 6,
+    "op": "editor.normalize",
+    "model": {
+      "walls": 5,
+      "holes": 2,
+      "items": 0,
+      "pillars": 0,
+      "rigels": 0
+    }
+  },
+  {
+    "at": 7,
+    "op": "editor.save",
+    "attempt": 1
+  },
+  {
+    "at": 8,
+    "op": "editor.save.result",
+    "ok": false,
+    "conflict": false,
+    "save_id": null
+  },
+  {
+    "at": 9,
+    "op": "save.error",
+    "code": "SITE_ERROR",
+    "save_attempts": 1,
+    "retries": 0,
+    "delays_ms": 0,
+    "details_keys": [
+      "save_id"
+    ]
+  },
+  {
+    "at": 10,
+    "op": "workspace.state",
+    "dirty": true,
+    "save_id": "s1",
+    "walls": 5,
+    "history_steps": 1
+  }
+]
