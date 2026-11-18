@@ -18,7 +18,7 @@ export const position = z.union([
   z.object({ center: mmPoint }),
   z.object({ against_wall: z.object({
     wall_id: wallRef,
-    offset_mm: mmInt.describe("смещение центра предмета от начала стены (учитывая from)"),
+    offset_mm: mmInt.describe("смещение ближнего края предмета от конца стены from (start — от начала стены, end — от конца; по умолчанию start); центр предмета = offset_mm + половина ширины"),
     from: z.enum(["start", "end"]).optional(),
     gap_mm: mm.optional().describe("зазор до внутренней грани стены (0 — вплотную, по умолчанию)"),
   }) }),
@@ -32,7 +32,7 @@ export const position = z.union([
 export const positionMove = z.union([
   z.object({ center: mmPoint }),
   z.object({ against_wall: z.object({
-    wall_id: wallRef, offset_mm: mmInt, from: z.enum(["start", "end"]).optional(), gap_mm: mm.optional(),
+    wall_id: wallRef, offset_mm: mmInt.describe("смещение ближнего края предмета от конца стены from (start — от начала стены, end — от конца; по умолчанию start); центр предмета = offset_mm + половина ширины"), from: z.enum(["start", "end"]).optional(), gap_mm: mm.optional(),
   }) }),
 ]);
 

@@ -1392,7 +1392,7 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 1000000,
-            "description": "смещение центра предмета от начала стены (учитывая from)"
+            "description": "смещение ближнего края предмета от конца стены from (start — от начала стены, end — от конца; по умолчанию start); центр предмета = offset_mm + половина ширины"
            },
            "from": {
             "type": "string",
@@ -1561,7 +1561,7 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 1000000,
-            "description": "мм, целое, ≥ 0"
+            "description": "смещение ближнего края предмета от конца стены from (start — от начала стены, end — от конца; по умолчанию start); центр предмета = offset_mm + половина ширины"
            },
            "from": {
             "type": "string",

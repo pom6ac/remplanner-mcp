@@ -5,6 +5,9 @@
 // без сравнения со старым инлайн-кодом (эквивалентность доказана ревьюером).
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveWall, resolveWallMaterial } from "../../src/dto/walls.ts";
 import { resolveBorder, borderResponse } from "../../src/dto/borders.ts";
 import {
@@ -22,6 +25,8 @@ import type { Model, Wall, ItemProps } from "../../src/model/types.ts";
 import type { RoomPolygon } from "../../src/model/items.ts";
 
 // ---------- фикстуры ----------
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 function wall(id: string, x1: number, y1: number, x2: number, y2: number): Wall {
   return { id, plan: "a", role: "wall", depth: 20, height: 270, p1: { x: x1, y: y1 }, p2: { x: x2, y: y2 }, material: "a_block", holes: {} };
@@ -320,6 +325,205 @@ test("againstWallCenter == addItem againstWall: одна формула на р�
       }
     }
   }
+});
+
+// ---------- ревью 198 №4: сторона стены по попаданию пробной точки в комнату ----------
+
+// комнаты A 0..400×0..300 и B 400..600×0..100 см; B — маленькая комната справа
+const roomA: RoomPolygon = {
+  roomId: "roomA",
+  polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }],
+  areaCm2: 120_000,
+  axisAreaCm2: null,
+};
+const roomB: RoomPolygon = {
+  roomId: "roomB",
+  polygon: [{ x: 400, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 100 }, { x: 400, y: 100 }],
+  areaCm2: 20_000,
+  axisAreaCm2: null,
+};
+const bothRooms = [roomA, roomB];
+
+test("ревью 198 №4: стена маленькой комнаты B — нормаль в B (пробная точка в полигоне), item_add и item_update совпадают", () => {
+  // стена B (400,100)→(600,100), предмет 40×40 см, offset_mm 500, gap_mm 0:
+  // вдоль 50 + 20 = 70 см от начала → x = 470; полутолщина 10 + полуглубина 20
+  // в сторону B → y = 70 (внутри B). Раньше нормаль бралась от центра самой
+  // большой комнаты A → (470,130) вне обеих комнат → OUTSIDE_ROOM
+  const wb = wall("wb", 400, 100, 600, 100);
+  const added = addItem(model({ walls: { wb } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wb", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, bothRooms);
+  assert.deepEqual(added.pc, { x: 470, y: 70 });
+  assert.equal(added.angle, 0);
+  assert.equal(added.id_room, "roomB");
+  // та же стена с обратной ориентацией p1→p2: x = 600 − 70 = 530, угол тот же 0
+  const wbRev = wall("wb-rev", 600, 100, 400, 100);
+  const addedRev = addItem(model({ walls: { "wb-rev": wbRev } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wb-rev", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, bothRooms);
+  assert.deepEqual(addedRev.pc, { x: 530, y: 70 });
+  assert.equal(addedRev.angle, 0);
+  // item_update (againstWallCenter) — ровно те же значения, что у item_add
+  assert.deepEqual(againstWallCenter(wb, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
+    { center: { x: 4700, y: 700 }, angleDeg: 0 });
+  assert.deepEqual(againstWallCenter(wbRev, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
+    { center: { x: 5300, y: 700 }, angleDeg: 0 });
+});
+
+test("ревью 198 №4: стена большой комнаты — сторона помещения как раньше", () => {
+  // стена A (0,0)→(400,0): пробная точка со стороны A попадает в полигон A —
+  // тот же выбор, что давало старое правило «центр самой большой комнаты»
+  const wa = wall("wa", 0, 0, 400, 0);
+  const added = addItem(model({ walls: { wa } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wa", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, bothRooms);
+  assert.deepEqual(added.pc, { x: 70, y: 30 });
+  assert.equal(added.angle, 0);
+  assert.deepEqual(againstWallCenter(wa, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
+    { center: { x: 700, y: 300 }, angleDeg: 0 });
+});
+
+test("ревью 198 №4: внутренняя перегородка A|B — обе нормали дают комнату, детерминированный выбор как раньше (самая большая)", () => {
+  // перегородка (400,0)→(400,100): пробные точки попадают в A (слева) и в B
+  // (справа) — правило не определено геометрией, сохраняем прежнее: комната
+  // с центром самой большой комнаты (A) → предмет в A
+  const wp = wall("wp", 400, 0, 400, 100);
+  const added = addItem(model({ walls: { wp } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wp", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, bothRooms);
+  assert.deepEqual(added.pc, { x: 370, y: 70 });
+  assert.equal(added.angle, 90);
+  assert.equal(added.id_room, "roomA");
+  assert.deepEqual(againstWallCenter(wp, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
+    { center: { x: 3700, y: 700 }, angleDeg: 90 });
+});
+
+test("ревью 198 №4: пробные точки вне обеих комнат — прежнее поведение, OUTSIDE_ROOM без падения", () => {
+  // стена правее комнаты B (600,100)→(800,100): ни одна пробная точка не в
+  // комнате → прежнее правило (самая большая комната) → точка вне помещений
+  const wo = wall("wo", 600, 100, 800, 100);
+  assert.throws(() => addItem(model({ walls: { wo } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wo", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, bothRooms), (e: unknown) => e instanceof McpError && e.code === "OUTSIDE_ROOM");
+});
+
+// ---------- ревью 209 №1: полигоны в формате редактора (rooms2 по ВНУТРЕННИМ граням стен) ----------
+
+// комнаты контурами по граням — на 10 см от осей стен (как даёт rooms2 редактора:
+// tests/fixtures/editor-corridor-3rooms.json), а не по осям, как в тестах выше:
+// A 10..390 × 10..290, B 410..590 × 10..90. На таких полигонах пробная точка без
+// отступа depth/2 (на самой оси) не попадает ни в одну комнату — тест краснеет
+const faceRoomA: RoomPolygon = {
+  roomId: "faceA",
+  polygon: [{ x: 10, y: 10 }, { x: 390, y: 10 }, { x: 390, y: 290 }, { x: 10, y: 290 }],
+  areaCm2: 106_400,
+  axisAreaCm2: null,
+};
+const faceRoomB: RoomPolygon = {
+  roomId: "faceB",
+  polygon: [{ x: 410, y: 10 }, { x: 590, y: 10 }, { x: 590, y: 90 }, { x: 410, y: 90 }],
+  areaCm2: 14_400,
+  axisAreaCm2: null,
+};
+const faceRooms = [faceRoomA, faceRoomB];
+
+test("ревью 209 №1: грани по rooms2 редактора — предмет у стены маленькой комнаты B, проба с отступом depth/2", () => {
+  // стена B (400,100)→(600,100), ось y=100, грань B на y=90: проба вниз
+  // (470, 89.99) — в B, вверх (470, 110.01) — вне A (A кончается на x=390).
+  // Без отступа depth/2 проба легла бы на ось (470, 99.99) — вне B → прежнее
+  // правило (самая большая комната A) → (470,130) вне комнат → OUTSIDE_ROOM
+  const wb = wall("wb", 400, 100, 600, 100);
+  const added = addItem(model({ walls: { wb } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wb", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, faceRooms);
+  assert.deepEqual(added.pc, { x: 470, y: 70 });
+  assert.equal(added.angle, 0);
+  assert.equal(added.id_room, "faceB");
+  // item_update (againstWallCenter) — те же значения
+  assert.deepEqual(againstWallCenter(wb, { offset_mm: 500, gap_mm: 0 }, 40, 40, faceRooms),
+    { center: { x: 4700, y: 700 }, angleDeg: 0 });
+});
+
+test("ревью 209 №1: реальная фикстура редактора editor-corridor-3rooms (rooms2 по граням) — w5 → коридор _sn2hk", () => {
+  // стена перегородки w5 (10,0)→(590,0): комнаты над ней — контурами по граням
+  // (y от −290 до −10), коридор под ней (y от 10 до 110). Проба вниз (300, 10.01)
+  // — в коридор, вверх (300, −10.01) — вне комнат (между гранями y=−10 и телом
+  // перегородки). Старое правило «центр самой большой комнаты» давало нормаль
+  // вверх → (300,−30) вне комнат → OUTSIDE_ROOM
+  const raw = JSON.parse(readFileSync(join(here, "../fixtures/editor-corridor-3rooms.json"), "utf8")) as { model: Model };
+  const added = addItem(raw.model, {
+    name: "sofa",
+    position: { againstWall: { wallId: "w5", offsetMm: 2700, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  });
+  assert.deepEqual(added.pc, { x: 300, y: 30 });
+  assert.equal(added.angle, 0);
+  assert.equal(added.id_room, "_sn2hk");
+});
+
+// ---------- ревью 209 №2: «ступенчатая стена» — from и width/2 в пробной точке ----------
+
+// стена (0,100)→(800,100), вдоль неё комнаты по разные стороны на разных участках:
+// A 10..390 × −290..90 над ней слева, C 410..790 × 110..390 под ней справа
+const stepRoomA: RoomPolygon = {
+  roomId: "stepA",
+  polygon: [{ x: 10, y: -290 }, { x: 390, y: -290 }, { x: 390, y: 90 }, { x: 10, y: 90 }],
+  areaCm2: 144_400,
+  axisAreaCm2: null,
+};
+const stepRoomC: RoomPolygon = {
+  roomId: "stepC",
+  polygon: [{ x: 410, y: 110 }, { x: 790, y: 110 }, { x: 790, y: 390 }, { x: 410, y: 390 }],
+  areaCm2: 106_400,
+  axisAreaCm2: null,
+};
+const stepRooms = [stepRoomA, stepRoomC];
+const wstep = wall("wstep", 0, 100, 800, 100);
+
+test("ревью 209 №2: ступенчатая стена — проба на смещении from/offset+width/2, предмет по разные стороны", () => {
+  // from=start, offset 500: проба (70, 89.99) — в A над стеной → предмет (70,70) в A
+  const addedA = addItem(model({ walls: { wstep } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wstep", offsetMm: 500, gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, stepRooms);
+  assert.deepEqual(addedA.pc, { x: 70, y: 70 });
+  assert.equal(addedA.id_room, "stepA");
+  // from=end, offset 500: проба (730, 110.01) — в C под стеной → предмет (730,130) в C.
+  // Проба, игнорирующая from (легла бы на x=70), выбрала бы сторону A → (730,70)
+  // вне комнат → OUTSIDE_ROOM
+  const addedC = addItem(model({ walls: { wstep } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wstep", offsetMm: 500, from: "end", gapMm: 0 } },
+    widthMm: 400, depthMm: 400,
+  }, stepRooms);
+  assert.deepEqual(addedC.pc, { x: 730, y: 130 });
+  assert.equal(addedC.id_room, "stepC");
+  assert.deepEqual(againstWallCenter(wstep, { offset_mm: 500, from: "end", gap_mm: 0 }, 40, 40, stepRooms),
+    { center: { x: 7300, y: 1300 }, angleDeg: 0 });
+  // ширина 100 см, offset 3700: с width/2 проба на x=420 → (420, 110.01) в C →
+  // предмет (420,130) в C; без width/2 проба на x=370 → (370, 89.99) в A —
+  // сторона выбрана неверно → (420,70) вне комнат → OUTSIDE_ROOM. Проба на
+  // середине стены (x=400) не попадает ни в одну комнату → тоже прежнее правило
+  const addedW = addItem(model({ walls: { wstep } }), {
+    name: "sofa",
+    position: { againstWall: { wallId: "wstep", offsetMm: 3700, gapMm: 0 } },
+    widthMm: 1000, depthMm: 400,
+  }, stepRooms);
+  assert.deepEqual(addedW.pc, { x: 420, y: 130 });
+  assert.equal(addedW.id_room, "stepC");
 });
 
 test("itemsInRoom: индексы предметов внутри комнаты, roomIndex вне диапазона — пусто", () => {
