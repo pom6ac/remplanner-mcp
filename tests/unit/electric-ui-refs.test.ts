@@ -320,6 +320,24 @@ test("ревью 203 №8: перенос socket_group из 2 под-розет�
   assert.deepEqual(subs[0]!.center, freshSub.center);
 });
 
+test("ревью 203 №10: idWall сам по себе алгоритм пересчёта под-розеток не переключает — только явный resnapToWall", () => {
+  const m = baseModel();
+  const sw = addItemByName(m, "light_switch", { againstWall: { wallId: topWall(m), offsetMm: 500 } });
+  // перенос с поворотом и записью id_wall БЕЗ resnapToWall — обычный путь:
+  // смещение center относительно pc (0, -2) переносится с доворотом
+  // (угол группы 180 → 90, доворот −90°) → (-2, 0)
+  updateItem(m, { itemId: sw.id, center: { x: 2000, y: 1500 }, angleDeg: 90, idWall: topWall(m) });
+  const carried = (sw.socket_group as Array<{ center: { x: number; y: number } }>)[0]!;
+  assert.ok(Math.abs(carried.center.x - 198) < 1e-9 && Math.abs(carried.center.y - 150) < 1e-9,
+    `без флага: прежнее смещение с доворотом, получили ${JSON.stringify(carried.center)}`);
+  // тот же вызов С resnapToWall — нормальная составляющая ставится от стены заново:
+  // вдоль (-2, 0) остаётся, нормаль от верхней стены → center на 7 см от лица стены
+  updateItem(m, { itemId: sw.id, center: { x: 2000, y: 1500 }, angleDeg: 90, idWall: topWall(m), resnapToWall: true });
+  const resnapped = (sw.socket_group as Array<{ center: { x: number; y: number } }>)[0]!;
+  assert.ok(Math.abs(resnapped.center.x - 198) < 1e-9 && Math.abs(resnapped.center.y - 148) < 1e-9,
+    `с флагом: нормаль от новой стены, получили ${JSON.stringify(resnapped.center)}`);
+});
+
 // ---------- реестр коллекций и компакт ----------
 
 test("88: реестр коллекций — cables в clear/import, пустой проект не ломается", () => {

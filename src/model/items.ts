@@ -449,6 +449,10 @@ export type UpdateItemParams = {
   comment?: string;
   /** ревью 198 №2: перенос against_wall пишет id_wall = wall.id, как item_add. */
   idWall?: string;
+  /** ревью 203 №8/№10: явный режим пересчёта под-розеток при переносе against_wall —
+   *  взаимное расположение (шаг) сохраняется, нормальная составляющая ставится от
+   *  новой стены. Наличие idWall само по себе алгоритм не переключает. */
+  resnapToWall?: boolean;
   /** ревью 198 №7: комнаты, по которым считалась позиция (кеш workspace) —
    *  OUTSIDE_ROOM проверяется по ним, а не только по rooms2 модели. */
   rooms?: RoomPolygon[];
@@ -489,12 +493,13 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   // этап 88: транзитивный пересчёт затронутых привязок электрики — под-розетки
   // группы (перенос/поворот) и вершины связей, ссылающиеся на предмет
   if (Array.isArray(props.socket_group) && (params.center !== undefined || params.angleDeg !== undefined)) {
-    // ревью 198 №1/№2, 203 №8: перенос against_wall (пришёл idWall) — под-элементы
-    // пересчитываются с сохранением взаимного расположения (шаг): вдоль-составляющая
-    // смещения переносится, нормальная ставится от новой стены, как у item_add;
-    // обычный перенос/поворот — прежние смещения переносятся с доворотом
-    if (params.idWall !== undefined) refreshSocketGroupSubs(model, props, oldPc, oldAngle, true);
-    else refreshSocketGroupSubs(model, props, oldPc, oldAngle);
+    // ревью 198 №1/№2, 203 №8/№10: перенос against_wall (явный режим resnapToWall
+    // от tools-plan) — под-элементы пересчитываются с сохранением взаимного
+    // расположения (шаг): вдоль-составляющая смещения переносится, нормальная
+    // ставится от новой стены, как у item_add; обычный перенос/поворот — прежние
+    // смещения переносятся с доворотом. idWall лишь пишет id_wall, алгоритм
+    // переключает только явный флаг (ревью 203 №10).
+    refreshSocketGroupSubs(model, props, oldPc, oldAngle, params.resnapToWall === true);
   }
   if (params.center !== undefined || params.angleDeg !== undefined) {
     refreshCablesForItem(model, params.itemId);

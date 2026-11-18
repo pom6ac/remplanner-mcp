@@ -667,6 +667,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
               center: at.center,
               angleDeg: socketGroup ? socketGroupAngleDeg(at.angleDeg) : at.angleDeg,
               idWall: wall.id,
+              // ревью 203 №10: режим пересчёта под-розеток — явный флаг, а не
+              // скрытая связь «пришёл idWall»
+              resnapToWall: true,
               rooms: ws.rooms(),
               widthMm: a["width_mm"] as number | undefined, depthMm: a["depth_mm"] as number | undefined,
               heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined,
