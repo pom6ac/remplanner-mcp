@@ -106,3 +106,18 @@ test("c4: снапшот публичного контракта (список �
   const stored = readFileSync(SNAPSHOT, "utf8");
   assert.equal(current, stored, "публичный контракт изменился — снапшот надо осознанно переснять и показать diff ревьюеру");
 });
+
+// Ревью 188 №5: снапшот вне fixtures-guard, поэтому чистоту проверяет сам снапшот-тест.
+// Известные 7+-значные числа: лимит лимита редактора (1000000) и MAX_SAFE_INTEGER в схемах.
+const KNOWN_BIG_NUMBERS = new Set([1_000_000, Number.MAX_SAFE_INTEGER]);
+
+test("c4: снапшот не содержит локальных путей, email и неизвестных больших чисел", () => {
+  const stored = readFileSync(SNAPSHOT, "utf8");
+  assert.ok(!stored.includes("/Users/"), "в снапшоте локальный путь /Users/ — HOME не нормализован");
+  assert.ok(!stored.includes("/home/"), "в снапшоте локальный путь /home/ — HOME не нормализован");
+  assert.ok(!stored.includes("<unset-home>"), "в снапшоте ненормализованный HOME (<unset-home>)");
+  assert.doesNotMatch(stored, /[\w.+-]+@[\w-]+\.[\w.-]+/, "в снапшоте email");
+  const unexpected = [...new Set(stored.match(/\d{7,}/g) ?? [])]
+    .filter((n) => !KNOWN_BIG_NUMBERS.has(Number(n)));
+  assert.deepEqual(unexpected, [], "в снапшоте неизвестные 7+-значные числа (реальные ID вместо синтетических?)");
+});

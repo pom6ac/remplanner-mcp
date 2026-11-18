@@ -223,8 +223,9 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
       async (args) => {
         const ws = ctx.workspace();
         const scope = (args["scope"] as string | undefined) ?? "full";
-        // scope=full — RAW EDITOR PAYLOAD (src/dto/model-payload.ts): сырая модель
-        // сайта в см, формат принадлежит сайту; scope=current — компактная модель (мм)
+        // RAW EDITOR PAYLOAD (src/dto/model-payload.ts): обе ветки — сырая модель
+        // сайта в см, формат принадлежит сайту; scope=current — модель без обёртки,
+        // scope=full — {model, saved_at}
         const payload = scope === "current" ? ws.model : { model: ws.model, saved_at: new Date().toISOString() };
         try {
           // B3/B4 (аудит 65): атомарная запись, 0600, отказ на symlink/не-обычную цель.
