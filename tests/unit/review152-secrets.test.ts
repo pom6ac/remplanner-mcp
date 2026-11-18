@@ -117,31 +117,33 @@ test("ревью 152: sessionId — секрет, координаты и зна
   assert.ok(maskSecrets("pass: 1000 … координаты 1000").includes("координаты 1000"));
 });
 
-// ---------- m10: export в несуществующий каталог — «путь не найден» ----------
+// ---------- m10: export в несуществующий подкаталог корня plans ----------
 
-test("ревью 152 m10: export в несуществующий каталог — путь не найден, basename без абсолюта", async () => {
-  const { mkdtempSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
+// 213 plans-root: подкаталоги внутри корня plans export создаёт (0700); прежний
+// NOT_FOUND «путь не найден» остаётся для путей, где создание невозможно.
+test("ревью 152 m10: export в несуществующий подкаталог plans — каталог создан, ответ без абсолюта вне plans", async () => {
+  const { mkdirSync, existsSync, rmSync, statSync } = await import("node:fs");
   const { join } = await import("node:path");
   const { ServerContext } = await import("../../src/server/context.ts");
   const { buildServer } = await import("../../src/server.ts");
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
-  const dir = mkdtempSync(join(tmpdir(), "plan-m10-"));
-  const badDir = join(dir, "nodir", "x.plan");
+  const { PLANS_DIR } = await import("../../src/config.ts");
+  const rel = "rev152-m10/nested/x.plan";
   const ctx = new ServerContext({ offlineFixture: join(import.meta.dirname, "..", "..", "tests", "fixtures", "anon-rect-4000x3000.json") });
   const server = buildServer(ctx);
   const client = new Client({ name: "review152", version: "0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(b), client.connect(a)]);
   try {
-    const res = await client.callTool({ name: "project_export_plan", arguments: { path: badDir } });
-    const payload = JSON.parse(((res as { content: Array<{ text: string }> }).content[0] as { text: string }).text) as { code: string; message: string };
-    assert.equal(payload.code, "NOT_FOUND");
-    assert.match(payload.message, /путь не найден: x\.plan/);
-    assert.ok(!payload.message.includes(dir), "абсолютный путь не выходит наружу");
+    const res = await client.callTool({ name: "project_export_plan", arguments: { path: rel } });
+    const payload = JSON.parse(((res as { content: Array<{ text: string }> }).content[0] as { text: string }).text) as { code?: string; path?: string };
+    assert.equal(payload.code, undefined, JSON.stringify(payload));
+    assert.ok(existsSync(join(PLANS_DIR, rel)), "файл создан в подкаталоге plans");
+    assert.equal(statSync(join(PLANS_DIR, "rev152-m10", "nested")).mode & 0o777, 0o700, "подкаталог 0700");
   } finally {
     await client.close();
+    rmSync(join(PLANS_DIR, "rev152-m10"), { recursive: true, force: true });
   }
 });
 

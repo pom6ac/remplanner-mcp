@@ -7,10 +7,10 @@ import assert from "node:assert/strict";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { join } from "node:path";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, existsSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { PLANS_DIR } from "../../src/config.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const FIXTURE = join(ROOT, "tests/fixtures/anon-rect-4000x3000.json");
@@ -59,15 +59,18 @@ test("ошибки модельного слоя стен — код и поня
 
 // Ревью 150 M3: ожидаемые ошибки пользователя у файловых инструментов — McpError
 // с понятным текстом, путь в сообщении обезличен (basename, без абсолютного пути).
+// 213 plans-root: путь import/export — относительно корня plans; в сообщении
+// относительный путь показывается как задан, абсолютный план-каталог не выходит.
 test("project_import/export_plan: ошибки файла — McpError без абсолютного пути", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "plan-e2e-"));
+  const relDir = "rev149";
+  const absDir = join(PLANS_DIR, relDir);
   try {
-    const badJson = join(dir, "bad.plan");
-    writeFileSync(badJson, '{"walls": [1, 2');
-    const badShape = join(dir, "shape.plan");
-    writeFileSync(badShape, "[1, 2, 3]");
-    const absent = join(dir, "nope.plan");
-    const badDir = join(dir, "nodir", "x.plan");
+    mkdirSync(absDir, { recursive: true });
+    writeFileSync(join(absDir, "bad.plan"), '{"walls": [1, 2');
+    writeFileSync(join(absDir, "shape.plan"), "[1, 2, 3]");
+    mkdirSync(join(absDir, "dir.plan"));
+    const absent = join(relDir, "nope.plan");
+    const badDir = join(relDir, "nodir", "x.plan");
 
     const ctx = new ServerContext({ offlineFixture: FIXTURE });
     const server = buildServer(ctx);
@@ -75,39 +78,39 @@ test("project_import/export_plan: ошибки файла — McpError без а
     const [a, b] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(b), client.connect(a)]);
     try {
-      // файл не найден — NOT_FOUND, basename без каталога
+      // файл не найден — NOT_FOUND, имя файла в сообщении
       const missing = await payload(client, "project_import_plan", { path: absent, replace: true });
       assert.equal(missing.code, "NOT_FOUND");
       assert.match(missing.message, /не найден/);
-      assert.ok(missing.message.includes("nope.plan"), "в сообщении basename файла");
-      assert.ok(!missing.message.includes(dir), "абсолютный путь не выходит наружу");
+      assert.ok(missing.message.includes("nope.plan"), "в сообщении имя файла");
+      assert.ok(!missing.message.includes(absDir), "абсолютный путь не выходит наружу");
 
       // битый JSON — INVALID_ARGUMENT
-      const bad = await payload(client, "project_import_plan", { path: badJson, replace: true });
+      const bad = await payload(client, "project_import_plan", { path: join(relDir, "bad.plan"), replace: true });
       assert.equal(bad.code, "INVALID_ARGUMENT");
       assert.match(bad.message, /не является JSON/);
-      assert.ok(!bad.message.includes(dir));
+      assert.ok(!bad.message.includes(absDir));
 
       // не тот формат (JSON, но не модель) — INVALID_ARGUMENT
-      const shape = await payload(client, "project_import_plan", { path: badShape, replace: true });
+      const shape = await payload(client, "project_import_plan", { path: join(relDir, "shape.plan"), replace: true });
       assert.equal(shape.code, "INVALID_ARGUMENT");
       assert.match(shape.message, /не является планом/);
-      assert.ok(!shape.message.includes(dir));
+      assert.ok(!shape.message.includes(absDir));
 
-      // экспорт в несуществующий каталог — NOT_FOUND
+      // экспорт в несуществующий подкаталог корня plans — каталог создаётся (213 plans-root)
       const exp = await payload(client, "project_export_plan", { path: badDir });
-      assert.equal(exp.code, "NOT_FOUND");
-      assert.match(exp.message, /не найден/);
-      assert.ok(!exp.message.includes(dir));
+      assert.ok(!("code" in exp), JSON.stringify(exp));
+      assert.ok(existsSync(join(absDir, "nodir", "x.plan")), "подкаталог и файл созданы");
+      assert.equal(statSync(join(absDir, "nodir")).mode & 0o777, 0o700, "подкаталог 0700");
 
       // каталог вместо файла — INVALID_ARGUMENT
-      const dirRes = await payload(client, "project_import_plan", { path: dir, replace: true });
+      const dirRes = await payload(client, "project_import_plan", { path: join(relDir, "dir.plan"), replace: true });
       assert.equal(dirRes.code, "INVALID_ARGUMENT");
-      assert.ok(!dirRes.message.includes(dir));
+      assert.ok(!dirRes.message.includes(absDir));
     } finally {
       await client.close();
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(absDir, { recursive: true, force: true });
   }
 });

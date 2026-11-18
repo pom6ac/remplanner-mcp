@@ -24,7 +24,9 @@ const SNAPSHOT = join(import.meta.dirname, "snapshots", "c4-contract-snapshot.js
 const REGEN = process.env["C4_SNAPSHOT_REGEN"] === "1";
 
 const HOME = process.env["REMPLANNER_HOME"] ?? "<unset-home>";
-const EXPORT_PATH = join(HOME, "c4-contract-snapshot.plan");
+// B3 (аудит 65, решение пользователя): путь export/import — относительно корня
+// plans; в ответе absolute-путь нормализуется в <HOME>/plans/… через normalize()
+const EXPORT_PATH = "c4-contract-snapshot.plan";
 
 async function start(): Promise<Client> {
   const ctx = new ServerContext({ offlineFixture: FIXTURE });

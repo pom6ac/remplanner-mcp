@@ -3,17 +3,26 @@
 // Офлайн-режим на фикстуре.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, readFileSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync, readFileSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { PLANS_DIR } from "../../src/config.ts";
 import type { Model } from "../../src/model/types.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const FIXTURE = join(ROOT, "tests/fixtures/anon-rect-4000x3000.json");
+
+// 213 plans-root: путь export/import — относительно корня plans; фикстура
+// копируется в корень plans (вне корня импорт отклоняется)
+const FIXTURE_REL = "rev67-fixture.plan";
+const fixtureRel = (): string => {
+  mkdirSync(PLANS_DIR, { recursive: true });
+  writeFileSync(join(PLANS_DIR, FIXTURE_REL), readFileSync(FIXTURE));
+  return FIXTURE_REL;
+};
 
 type ToolCallResult = { isError?: boolean; content?: { type: string; text?: string }[] };
 const text = (r: unknown): string => ((r as ToolCallResult).content as { text: string }[])[0]!.text;
@@ -81,11 +90,11 @@ test("rev67 M2: project_clear убирает ВСЕ коллекции (риге
 test("rev67 M2: project_import_plan переносит новые коллекции и убирает старые лишние", async () => {
   const { client } = await start();
   await populate(client);
-  const dir = mkdtempSync(join(tmpdir(), "rev67-"));
-  const planPath = join(dir, "import.plan");
+  // 213 plans-root: путь export/import — относительно корня plans
+  const planPath = "rev67-import.plan";
   await call(client, "project_export_plan", { path: planPath, scope: "full" });
   // импортируем пустую фикстуру (без новых коллекций) — старые коллекции должны уйти
-  await call(client, "project_import_plan", { path: FIXTURE, replace: true });
+  await call(client, "project_import_plan", { path: fixtureRel(), replace: true });
   const afterEmpty = counters(fullModel(await call(client, "model_get", { detail: "full" })));
   for (const k of ["terrace_borders", "territory_borders", "level_holes", "pipes_gas"]) {
     assert.equal(afterEmpty[k], 0, `${k} после импорта пустой модели = ${afterEmpty[k]}`);
@@ -95,6 +104,8 @@ test("rev67 M2: project_import_plan переносит новые коллекц
   const back = counters(fullModel(await call(client, "model_get", { detail: "full" })));
   assert.ok(back.terrace_borders === 4 && back.territory_borders === 4 && back.rigels === 1 && back.pipes_gas === 1, JSON.stringify(back));
   await client.close();
+  rmSync(join(PLANS_DIR, planPath), { force: true });
+  rmSync(join(PLANS_DIR, FIXTURE_REL), { force: true });
 });
 
 // Этап 71: балкон — стены role «balcony» в обязательной коллекции walls, реестр
@@ -124,22 +135,23 @@ test("этап 71: project_clear убирает балконные огражд�
   const restored = fullModel(await call(client, "model_get", { detail: "full" }));
   assert.deepEqual([...roleOf(restored)].sort(), [...added].sort());
 
-  const dir = mkdtempSync(join(tmpdir(), "rev71-"));
-  const planPath = join(dir, "balcony.plan");
+  // 213 plans-root: путь export/import — относительно корня plans
+  const planPath = "rev71-balcony.plan";
   await call(client, "project_export_plan", { path: planPath, scope: "full" });
   await call(client, "project_clear", { confirm: true });
   await call(client, "project_import_plan", { path: planPath, replace: true });
   const back = roleOf(fullModel(await call(client, "model_get", { detail: "full" })));
   assert.deepEqual([...back].sort(), [...added].sort());
   await client.close();
+  rmSync(join(PLANS_DIR, planPath), { force: true });
 });
 
 test("rev67 M2: export→import roundtrip сохраняет проём в полу без потерь", async () => {
   const { client } = await start();
   await populate(client);
   await call(client, "floor_hole_add", { corner1: { x: 1000, y: 1000 }, corner2: { x: 2000, y: 2000 } });
-  const dir = mkdtempSync(join(tmpdir(), "rev67-"));
-  const planPath = join(dir, "roundtrip.plan");
+  // 213 plans-root: путь export/import — относительно корня plans
+  const planPath = "rev67-roundtrip.plan";
   await call(client, "project_export_plan", { path: planPath, scope: "full" });
   await call(client, "project_clear", { confirm: true });
   await call(client, "project_import_plan", { path: planPath, replace: true });
@@ -151,4 +163,5 @@ test("rev67 M2: export→import roundtrip сохраняет проём в по�
   assert.equal(h.polygon.length, 4);
   assert.ok(Math.abs(h.area - 1) < 0.01, `area ${h.area}`);
   await client.close();
+  rmSync(join(PLANS_DIR, planPath), { force: true });
 });

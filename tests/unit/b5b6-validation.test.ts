@@ -4,9 +4,9 @@
 import "./helpers/tmp-home.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync, readFileSync, readdirSync, mkdtempSync, rmSync } from "node:fs";
+import { writeFileSync, readFileSync, readdirSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../../src/server.ts";
@@ -14,6 +14,7 @@ import { ServerContext } from "../../src/server/context.ts";
 import { readPlanFile } from "../../src/server/tools-projects.ts";
 import { parseModelImport } from "../../src/model/import-schema.ts";
 import { MODEL_ENTITY_COLLECTIONS } from "../../src/model/collections.ts";
+import { PLANS_DIR } from "../../src/config.ts";
 import { McpError } from "../../src/errors.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -375,13 +376,15 @@ test("b5/171: негативный контроль — связь конца с
 // ---------- инструментальный уровень: import → workspace ----------
 
 test("b5: project_import_plan принимает валидный .plan (офлайн)", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "b5b6-"));
+  // 213 plans-root: путь импорта — относительно корня plans
+  const rel = join("b5b6", "ok.plan");
+  const p = join(PLANS_DIR, rel);
   try {
-    const p = join(dir, "ok.plan");
+    mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, JSON.stringify({ model: { ...baseModel(), walls: { w1: wall() } } }));
     const client = await start();
     try {
-      const res = await client.callTool({ name: "project_import_plan", arguments: { path: p, replace: true } });
+      const res = await client.callTool({ name: "project_import_plan", arguments: { path: rel, replace: true } });
       assert.ok(!res.isError, text(res));
       const payload = JSON.parse(text(res)) as { walls: number };
       assert.equal(payload.walls, 1);
@@ -389,19 +392,20 @@ test("b5: project_import_plan принимает валидный .plan (офл�
       await client.close();
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(PLANS_DIR, "b5b6"), { recursive: true, force: true });
   }
 });
 
 test("b5: project_import_plan с walls-строкой — INVALID_ARGUMENT, путь без содержимого файла", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "b5b6-"));
+  const rel = join("b5b6", "bad.plan");
+  const p = join(PLANS_DIR, rel);
   try {
+    mkdirSync(dirname(p), { recursive: true });
     const marker = "SECRET_CANARY_4242_file_body_marker_xxxxxxxxxxxxxxxxxx";
-    const p = join(dir, "bad.plan");
     writeFileSync(p, JSON.stringify({ model: { ...baseModel(), walls: "bad", marker } }));
     const client = await start();
     try {
-      const res = await client.callTool({ name: "project_import_plan", arguments: { path: p, replace: true } });
+      const res = await client.callTool({ name: "project_import_plan", arguments: { path: rel, replace: true } });
       assert.ok(res.isError, "импорт должен отклоняться");
       const payload = JSON.parse(text(res)) as { code: string; message: string };
       assert.equal(payload.code, "INVALID_ARGUMENT");
@@ -411,7 +415,7 @@ test("b5: project_import_plan с walls-строкой — INVALID_ARGUMENT, пу
       await client.close();
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(PLANS_DIR, "b5b6"), { recursive: true, force: true });
   }
 });
 
@@ -420,31 +424,32 @@ test("b5: project_import_plan с walls-строкой — INVALID_ARGUMENT, пу
 // Ревью 170 №1: ригель, прилипший к стене, — основной сценарий; до фикса
 // import отклонял собственный экспорт MCP на rigels.<id>.p1.link.
 test("b5/171: round-trip ригеля у стены: rigel_add → export → import (офлайн)", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "b5b6-"));
+  // 213 plans-root: путь export/import — относительно корня plans
+  const rel = join("b5b6", "rigel.plan");
+  const p = join(PLANS_DIR, rel);
   try {
     const ctx = new ServerContext({ offlineFixture: join(ROOT, "tests/fixtures/editor-corridor-3rooms.json") });
     const server = buildServer(ctx);
     const client = new Client({ name: "b5b6-rigel-rt", version: "0.0.0" });
     const [a, b] = InMemoryTransport.createLinkedPair();
     await Promise.all([server.connect(b), client.connect(a)]);
-    const p = join(dir, "rigel.plan");
     try {
       // конец оси на грани стены (w4/w6, y=-290): связь RigelLink {ot: wall}
       const add = await client.callTool({ name: "rigel_add", arguments: { start: { x: 100, y: -2000 }, end: { x: 2900, y: -2000 } } });
       assert.ok(!add.isError, text(add));
-      const exp = await client.callTool({ name: "project_export_plan", arguments: { path: p, scope: "full" } });
+      const exp = await client.callTool({ name: "project_export_plan", arguments: { path: rel, scope: "full" } });
       assert.ok(!exp.isError, text(exp));
       const exported = JSON.parse(readFileSync(p, "utf8")) as { model: Record<string, Record<string, { p1?: { link?: { ot?: string } } }>> };
       const rigel = Object.values(exported.model.rigels ?? {})[0];
       assert.ok(rigel, "в экспорте нет ригеля");
       assert.equal(rigel.p1?.link?.ot, "wall", "конец ригеля должен быть привязан к стене (иначе тест не проверяет RigelLink)");
-      const imp = await client.callTool({ name: "project_import_plan", arguments: { path: p, replace: true } });
+      const imp = await client.callTool({ name: "project_import_plan", arguments: { path: rel, replace: true } });
       assert.ok(!imp.isError, text(imp));
     } finally {
       await client.close();
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(PLANS_DIR, "b5b6"), { recursive: true, force: true });
   }
 });
 
@@ -452,21 +457,22 @@ test("b5/171: round-trip ригеля у стены: rigel_add → export → im
 // без height (эталон ui-ref-terrace-fence.json); round-trip MCP не должен
 // отклонять собственный экспорт.
 test("b5/171: round-trip ограждения террасы: terrace_add → terrace_fence_add → export → import (офлайн)", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "b5b6-"));
+  // 213 plans-root: путь export/import — относительно корня plans
+  const rel = join("b5b6", "fence.plan");
+  const p = join(PLANS_DIR, rel);
   try {
     const client = await start();
-    const p = join(dir, "fence.plan");
     try {
       const terrace = await client.callTool({ name: "terrace_add", arguments: { points: [{ x: 500, y: 500 }, { x: 3500, y: 500 }, { x: 3500, y: 2500 }, { x: 500, y: 2500 }] } });
       assert.ok(!terrace.isError, text(terrace));
       const fence = await client.callTool({ name: "terrace_fence_add", arguments: { start: { x: 600, y: 600 }, end: { x: 3400, y: 600 } } });
       assert.ok(!fence.isError, text(fence));
-      const exp = await client.callTool({ name: "project_export_plan", arguments: { path: p, scope: "full" } });
+      const exp = await client.callTool({ name: "project_export_plan", arguments: { path: rel, scope: "full" } });
       assert.ok(!exp.isError, text(exp));
       const exported = JSON.parse(readFileSync(p, "utf8")) as { model: Record<string, Record<string, { role?: string; height?: number }>> };
       const fenceWall = Object.values(exported.model.walls ?? {}).find((w) => w.role === "terrace_fence");
       assert.ok(fenceWall, "в экспорте нет ограждения террасы");
-      const imp = await client.callTool({ name: "project_import_plan", arguments: { path: p, replace: true } });
+      const imp = await client.callTool({ name: "project_import_plan", arguments: { path: rel, replace: true } });
       assert.ok(!imp.isError, text(imp));
       // и стена без height (формат живого редактора) тоже проходит
       delete fenceWall.height;
@@ -475,6 +481,6 @@ test("b5/171: round-trip ограждения террасы: terrace_add → te
       await client.close();
     }
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(join(PLANS_DIR, "b5b6"), { recursive: true, force: true });
   }
 });
