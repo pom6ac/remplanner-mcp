@@ -150,6 +150,34 @@ test("88: item_add socket — группа с под-розеткой, plan ли
   assert.equal((sw.over_floor as { value: number }).value, 90);
 });
 
+test("ревью 209 №3: выключатель на вогнутой стене L-комнаты — center под-элемента по правилу пробной точки (17 см от оси)", () => {
+  // L-комната (0,0)-(400,0)-(400,100)-(100,100)-(100,400)-(0,400), вогнутое ребро
+  // (400,100)→(100,100). Центр вершин (166.7,166.7) лежит СНАРУЖИ этого ребра,
+  // поэтому старое правило «нормаль к центру комнаты» ставило center на 21 см от
+  // оси вместо 17 (проба ниже — независимые значения, не из кода):
+  // pc: вдоль 100 + 7 = 107 от p1 → x = 293; внутрь 10 + 9 = 19 → y = 81
+  // center: 17 см от оси → y = 83 (10 полутолщина стены + 7 полупластина)
+  const m: Model = { v: 0, id: "model", plan_id: "plan", walls: {}, items: {}, pillars: {}, total_height: 300, final: false };
+  m.walls["wconcave"] = {
+    id: "wconcave", plan: "a", role: "wall", depth: 20, height: 270, material: "a_block", holes: {},
+    p1: { x: 400, y: 100 }, p2: { x: 100, y: 100 },
+  };
+  m.rooms2 = {
+    lroom: {
+      polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 100 }, { x: 100, y: 100 }, { x: 100, y: 400 }, { x: 0, y: 400 }],
+      area: 5,
+    } as never,
+  };
+  const sw = addItemByName(m, "light_switch", { againstWall: { wallId: "wconcave", offsetMm: 1000 } });
+  assert.deepEqual(sw.pc, { x: 293, y: 81 });
+  assert.equal(sw.angle, 180);
+  assert.equal(sw.id_room, "lroom");
+  const sub = (sw.socket_group as Array<{ real_center: { x: number; y: number }; center: { x: number; y: number }; center_prs: { x: number; y: number } }>)[0]!;
+  assert.deepEqual(sub.real_center, { x: 293, y: 81 });
+  assert.deepEqual(sub.center, { x: 293, y: 83 });
+  assert.deepEqual(sub.center_prs, { x: 293, y: 83 });
+});
+
 test("88: item_add socket_power/socket_380 — самостоятельные предметы, over_floor {value, display:true} без vd", () => {
   const m = baseModel();
   for (const name of STANDALONE_SOCKETS) {

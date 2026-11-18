@@ -18,7 +18,7 @@ import {
 // ---------- комнаты (канонические полигоны считает редактор: rooms2) ----------
 
 export { roomPolygons, type RoomPolygon } from "./rooms.ts";
-import { roomPolygons, type RoomPolygon } from "./rooms.ts";
+import { roomPolygons, inwardSideByProbe, type RoomPolygon } from "./rooms.ts";
 
 function dist(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -218,7 +218,10 @@ export function socketGroupAngleDeg(wallAxisAngleDeg: number): number {
  * в (−90; 90]. Общая формула item_add (againstWall) и item_update
  * (against_wall, через DTO-слой) — ревью 190: дубликат в DTO считал нормаль
  * вектором в 10 раз короче (мм↔см), без полутолщины стены и без стороны
- * помещения. Внутренняя сторона стены — та, где центр комнаты.
+ * помещения. Внутренняя сторона стены — ревью 198 №4: та, чья пробная точка
+ * (на offset вдоль стены, depth/2 + ε от оси) попадает в полигон комнаты;
+ * если попадают обе (внутренняя перегородка) или ни одна — прежнее правило:
+ * сторона центра самой большой комнаты.
  */
 export function againstWallPlacement(
   wall: Wall,
@@ -232,17 +235,24 @@ export function againstWallPlacement(
   if (len < 1e-6) throw new McpError("INVALID_ARGUMENT", "стена нулевой длины");
   const u = scale(dir, 1 / len);
   const nl = leftNormal(dir.x, dir.y);
-  // внутренняя сторона стены — та, где помещение
-  const room = findRoom(rooms);
-  const center = roomCenter(room.polygon);
-  const wallMid = { x: (wall.p1.x + wall.p2.x) / 2, y: (wall.p1.y + wall.p2.y) / 2 };
-  const toRoom = sub(center, wallMid);
-  const inward = nl.x * toRoom.x + nl.y * toRoom.y > 0 ? nl : scale(nl, -1);
   const from = aw.from ?? "start";
   const sign = from === "end" ? -1 : 1;
   const base = from === "end" ? wall.p2 : wall.p1;
   const along = mmToCm(aw.offsetMm) + widthCm / 2;
-  const pc = add(add(base, scale(u, sign * along)), scale(inward, wall.depth / 2 + mmToCm(aw.gapMm ?? 0) + depthCm / 2));
+  // ревью 198 №4: точка проб и центр предмета — одно смещение вдоль стены
+  // (offset от from + полуширина), пробная точка стороны — на depth/2 + ε от оси
+  // (общий хелпер inwardSideByProbe, ревью 209 №3)
+  const onAxis = add(base, scale(u, sign * along));
+  let inward = inwardSideByProbe(wall, nl, onAxis, rooms);
+  if (!inward) {
+    // запасное правило (обе или ни одна проба в комнате): сторона центра самой большой комнаты
+    const room = findRoom(rooms);
+    const center = roomCenter(room.polygon);
+    const wallMid = { x: (wall.p1.x + wall.p2.x) / 2, y: (wall.p1.y + wall.p2.y) / 2 };
+    const toRoom = sub(center, wallMid);
+    inward = nl.x * toRoom.x + nl.y * toRoom.y > 0 ? nl : scale(nl, -1);
+  }
+  const pc = add(onAxis, scale(inward, wall.depth / 2 + mmToCm(aw.gapMm ?? 0) + depthCm / 2));
   // ширина предмета ВДОЛЬ стены (эталон ui-ref-sofa: угол = углу оси, а не нормали) — №10 ревью
   let angle = angleDeg(wall.p1, wall.p2);
   if (angle > 90) angle -= 180;
