@@ -1,12 +1,12 @@
-import { constants as fsConstants, fstatSync, lstatSync, openSync, readSync, closeSync, realpathSync } from "node:fs";
+import { constants as fsConstants, fstatSync, lstatSync, readSync, closeSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { SCENARIO_HINT, mmInt, mmPoint } from "./context.ts";
 import type { ServerContext } from "./context.ts";
 import { ok, tool, type ToolDefLike as ToolDef } from "./toolkit.ts";
 import { McpError } from "../errors.ts";
-import { ensurePrivateDir, inspectPath, writePrivateFile } from "../fs-safe.ts";
-import { PLANS_DIR, HOME_DIR } from "../config.ts";
+import { ensurePrivateDir, fsWriteCalls, inspectPath, writePrivateFile } from "../fs-safe.ts";
+import { PLANS_DIR } from "../config.ts";
 import type { Model } from "../model/types.ts";
 import { clearEntityCollections, replaceEntityCollections, MODEL_ENTITY_COLLECTIONS } from "../model/collections.ts";
 import { MAX_PLAN_FILE_BYTES, MAX_SERVICE_COMMENT_CHARS } from "../limits.ts";
@@ -92,10 +92,13 @@ function planFileError(e: unknown, p: string, kind: "import" | "export" = "impor
  * backups/renders). Абсолютный путь принимается, только если после resolve он
  * внутри корня. Отказ (INVALID_ARGUMENT) при: выходе за корень (`..`, абсолютный
  * путь вне корня), symlink в любом существующем компоненте пути внутри корня,
- * на сам файл или на корень plans (или каталог состояния приложения — ревью 214
- * №1, отказ до любых mkdir/chmod), расширении не `.plan`, пустом имени, нулевом
+ * на сам файл или на корень plans (отказ до любых mkdir/chmod — ревью 214 №1;
+ * каталог состояния приложения symlink-ом быть может — ревью 216 №11),
+ * расширении не `.plan`, пустом имени, нулевом
  * байте, пути вида `~/…` (подсказка «относительно каталога plans»). Корень
- * создаётся при первом использовании (0700, ensurePrivateDir).
+ * создаётся при первом использовании (0700, ensurePrivateDir). Каталог
+ * состояния приложения может быть символической ссылкой — корень считается
+ * от его реального пути (ревью 216 №11).
  */
 export type ResolvedPlanPath = {
   /** абсолютный путь внутри корня plans (после resolve) */
@@ -117,25 +120,24 @@ const containsInside = (root: string, p: string): boolean => {
 };
 
 /**
- * Ревью 214 №1: корень plans и каталог состояния приложения не могут быть
- * символическими ссылками. Проверка lstat выполняется ДО ensurePrivateDir:
- * mkdir/chmod идут по ссылке и меняют внешний каталог ещё до проверок пути
- * (chmod 0700 на цели ссылки — побочный эффект даже при отклонённом запросе).
+ * Ревью 214 №1, уточнено ревью 216 №11 (решение координатора): корень plans
+ * не может быть символической ссылкой — проверка lstat выполняется ДО
+ * ensurePrivateDir: mkdir/chmod идут по ссылке и меняют внешний каталог ещё
+ * до проверок пути (chmod 0700 на цели ссылки — побочный эффект даже при
+ * отклонённом запросе). Каталог состояния приложения (REMPLANNER_HOME) быть
+ * ссылкой МОЖЕТ — это доверенная настройка пользователя (как backups/renders
+ * до корневой политики); корень plans считается от реального пути.
  */
 function rejectSymlinkRoots(): void {
-  const check = (dir: string, what: string): void => {
-    try {
-      if (lstatSync(dir).isSymbolicLink()) {
-        throw new McpError("INVALID_ARGUMENT", `${what} — символическая ссылка, операция отклонена`);
-      }
-    } catch (e) {
-      if (e instanceof McpError) throw e;
-      // нет каталога — его создаст ensurePrivateDir; прочее (ENAMETOOLONG и т.п.) — как есть
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  try {
+    if (lstatSync(PLANS_DIR).isSymbolicLink()) {
+      throw new McpError("INVALID_ARGUMENT", "корень plans — символическая ссылка, операция отклонена");
     }
-  };
-  check(HOME_DIR, "каталог состояния приложения");
-  check(PLANS_DIR, "корень plans");
+  } catch (e) {
+    if (e instanceof McpError) throw e;
+    // нет каталога — его создаст ensurePrivateDir; прочее (ENAMETOOLONG и т.п.) — как есть
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
 }
 
 export function resolvePlanPath(input: string): ResolvedPlanPath {
@@ -147,9 +149,10 @@ export function resolvePlanPath(input: string): ResolvedPlanPath {
     // ревью 214 №4: нулевой байт отклоняем явно, а не через INTERNAL
     throw new McpError("INVALID_ARGUMENT", `путь содержит нулевой байт: ${shown}`);
   }
-  if (input === "~" || input.startsWith("~/")) {
-    // ревью 214 №6: `~/x.plan` молча создавал каталог с именем `~` в корне;
-    // отклоняем с подсказкой, что путь задаётся относительно каталога plans
+  if (/^~/.test(input)) {
+    // ревью 214 №6, расширено 216 №12: `~/x.plan` и `~user/x.plan` молча
+    // создавали каталог с именем `~`/`~user` в корне; отклоняем любой ведущий
+    // `~` с подсказкой, что путь задаётся относительно каталога plans
     throw new McpError("INVALID_ARGUMENT", `путь должен быть относительно каталога plans (~ в начале пути не поддерживается): ${shown}`);
   }
   if (basename(input).toLowerCase() === ".plan") {
@@ -159,9 +162,18 @@ export function resolvePlanPath(input: string): ResolvedPlanPath {
   if (!input.toLowerCase().endsWith(".plan")) {
     throw new McpError("INVALID_ARGUMENT", `расширение файла плана должно быть .plan: ${shown}`);
   }
-  rejectSymlinkRoots();
-  ensurePrivateDir(PLANS_DIR);
-  const realRoot = realpathSync(PLANS_DIR);
+  // ревью 216 №9: подготовка корня plans (проверка symlink, mkdir, realpath) —
+  // те же ожидаемые ошибки пользователя (EACCES/EPERM/ENOTDIR/EEXIST), понятный
+  // INVALID_ARGUMENT вместо INTERNAL, как в d714539
+  let realRoot: string;
+  try {
+    rejectSymlinkRoots();
+    ensurePrivateDir(PLANS_DIR);
+    realRoot = realpathSync(PLANS_DIR);
+  } catch (e) {
+    if (e instanceof McpError) throw e;
+    throw planFileError(e, input);
+  }
   // resolve принимает и относительный (к корню), и абсолютный вход;
   // абсолютный вне корня сразу даёт rel с ".."
   const candidate = resolve(PLANS_DIR, input);
@@ -221,6 +233,8 @@ function assertDirStillInside(res: ResolvedPlanPath): void {
     throw new McpError("INVALID_ARGUMENT", `реальный путь выходит за корень plans: ${res.relative}`);
   }
 }
+// ревью 216 №10: экспорт для тестов TOCTOU-слоя (подмена между resolve и операцией)
+export { assertDirStillInside };
 
 /** Флаг O_NOFOLLOW, если платформа его поддерживает (на Windows отсутствует — 0). */
 const O_NOFOLLOW = (fsConstants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
@@ -254,10 +268,12 @@ export function readPlanFile(p: string, options: { maxBytes?: number; display?: 
   }
   // Ревью 214 №3 (TOCTOU): чтение через дескриптор, открытый с O_NOFOLLOW —
   // подмена финального компонента пути на ссылку между lstat-проверкой и чтением
-  // даёт ELOOP (понятный отказ), а не чтение чужого файла.
+  // даёт ELOOP (понятный отказ), а не чтение чужого файла. Открытие — через
+  // инъекционную точку fsWriteCalls (ревью 216 №10): тест подменяет файл на
+  // ссылку ровно между inspectPath и открытием.
   let fd: number;
   try {
-    fd = openSync(p, fsConstants.O_RDONLY | O_NOFOLLOW);
+    fd = fsWriteCalls.openSync(p, fsConstants.O_RDONLY | O_NOFOLLOW);
   } catch (e) {
     throw planFileError(e, shown);
   }
