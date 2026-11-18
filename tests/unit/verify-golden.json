@@ -1,0 +1,227 @@
+{
+  "missingIds/plan-vs-corridor": [
+    "0kvxg69h8n",
+    "gxugmdrasv",
+    "jcdj4hyyeo",
+    "q3fckwe4cj"
+  ],
+  "missingIds/empty": [],
+  "openingIds/broken-item": [
+    "apuny6wral",
+    "pbwydi1o66"
+  ],
+  "openingIds/corridor-empty-holes": [],
+  "borders/identity": [],
+  "borders/terrace-lost": [
+    "0: граница террасы потеряна"
+  ],
+  "borders/territory-extra": [
+    "9: граница участка добавлена редактором"
+  ],
+  "borders/terrace-shifted": [
+    "0: конец сместился (на сервере 905,100; ожидалось 900,100)"
+  ],
+  "borders/borderMismatchesOf-shifted": [
+    "0: конец сместился (на сервере 905,100; ожидалось 900,100)"
+  ],
+  "level-holes/identity": [],
+  "level-holes/lost": [
+    "0: проём в полу потерян"
+  ],
+  "level-holes/polygon-shifted": [
+    "0: угол 0 сместился (на сервере 103,-250; ожидалось 100,-250)"
+  ],
+  "gas-graph/identity": [],
+  "gas-graph/missing": [
+    "0: газовая линия исчезла после сохранения"
+  ],
+  "gas-graph/extra": [
+    "9: лишняя газовая линия на сервере (не заявлена рабочей копией)"
+  ],
+  "gas-graph/vertex-shifted": [
+    "0: узел 1 сместился (на сервере 832.19,661.47; ожидалось 827.19,661.47)"
+  ],
+  "gas-graph/matrix-edge-lost": [
+    "0: ребро 0–1 потеряно на сервере (matrix изменилась)"
+  ],
+  "gas-graph/matrix-length-changed": [
+    "0: длина ребра 0–1 изменилась (на сервере 9; ожидалось 1)"
+  ],
+  "gas-graph/loop-added": [
+    "0: петля на узле 0 добавлена на сервере (matrix[i][i] изменилась)"
+  ],
+  "gas-graph/type-changed": [
+    "0: узел 1 сместился (на сервере 832.19,661.47; ожидалось 827.19,661.47)",
+    "0: тип изменился (на сервере «water_pipe»; ожидалось «gas_line»)"
+  ],
+  "gas-graph/plan-changed": [
+    "0: поле plan изменилось (на сервере \"b\"; ожидалось \"a\")"
+  ],
+  "gas-graph/items-value-changed": [
+    "0: значение items узла 2 изменилось (на сервере \"other\"; ожидалось \"node\")"
+  ],
+  "gas-graph/vertex-count-mismatch": [
+    "0: узлы не сопоставлены (на сервере 1; ожидалось 2)"
+  ],
+  "gas-graph/node-id-renamed-geom-match": [],
+  "led-graph/identity": [],
+  "led-graph/id-room-not-stripped": [
+    "0: узел 0, поле id_room изменилось (на сервере null; ожидалось \"0\")",
+    "0: узел 1, поле id_room изменилось (на сервере null; ожидалось \"0\")",
+    "0: узел 2, поле id_room изменилось (на сервере null; ожидалось \"0\")"
+  ],
+  "water-pipe/identity": [],
+  "water-pipe/lenient-vertex-within-tol": [],
+  "water-pipe/lenient-vertex-beyond-tol": [],
+  "water-pipe/strict-vertex-shift": [],
+  "water-pipe/lenient-length-out-of-range": [
+    "0: длина изменилась вне допустимого диапазона точек подключения (на сервере 5; допустимо 1.84–2.16)"
+  ],
+  "pipe-conn/identity": [],
+  "pipe-conn/back-ref-lost": [
+    "0: предмет i2 потерял обратную ссылку water_pipe_id (на сервере null; ожидалось «0»)",
+    "i2: обратная ссылка water_pipe_id → 0 потеряна на сервере"
+  ],
+  "pipe-conn/extra-links": [
+    "i2: лишняя обратная ссылка water_hot_pipe_id → 0 (в рабочей копии этой ссылки нет)",
+    "i2: у обычного вывода «waterspot_cold_hot» ссылка water_pipe_id должна быть скаляром (на сервере массив)"
+  ],
+  "pipe-conn/wrong-kind-link": [
+    "0: предмет i2 потерял обратную ссылку water_pipe_id (на сервере null; ожидалось «0»)",
+    "i2: лишняя обратная ссылка warm_floor_pipe_id → 0 (в рабочей копии этой ссылки нет)",
+    "i2: обратная ссылка water_pipe_id → 0 потеряна на сервере"
+  ],
+  "pipe-conn/multi-scalar-violation": [
+    "i1: у multi-предмета «waterspot_collector» ссылка water_pipe_id должна быть массивом труб (на сервере скаляр)"
+  ],
+  "pipe-conn/scalar-array-violation": [
+    "i2: у обычного вывода «waterspot_cold_hot» ссылка water_pipe_id должна быть скаляром (на сервере массив)"
+  ],
+  "pipe-conn/climate-only-keys": [],
+  "subs-user/identity": [],
+  "subs-user/group-lost": [
+    "0: группа socket_group (1 под-розеток) потеряна после сохранения"
+  ],
+  "subs-user/count-changed": [
+    "0: число под-розеток изменилось (ожидалось 1, на сервере 0)"
+  ],
+  "subs-user/type-changed": [
+    "0/0: тип изменился (на сервере «socket»; ожидалось «light_switch»)"
+  ],
+  "subs-user/over-floor-lost": [
+    "0: высота установки (over_floor.value) потеряна после сохранения"
+  ],
+  "subs-user/over-floor-changed": [
+    "0: высота установки изменилась (на сервере 95; ожидалось 90)"
+  ],
+  "subs-derived/identity": [],
+  "subs-derived/center-shifted": [
+    "0/0: center сместился (на сервере 210,-283; ожидалось 200,-283)"
+  ],
+  "subs-derived/vd-changed": [
+    "0: производная высота (over_floor.vd) изменилась (на сервере 100; ожидалось 90)"
+  ],
+  "subs-user/socket-item": [],
+  "cables-conn/identity": [],
+  "cables-conn/cable-missing": [
+    "сервер: висячая ссылка на связь id1 (у под-розетка id2/id3) — связи нет",
+    "сервер: висячая ссылка на связь id1 (у предмет id4) — связи нет",
+    "id1: обратная ссылка потеряна на сервере (под-розетка id2/id3)",
+    "id1: обратная ссылка потеряна на сервере (предмет id4)"
+  ],
+  "cables-conn/lamp-ref-lost": [
+    "id1: обратная ссылка потеряна на сервере (предмет id4)",
+    "сервер: id1 — светильник id4 не ссылается на связь"
+  ],
+  "cables-conn/extra-holder": [
+    "сервер: id1 — держатель ссылки предмет id9 не является вершиной связи (лишняя ссылка)"
+  ],
+  "cables-conn/sub-not-switch": [
+    "сервер: под-розетка «socket» (id2/id5) хранит ссылки cables (id1) — cables пишут только выключатели",
+    "сервер: id1 — держатель ссылки под-розетка id2/id5 не является вершиной связи (лишняя ссылка)"
+  ],
+  "cables-form/identity": [],
+  "cables-form/lamp-form-changed": [
+    "id4: форма ссылки изменилась (ожидание scalar, сервер array)"
+  ],
+  "cables-form/sub-form-changed": [
+    "id2/id3: форма ссылки изменилась (ожидание array, сервер scalar)"
+  ],
+  "pillars/identity": [],
+  "pillars/missing": [
+    "0: колонна исчезла после сохранения"
+  ],
+  "pillars/pc-shifted": [
+    "0: центр сместился (на сервере 457.08,78; ожидалось 452.08,78)"
+  ],
+  "pillars/angle-changed": [
+    "0: угол изменился (на сервере 10; ожидалось 0)"
+  ],
+  "pillars/role-changed": [
+    "0: role изменилась (на сервере «wall»; ожидалось «pillar»)"
+  ],
+  "rigels/identity": [],
+  "rigels/missing": [
+    "0: ригель исчез после сохранения"
+  ],
+  "rigels/depth-changed": [
+    "0: толщина изменилась (на сервере 31; ожидалось 30)"
+  ],
+  "rigels/ceiling-type-changed": [
+    "0: тип отделки изменился (на сервере «stretch»; ожидалось «»)"
+  ],
+  "items/identity": [],
+  "items/missing": [
+    "iout1: предмет исчез после сохранения"
+  ],
+  "items/type-changed": [
+    "iout1: тип изменился (на сервере «bed»; ожидалось «sofa»)"
+  ],
+  "items/pc-shifted": [
+    "iout1: центр сместился (на сервере 605,600; ожидалось 600,600)"
+  ],
+  "items/angle-changed": [
+    "iout1: угол изменился (на сервере 90; ожидалось 0)"
+  ],
+  "wall-roles/identity": [],
+  "wall-roles/role-changed": [
+    "gxugmdrasv: role изменилась (на сервере «partition»; ожидалось «wall»)"
+  ],
+  "wall-roles/renamed-same-role": [],
+  "wall-roles/renamed-role-changed": [
+    "renamed-1: role изменилась (на сервере «partition»; ожидалось «wall» у gxugmdrasv)"
+  ],
+  "balcony-props/identity": [],
+  "balcony-props/height-changed": [
+    "_m7djg: height изменилась (на сервере 120; ожидалось 100)"
+  ],
+  "balcony-props/material-changed": [
+    "_m7djg: material изменился (на сервере «brick»; ожидалось «a_block»)"
+  ],
+  "balcony-props/not-covered": [
+    "_m7djg: ограждение не найдено на сервере (ось не покрыта ни одной оградой)"
+  ],
+  "wall-axis-covered/same": [
+    "true"
+  ],
+  "wall-axis-covered/foreign": [
+    "false"
+  ],
+  "wall-axis-covered/undefined": [
+    "false"
+  ],
+  "climate/identity": [],
+  "climate/warm-floor-polygon-changed": [
+    "контуры тёплого пола: потеряны []; расхождения [\"0: вершина polygon 0 сместилась (на сервере 65,-240; ожидалось 60,-240)\"]"
+  ],
+  "climate/pipe-lost": [
+    "pipes_warm_floor: потеряны [\"0\"]; расхождения [\"0: труба климата исчезла после сохранения\"]"
+  ],
+  "climate/pipe-length-changed": [
+    "pipes_warm_floor: потеряны []; расхождения [\"0: длина изменилась (на сервере 9; ожидалось 2)\"]"
+  ],
+  "climate/item-refs-identity": [],
+  "climate/item-refs-lost": [
+    "подключения труб климата: [\"n1: обратная ссылка warm_floor_pipe_id → 0 потеряна на сервере\"]"
+  ]
+}
