@@ -200,6 +200,20 @@ export type AgainstWallSpec = {
 };
 
 /**
+ * Угол пристенной электрики (socket_group: розетки, выключатели, socket_thermo):
+ * ось стены + 180, нормированный в (−180; 180] — предмет развёрнут лицом от стены
+ * (эталоны ui-ref-elec-*). Одно правило для item_add и item_update against_wall
+ * (ревью 198 №1): иначе под-элементы refreshSocketGroupSubs оказываются не с той
+ * стороны от pc.
+ */
+export function socketGroupAngleDeg(wallAxisAngleDeg: number): number {
+  let a = wallAxisAngleDeg + 180;
+  if (a > 180) a -= 360;
+  if (a <= -180) a += 360;
+  return a;
+}
+
+/**
  * Постановка предмета у стены: центр (см модели) и угол оси, нормированный
  * в (−90; 90]. Общая формула item_add (againstWall) и item_update
  * (against_wall, через DTO-слой) — ревью 190: дубликат в DTO считал нормаль
@@ -359,12 +373,7 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
       : entry && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
         ? r2((entry.over_floor as { value: number }).value)
         : 0;
-    const angle180 = (() => {
-      let a = angle + 180;
-      if (a > 180) a -= 360;
-      if (a <= -180) a += 360;
-      return a;
-    })();
+    const angle180 = socketGroupAngleDeg(angle);
     const sub: SocketGroupSub = {
       name: params.name,
       id: `_${newId(5)}`,
@@ -438,6 +447,11 @@ export type UpdateItemParams = {
   heightMm?: number;
   elevationMm?: number;
   comment?: string;
+  /** ревью 198 №2: перенос against_wall пишет id_wall = wall.id, как item_add. */
+  idWall?: string;
+  /** ревью 198 №7: комнаты, по которым считалась позиция (кеш workspace) —
+   *  OUTSIDE_ROOM проверяется по ним, а не только по rooms2 модели. */
+  rooms?: RoomPolygon[];
 };
 
 /** item_update: перемещение, поворот, размеры. */
@@ -449,7 +463,7 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   const oldAngle = props.angle;
   if (params.center) {
     const pc = { x: mmToCm(params.center.x), y: mmToCm(params.center.y) };
-    const found = roomPolygons(model).find((room) => pointInPolygon(room.polygon, pc));
+    const found = (params.rooms ?? roomPolygons(model)).find((room) => pointInPolygon(room.polygon, pc));
     if (!found) {
       throw new McpError("OUTSIDE_ROOM", "точка вне помещений", { details: { kind: "outside_room", point: pc } });
     }
@@ -460,6 +474,7 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
     refreshPipeForItem(model, params.itemId, props.pc);
   }
   if (params.angleDeg !== undefined) props.angle = Math.round(params.angleDeg);
+  if (params.idWall !== undefined) props.id_wall = params.idWall;
   if (params.widthMm !== undefined) props.width = r2(mmToCm(params.widthMm));
   if (params.depthMm !== undefined) props.height = r2(mmToCm(params.depthMm));
   if (params.heightMm !== undefined) props.self_height = r2(mmToCm(params.heightMm));
@@ -474,7 +489,11 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   // этап 88: транзитивный пересчёт затронутых привязок электрики — под-розетки
   // группы (перенос/поворот) и вершины связей, ссылающиеся на предмет
   if (Array.isArray(props.socket_group) && (params.center !== undefined || params.angleDeg !== undefined)) {
-    refreshSocketGroupSubs(model, props, oldPc, oldAngle);
+    // ревью 198 №1/№2: перенос against_wall (пришёл idWall) — под-элементы
+    // пересчитываются с нуля по новой стене, как при item_add; обычный
+    // перенос/поворот — прежние смещения переносятся с доворотом на изменение угла
+    if (params.idWall !== undefined) refreshSocketGroupSubs(model, props);
+    else refreshSocketGroupSubs(model, props, oldPc, oldAngle);
   }
   if (params.center !== undefined || params.angleDeg !== undefined) {
     refreshCablesForItem(model, params.itemId);
