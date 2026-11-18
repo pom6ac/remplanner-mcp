@@ -1,0 +1,4560 @@
+{
+ "tools": [
+  {
+   "name": "auth_status",
+   "description": "Статус сессии remplanner: вошли ли в аккаунт, тариф (free/pro), режим (account/anon/offline), лимит проектов. Вызывайте первым, чтобы понять режим работы: в режиме anon проекты анонимные (живут в cookies, ~до месяца), в режиме account — проекты вашего аккаунта (на бесплатном тарифе только 1 проект). Офлайн-режим (переменная REMPLANNER_OFFLINE_FIXTURE) — только для проверки инструментов без сайта.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "balcony_add",
+   "description": "Нарисовать балкон (пункт меню «Нарисовать балкон»): ломаная зелёных ограждений — стены role «balcony» на исходном плане, points — осевые точки (мм). Концы пристают к наружным стенам (узел или грань); контур, замкнутый с наружной стеной, даёт комнату-балкон с площадью (rooms_list). Толщина по умолчанию 100 мм (defs.wall), высота ограждения 1000 мм, материал a_block — как у инструмента редактора. Проёмы на ограждения ставить нельзя (opening_add отклонит с INVALID_ARGUMENT). Контур без самопересечений; отказ любого сегмента отменяет весь балкон. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "points": {
+      "minItems": 2,
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), X вправо"
+        },
+        "y": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), Y вниз"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "description": "точка плана в мм, X вправо, Y вниз"
+      },
+      "description": "осевые точки ограждения, мм"
+     },
+     "closed": {
+      "description": "замкнуть контур (обычно нет — балкон замыкается наружной стеной)",
+      "type": "boolean"
+     },
+     "thickness_mm": {
+      "description": "толщина, мм (по умолчанию 100, лимиты 40..1000)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "height_mm": {
+      "description": "высота ограждения, мм (по умолчанию 1000)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "material": {
+      "description": "материал (по умолчанию a_block)",
+      "type": "string",
+      "maxLength": 64
+     }
+    },
+    "required": [
+     "points"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "balcony_delete",
+   "description": "Удалить балконное ограждение (id из model_get). Контур может разомкнуться — комната-балкон исчезнет, как при удалении стены в UI. Балконная стена не демонтируется (demolish), только удаляется целиком.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "balcony_wall_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id балконного ограждения из model_get"
+     }
+    },
+    "required": [
+     "balcony_wall_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "balcony_update",
+   "description": "Изменить балконное ограждение: длина (length_mm с anchor start|end), толщина (thickness_mm), перенос конца (start/end, мм). Соседние ограждения в общем узле двигаются вместе. balcony_wall_id — id сайта из model_get (стены с role «balcony»). Проёмы на ограждении появиться не могут.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "balcony_wall_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id балконного ограждения из model_get"
+     },
+     "length_mm": {
+      "description": "новая длина, мм",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "anchor": {
+      "description": "какой конец переносится, другой остаётся на месте (по умолчанию end — начало на месте; семантика wall_update)",
+      "type": "string",
+      "enum": [
+       "start",
+       "end"
+      ]
+     },
+     "thickness_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "start": {
+      "description": "новое начало оси, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "end": {
+      "description": "новый конец оси, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     }
+    },
+    "required": [
+     "balcony_wall_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "cable_add",
+   "description": "Соединить выключатель со светильником (лист «Выключатели», инструмент «Соединительная линия», PRO в UI): switch_item_id — предмет-группа с выключателем (light_switch*, item_add), lamp_item_id — светильник (люстры, бра, светильники группы lights, вентилятор fan; трековые шины/ленты — следующий этап). switch_sub_id — id под-розетки-выключателя внутри группы (model_get items[].socket_group[].id); по умолчанию первая под-розетка со свободным ключом. path — промежуточные узлы (мм, опционально). У выключателя ограничение по клавишам (light_switch — 1 связь, double — 2, triple — 3); у светильника одно подключение. Коллекция cables — отдельная сущность; обратные ссылки на предметах ставятся автоматически (cables.cable_id). Ответ — компактная сущность CB: switch_item_id (группа), switch_sub_id (под-розетка) и lamp_item_id раздельно. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "switch_item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "предмет-группа с выключателем (I<n> из model_get или id сайта)"
+     },
+     "switch_sub_id": {
+      "description": "id под-розетки-выключателя (socket_group[].id); по умолчанию первый свободный",
+      "type": "string"
+     },
+     "lamp_item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "светильник (I<n> из model_get или id сайта)"
+     },
+     "path": {
+      "description": "промежуточные узлы, мм; не более 32",
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), X вправо"
+        },
+        "y": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), Y вниз"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "description": "точка плана в мм, X вправо, Y вниз"
+      }
+     }
+    },
+    "required": [
+     "switch_item_id",
+     "lamp_item_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "cable_delete",
+   "description": "Удалить связь «выключатель → светильник» (метка CB<n> из model_get): обратные ссылки (cables.cable_id у под-розетки выключателя, у светильника и у световых линий) снимаются автоматически.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "cable_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка CB<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "cable_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "catalog_get",
+   "description": "Все параметры позиции каталога по точному name (из catalog_search).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "catalog_search",
+   "description": "Поиск по каталогу мебели/сантехники remplanner (русский или английский запрос; ё=е, регистр не важен). Возвращает name (точное имя для item_add), title, размеры в мм, resizable. Примеры запросов: «диван», «унитаз», «кровать», «лестница», «стояк». Лестницы — группа stairs (21 позиция меню «Лестницы»: ladder_march, spiral_staircase, …) — это предметы каталога, ставятся item_add, а не отдельная сущность. «Коммуникации» (меню на исходном плане) — тоже предметы каталога: стояки water, water_column_hot, water_column_cold, drainage_column, вентиляция air, отопление radiator_old, heat_pipe, газ gas_pipe, gas_boiler, gas_meter, пожарный датчик fire_detector и др.; исключения — линии-графы: газовая линия gas_line (gas_line_add) и трубы водоснабжения water_pipe, water_hot_pipe, drainage_pipe (pipe_add). Сантехника — группа santeh_furniture (140 позиций листа «Сантехника»: ванны, унитазы, раковины, душевые, бойлеры — plan santeh, item_add). Точки воды — группа waterspots (лист «Водоснабжение»): комбинированные выводы waterspot_cold_hot, waterspot_drainage_cold, waterspot_drainage_hot, waterspot_drainage_cold_hot — предметы каталога (item_add, высота вывода по умолчанию 500 мм от пола); одиночные waterspot_cold/hot/drainage и коллектор waterspot_collector — PRO; подключение труб к выводам — pipe_add. Освещение — группа lights (лист «Освещение», 49 позиций: люстры chandelier*, светильники lightspot*, бра bra*, настенные wall_*, лампы led_lamp и др.) — предметы каталога, ставятся item_add; потолочные — свободно (центр комнаты — in_room center), настенные (bra, led_lamp, wall_spot, …) — только against_wall. Исключения-линии: led_strip (led_strip_add), recessed_strip/surface_stripe/pendent_strip (stripe_add), line_light (line_light_add); трековые споты track_spot/track_pendent_spot/track_panel_spot/track_line_spot ставятся на шину (MCP пока не поддерживает). Меню «Терраса и участок» (исходный план): террасная мебель — предметы каталога; контуры террасы/участка, ограждение и опорный столб — отдельные сущности (terrace_add, terrace_fence_add, terrace_column_add, territory_add); «Террасная доска» — покрытие листа «Полы» (не предмет).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "query": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+     },
+     "group": {
+      "description": "furniture, santeh_furniture, lights, stairs, sockets, …",
+      "type": "string",
+      "maxLength": 64
+     },
+     "sheet": {
+      "description": "лист: furniture, santeh, …",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+     },
+     "limit": {
+      "description": "сколько позиций (по умолчанию 20)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "query"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "comment_add",
+   "description": "Добавить текстовый комментарий с указателем на план (кнопка «Текстовый комментарий» в нижней панели — **PRO в UI**: на бесплатном тарифе поведение не проверено). Текст 1..600 символов (символы «\"» и «`» канонизируются под формат редактора: \" → '', ` → ', в ответе — итоговый текст и warning), шрифт 8..30 (по умолчанию 10), рамка и указатель — по умолчанию включены, цвет из палитры UI (по умолчанию #000000), url — ссылка http(s)://. attach_item — привязать к предмету (label item, следует за ним; у предмета один такой комментарий). point — точка-указатель, pc — центр пузыря (по умолчанию в точке указателя). После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "point": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "точка-указатель, мм"
+     },
+     "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 600,
+      "description": "текст комментария, до 600 символов"
+     },
+     "pc": {
+      "description": "центр пузыря, мм (по умолчанию — точка указателя)",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "attach_item": {
+      "description": "привязать к предмету (метка I<n> из model_get или id сайта)",
+      "type": "string",
+      "minLength": 1
+     },
+     "font_size": {
+      "description": "размер шрифта 8..30 (по умолчанию 10)",
+      "type": "integer",
+      "minimum": 8,
+      "maximum": 30
+     },
+     "framed": {
+      "description": "рамка и указатель (по умолчанию true)",
+      "type": "boolean"
+     },
+     "color": {
+      "description": "цвет (палитра UI, по умолчанию #000000)",
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+     },
+     "url": {
+      "description": "прикреплённая ссылка http(s)://",
+      "type": "string",
+      "maxLength": 2000
+     },
+     "show_everywhere": {
+      "description": "показать на всех листах",
+      "type": "boolean"
+     },
+     "sheet": {
+      "description": "лист: plan (исходный план, по умолчанию) или furniture (мебель)",
+      "type": "string",
+      "enum": [
+       "plan",
+       "furniture"
+      ]
+     }
+    },
+    "required": [
+     "point",
+     "text"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "comment_delete",
+   "description": "Удалить комментарий (id из comments_list). Комментарий предмета (label item) снимает обратную ссылку предмета автоматически.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "comment_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id комментария из comments_list"
+     }
+    },
+    "required": [
+     "comment_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "comment_update",
+   "description": "Изменить комментарий (id из comments_list): текст (символы «\"» и «`» канонизируются под формат редактора, в ответе — итоговый текст и warning), точку-указатель (point), пузырь (pc), шрифт, рамку, цвет, ссылку (url или null — снять), «показать на всех листах».",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "comment_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id комментария из comments_list"
+     },
+     "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 600
+     },
+     "point": {
+      "description": "новая точка-указатель, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "pc": {
+      "description": "новый центр пузыря, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "font_size": {
+      "type": "integer",
+      "minimum": 8,
+      "maximum": 30
+     },
+     "framed": {
+      "type": "boolean"
+     },
+     "color": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+     },
+     "url": {
+      "description": "ссылка http(s):// или null (снять)",
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 2000
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "show_everywhere": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "comment_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "comments_list",
+   "description": "Текстовые комментарии плана: текст, точка-указатель (points_mm), пузырь (pc_mm), шрифт, рамка, цвет, ссылка, привязка к предмету (attach_item), лист.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "demolish",
+   "description": "Пометка демонтажа (лист «Демонтаж», план «до/после») — стена и проёмы остаются в модели с флагами, комнаты «после» редактор перестраивает сам. target=wall: без range — стена целиком (demount=1, участки сбрасываются); с range {from: start|end, offset_mm, length_mm} — участок стены (sectors); range не должен пересекать проёмы и другие участки. target=opening: id проёма — пометка demount на проёме (заменённый hasReplacement и проём листа «Перегородок» plan:c не демонтируются). Перегородки (plan:c) и ограждения (balcony/terrace_fence) не демонтируются. Отмена — demolish_cancel. После правок: model_validate → render_plan break_walls → project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "target": {
+      "type": "string",
+      "enum": [
+       "wall",
+       "opening"
+      ]
+     },
+     "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id стены (W<n>/site_id) или проёма (site_id из model_get)"
+     },
+     "range": {
+      "description": "только target=wall: демонтаж участка вместо всей стены",
+      "type": "object",
+      "properties": {
+       "from": {
+        "type": "string",
+        "enum": [
+         "start",
+         "end"
+        ]
+       },
+       "offset_mm": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000,
+        "description": "отступ участка от края стены, мм"
+       },
+       "length_mm": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000,
+        "description": "длина участка, мм"
+       }
+      },
+      "required": [
+       "offset_mm",
+       "length_mm"
+      ]
+     }
+    },
+    "required": [
+     "target",
+     "id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "demolish_cancel",
+   "description": "Отменить пометку демонтажа: стены целиком (target=wall, без sector_id — вместе со всеми участками), одного участка (target=wall + sector_id) или проёма (target=opening). Не демонтированный объект — INVALID_ARGUMENT (нечего отменять).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "target": {
+      "type": "string",
+      "enum": [
+       "wall",
+       "opening"
+      ]
+     },
+     "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id стены (W<n>/site_id) или проёма"
+     },
+     "sector_id": {
+      "description": "только target=wall: отменить один участок демонтажа",
+      "type": "string"
+     }
+    },
+    "required": [
+     "target",
+     "id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "dim_add",
+   "description": "Добавить ручной размер (кнопка «Добавить размер» в нижней панели): отрезок p1–p2 (мм) с подписью расстояния. Длина 50..50000 мм (лимит меню «Задать длину» редактора). attach1/attach2 — привязать конец к предмету (I<n> из model_get): привязанный конец следует за предметом при item_update. К стенам и проёмам концы магнитятся в UI только координатно — при переносе стены размер остаётся на месте (привязки к стенам в редакторе нет). sheet — лист: plan (исходный план, по умолчанию) или furniture (мебель). offset_mm/offset_side — отступ размерной линии (side auto|left|right; при отступе больше нуля нужна сторона left|right). Цвет — из палитры UI. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "p1": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "начало, мм"
+     },
+     "p2": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "конец, мм"
+     },
+     "attach1": {
+      "description": "привязать начало к предмету (метка I<n> из model_get или id сайта)",
+      "type": "string",
+      "minLength": 1
+     },
+     "attach2": {
+      "description": "привязать конец к предмету",
+      "type": "string",
+      "minLength": 1
+     },
+     "offset_mm": {
+      "description": "отступ размерной линии, мм (по умолчанию 0)",
+      "type": "number"
+     },
+     "offset_side": {
+      "description": "сторона отступа: auto — авто (по умолчанию), left/right — слева/справа по ходу p1→p2",
+      "type": "string",
+      "enum": [
+       "auto",
+       "left",
+       "right"
+      ]
+     },
+     "sheet": {
+      "description": "лист: plan (исходный план, по умолчанию) или furniture (мебель)",
+      "type": "string",
+      "enum": [
+       "plan",
+       "furniture"
+      ]
+     },
+     "show_everywhere": {
+      "description": "показать на всех листах",
+      "type": "boolean"
+     },
+     "color": {
+      "description": "цвет из палитры UI (по умолчанию #ed143d)",
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+     }
+    },
+    "required": [
+     "p1",
+     "p2"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "dim_delete",
+   "description": "Удалить ручной размер (id из dims_list). Привязки других размеров, прицепленных к нему цепочкой («Разделить на участки»), снимаются автоматически.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "dim_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id размера из dims_list"
+     }
+    },
+    "required": [
+     "dim_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "dim_update",
+   "description": "Изменить ручной размер: перенос концов (p1/p2, мм), привязки (attach1/attach2: id предмета — привязать, null — отвязать), отступ (offset_mm/offset_side), цвет, «показать на всех листах». dim_id — id из dims_list. Перенос конца с сохранённой привязкой обновляет смещение привязки; концы цепочки («Разделить на участки») пересчитываются следом за изменённым размером.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "dim_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id размера из dims_list"
+     },
+     "p1": {
+      "description": "новое начало, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "p2": {
+      "description": "новый конец, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "attach1": {
+      "description": "привязка начала: id предмета или null (отвязать)",
+      "anyOf": [
+       {
+        "type": "string",
+        "minLength": 1
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "attach2": {
+      "description": "привязка конца: id предмета или null (отвязать)",
+      "anyOf": [
+       {
+        "type": "string",
+        "minLength": 1
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "offset_mm": {
+      "description": "отступ размерной линии, мм",
+      "type": "number"
+     },
+     "offset_side": {
+      "description": "сторона отступа: auto — авто (по умолчанию), left/right — слева/справа по ходу p1→p2",
+      "type": "string",
+      "enum": [
+       "auto",
+       "left",
+       "right"
+      ]
+     },
+     "show_everywhere": {
+      "type": "boolean"
+     },
+     "color": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+     }
+    },
+    "required": [
+     "dim_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "dims_list",
+   "description": "Ручные размеры плана: концы (мм), длина, отступ, лист, цвет, привязки к предметам (attach1/attach2) и «показать на всех листах».",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "editor_status",
+   "description": "Статус связки с редактором: версия сайта (global_version), совместимость адаптера, запущен ли headless-браузер, dirty (есть несохранённые правки), save_id. При EDITOR_INCOMPATIBLE сайт обновился и адаптер надо сверить с новой версией.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_ceiling_remove",
+   "description": "Снять покрытие потолка комнаты (инструмент ceiling_remove).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     }
+    },
+    "required": [
+     "room_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_ceiling_set",
+   "description": "Задать комнате покрытие потолка (лист «Потолки», простые покрытия; многоуровневые потолки, короба и ниши — инструментами следующих этапов). Покрытия: paint_ceiling, whitewash_ceiling, gypsum_ceiling, stretch_ceiling, stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "material": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ключ покрытия потолка"
+     },
+     "level": {
+      "description": "уровень потолка (по умолчанию 0)",
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+     },
+     "profile": {
+      "description": "профиль (по умолчанию standard)",
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [
+     "room_id",
+     "material"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_floor_remove",
+   "description": "Снять покрытие пола комнаты (инструмент remove_flooring).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     }
+    },
+    "required": [
+     "room_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_floor_set",
+   "description": "Задать комнате покрытие пола (лист «Напольные покрытия»; отделка хранится по комнате). Покрытия: laminate, laminate_corky, laminate_vinyl, laminate_quartz_vinyl, laminate_spc, laminate_pvh, parquet_board, engineer_board, wood_board, parquet, terrace_board, floor_tile, stoneware_wood (PRO), stoneware_marble (PRO), metlah (PRO), mosaic (PRO), hex_tile (PRO), linoleum, fitted_carpet, corky_floor, floor_3d. Неизвестное — INVALID_ARGUMENT. Размеры планок/швы/угол раскладки необязательны (умолчания редактора). После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "cover": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ключ покрытия пола"
+     },
+     "angle_deg": {
+      "description": "угол раскладки, градусы (по умолчанию 0)",
+      "type": "number"
+     },
+     "plank_length_mm": {
+      "description": "длина планки/стороны плитки, мм",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "plank_width_mm": {
+      "description": "ширина планки/стороны плитки, мм",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "stitch_width_mm": {
+      "description": "ширина шва, мм",
+      "type": "number"
+     },
+     "type_laying": {
+      "description": "раскладка: 1/2, 1/3 (доска), tile (плитка), line",
+      "type": "string",
+      "enum": [
+       "1/2",
+       "1/3",
+       "tile",
+       "line"
+      ]
+     }
+    },
+    "required": [
+     "room_id",
+     "cover"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_get",
+   "description": "Отделка комнат: покрытие пола (с параметрами раскладки), покрытие потолка и отделка сторон стен по комнатам (тип, слой, высота, высота от пола). wall — метка W<n>; side — сторона стены, обращённая к комнате. Без room_id — по всем комнатам.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "description": "метка R<n> из model_get или id комнаты",
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_wall_remove",
+   "description": "Снять отделку стены в комнате (инструмент wall_cover_remove). Без wall_id — со всех сторон комнаты.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "wall_id": {
+      "description": "метка W<n> из model_get или id стены",
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [
+     "room_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_wall_set",
+   "description": "Отделить сторону стены, обращённую к комнате (лист «Отделка стен»; каждая сторона хранится своей комнатой — у смежных комнат стороны независимы). Покрытия: wallpaper, wallpaper_for_paint, paint_wall, walls_whitewash, wall_chalk_paint (PRO), wall_tile, wall_mosaic, wall_clinker (PRO), wall_stone (PRO), wall_wooden_panels, plastic_panels, wall_woodbatten (PRO), wall_sheet_panels (PRO), wall_tile_panels (PRO), decorative_plaster, venice_plaster. height_mm=0 — на всю высоту стены. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "wall_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка W<n> из model_get или id стены"
+     },
+     "type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ключ отделки стены"
+     },
+     "height_from_floor_mm": {
+      "description": "высота от пола до низа отделки, мм (по умолчанию 0)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "height_mm": {
+      "description": "высота отделки, мм (0 — на всю стену, по умолчанию 0)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "room_id",
+     "wall_id",
+     "type"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "floor_hole_add",
+   "description": "Добавить проём в полу (пункт меню «Проем в пола»): прямоугольник по двум противоположным углам (мм) внутри одной комнаты — перетаскиванию прямоугольника в редакторе соответствует пара углов. Проём должен целиком лежать внутри одной комнаты и не пересекать другие проёмы в полу (GEOMETRY_CONFLICT). Лимитов размеров в панели редактора нет — только ненулевой размер. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "corner1": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "первый угол прямоугольника, мм"
+     },
+     "corner2": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "противоположный угол прямоугольника, мм"
+     }
+    },
+    "required": [
+     "corner1",
+     "corner2"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "floor_hole_delete",
+   "description": "Удалить проём в полу (метка FH<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "floor_hole_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка FH<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "floor_hole_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "floor_hole_update",
+   "description": "Изменить проём в полу: новые углы прямоугольника (corner1/corner2, мм; переданные — заменяются, непереданные остаются). Правила те же: внутри одной комнаты, без пересечения других проёмов. floor_hole_id — id проёма (site_id) или метка FH<n> из model_get.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "floor_hole_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка FH<n> из model_get или id сайта"
+     },
+     "corner1": {
+      "description": "новый первый угол, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "corner2": {
+      "description": "новый противоположный угол, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     }
+    },
+    "required": [
+     "floor_hole_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "floor_list",
+   "description": "Этажи и планировки открытого проекта. На бесплатном тарифе этаж один; несколько этажей/планировок — PRO.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "gas_line_add",
+   "description": "Поставить газовую линию (пункт меню «Коммуникации» → «Газовый трубопровод»): труба-отрезок от точки start до точки end (мм, коллекция gas_lines в model_get — отдельная сущность, не item_add). Длина в модели — в метрах, пересчитывается автоматически. Лимитов нет (кроме конечных координат). После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "start": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "начало газовой линии, мм"
+     },
+     "end": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "конец газовой линии, мм"
+     }
+    },
+    "required": [
+     "start",
+     "end"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "gas_line_delete",
+   "description": "Удалить газовую линию (метка G<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "gas_line_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка G<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "gas_line_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "gas_line_update",
+   "description": "Изменить газовую линию: переместить начало (start) или конец (end), мм. Мм→см только для явно переданных значений. gas_line_id — id линии (site_id) или метка G<n> из model_get.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "gas_line_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка G<n> из model_get или id сайта"
+     },
+     "start": {
+      "description": "новое начало линии, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "end": {
+      "description": "новый конец линии, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     }
+    },
+    "required": [
+     "gas_line_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "item_add",
+   "description": "Поставить предмет из каталога (name — точное имя из catalog_search). Позиция: center (координаты в мм, точка внутри комнаты) ИЛИ against_wall (у стены, вплотную к внутренней грани при gap_mm=0) ИЛИ in_room (угол комнаты R<n>). Точка вне помещений → OUTSIDE_ROOM. Размеры берутся из каталога; width_mm/depth_mm/height_mm переопределяют (если resizable). Лестницы (меню «Лестницы»: ladder_march, ladder_console, ladder_2march, ladder_2march-fan, ladder_2march_console-fan, ladder_2march_console, ladder_trapeze, rounded_staircase, ladder_march_double, ladder_fan_2march, ladder_3march, ladder_3march_fan, spiral_staircase, upper_march, ladder_circle, porch, attic_staircase, step_ladder, escalator, elevator, floor_hatch) — предметы каталога, а не отдельная сущность; марши/ступени/ограждение в модель не пишутся (отрисовка вида). Как в UI, план предмета получает видимость на исходном плане (a:1). У stair_spot над полом 20 см — передайте elevation_mm=200. porch и stair_spot в редакторе ставятся только у стены — используйте against_wall. Раздел «Коммуникации» (исходный план): стояки водоснабжения/канализации water, water_column_hot, water_column_cold, drainage_column, вентиляционный короб air, радиатор radiator_old, стояк отопления heat_pipe, газовый стояк gas_pipe, колонка gas_boiler, счётчик gas_meter, пожарный датчик fire_detector — предметы каталога (ставятся item_add, размеры из каталога). У ceiling_water (ввод водоснабжения) и conditioner_cage (корзина кондиционера) постановка только у стены — against_wall. Сантехника (лист «Сантехника», группа santeh_furniture — ванны, унитазы, раковины, душевые, полотенцесушители, бойлеры) и точки воды (лист «Водоснабжение», группа waterspots — комбинированные выводы waterspot_cold_hot, waterspot_drainage_cold, waterspot_drainage_hot, waterspot_drainage_cold_hot) — предметы каталога; у точек воды высота вывода по умолчанию 500 мм (elevation_mm переопределяет); одиночные waterspot_cold/hot/drainage и коллектор waterspot_collector — PRO-функция. Линии-графы — НЕ предметы: газовая линия gas_line → gas_line_add, трубы водоснабжения water_pipe/water_hot_pipe/drainage_pipe → pipe_add, световые линии листа «Освещение» led_strip → led_strip_add, recessed_strip/surface_stripe/pendent_strip → stripe_add, line_light → line_light_add. Освещение (лист «Освещение», группа lights — 40 предметов из 49; остальные 5 — световые линии (led_strip/recessed_strip/surface_stripe/pendent_strip/line_light) и 4 — трековые споты track_spot/track_pendent_spot/track_panel_spot/track_line_spot на шину, оба вида не item_add): люстры chandelier, hanging_chandelier, потолочные светильники lightspot, lightspot_surface, подвесные hanging_light*, рейлинговые track_single/double/triple, светильник Армстронг armstrong_light, бра bra, bra_shades, лампы led_lamp, light_stick, настенные wall_spot, wall_lamp, подсветка для картин painting_lighting и др. — предметы каталога (item_add, размеры/высота из каталога). Потолочные ставятся свободно (in_room center — «люстра по центру комнаты»), настенные (bra, led_lamp, wall_spot, wall_lamp, painting_lighting, light_stick) — только against_wall, высота по умолчанию 140 см из каталога (elevation_mm переопределяет). Трековые споты track_spot/track_pendent_spot/track_panel_spot/track_line_spot ставятся НА трековую шину — MCP пока не поддерживает подключение к шине. Электрика (листы «Розетки» и «Выключатели», этап 88): пристенные розетки socket, socket_ip44, socket_power, socket_380, socket_tv, socket_usb, socket_hdmi, socket_phone, socket_audio, socket_ip (поз. PRO: floor_socket, ceiling_socket, furniture_socket) и выключатели light_switch, light_switch_double (поз. PRO: light_switch_triple, light_dimmer, light_switch_through, light_switch_through_double, light_switch_cross, light_switch_cross_double, light_switch_master) — предметы каталога item_add у стены (against_wall; высота установки по умолчанию 30 см у розеток и 90 см у выключателей из каталога, elevation_mm переопределяет). Редактор пишет их группой socket_group (одна под-розетка) — model_get показывает items[] с socket_group[]. Группа розеток — несколько под-розеток на одной пластине (как клик рядом в редакторе) — пока одиночными item_add. Связь «выключатель → светильник» — cable_add (выключатель item_add, светильник item_add, затем cable_add); cable (Соединительная линия) — не item_add. Потолочная ceiling_socket и напольная floor_socket розетки ставятся свободно (center/in_room). Выводы проводов (wire*, группа wires) и электрощит — отдельные этапы. Меню «Терраса и участок»: диваны terrace-серии (sofa_pottery_barn_malibu_wicker, sofa_coup_detat_campanha, armchair_solana_papasan) — предметы каталога (item_add, план furniture); сами терраса/ограждение/столб — отдельные сущности (terrace_add, terrace_fence_add, terrace_column_add), «Террасная доска» terrace_board — покрытие листа «Полы» (MCP пока не покрывает). Климат (этап 122): терморегулятор socket_thermo (лист «Тёплые полы», у стены, высота 90 см из каталога), кондиционеры листа «Кондиционеры» — conditioner и conditioner_engine (внешний блок; оба у стены — against_wall; высоты 210/20 см из каталога), floor_conditioner (напольный) и air_curtain (тепловая завеса, 250 см) — свободно, радиаторы листа «Радиаторы» (radiator_bimetal, radiator_steel, radiator_iron, radiator_tubular_vert, radiator_tubular_horizontal, vertical_radiator, floor_convector, convector_on_floor, electro_convector — у стены), вентиляция листа «Вентиляция» — вентиляторы fan, fan_wall, fan_channel (свободно; решётки ventilation_gate*, диффузоры ventilation_diffusor*, приточно-вытяжная установка ventilation_system и др. — PRO-группа). Контуры тёплого пола и трубы климата — НЕ предметы: warm_floor/warm_floor_ir/warm_floor_water → warm_floor_add, warm_floor_pipe/conditioner_drainage/heat_pipe_hot/heat_pipe_cold/ventpipe_out/ventpipe_in → pipe_add.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "точное имя позиции каталога"
+     },
+     "position": {
+      "anyOf": [
+       {
+        "type": "object",
+        "properties": {
+         "center": {
+          "type": "object",
+          "properties": {
+           "x": {
+            "type": "integer",
+            "minimum": -1000000,
+            "maximum": 1000000,
+            "description": "мм, целое (может быть отрицательным), X вправо"
+           },
+           "y": {
+            "type": "integer",
+            "minimum": -1000000,
+            "maximum": 1000000,
+            "description": "мм, целое (может быть отрицательным), Y вниз"
+           }
+          },
+          "required": [
+           "x",
+           "y"
+          ],
+          "description": "точка плана в мм, X вправо, Y вниз"
+         }
+        },
+        "required": [
+         "center"
+        ]
+       },
+       {
+        "type": "object",
+        "properties": {
+         "against_wall": {
+          "type": "object",
+          "properties": {
+           "wall_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "id стены сайта или метка W<n> из model_get"
+           },
+           "offset_mm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000,
+            "description": "смещение центра предмета от начала стены (учитывая from)"
+           },
+           "from": {
+            "type": "string",
+            "enum": [
+             "start",
+             "end"
+            ]
+           },
+           "gap_mm": {
+            "description": "зазор до внутренней грани стены (0 — вплотную, по умолчанию)",
+            "type": "number"
+           }
+          },
+          "required": [
+           "wall_id",
+           "offset_mm"
+          ]
+         }
+        },
+        "required": [
+         "against_wall"
+        ]
+       },
+       {
+        "type": "object",
+        "properties": {
+         "in_room": {
+          "type": "object",
+          "properties": {
+           "room_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "метка комнаты R<n> из model_get"
+           },
+           "corner": {
+            "type": "string",
+            "enum": [
+             "nw",
+             "ne",
+             "se",
+             "sw",
+             "center"
+            ]
+           }
+          },
+          "required": [
+           "room_id",
+           "corner"
+          ]
+         }
+        },
+        "required": [
+         "in_room"
+        ]
+       }
+      ]
+     },
+     "angle_deg": {
+      "description": "поворот в градусах, по часовой стрелке",
+      "type": "number"
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "depth_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "elevation_mm": {
+      "description": "подъём над полом (настенные полки, ТВ)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "name",
+     "position"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "item_delete",
+   "description": "Удалить предмет (метка I<n> из model_get). Привязанные к предмету размеры (dim_add attach) сохраняются с отвязкой концов, комментарий предмета удаляется; в ответе — detached_rulers/deleted_comments.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [
+     "item_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "item_update",
+   "description": "Изменить предмет: переместить (center или against_wall), повернуть (angle_deg), изменить размеры. При переносе/повороте привязанные размеры (dim_add attach) и комментарии предмета следуют за ним.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "position": {
+      "anyOf": [
+       {
+        "type": "object",
+        "properties": {
+         "center": {
+          "type": "object",
+          "properties": {
+           "x": {
+            "type": "integer",
+            "minimum": -1000000,
+            "maximum": 1000000,
+            "description": "мм, целое (может быть отрицательным), X вправо"
+           },
+           "y": {
+            "type": "integer",
+            "minimum": -1000000,
+            "maximum": 1000000,
+            "description": "мм, целое (может быть отрицательным), Y вниз"
+           }
+          },
+          "required": [
+           "x",
+           "y"
+          ],
+          "description": "точка плана в мм, X вправо, Y вниз"
+         }
+        },
+        "required": [
+         "center"
+        ]
+       },
+       {
+        "type": "object",
+        "properties": {
+         "against_wall": {
+          "type": "object",
+          "properties": {
+           "wall_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "id стены сайта или метка W<n> из model_get"
+           },
+           "offset_mm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000,
+            "description": "мм, целое, ≥ 0"
+           },
+           "from": {
+            "type": "string",
+            "enum": [
+             "start",
+             "end"
+            ]
+           },
+           "gap_mm": {
+            "type": "number",
+            "description": "мм"
+           }
+          },
+          "required": [
+           "wall_id",
+           "offset_mm"
+          ]
+         }
+        },
+        "required": [
+         "against_wall"
+        ]
+       }
+      ]
+     },
+     "angle_deg": {
+      "type": "number",
+      "description": "мм"
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "depth_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "elevation_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     }
+    },
+    "required": [
+     "item_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "items_list",
+   "description": "Список предметов (все или в конкретной комнате).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "description": "метка комнаты R<n> — предметы только этой комнаты",
+      "type": "string"
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "led_strip_add",
+   "description": "Провести светодиодную ленту (лист «Освещение» → «Светодиодная подсветка», PRO): ломаная по точкам path (мм, не менее 2; коллекция led_strips — отдельная сущность, не item_add). Соседние точки пути соединяются ребром. Длина в модели — в метрах, пересчитывается автоматически. Точки можно двигать led_strip_update. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "minItems": 2,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), X вправо"
+        },
+        "y": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), Y вниз"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "description": "точка плана в мм, X вправо, Y вниз"
+      },
+      "description": "точки ленты по порядку, мм; не более 32"
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "led_strip_delete",
+   "description": "Удалить светодиодную ленту (метка LS<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "led_strip_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка LS<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "led_strip_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "led_strip_update",
+   "description": "Изменить светодиодную ленту: перенести узлы графа. positions — список {vertex, x_mm, y_mm}; vertex — индекс вершины (0-based, как в model_get led_strips[].vertexes). Длина пересчитывается по рёбрам.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "led_strip_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка LS<n> из model_get или id сайта"
+     },
+     "positions": {
+      "minItems": 1,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "vertex": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 1000000,
+         "description": "индекс узла (0-based)"
+        },
+        "x_mm": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным)"
+        },
+        "y_mm": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным)"
+        }
+       },
+       "required": [
+        "vertex",
+        "x_mm",
+        "y_mm"
+       ]
+      }
+     }
+    },
+    "required": [
+     "led_strip_id",
+     "positions"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "line_light_add",
+   "description": "Провести линейное освещение (лист «Освещение» → «Линейное освещение», PRO): ломаная по точкам path (мм, не менее 2; коллекция line_strips — отдельная сущность, не item_add). Соседние точки пути соединяются ребром. Длина в модели — в метрах, пересчитывается автоматически. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "minItems": 2,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), X вправо"
+        },
+        "y": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), Y вниз"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "description": "точка плана в мм, X вправо, Y вниз"
+      },
+      "description": "точки линии по порядку, мм; не более 32"
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "line_light_delete",
+   "description": "Удалить линию линейного освещения (метка LL<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "line_light_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка LL<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "line_light_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "line_light_update",
+   "description": "Изменить линию линейного освещения: перенести узлы графа. positions — список {vertex, x_mm, y_mm}; vertex — индекс вершины (0-based, как в model_get line_strips[].vertexes). Длина пересчитывается по рёбрам.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "line_light_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка LL<n> из model_get или id сайта"
+     },
+     "positions": {
+      "minItems": 1,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "vertex": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 1000000,
+         "description": "индекс узла (0-based)"
+        },
+        "x_mm": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным)"
+        },
+        "y_mm": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным)"
+        }
+       },
+       "required": [
+        "vertex",
+        "x_mm",
+        "y_mm"
+       ]
+      }
+     }
+    },
+    "required": [
+     "line_light_id",
+     "positions"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "model_get",
+   "description": "Текущая модель плана в компактном виде: стены W1… (осевые концы, длины по осям и внутренним граням, толщины, проёмы с отступами), комнаты R1… (площади м², периметры), предметы I1…, колонны P1… (пункт меню «Несущая колонна»), ригели B1… (пункт меню «Потолочный ригель»), газовые линии G1… (пункт меню «Коммуникации» → «Газовый трубопровод»), трубы TP1… (лист «Водоснабжение»), границы террас TB1… и участка XB1… (пункт меню «Терраса и участок»), проёмы в полу FH1… (пункт меню «Проем в полу»), световые линии LS1… (светодиодные ленты), SL1… (трековые шины), LL1… (линейное освещение — лист «Освещение»). Обычно < 5 КБ. id сайта — в поле site_id; метки W/R/I/P/B/G/TP/TB/XB/FH/LS/SL/LL можно использовать в других инструментах.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "detail": {
+      "type": "string",
+      "enum": [
+       "compact",
+       "full"
+      ]
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "model_validate",
+   "description": "Проверить инварианты модели: короткие стены, стены поверх стен, незамкнутые контуры, проёмы вне стены/на краю/с пересечением, предметы: выход прямоугольника (с учётом поворота) за внутренние грани комнат (ITEM_OUTSIDE_ROOM с вылетом в мм) и пересечение со стеной (ITEM_INTERSECTS_WALL). Пустой список = всё хорошо. Вызывайте перед project_save и render_plan.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "opening_add",
+   "description": "Добавить проём на стену. Двери (пункты меню «Двери и проемы»): doorway (Проем без двери 80×210), door (Дверь стандартная 80×210), door_double (Дверь 2-створчатая 120), door_coupe (Дверь-купе сдвижная 80), door_coupe_double (Дверь-купе 2-створчатая 160), door_penal (Дверь-пенал раздвижная 80), door_penal_double (Дверь-пенал 2-створчатая 160), door_roto (Рото-дверь 80), door_roto_double (Рото-дверь 160), door_book (Дверь-книжка 80), door_book_double (Дверь-книжка 160), door_bellows (Дверь-гармошка 120), door_glass (Стеклянная дверь 80), door_garage (Гаражные ворота 300×225), door_system_x2/x3/x4 (Каскадная система 2/3/4-створчатая 160/240/320), door_system_penal_x2/x3/x4 (Раздвижная система 2/3/4-створчатая 160/240/320). Пункты меню «Двери-купе 2/3/4-дверные» (doors_coupe_2x/3x/4x), «Домофон» (door_remote) и «Видеодомофон» (door_videoremote) — предметы каталога, ставятся item_add, а не opening_add. Окна (пункты меню «Окна»): windowway (Проем без окна 120×150), window (Стандартное окно 120×150, подоконник 85), window_balcony (Балконный блок 180: окно+дверь, параметры window_*_mm/door_*_mm/door_position), window_door (Балконная дверь 80×225), french_window (Французское окно распашное 120×250), french_window_coupe (Французское окно раздвижное 120×250), french_window_double (Французское окно 4-створчатое 180×250). Положение: offset_mm + from (смещение края проёма от угла комнаты; from=end — от противоположного конца) или center_mm (центр от начала оси стены). Размеры в мм; двери: swing (сторона петель/открывания), casing (короб с наличниками; по умолчанию включён, у doorway и door_garage выключен); окна: sill_height_mm (подоконник), casements (створки), slope_angle_deg (угол рассвета), sill_thickness_mm/sill_overhang_mm/sill_overmeasure_mm (подоконник). Параметры применяются строго по типу: sill_height_mm и sill-параметры — только окна, части балконного блока (window_*_mm, door_*_mm, door_position) — только window_balcony, impost_height_mm — только window_door, casements у французских окон не принимается; door_position поддерживает только left (редактор сохраняет лишь левую дверь). Ширина/высота проверяются по лимитам типа из панели редактора. Проём должен целиком помещаться на стене и не пересекать другие проёмы и примыкания стен (GEOMETRY_CONFLICT).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "wall_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id стены сайта или метка W<n> из model_get"
+     },
+     "type": {
+      "type": "string",
+      "description": "door, door_double, doorway, door_coupe, door_penal, door_roto, door_book, door_bellows, door_glass, door_garage, door_system_*, window, windowway, window_balcony, window_door, french_window, french_window_coupe, french_window_double (всего 27 типов)"
+     },
+     "offset_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "from": {
+      "type": "string",
+      "enum": [
+       "start",
+       "end"
+      ]
+     },
+     "center_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "sill_height_mm": {
+      "description": "окна: высота подоконника над полом",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "swing": {
+      "description": "двери: петля и сторона открывания",
+      "type": "object",
+      "properties": {
+       "hinge": {
+        "type": "string",
+        "enum": [
+         "start",
+         "end"
+        ],
+        "description": "у какого конца оси петля"
+       },
+       "into": {
+        "type": "string",
+        "enum": [
+         "left",
+         "right"
+        ],
+        "description": "куда открывается дверь (left — левая грань по направлению оси)"
+       }
+      },
+      "required": [
+       "hinge",
+       "into"
+      ]
+     },
+     "casing": {
+      "description": "короб с наличниками (двери и окна); по умолчанию включён, у doorway и door_garage выключен",
+      "type": "boolean"
+     },
+     "casements": {
+      "description": "окна и двери: число створок (кроме французских окон)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6
+     },
+     "slope_angle_deg": {
+      "description": "окна: угол рассвета (откосов), градусы",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 45
+     },
+     "sill_thickness_mm": {
+      "description": "окна: толщина подоконника",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "sill_overhang_mm": {
+      "description": "окна: вылет подоконника",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "sill_overmeasure_mm": {
+      "description": "окна: выпуски подоконника вбок",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "window_width_mm": {
+      "description": "только балконный блок (window_balcony): ширина окна (итог = окно + дверь, обе > 0)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "window_height_mm": {
+      "description": "только балконный блок: высота окна",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "door_width_mm": {
+      "description": "только балконный блок: ширина двери (итог = окно + дверь, обе > 0)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "door_height_mm": {
+      "description": "только балконный блок: высота двери",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "door_position": {
+      "description": "только балконный блок: сторона двери; поддерживается только left — right вернёт INVALID_ARGUMENT",
+      "type": "string",
+      "enum": [
+       "left",
+       "right"
+      ]
+     },
+     "impost_height_mm": {
+      "description": "только балконная дверь (window_door): высота импоста от пола, в пределах высоты двери",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "replaces": {
+      "description": "замена исходного проёма (лист «Перегородки»): id исходного проёма (plan:a) на той же стене; новый проём пишется plan:c по центру исходного, исходный получает hasReplacement. Демонтированный и уже заменённый проём — INVALID_ARGUMENT",
+      "type": "string"
+     }
+    },
+    "required": [
+     "wall_id",
+     "type"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "opening_delete",
+   "description": "Удалить проём (дверь/окно) со стены. Если проём — исходный, у которого есть замена (проём листа «Перегородки», plan:c), замена удаляется вместе с ним (каскад): ответ возвращает все удалённые ID (deleted) и предупреждение (warning). Удаление замены снимает у исходного флаг hasReplacement — повторная замена снова возможна.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "opening_id": {
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [
+     "opening_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "opening_update",
+   "description": "Изменить проём: размеры, положение (offset_mm/from или center_mm), сторону открывания (swing), короб с наличниками (casing); у окон — подоконник, створки, угол рассвета; у балконного блока — window_*_mm/door_*_mm/door_position, у балконной двери impost_height_mm. Параметры применяются строго по типу проёма: sill_height_mm и sill-параметры — только окна, части балконного блока — только window_balcony, impost_height_mm — только window_door, casements у французских окон не принимается, door_position — только left; ширина/высота проверяются по лимитам типа из панели редактора. Смена типа не поддерживается: переданный type, отличный от текущего, вернёт INVALID_ARGUMENT — удалите проём (opening_delete) и добавьте новый (opening_add) с нужным типом; передача текущего типа — no-op. Поля не указанные — не меняются. opening_id — id проёма (site_id) из model_get.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "opening_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id проёма из model_get (поле id у openings)"
+     },
+     "wall_id": {
+      "description": "если известен; иначе находится автоматически",
+      "type": "string",
+      "minLength": 1
+     },
+     "type": {
+      "description": "передача текущего типа проёма допустима (no-op); смена типа не поддерживается — удалите проём (opening_delete) и добавьте новый (opening_add)",
+      "type": "string"
+     },
+     "offset_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "from": {
+      "type": "string",
+      "enum": [
+       "start",
+       "end"
+      ]
+     },
+     "center_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "sill_height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "swing": {
+      "type": "object",
+      "properties": {
+       "hinge": {
+        "type": "string",
+        "enum": [
+         "start",
+         "end"
+        ],
+        "description": "у какого конца оси петля"
+       },
+       "into": {
+        "type": "string",
+        "enum": [
+         "left",
+         "right"
+        ],
+        "description": "куда открывается дверь (left — левая грань по направлению оси)"
+       }
+      },
+      "required": [
+       "hinge",
+       "into"
+      ]
+     },
+     "casing": {
+      "description": "короб с наличниками (двери и окна)",
+      "type": "boolean"
+     },
+     "casements": {
+      "description": "окна и двери: число створок (кроме французских окон)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 6
+     },
+     "slope_angle_deg": {
+      "description": "окна: угол рассвета, градусы",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 45
+     },
+     "sill_thickness_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "sill_overhang_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "sill_overmeasure_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "window_width_mm": {
+      "description": "только балконный блок: ширина окна (итог = окно + дверь, обе > 0)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "window_height_mm": {
+      "description": "только балконный блок: высота окна",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "door_width_mm": {
+      "description": "только балконный блок: ширина двери (итог = окно + дверь, обе > 0)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "door_height_mm": {
+      "description": "только балконный блок: высота двери",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "door_position": {
+      "description": "только балконный блок: сторона двери; поддерживается только left — right вернёт INVALID_ARGUMENT",
+      "type": "string",
+      "enum": [
+       "left",
+       "right"
+      ]
+     },
+     "impost_height_mm": {
+      "description": "только балконная дверь (window_door): высота импоста от пола, в пределах высоты двери",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "opening_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "pillar_add",
+   "description": "Поставить колонну или ГКЛ-короб. kind=column (по умолчанию) — несущая колонна исходного плана (пункт меню «Несущая колонна»): прямоугольник 20×20 см по умолчанию, центр в мм. Колонна ставится внутри комнаты или вплотную к грани стены (как в UI); пересекать стены и другие колонны нельзя (касание грани стены разрешено; если колонна в 30 мм от грани стены — прижимается к ней, как в UI). Габариты 100..20000 × 100..6000 мм (лимиты панели редактора). Колонна вырезает площадь из комнаты редактора (комната пересчитается при сохранении; имя и отделка комнат переживают сохранение — живая проба 43). kind=gypsum_box — гипсокартонный короб листа «Перегородки» (этап 103): plan:c, роль gypsum, габариты по умолчанию 700×200 мм, ставится внутри комнаты; примыкание к граням стен разрешено (короб может стоять в углу), пересечение с телом стены — INVALID_GEOMETRY. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "kind": {
+      "description": "column (по умолчанию) — несущая колонна; gypsum_box — ГКЛ-короб листа «Перегородки»",
+      "type": "string",
+      "enum": [
+       "column",
+       "gypsum_box"
+      ]
+     },
+     "center": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "центр колонны/короба, мм"
+     },
+     "width_mm": {
+      "description": "габарит по X (колонна: по умолчанию 200; короб: 700)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "height_mm": {
+      "description": "габарит по Y (колонна: по умолчанию 200; короб: 200)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "angle_deg": {
+      "description": "поворот в градусах, по часовой стрелке (по умолчанию 0)",
+      "type": "number"
+     }
+    },
+    "required": [
+     "center"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "pillar_delete",
+   "description": "Удалить несущую колонну (метка P<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "pillar_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка P<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "pillar_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "pillar_update",
+   "description": "Изменить несущую колонну: переместить (center, мм), изменить габариты (width_mm/height_mm) или поворот (angle_deg). Правила те же: внутри комнаты, без пересечения стен и колонн; мм→см только для явно переданных значений. pillar_id — id колонны (site_id) или метка P<n> из model_get.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "pillar_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка P<n> из model_get или id сайта"
+     },
+     "center": {
+      "description": "новый центр, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "angle_deg": {
+      "type": "number",
+      "description": "мм"
+     }
+    },
+    "required": [
+     "pillar_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "pipe_add",
+   "description": "Провести трубу (листы «Водоснабжение», «Тёплые полы», «Кондиционеры», «Радиаторы», «Вентиляция»): kind=water (ХВС, water_pipe), hot (ГВС, water_hot_pipe), drainage (канализация, drainage_pipe) — с подключением выводов воды; климат-виды (PRO-инструменты редактора, только узлы): warm_floor (магистрали тёплого пола, warm_floor_pipe), conditioner_drainage (дренаж кондиционера), heat_hot/heat_cold (магистрали подачи/обратная отопления), vent_out/vent_in (воздуховод вытяжной/приточный). path — цепочка элементов по порядку: {x, y} (узел, мм) или {item_id} (подключение предмета — только для water/hot/drainage: выводы воды waterspot_*, стояки water/water_column_hot/water_column_cold/drainage_column, ввод ceiling_water, коллектор waterspot_collector; какие выводы к какой трубе подключаются, проверяется как в редакторе). Соседние элементы пути соединяются ребром; у предметов ставится обратная ссылка pipes.<вид>_id. Длина в модели — в метрах, пересчитывается автоматически. Все трубы — функции PRO-тарифа редактора: на бесплатном тарифе трубы могут не сохраниться — поведение free не проверялось. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "kind": {
+      "type": "string",
+      "enum": [
+       "water",
+       "hot",
+       "drainage",
+       "warm_floor",
+       "conditioner_drainage",
+       "heat_hot",
+       "heat_cold",
+       "vent_out",
+       "vent_in"
+      ],
+      "description": "вид трубы: water — ХВС, hot — ГВС, drainage — канализация, warm_floor — магистрали тёплого пола, conditioner_drainage — дренаж кондиционера, heat_hot/heat_cold — магистрали отопления, vent_out/vent_in — воздуховоды"
+     },
+     "path": {
+      "minItems": 2,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "anyOf": [
+        {
+         "type": "object",
+         "properties": {
+          "x": {
+           "type": "integer",
+           "minimum": -1000000,
+           "maximum": 1000000,
+           "description": "мм, целое (может быть отрицательным), X вправо"
+          },
+          "y": {
+           "type": "integer",
+           "minimum": -1000000,
+           "maximum": 1000000,
+           "description": "мм, целое (может быть отрицательным), Y вниз"
+          }
+         },
+         "required": [
+          "x",
+          "y"
+         ],
+         "description": "узел трубы, мм"
+        },
+        {
+         "type": "object",
+         "properties": {
+          "item_id": {
+           "type": "string",
+           "minLength": 1,
+           "description": "предмет-вершина (вывод воды, стояк, ввод) — метка I<n> или id сайта"
+          }
+         },
+         "required": [
+          "item_id"
+         ]
+        }
+       ]
+      },
+      "description": "путь трубы по порядку: узлы ({x, y}) и подключения предметов ({item_id}); не более 32 точек"
+     }
+    },
+    "required": [
+     "kind",
+     "path"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "pipe_delete",
+   "description": "Удалить трубу (PRO-функция редактора; метка TP/PW/PC/PH/PV<n> из model_get: трубы водоснабжения, магистрали тёплого пола, дренаж кондиционеров, магистрали отопления, воздуховоды). Обратные ссылки подключённых предметов снимаются; сами предметы не удаляются.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "pipe_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка TP<n>/PW<n>/PC<n>/PH<n>/PV<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "pipe_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "pipe_update",
+   "description": "Изменить трубу (PRO-функция редактора, как и вся лист «Водоснабжение»): перенести узлы графа. positions — список {vertex, x_mm, y_mm}; vertex — индекс вершины в графе трубы (0-based, как в model_get pipes[].vertexes); двигать можно только узлы (type node) — вершины-предметы следуют за предметом (item_update). Длина пересчитывается по рёбрам.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "pipe_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка TP<n> из model_get или id сайта"
+     },
+     "positions": {
+      "minItems": 1,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "vertex": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 1000000,
+         "description": "индекс вершины (0-based)"
+        },
+        "x_mm": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 1000000,
+         "description": "мм, целое, ≥ 0"
+        },
+        "y_mm": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 1000000,
+         "description": "мм, целое, ≥ 0"
+        }
+       },
+       "required": [
+        "vertex",
+        "x_mm",
+        "y_mm"
+       ]
+      }
+     }
+    },
+    "required": [
+     "pipe_id",
+     "positions"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "plan_list",
+   "description": "Планировки (листы плана) открытого проекта: init (чертёж), create_walls, rooms, furniture, santeh — это ЛИСТЫ ОТОБРАЖЕНИЯ (render_plan sheet=…), а не отдельные проекты.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "project_clear",
+   "description": "Очистить текущую планировку (убрать все стены, проёмы и предметы) в рабочей копии. Требует confirm: true. До project_save сервер не трогается; отменить можно undo.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "confirm": {
+      "type": "boolean",
+      "const": true
+     }
+    },
+    "required": [
+     "confirm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "project_create",
+   "description": "Создать НОВЫЙ анонимный проект и сразу открыть его (project_open не нужен). Название задаётся в ЛК сайта вручную — у анонимных проектов его нет. Проект привязан к cookie-сессии сервера (~/.remplanner-mcp/state.anon.json) и не попадает в аккаунт пользователя. Дальше: room_add_rect → opening_add → item_add → model_validate → render_plan → project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "units": {
+      "description": "единицы проекта на сайте (модель всегда в мм); по умолчанию cm",
+      "type": "string",
+      "enum": [
+       "cm",
+       "mm"
+      ]
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "project_export_plan",
+   "description": "Экспортировать текущую планировку в файл .plan (JSON модели; scope full — со всеми полями модели). Файл можно позже импортировать project_import_plan.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "путь к файлу (.plan)"
+     },
+     "scope": {
+      "description": "current — компактная модель, full — полная (по умолчанию full)",
+      "type": "string",
+      "enum": [
+       "current",
+       "full"
+      ]
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "project_import_plan",
+   "description": "Импортировать планировку из файла .plan (JSON модели) вместо текущей. Требует явного replace: true — операция затирает несохранённые правки. После импорта правки НЕ сохранены: project_save отдельно.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "path": {
+      "type": "string",
+      "minLength": 1
+     },
+     "replace": {
+      "type": "boolean",
+      "const": true,
+      "description": "подтверждение замены текущей планировки"
+     }
+    },
+    "required": [
+     "path",
+     "replace"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "project_list",
+   "description": "Список проектов аккаунта (нужен вход, анонимные проекты не перечисляются). Возвращает object_id, название, дату обновления, число этажей и планировок.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "project_open",
+   "description": "Открыть проект: каноническая модель читается с сервера (GET), возвращается компактная модель (стены W1.., комнаты R1.. с площадями, предметы I1..). Все дальнейшие инструменты работают с открытым проектом. Повторный project_open перечитывает сервер и СБРАСЫВАЕТ несохранённые правки (это способ отказаться от правок). Если сервер отдал непустой проект (save_id > 0 или непустой data), а модель разобралась пустой — ошибка MODEL_PARSE_EMPTY.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "object_id": {
+      "type": "string",
+      "pattern": "^\\d+$",
+      "description": "id проекта (project_list или project_create)"
+     },
+     "plan_id": {
+      "description": "id планировки; по умолчанию основной",
+      "type": "string",
+      "pattern": "^\\d+$"
+     }
+    },
+    "required": [
+     "object_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "project_rename",
+   "description": "Переименовать проект аккаунта (нужен вход). Не работает с анонимными проектами. Название ≤ 40 символов.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "object_id": {
+      "type": "string",
+      "pattern": "^\\d+$"
+     },
+     "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+     }
+    },
+    "required": [
+     "object_id",
+     "title"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "project_save",
+   "description": "Сохранить открытый проект на сервер. Порядок: model_validate → project_save. Перед записью делается снимок модели в ~/.remplanner-mcp/backups/. Ответ содержит will_delete — сколько объектов серверной версии будет удалено (walls, openings и по коллекции на каждый публичный ключ model_get: items, pillars, rigels, gas_lines, pipes, terrace_borders, territory_borders, level_holes, led_strips, stripes_light, line_strips, cables, rulers, comments, warm_floors, pipes_warm_floor, pipes_conditioner, pipes_heat, pipes_ventilation) — и warnings; проверьте их, если модель открыта не с нуля. Если save_id на сервере новее (правки в другой вкладке сайта) — ошибка SAVE_CONFLICT: не форсируйте вслепую — сначала перечитайте проект (project_open) или спросите пользователя; принудительная запись поверх чужих правок — только явный force: true. Сохранение проекта, открытого с пустой моделью при непустой серверной, блокируется без force. Ограничение сайта: не чаще одного сохранения в 5 секунд. Свежая модель на сервере после сохранения проверяется автоматически.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "force": {
+      "description": "принудительная запись при SAVE_CONFLICT (по умолчанию false)",
+      "type": "boolean"
+     },
+     "comment": {
+      "description": "служебный комментарий (в бэкап-снимок)",
+      "type": "string",
+      "maxLength": 200
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "project_set_height",
+   "description": "Общая высота стен и потолков проекта (мм, по умолчанию 2700).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     }
+    },
+    "required": [
+     "height_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "redo",
+   "description": "Повторить отменённые мутации рабочей копии.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "steps": {
+      "description": "сколько шагов (по умолчанию 1)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "render_plan",
+   "description": "Отрендерить план в PNG (скриншот листа редактора с размерами, если dimensions не выключен). Перед скриншотом в редактор синхронизируется вся каноническая модель (стены, проёмы, предметы); если редактор показывает не текущую модель — ошибка RENDER_OUT_OF_SYNC без картинки. Мебель отрисовывается на листе furniture (на листе init её слой выключен самим сайтом). Ответ содержит КАРТИНКУ (image content), путь к файлу в ~/.remplanner-mcp/renders/ и ревизию (model_hash, счётчики стен/проёмов/предметов в модели и у редактора). Листы: init (по умолчанию — общий чертёж), rooms, furniture, santeh. Используйте после правок для визуальной проверки.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "sheet": {
+      "description": "лист плана (по умолчанию init)",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{1,64}$"
+     },
+     "width_px": {
+      "description": "ширина PNG (по умолчанию 1600)",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4096
+     },
+     "dimensions": {
+      "description": "размеры на плане (по умолчанию true)",
+      "type": "boolean"
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "rigel_add",
+   "description": "Поставить потолочный ригель (пункт меню «Потолочный ригель»): балка-прямоугольник на плане от точки start до точки end (ось, мм). Толщина depth_mm (по умолчанию 300, лимиты 100..1000 мм) и высота height_mm — опускание от потолка (по умолчанию 300, 100..1000 мм, лимиты панели редактора). Концы оси на расстоянии до 30 мм от грани стены, колонны или другого ригеля прилипают к ней (конец срезается по линии грани, как в UI). Ригель не влияет на комнаты и площадь. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "start": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "начало оси ригеля, мм"
+     },
+     "end": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "конец оси ригеля, мм"
+     },
+     "depth_mm": {
+      "description": "толщина на плане, мм (по умолчанию 300)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "height_mm": {
+      "description": "опускание от потолка, мм (по умолчанию 300)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "ceiling_type": {
+      "description": "тип отделки потолка: \"\" — без отделки или ключ инструмента листа потолка (stretch_ceiling, paint_ceiling, gypsum_ceiling и др. — группа ceiling_elements редактора); произвольные значения не принимаются",
+      "type": "string",
+      "enum": [
+       "stretch_ceiling",
+       "stretch_ceiling_tissue",
+       "paint_ceiling",
+       "gypsum_ceiling",
+       "rack_ceiling",
+       "wooden_ceiling",
+       "plastic_panels_ceiling",
+       "whitewash_ceiling",
+       "armstrong_ceiling",
+       "grillato_ceiling",
+       "plaster_visual_ceiling",
+       "plaster_full_ceiling",
+       "isolation_ceiling_cotton",
+       "ceiling_niche",
+       ""
+      ]
+     }
+    },
+    "required": [
+     "start",
+     "end"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "rigel_delete",
+   "description": "Удалить потолочный ригель (метка B<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "rigel_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка B<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "rigel_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "rigel_update",
+   "description": "Изменить потолочный ригель: переместить ось (start/end, мм), изменить толщину (depth_mm), высоту (height_mm) или тип отделки (ceiling_type). Мм→см только для явно переданных значений. rigel_id — id ригеля (site_id) или метка B<n> из model_get.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "rigel_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка B<n> из model_get или id сайта"
+     },
+     "start": {
+      "description": "новое начало оси, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "end": {
+      "description": "новый конец оси, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "depth_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "ceiling_type": {
+      "type": "string",
+      "enum": [
+       "stretch_ceiling",
+       "stretch_ceiling_tissue",
+       "paint_ceiling",
+       "gypsum_ceiling",
+       "rack_ceiling",
+       "wooden_ceiling",
+       "plastic_panels_ceiling",
+       "whitewash_ceiling",
+       "armstrong_ceiling",
+       "grillato_ceiling",
+       "plaster_visual_ceiling",
+       "plaster_full_ceiling",
+       "isolation_ceiling_cotton",
+       "ceiling_niche",
+       ""
+      ]
+     }
+    },
+    "required": [
+     "rigel_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "room_add_polygon",
+   "description": "Добавить комнату-полигон: точки внутреннего контура по часовой стрелке (мм). Для Г- и П-образных комнат.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "points": {
+      "minItems": 3,
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), X вправо"
+        },
+        "y": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), Y вниз"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "description": "точка плана в мм, X вправо, Y вниз"
+      },
+      "description": "обход по часовой стрелке, Y вниз"
+     },
+     "wall_thickness": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "dimensions": {
+      "type": "string",
+      "enum": [
+       "inner",
+       "axis"
+      ]
+     },
+     "name": {
+      "type": "string",
+      "maxLength": 100
+     }
+    },
+    "required": [
+     "points"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "room_add_rect",
+   "description": "Добавить прямоугольную комнату. dimensions=inner (по умолчанию): width/depth — чистые внутренние размеры (как в замерах квартиры), origin — внутренний левый верхний угол. Толщина — одно число или по сторонам. Если сторона совпадает со стеной соседней комнаты, общая стена переиспользуется (не дублируется). Возвращает созданные стены. После добавления комнат вызываете model_validate и render_plan.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "origin": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "точка плана в мм, X вправо, Y вниз"
+     },
+     "width": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм по X"
+     },
+     "depth": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм по Y"
+     },
+     "wall_thickness": {
+      "anyOf": [
+       {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000,
+        "description": "мм, целое, ≥ 0"
+       },
+       {
+        "type": "object",
+        "properties": {
+         "top": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "мм, целое, ≥ 0"
+         },
+         "right": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "мм, целое, ≥ 0"
+         },
+         "bottom": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "мм, целое, ≥ 0"
+         },
+         "left": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "мм, целое, ≥ 0"
+         }
+        },
+        "required": [
+         "top",
+         "right",
+         "bottom",
+         "left"
+        ]
+       }
+      ],
+      "description": "толщина в мм: одно число или {top,right,bottom,left}"
+     },
+     "dimensions": {
+      "type": "string",
+      "enum": [
+       "inner",
+       "axis"
+      ]
+     },
+     "name": {
+      "description": "имя помещения (фаза 2 — сейчас игнорируется)",
+      "type": "string",
+      "maxLength": 100
+     }
+    },
+    "required": [
+     "origin",
+     "width",
+     "depth"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "rooms_list",
+   "description": "Список комнат с площадями (по внутренним граням, как показывает редактор), периметром и именами. Комнаты считает редактор (rooms2 нормализованной модели). Если модель ещё не нормализовалась (нет редактора) — список пуст: добавьте комнату и сохраните.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "stripe_add",
+   "description": "Провести трековую шину (лист «Освещение», PRO): kind=recessed (встроенная, recessed_strip), kind=surface (накладная, surface_stripе), kind=pendent (подвесная, pendent_strip — опускание подвеса 20 см по умолчанию). path — ломаная по точкам (мм, не менее 2; коллекция stripes_light). Трековые споты (track_spot и др.) на шину MCP пока не ставит. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "kind": {
+      "type": "string",
+      "enum": [
+       "recessed",
+       "surface",
+       "pendent"
+      ],
+      "description": "вид шины: recessed — встроенная, surface — накладная, pendent — подвесная"
+     },
+     "path": {
+      "minItems": 2,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), X вправо"
+        },
+        "y": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), Y вниз"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "description": "точка плана в мм, X вправо, Y вниз"
+      },
+      "description": "точки шины по порядку, мм; не более 32"
+     }
+    },
+    "required": [
+     "kind",
+     "path"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "stripe_delete",
+   "description": "Удалить трековую шину (метка SL<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "stripe_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка SL<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "stripe_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "stripe_update",
+   "description": "Изменить трековую шину: перенести узлы графа. positions — список {vertex, x_mm, y_mm}; vertex — индекс вершины (0-based, как в model_get stripes_light[].vertexes). Длина пересчитывается по рёбрам.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "stripe_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка SL<n> из model_get или id сайта"
+     },
+     "positions": {
+      "minItems": 1,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "vertex": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 1000000,
+         "description": "индекс узла (0-based)"
+        },
+        "x_mm": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным)"
+        },
+        "y_mm": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным)"
+        }
+       },
+       "required": [
+        "vertex",
+        "x_mm",
+        "y_mm"
+       ]
+      }
+     }
+    },
+    "required": [
+     "stripe_id",
+     "positions"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "terrace_add",
+   "description": "Нарисовать террасу (пункт меню «Терраса и участок» → «Нарисовать террасу»): замкнутый контур из отрезков-границ, points — вершины (мм, минимум 3). Контур не должен самопересекаться; сторона, лежащая на ограждении террасы, отклоняется — проведите там terrace_fence_add (редактор удаляет такие границы). Площадь террасы редактор считает сам. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "points": {
+      "minItems": 3,
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), X вправо"
+        },
+        "y": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), Y вниз"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "description": "точка плана в мм, X вправо, Y вниз"
+      },
+      "description": "вершины замкнутого контура, мм"
+     }
+    },
+    "required": [
+     "points"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "terrace_border_delete",
+   "description": "Удалить границу террасы (метка TB<n> из model_get). Контур может стать незамкнутым — как при удалении границы в UI.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "terrace_border_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка TB<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "terrace_border_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "terrace_border_update",
+   "description": "Перенести узел/границу террасы: новые концы отрезка (start/end, мм). Общий узел соседних границ двигается вместе (как перенос узла в UI). terrace_border_id — метка TB<n> из model_get или id сайта.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "terrace_border_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка TB<n> из model_get или id сайта"
+     },
+     "start": {
+      "description": "новое начало отрезка, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "end": {
+      "description": "новый конец отрезка, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     }
+    },
+    "required": [
+     "terrace_border_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "terrace_column_add",
+   "description": "Поставить опорный столб террасы (пункт меню «Терраса и участок» → «Опорный столб террасы»): квадрат 200×200 мм по центру (мм). Как в UI, ставится на террасе — центр внутри контура террасы или на его границе. Габариты 100..20000 × 100..6000 мм (лимиты панели). После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "center": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "центр столба, мм"
+     },
+     "width_mm": {
+      "description": "габарит по X (по умолчанию 200)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "height_mm": {
+      "description": "габарит по Y (по умолчанию 200)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "center"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "terrace_column_delete",
+   "description": "Удалить столб террасы (метка P<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "terrace_column_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка P<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "terrace_column_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "terrace_column_update",
+   "description": "Изменить столб террасы: перенести (center, мм) или изменить габариты (width_mm/height_mm). Столб должен остаться в контуре террасы. terrace_column_id — метка P<n> из model_get или id сайта.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "terrace_column_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка P<n> из model_get или id сайта"
+     },
+     "center": {
+      "description": "новый центр, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     }
+    },
+    "required": [
+     "terrace_column_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "terrace_fence_add",
+   "description": "Поставить ограждение террасы (пункт меню «Терраса и участок» → «Ограждение террасы»): отрезок от start до end (мм). Как в UI, ставится при существующей террасе — сначала terrace_add. Толщина по умолчанию 50 мм (defs редактора), лимит 10..1000 мм. Ограждение заменяет границу террасы: границу под ограждением редактор убирает сам. Изменение/удаление — wall_update/wall_delete.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "start": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "начало ограждения, мм"
+     },
+     "end": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "конец ограждения, мм"
+     },
+     "thickness_mm": {
+      "description": "толщина, мм (по умолчанию 50)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "start",
+     "end"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "territory_add",
+   "description": "Нарисовать участок (пункт меню «Терраса и участок» → «Нарисовать участок»): замкнутый контур из отрезков-границ (мм, минимум 3 вершины) — зона двора вокруг дома. Правила те же, что у террасы: без самопересечений. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "points": {
+      "minItems": 3,
+      "maxItems": 64,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), X вправо"
+        },
+        "y": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), Y вниз"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "description": "точка плана в мм, X вправо, Y вниз"
+      },
+      "description": "вершины замкнутого контура, мм"
+     }
+    },
+    "required": [
+     "points"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "territory_border_delete",
+   "description": "Удалить границу участка (метка XB<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "territory_border_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка XB<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "territory_border_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "territory_border_update",
+   "description": "Перенести узел/границу участка (start/end, мм); общие узлы соседних границ двигаются вместе. territory_border_id — метка XB<n> из model_get или id сайта.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "territory_border_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка XB<n> из model_get или id сайта"
+     },
+     "start": {
+      "description": "новое начало отрезка, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "end": {
+      "description": "новый конец отрезка, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     }
+    },
+    "required": [
+     "territory_border_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "undo",
+   "description": "Отменить последние мутации рабочей копии (до 50 шагов). Работает до сохранения; после project_save история сбрасывается.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "steps": {
+      "description": "сколько шагов (по умолчанию 1)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wall_add",
+   "description": "Добавить стену по осевой линии (координаты в мм; X вправо, Y вниз; толщина по умолчанию 200). Для отдельной перегородки используйте kind=partition (тонкая, план «Перегородки»; толщина по умолчанию 100, материал pgb|foam_block|brick|gypsum — коды c_*; стеклянная (glass) и реечная (bar) — только PRO). Свободные (несоединённые) концы допустимы, как в редакторе: ответ содержит предупреждение wall_free_ends со списком концов в мм; помещение образует только замкнутый контур стен. Концы стен должны совпадать с концами соседних стен — примыкание узла к середине стены не поддерживается (UNSUPPORTED_JUNCTION; используйте wall_split). Сценарий: правки → model_validate (инварианты) → render_plan (визуальная проверка) → project_save (запись на сервер). Мутации НЕ сохраняют на сервер сами.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "start": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "точка плана в мм, X вправо, Y вниз"
+     },
+     "end": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "точка плана в мм, X вправо, Y вниз"
+     },
+     "thickness_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "material": {
+      "description": "исходные стены: a_block (по умолчанию) и др.; для kind=partition: pgb (по умолчанию), foam_block, brick, gypsum, glass (PRO), bar (PRO)",
+      "type": "string",
+      "maxLength": 64
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "initial",
+       "partition"
+      ]
+     },
+     "role": {
+      "type": "string",
+      "enum": [
+       "wall",
+       "balcony"
+      ]
+     }
+    },
+    "required": [
+     "start",
+     "end"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wall_delete",
+   "description": "Удалить стену вместе с её проёмами (в ответе — число удалённых проёмов). Связанные стены теряют связь в узле.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "wall_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id стены сайта или метка W<n> из model_get"
+     }
+    },
+    "required": [
+     "wall_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wall_move",
+   "description": "Параллельно перенести стену на offset_mm перпендикулярно (вправо от направления p1→p2 — положительное). Соседние стены удлиняются/укорачиваются сами. Проёмы едут вместе со стеной.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "wall_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id стены сайта или метка W<n> из model_get"
+     },
+     "offset_mm": {
+      "type": "number",
+      "description": "мм; + вправо от оси, − влево"
+     }
+    },
+    "required": [
+     "wall_id",
+     "offset_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wall_split",
+   "description": "Разрезать стену на две в точке at_mm от начала оси (нужно для Т-примыканий: разрежьте стену и приведите конец новой стены к точке разреза). Разрез через проём запрещён (GEOMETRY_CONFLICT).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "wall_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id стены сайта или метка W<n> из model_get"
+     },
+     "at_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     }
+    },
+    "required": [
+     "wall_id",
+     "at_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wall_update",
+   "description": "Изменить стену: длину (anchor — какой конец на месте), толщину (side: both/left/right), материал или положение концов. Перенос узла тянет связанные стены; проёмы на стене переезжают автоматически.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "wall_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id стены сайта или метка W<n> из model_get"
+     },
+     "length_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "anchor": {
+      "type": "string",
+      "enum": [
+       "start",
+       "end"
+      ]
+     },
+     "thickness_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "side": {
+      "type": "string",
+      "enum": [
+       "both",
+       "left",
+       "right"
+      ]
+     },
+     "material": {
+      "type": "string",
+      "maxLength": 64
+     },
+     "start": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "точка плана в мм, X вправо, Y вниз"
+     },
+     "end": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "точка плана в мм, X вправо, Y вниз"
+     }
+    },
+    "required": [
+     "wall_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "walls_add_polyline",
+   "description": "Добавить ломаную из связанных стен (и замкнутый контур при closed: true). Точки в мм, узлы связываются автоматически. Для перегородок — kind=partition (толщина по умолчанию 100, материалы как у wall_add). Свободные (несоединённые) концы допустимы, как в редакторе: ответ содержит предупреждение wall_free_ends (список концов в мм); помещение образует только замкнутый контур (closed: true).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "points": {
+      "minItems": 2,
+      "maxItems": 200,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), X вправо"
+        },
+        "y": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), Y вниз"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "description": "точка плана в мм, X вправо, Y вниз"
+      }
+     },
+     "closed": {
+      "type": "boolean"
+     },
+     "thickness_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "material": {
+      "type": "string",
+      "maxLength": 64
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "initial",
+       "partition"
+      ]
+     }
+    },
+    "required": [
+     "points"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "warm_floor_add",
+   "description": "Постелить контур тёплого пола (лист «Тёплые полы»): прямоугольник по двум углам corner1/corner2 (мм, оси; контур целиком внутри одной комнаты). kind=cable — кабельный (free), kind=infrared — инфракрасный (free), kind=water — водяной (PRO в UI; шаг 10 см, укладка спиралью, длина трубы считается по габаритам и шагу). В комнате уже есть контур — INVALID_ARGUMENT (в редакторе протяжка заменяет контур; здесь — сначала warm_floor_delete). Коллекция warm_floors — отдельная сущность, не item_add. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "kind": {
+      "type": "string",
+      "enum": [
+       "cable",
+       "infrared",
+       "water"
+      ],
+      "description": "вид тёплого пола: cable — кабельный, infrared — инфракрасный, water — водяной"
+     },
+     "corner1": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "первый угол контура, мм"
+     },
+     "corner2": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "второй угол контура (противоположный), мм"
+     }
+    },
+    "required": [
+     "kind",
+     "corner1",
+     "corner2"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "warm_floor_delete",
+   "description": "Удалить контур тёплого пола (метка WF<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "warm_floor_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка WF<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "warm_floor_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "warm_floor_update",
+   "description": "Изменить контур тёплого пола: новые углы corner1/corner2 (мм — только явно переданные; остальные остаются прежними). Контур должен остаться внутри одной комнаты. warm_floor_id — метка WF<n> из model_get или id сайта.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "warm_floor_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка WF<n> из model_get или id сайта"
+     },
+     "corner1": {
+      "description": "новый первый угол контура, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "corner2": {
+      "description": "новый второй угол контура, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     }
+    },
+    "required": [
+     "warm_floor_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  }
+ ],
+ "responses": {
+  "model_get_compact": {
+   "walls": [
+    {
+     "id": "W1",
+     "site_id": "gxugmdrasv",
+     "from": [
+      0,
+      0
+     ],
+     "to": [
+      4000,
+      0
+     ],
+     "len_mm": 4000,
+     "len_inner_mm": 3800,
+     "thickness_mm": 200,
+     "plan": "a",
+     "material": "a_block",
+     "openings": [
+      {
+       "id": "apuny6wral",
+       "wall": "W1",
+       "type": "window",
+       "offset_mm": 1400,
+       "width_mm": 1200,
+       "height_mm": 1500,
+       "sill_mm": 800
+      }
+     ]
+    },
+    {
+     "id": "W2",
+     "site_id": "0kvxg69h8n",
+     "from": [
+      4000,
+      0
+     ],
+     "to": [
+      4000,
+      3000
+     ],
+     "len_mm": 3000,
+     "len_inner_mm": 2800,
+     "thickness_mm": 200,
+     "plan": "a",
+     "material": "a_block",
+     "openings": []
+    },
+    {
+     "id": "W3",
+     "site_id": "q3fckwe4cj",
+     "from": [
+      4000,
+      3000
+     ],
+     "to": [
+      0,
+      3000
+     ],
+     "len_mm": 4000,
+     "len_inner_mm": 3800,
+     "thickness_mm": 200,
+     "plan": "a",
+     "material": "a_block",
+     "openings": [
+      {
+       "id": "pbwydi1o66",
+       "wall": "W3",
+       "type": "single",
+       "offset_mm": 1600,
+       "width_mm": 800,
+       "height_mm": 2000,
+       "sill_mm": 0,
+       "opening": "r-l"
+      }
+     ]
+    },
+    {
+     "id": "W4",
+     "site_id": "jcdj4hyyeo",
+     "from": [
+      0,
+      3000
+     ],
+     "to": [
+      0,
+      0
+     ],
+     "len_mm": 3000,
+     "len_inner_mm": 2800,
+     "thickness_mm": 200,
+     "plan": "a",
+     "material": "a_block",
+     "openings": []
+    }
+   ],
+   "rooms": [
+    {
+     "id": "R1",
+     "name": null,
+     "area_m2": 10.64,
+     "area_axis_m2": null,
+     "perimeter_mm": 132000,
+     "floor": null,
+     "ceiling": null
+    }
+   ],
+   "items": [],
+   "pillars": [],
+   "rigels": [],
+   "gas_lines": [],
+   "pipes": [],
+   "terrace_borders": [],
+   "territory_borders": [],
+   "level_holes": [],
+   "led_strips": [],
+   "stripes_light": [],
+   "line_strips": [],
+   "cables": [],
+   "warm_floors": [],
+   "pipes_warm_floor": [],
+   "pipes_conditioner": [],
+   "pipes_heat": [],
+   "pipes_ventilation": [],
+   "total_height_mm": 2700
+  },
+  "model_get_full": {
+   "v": 3,
+   "id": "0",
+   "plan_id": "0",
+   "walls": {
+    "gxugmdrasv": {
+     "id": "gxugmdrasv",
+     "plan": "a",
+     "role": "wall",
+     "child": 0,
+     "archive": 0,
+     "demount": 0,
+     "depth": 20,
+     "height": 270,
+     "p1": {
+      "x": 0,
+      "y": 0,
+      "link": {
+       "ct": "node",
+       "ot": "wall",
+       "id": "jcdj4hyyeo",
+       "z0": "p2",
+       "z1": "p1"
+      }
+     },
+     "p2": {
+      "x": 400,
+      "y": 0,
+      "link": {
+       "ct": "node",
+       "ot": "wall",
+       "id": "0kvxg69h8n",
+       "z0": "p1",
+       "z1": "p2"
+      }
+     },
+     "p1st": 0,
+     "p2st": 0,
+     "material": "a_block",
+     "color": 0,
+     "level": "1",
+     "show_dls": true,
+     "holes": {
+      "apuny6wral": {
+       "id": "apuny6wral",
+       "plan": "a",
+       "type": "window",
+       "group": "windows",
+       "pc": {
+        "x": 200,
+        "y": 0
+       },
+       "width": 120,
+       "height": 150,
+       "depth": 10,
+       "floor_height": 80
+      }
+     }
+    },
+    "0kvxg69h8n": {
+     "id": "0kvxg69h8n",
+     "plan": "a",
+     "role": "wall",
+     "child": 0,
+     "archive": 0,
+     "demount": 0,
+     "depth": 20,
+     "height": 270,
+     "p1": {
+      "x": 400,
+      "y": 0,
+      "link": {
+       "ct": "node",
+       "ot": "wall",
+       "id": "gxugmdrasv",
+       "z0": "p2",
+       "z1": "p1"
+      }
+     },
+     "p2": {
+      "x": 400,
+      "y": 300,
+      "link": {
+       "ct": "node",
+       "ot": "wall",
+       "id": "q3fckwe4cj",
+       "z0": "p1",
+       "z1": "p2"
+      }
+     },
+     "p1st": 0,
+     "p2st": 0,
+     "material": "a_block",
+     "color": 0,
+     "level": "1",
+     "show_dls": true,
+     "holes": {}
+    },
+    "q3fckwe4cj": {
+     "id": "q3fckwe4cj",
+     "plan": "a",
+     "role": "wall",
+     "child": 0,
+     "archive": 0,
+     "demount": 0,
+     "depth": 20,
+     "height": 270,
+     "p1": {
+      "x": 400,
+      "y": 300,
+      "link": {
+       "ct": "node",
+       "ot": "wall",
+       "id": "0kvxg69h8n",
+       "z0": "p2",
+       "z1": "p1"
+      }
+     },
+     "p2": {
+      "x": 0,
+      "y": 300,
+      "link": {
+       "ct": "node",
+       "ot": "wall",
+       "id": "jcdj4hyyeo",
+       "z0": "p1",
+       "z1": "p2"
+      }
+     },
+     "p1st": 0,
+     "p2st": 0,
+     "material": "a_block",
+     "color": 0,
+     "level": "1",
+     "show_dls": true,
+     "holes": {
+      "pbwydi1o66": {
+       "id": "pbwydi1o66",
+       "plan": "a",
+       "type": "single",
+       "group": "doors",
+       "pc": {
+        "x": 200,
+        "y": 300
+       },
+       "width": 80,
+       "height": 200,
+       "depth": 4,
+       "opening": "r-l"
+      }
+     }
+    },
+    "jcdj4hyyeo": {
+     "id": "jcdj4hyyeo",
+     "plan": "a",
+     "role": "wall",
+     "child": 0,
+     "archive": 0,
+     "demount": 0,
+     "depth": 20,
+     "height": 270,
+     "p1": {
+      "x": 0,
+      "y": 300,
+      "link": {
+       "ct": "node",
+       "ot": "wall",
+       "id": "q3fckwe4cj",
+       "z0": "p2",
+       "z1": "p1"
+      }
+     },
+     "p2": {
+      "x": 0,
+      "y": 0,
+      "link": {
+       "ct": "node",
+       "ot": "wall",
+       "id": "gxugmdrasv",
+       "z0": "p1",
+       "z1": "p2"
+      }
+     },
+     "p1st": 0,
+     "p2st": 0,
+     "material": "a_block",
+     "color": 0,
+     "level": "1",
+     "show_dls": true,
+     "holes": {}
+    }
+   },
+   "items": {},
+   "pillars": {},
+   "rulers": {},
+   "comments": {},
+   "total_height": 270,
+   "final": true,
+   "rooms2": {
+    "r1": {
+     "polygon": [
+      {
+       "x": 100,
+       "y": 100
+      },
+      {
+       "x": 3900,
+       "y": 100
+      },
+      {
+       "x": 3900,
+       "y": 2900
+      },
+      {
+       "x": 100,
+       "y": 2900
+      }
+     ],
+     "area": 10.64
+    }
+   }
+  },
+  "rooms_list": [
+   {
+    "id": "R1",
+    "name": null,
+    "area_m2": 10.64,
+    "area_axis_m2": null,
+    "perimeter_mm": 132000,
+    "floor": null,
+    "ceiling": null
+   }
+  ],
+  "items_list": [],
+  "dims_list": [],
+  "comments_list": [],
+  "finish_get": [
+   {
+    "id": "R1",
+    "site_id": "r1",
+    "walls": []
+   }
+  ],
+  "floor_list": {
+   "plan_id": "0",
+   "floors": [
+    {
+     "floor_id": "1",
+     "plans": [
+      "0"
+     ]
+    }
+   ],
+   "note": "несколько этажей — PRO (NOT_AVAILABLE_ON_TARIFF)"
+  },
+  "plan_list": {
+   "plans": [
+    "init",
+    "create_walls",
+    "rooms",
+    "furniture",
+    "santeh"
+   ],
+   "note": "лист для render_plan: sheet=<имя>"
+  },
+  "model_validate": {
+   "ok": true,
+   "problems": []
+  },
+  "catalog_search": [
+   {
+    "name": "sofa",
+    "title": "Кресло диванное",
+    "group": "furniture",
+    "width_mm": 900,
+    "depth_mm": 800,
+    "height_mm": 850,
+    "resizable": false
+   },
+   {
+    "name": "sofa_double",
+    "title": "Диван двухместный",
+    "group": "furniture",
+    "width_mm": 1400,
+    "depth_mm": 800,
+    "height_mm": 850,
+    "resizable": false
+   },
+   {
+    "name": "sofa_corner",
+    "title": "Диван угловой трехсекционный",
+    "group": "furniture",
+    "width_mm": 2000,
+    "depth_mm": 1200,
+    "height_mm": 850,
+    "resizable": false
+   }
+  ],
+  "project_export_plan_current": {
+   "path": "<HOME>/c4-contract-snapshot.plan",
+   "scope": "current",
+   "bytes": 2093
+  },
+  "project_export_plan_full": {
+   "path": "<HOME>/c4-contract-snapshot.plan",
+   "scope": "full",
+   "bytes": 2141
+  },
+  "render_plan_offline_error": {
+   "code": "AUTH_REQUIRED",
+   "message": "офлайн-режим: редактор недоступен",
+   "hint": "уберите REMPLANNER_OFFLINE_FIXTURE для работы с сайтом"
+  }
+ }
+}
