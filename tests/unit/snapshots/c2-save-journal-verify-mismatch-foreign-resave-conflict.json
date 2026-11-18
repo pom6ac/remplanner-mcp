@@ -1,0 +1,163 @@
+[
+  {
+    "at": 1,
+    "op": "loadModel",
+    "object_id": "212",
+    "plan_id": "1",
+    "save_id": "s1"
+  },
+  {
+    "at": 2,
+    "op": "loadModel",
+    "object_id": "212",
+    "plan_id": "1",
+    "save_id": "s1"
+  },
+  {
+    "at": 3,
+    "op": "backup.write",
+    "path": "212-1-<stamp>.json",
+    "backup_files_before": 0
+  },
+  {
+    "at": 4,
+    "op": "openEditor",
+    "object_id": "212",
+    "plan_id": "1",
+    "anonymous": false
+  },
+  {
+    "at": 5,
+    "op": "editor.compatInfo",
+    "object_id": null,
+    "plan_id": null
+  },
+  {
+    "at": 6,
+    "op": "editor.normalize",
+    "model": {
+      "walls": 5,
+      "holes": 2,
+      "items": 0,
+      "pillars": 0,
+      "rigels": 0
+    }
+  },
+  {
+    "at": 7,
+    "op": "editor.save",
+    "attempt": 1
+  },
+  {
+    "at": 8,
+    "op": "editor.save.result",
+    "ok": true,
+    "conflict": false,
+    "save_id": "s2"
+  },
+  {
+    "at": 9,
+    "op": "loadModel",
+    "object_id": "212",
+    "plan_id": "1",
+    "save_id": "s2"
+  },
+  {
+    "at": 10,
+    "op": "editor.save",
+    "attempt": 2
+  },
+  {
+    "at": 11,
+    "op": "editor.save.result",
+    "ok": true,
+    "conflict": false,
+    "save_id": "s2"
+  },
+  {
+    "at": 12,
+    "op": "loadModel",
+    "object_id": "212",
+    "plan_id": "1",
+    "save_id": "s2"
+  },
+  {
+    "at": 13,
+    "op": "save.error",
+    "code": "SITE_ERROR",
+    "save_attempts": 2,
+    "retries": 1,
+    "delays_ms": 0,
+    "details_keys": [
+      "axis_segments_after",
+      "axis_segments_before",
+      "backup_path",
+      "border_mismatches",
+      "cables_connection_mismatches",
+      "cables_link_form_mismatches",
+      "cables_mismatches",
+      "climate_mismatches",
+      "coverage_after_mm",
+      "coverage_before_mm",
+      "demolition_mismatches",
+      "dims_mismatches",
+      "expected_walls",
+      "finish_mismatches",
+      "gas_line_mismatches",
+      "got_walls",
+      "item_mismatches",
+      "led_strip_mismatches",
+      "level_hole_mismatches",
+      "line_strips_mismatches",
+      "pillar_mismatches",
+      "pipe_connection_mismatches",
+      "pipe_mismatches",
+      "rigel_mismatches",
+      "room_mismatches",
+      "rooms_expected",
+      "rooms_on_server",
+      "server_save_id",
+      "socket_group_derived_mismatches",
+      "socket_group_mismatches",
+      "stripes_light_mismatches",
+      "wall_property_mismatches",
+      "wall_role_mismatches"
+    ]
+  },
+  {
+    "at": 14,
+    "op": "workspace.state",
+    "dirty": true,
+    "save_id": "s2",
+    "walls": 5,
+    "history_steps": 1
+  },
+  {
+    "at": 15,
+    "op": "editor.close"
+  },
+  {
+    "at": 16,
+    "op": "loadModel",
+    "object_id": "212",
+    "plan_id": "1",
+    "save_id": "s3"
+  },
+  {
+    "at": 17,
+    "op": "save.error",
+    "code": "SAVE_CONFLICT",
+    "save_attempts": 2,
+    "retries": 1,
+    "delays_ms": 0,
+    "details_keys": []
+  },
+  {
+    "at": 18,
+    "op": "workspace.state",
+    "dirty": true,
+    "save_id": "s2",
+    "walls": 5,
+    "history_steps": 1
+  }
+]
