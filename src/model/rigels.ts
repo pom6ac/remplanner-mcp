@@ -4,6 +4,7 @@ import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
 import { wallFaces } from "./walls.ts";
 import { McpError } from "../errors.ts";
+import { assignCandidate } from "./assign.ts";
 import { dist, closestPoint, lineIntersection, offsetSegment, pointOnSegment, type Segment } from "./geometry.ts";
 
 /**
@@ -376,15 +377,6 @@ function buildCandidate(
   return candidate;
 }
 
-/** Переносит проверенного кандидата в модель, сохраняя identity (паттерн assignPillar). */
-function assignRigel(target: Rigel, candidate: Rigel): void {
-  const keys = new Set([...Object.keys(target), ...Object.keys(candidate)]);
-  for (const k of keys) {
-    if (k in candidate) (target as Record<string, unknown>)[k] = (candidate as Record<string, unknown>)[k];
-    else delete (target as Record<string, unknown>)[k];
-  }
-}
-
 /**
  * rigel_add: ставит потолочный ригель (мм): ось start→end, толщина depth_mm
  * (по умолчанию 300), высота height_mm (по умолчанию 300). Концы в пределах
@@ -437,7 +429,7 @@ export function updateRigel(model: Model, params: UpdateRigarParams): Rigel {
   // зависимые ригели пересчитываются; при ошибке модель идентична snapshot
   const backup = structuredClone(model.rigels ?? {});
   try {
-    assignRigel(rigel, rebuilt);
+    assignCandidate(rigel, rebuilt);
     refreshRigelsAfterWallOrPillarChange(model);
   } catch (e) {
     model.rigels = backup;
@@ -511,7 +503,7 @@ export function refreshRigelsAfterWallOrPillarChange(model: Model): void {
       ) {
         continue; // связи и форма не изменились — ригель не трогаем (байт в байт)
       }
-      assignRigel(rigel, candidate);
+      assignCandidate(rigel, candidate);
       changed = true;
     }
     if (!changed) return; // неподвижная точка: результат совпадает с повторной финализацией

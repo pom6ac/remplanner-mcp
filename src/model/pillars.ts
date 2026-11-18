@@ -4,6 +4,7 @@ import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
 import { wallFaces } from "./walls.ts";
 import { McpError } from "../errors.ts";
+import { assignCandidate } from "./assign.ts";
 import { lineIntersection, overlapArea, pointInPolygon, type Polygon } from "./geometry.ts";
 import type { RoomPolygon } from "./items.ts";
 import { refreshRigelsAfterWallOrPillarChange } from "./rigels.ts";
@@ -377,15 +378,6 @@ export function assertPillarInvariants(
   }
 }
 
-/** Переносит проверенного кандидата в модель, сохраняя identity (ревью 28, паттерн assignHole). */
-function assignPillar(target: Pillar, candidate: Pillar): void {
-  const keys = new Set([...Object.keys(target), ...Object.keys(candidate)]);
-  for (const k of keys) {
-    if (k in candidate) (target as Record<string, unknown>)[k] = (candidate as Record<string, unknown>)[k];
-    else delete (target as Record<string, unknown>)[k];
-  }
-}
-
 /** Собирает кандидат-копию колонны (углы, грани, eds, inRoom) без записи в модель. */
 function buildCandidate(
   model: Model,
@@ -522,7 +514,7 @@ export function updatePillar(model: Model, params: UpdatePillarParams, rooms?: R
   finalizeCandidate(candidate, model);
   assertPillarInvariants(candidate, model, rooms);
   return atomicPillar(model, () => {
-    assignPillar(pillar, candidate);
+    assignCandidate(pillar, candidate);
     return pillar;
   });
 }
@@ -569,7 +561,7 @@ export function refreshPillarsAfterWallChange(model: Model): void {
     candidate.edges = pillarEdges(storedCorners(candidate));
     finalizeCandidate(candidate, model);
     if (pillarContactSig(candidate) === pillarContactSig(pillar)) continue;
-    assignPillar(pillar, candidate);
+    assignCandidate(pillar, candidate);
   }
   for (const pillar of Object.values(pillars)) {
     const poly = pillarPolygon(pillar);

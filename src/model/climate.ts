@@ -3,6 +3,7 @@ import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
 import { McpError } from "../errors.ts";
+import { assignCandidate } from "./assign.ts";
 import { pointInPolygon, polygonInsidePolygon, segmentsCross } from "./geometry.ts";
 import { roomPolygons } from "./items.ts";
 
@@ -152,15 +153,6 @@ export function warmFloorPipesLengthM(polygon: Point[], stepCm: number, _directi
   return Math.round(((passes * run) / 100) * 100) / 100;
 }
 
-/** Переносит проверенного кандидата в объект модели, сохраняя identity (паттерн assignGasLine). */
-function assignWarmFloor(target: WarmFloor, candidate: WarmFloor): void {
-  const keys = new Set([...Object.keys(target), ...Object.keys(candidate)]);
-  for (const k of keys) {
-    if (k in candidate) (target as Record<string, unknown>)[k] = (candidate as Record<string, unknown>)[k];
-    else delete (target as Record<string, unknown>)[k];
-  }
-}
-
 /**
  * warm_floor_add: прямоугольный контур тёплого пола по двум углам (мм; оси, любые
  * квадранты) внутри ОДНОЙ комнаты. kind: cable (Кабельный, free), infrared
@@ -239,7 +231,7 @@ export function updateWarmFloor(
   if (wf.length_pipes !== undefined) {
     candidate.length_pipes = warmFloorPipesLengthM(pts, candidate.step ?? WARM_FLOOR_WATER_DEFAULTS.step, candidate.direction ?? "right");
   }
-  assignWarmFloor(wf, candidate);
+  assignCandidate(wf, candidate);
   return wf;
 }
 

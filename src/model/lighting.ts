@@ -3,6 +3,7 @@ import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
 import { McpError } from "../errors.ts";
+import { assignCandidate } from "./assign.ts";
 import { dist } from "./geometry.ts";
 import { gasLineLengthM } from "./pipes.ts";
 
@@ -126,18 +127,6 @@ export function lightLengthM(line: Pick<LedStrip, "vertexes" | "matrix">): numbe
   return gasLineLengthM(line);
 }
 
-/** Переносит проверенного кандидата в объект модели, сохраняя identity (паттерн assignGasLine). */
-function assignLightLine(
-  target: LedStrip | StripLight | LineStrip,
-  candidate: LedStrip | StripLight | LineStrip,
-): void {
-  const keys = new Set([...Object.keys(target), ...Object.keys(candidate)]);
-  for (const k of keys) {
-    if (k in candidate) (target as Record<string, unknown>)[k] = (candidate as Record<string, unknown>)[k];
-    else delete (target as Record<string, unknown>)[k];
-  }
-}
-
 function collectionOf(model: Model, kind: LightKind): Record<string, LedStrip> {
   const key = LIGHT_COLLECTION_BY_KIND[kind];
   return (model[key] ?? {}) as Record<string, LedStrip>;
@@ -217,7 +206,7 @@ export function updateLightLine(
     candidate.vertexes[p.vertex] = { ...candidate.vertexes[p.vertex]!, point: cmPoint({ x: p.x, y: p.y }) };
   }
   candidate.length = lightLengthM(candidate);
-  assignLightLine(line, candidate);
+  assignCandidate(line, candidate);
   return line;
 }
 
