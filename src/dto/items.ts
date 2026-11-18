@@ -2,8 +2,9 @@ import { z } from "zod";
 import { mm, mmInt, mmPoint } from "./units.ts";
 import { throwNotFound } from "./common.ts";
 import { wallRef } from "./walls.ts";
-import { compactModel, wallLengthMm } from "../model/compact.ts";
-import { roomPolygons } from "../model/items.ts";
+import { compactModel } from "../model/compact.ts";
+import { againstWallPlacement, roomPolygons } from "../model/items.ts";
+import { cmToMm, round0 } from "../model/units.ts";
 import type { MmPoint } from "../model/walls.ts";
 import type { Model, ItemProps, Wall } from "../model/types.ts";
 import type { RoomPolygon } from "../model/items.ts";
@@ -122,26 +123,26 @@ function cornerPoint(corner: string, minX: number, maxX: number, minY: number, m
 }
 
 /**
- * Перенос предмета к стене (item_update against_wall): точка на оси с зазором
- * (см модели) и угол по направлению оси. Публичные мм → см модели.
+ * Перенос предмета к стене (item_update against_wall): та же формула модельного
+ * слоя, что у item_add against_wall (againstWallPlacement) — точка на внутренней
+ * стороне стены (полутолщина стены + зазор + полуглубина предмета), offset с
+ * полушириной вдоль стены, угол оси в (−90; 90]. Ревью 190: прежний дубль формулы
+ * в DTO смешивал мм и см (нормаль в 10 раз короче), терял полутолщину стены и
+ * полуширину и брал нормаль «вправо» без учёта помещения. Публичные мм → см
+ * модели; центр ответа — целые мм.
  */
 export function againstWallCenter(
   wall: Wall,
   aw: { offset_mm: number; from?: "start" | "end"; gap_mm?: number },
-  itemHeightCm: number,
+  itemWidthCm: number,
+  itemDepthCm: number,
+  rooms: RoomPolygon[],
 ): { center: MmPoint; angleDeg: number } {
-  const len = wallLengthMm(wall);
-  const off = aw.from === "end" ? len - aw.offset_mm : aw.offset_mm;
-  const t = Math.min(Math.max(off / len, 0), 1);
-  const px = wall.p1.x + (wall.p2.x - wall.p1.x) * t;
-  const py = wall.p1.y + (wall.p2.y - wall.p1.y) * t;
-  const dirx = (wall.p2.x - wall.p1.x) / len;
-  const diry = (wall.p2.y - wall.p1.y) / len;
-  const angleDeg = Math.atan2(diry, dirx) * 180 / Math.PI;
-  // нормаль в сторону комнаты подберёт gap при updateItem? — упрощённо: центр на оси + gap по нормали вправо
-  const gap = (aw.gap_mm ?? 0) / 10 + itemHeightCm / 2;
+  const { pc, angleDeg } = againstWallPlacement(wall, {
+    wallId: wall.id, offsetMm: aw.offset_mm, from: aw.from, gapMm: aw.gap_mm,
+  }, itemWidthCm, itemDepthCm, rooms);
   return {
-    center: { x: Math.round((px + diry * gap) * 10), y: Math.round((py - dirx * gap) * 10) },
+    center: { x: round0(cmToMm(pc.x)), y: round0(cmToMm(pc.y)) },
     angleDeg: Math.round(angleDeg),
   };
 }

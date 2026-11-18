@@ -19,7 +19,7 @@ import {
   addRuler, updateRuler, deleteRuler, addComment, updateComment, deleteComment,
   dimsList, commentsList, resolveRuler, resolveComment, unescapeCommentText,
 } from "../model/dims.ts";
-import { cmToMm } from "../model/units.ts";
+import { cmToMm, mmToCm } from "../model/units.ts";
 import type { LedStrip, StripLight, LineStrip } from "../model/types.ts";
 import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
 import {
@@ -648,10 +648,13 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
               heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined });
           }
           if (pos && "against_wall" in pos) {
-            // перенос к стене: точка на оси с зазором считает DTO-слой
+            // перенос к стене: та же формула модельного слоя, что у item_add
+            // against_wall (ревью 190/196 — один расчёт, без дубля в DTO)
             const aw = pos["against_wall"] as { wall_id: string; offset_mm: number; from?: "start" | "end"; gap_mm?: number };
             const wall = resolveWall(m, aw.wall_id);
-            const at = againstWallCenter(wall, aw, target.height);
+            const widthCm = a["width_mm"] !== undefined ? mmToCm(a["width_mm"] as number) : target.width;
+            const depthCm = a["depth_mm"] !== undefined ? mmToCm(a["depth_mm"] as number) : target.height;
+            const at = againstWallCenter(wall, aw, widthCm, depthCm, ws.rooms());
             return updateItem(m, {
               itemId: target.id,
               center: at.center,

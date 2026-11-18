@@ -191,6 +191,51 @@ function itemPlan(entry: ToolEntry | undefined): Record<string, number> {
   return Object.keys(mapped).length > 0 ? mapped : { furniture: 1 };
 }
 
+/** Параметры постановки у стены (публичные мм, переводит формула). */
+export type AgainstWallSpec = {
+  wallId: string;
+  offsetMm: number;
+  from?: "start" | "end";
+  gapMm?: number;
+};
+
+/**
+ * Постановка предмета у стены: центр (см модели) и угол оси, нормированный
+ * в (−90; 90]. Общая формула item_add (againstWall) и item_update
+ * (against_wall, через DTO-слой) — ревью 190: дубликат в DTO считал нормаль
+ * вектором в 10 раз короче (мм↔см), без полутолщины стены и без стороны
+ * помещения. Внутренняя сторона стены — та, где центр комнаты.
+ */
+export function againstWallPlacement(
+  wall: Wall,
+  aw: AgainstWallSpec,
+  widthCm: number,
+  depthCm: number,
+  rooms: RoomPolygon[],
+): { pc: Point; angleDeg: number } {
+  const dir = sub(wall.p2, wall.p1);
+  const len = Math.hypot(dir.x, dir.y);
+  if (len < 1e-6) throw new McpError("INVALID_ARGUMENT", "стена нулевой длины");
+  const u = scale(dir, 1 / len);
+  const nl = leftNormal(dir.x, dir.y);
+  // внутренняя сторона стены — та, где помещение
+  const room = findRoom(rooms);
+  const center = roomCenter(room.polygon);
+  const wallMid = { x: (wall.p1.x + wall.p2.x) / 2, y: (wall.p1.y + wall.p2.y) / 2 };
+  const toRoom = sub(center, wallMid);
+  const inward = nl.x * toRoom.x + nl.y * toRoom.y > 0 ? nl : scale(nl, -1);
+  const from = aw.from ?? "start";
+  const sign = from === "end" ? -1 : 1;
+  const base = from === "end" ? wall.p2 : wall.p1;
+  const along = mmToCm(aw.offsetMm) + widthCm / 2;
+  const pc = add(add(base, scale(u, sign * along)), scale(inward, wall.depth / 2 + mmToCm(aw.gapMm ?? 0) + depthCm / 2));
+  // ширина предмета ВДОЛЬ стены (эталон ui-ref-sofa: угол = углу оси, а не нормали) — №10 ревью
+  let angle = angleDeg(wall.p1, wall.p2);
+  if (angle > 90) angle -= 180;
+  if (angle <= -90) angle += 180;
+  return { pc, angleDeg: angle };
+}
+
 /** item_add: центр / у стены (с касанием внутренней грани при gap=0) / в углу помещения.
  *  rooms — комнаты из кеша workspace (нормализованная модель), если в model.rooms2 их ещё нет. */
 export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon[]): ItemProps {
@@ -241,6 +286,8 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
   const depthCm = mmToCm(params.depthMm ?? (entry ? entry.height * 10 : 100));
   const selfHeightCm = mmToCm(params.heightMm ?? (entry ? entry.self_height * 10 : 0));
 
+  const allRooms = rooms ?? roomPolygons(model);
+
   let pc: Point;
   let angle = params.angleDeg ?? 0;
   let idWall: string | null = null;
@@ -251,30 +298,13 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
     const aw = params.position.againstWall;
     const wall = model.walls[aw.wallId];
     if (!wall) throw new McpError("NOT_FOUND", `стена ${aw.wallId} не найдена`);
-    const dir = sub(wall.p2, wall.p1);
-    const len = Math.hypot(dir.x, dir.y);
-    if (len < 1e-6) throw new McpError("INVALID_ARGUMENT", "стена нулевой длины");
-    const u = scale(dir, 1 / len);
-    const nl = leftNormal(dir.x, dir.y);
-    // внутренняя сторона стены — та, где помещение
-    const room = findRoom(rooms ?? roomPolygons(model));
-    const center = roomCenter(room.polygon);
-    const wallMid = { x: (wall.p1.x + wall.p2.x) / 2, y: (wall.p1.y + wall.p2.y) / 2 };
-    const toRoom = sub(center, wallMid);
-    const inward = nl.x * toRoom.x + nl.y * toRoom.y > 0 ? nl : scale(nl, -1);
-    const from = aw.from ?? "start";
-    const sign = from === "end" ? -1 : 1;
-    const base = from === "end" ? wall.p2 : wall.p1;
-    const along = mmToCm(aw.offsetMm) + widthCm / 2;
-    pc = add(add(base, scale(u, sign * along)), scale(inward, wall.depth / 2 + mmToCm(aw.gapMm ?? 0) + depthCm / 2));
-    // ширина предмета ВДОЛЬ стены (эталон ui-ref-sofa: угол = углу оси, а не нормали) — №10 ревью
-    angle = angleDeg(wall.p1, wall.p2);
-    if (angle > 90) angle -= 180;
-    if (angle <= -90) angle += 180;
+    const placement = againstWallPlacement(wall, aw, widthCm, depthCm, allRooms);
+    pc = placement.pc;
+    angle = placement.angleDeg;
     idWall = wall.id;
   } else {
     const corner = params.position.inRoom.corner;
-    const room = findRoom(rooms ?? roomPolygons(model));
+    const room = findRoom(allRooms);
     const xs = room.polygon.map((p) => p.x);
     const ys = room.polygon.map((p) => p.y);
     const minX = Math.min(...xs);
@@ -292,7 +322,6 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
     }
   }
 
-  const allRooms = rooms ?? roomPolygons(model);
   const found = allRooms.find((room) => pointInPolygon(room.polygon, pc));
   if (!found) {
     if (allRooms.length === 0) {
