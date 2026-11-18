@@ -1,4 +1,4 @@
-import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, constants, lstatSync, mkdirSync, openSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { McpError } from "./errors.ts";
@@ -12,6 +12,9 @@ import { HOME_DIR } from "./config.ts";
 export const PRIVATE_DIR_MODE = 0o700;
 /** Права файлов с приватным содержимым (план, сессия, бэкап, кэш каталога, PNG). */
 export const PRIVATE_FILE_MODE = 0o600;
+
+/** Флаг O_NOFOLLOW, если платформа его поддерживает (на Windows отсутствует — 0). */
+const O_NOFOLLOW = (constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
 
 /** Владелец пути — текущий пользователь (на платформах без uid — true). */
 export function ownedByCurrentUser(path: string): boolean {
@@ -112,7 +115,13 @@ export function writePrivateFile(path: string, data: string | Buffer): void {
   let fd: number | null = null;
   let created = false;
   try {
-    fd = fsWriteCalls.openSync(tmp, "wx", PRIVATE_FILE_MODE);
+    // Ревью 214 №3 (TOCTOU): O_NOFOLLOW|O_EXCL при создании tmp — подмена tmp
+    // на ссылку между randomBytes и open даёт ELOOP/EEXIST, а не запись по ссылке.
+    fd = fsWriteCalls.openSync(
+      tmp,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | O_NOFOLLOW,
+      PRIVATE_FILE_MODE,
+    );
     created = true;
     let offset = 0;
     while (offset < buf.length) {

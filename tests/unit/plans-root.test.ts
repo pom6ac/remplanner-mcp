@@ -6,7 +6,7 @@
 import "./helpers/tmp-home.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync, chmodSync, renameSync, linkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -231,4 +231,201 @@ test("plans-root: resolvePlanPath сам корень plans создаёт с 07
   resolvePlanPath("boot.plan");
   assert.ok(existsSync(PLANS_DIR));
   assert.equal(mode(PLANS_DIR), 0o700);
+});
+
+// ---------- ревью 214: major №1 и minor №2–№8 ----------
+
+// №1 (major): корень plans — symlink → отказ ДО любых побочных эффектов:
+// ни chmod, ни mkdir не выполняются, внешний каталог не меняется.
+test("plans-root: корень plans — symlink на внешний каталог → отказ, внешний каталог не изменён", async () => {
+  const client = await start();
+  const outsideDir = mkdtempSync(join(tmpdir(), "plans-root-sym-"));
+  const bak = PLANS_DIR + ".bak";
+  try {
+    writeFileSync(join(outsideDir, "keep.txt"), "keep");
+    chmodSync(outsideDir, 0o755);
+    mkdirSync(PLANS_DIR, { recursive: true });
+    renameSync(PLANS_DIR, bak);
+    symlinkSync(outsideDir, PLANS_DIR);
+    // (а) запрос с выходом за корень: отказ, chmod по ссылке не выполняется
+    const err = await callError(client, "project_export_plan", { path: "../y.plan" });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.match(err.message, /символическая ссылка/);
+    // (б) и обычное имя тоже отклонено: корень-ссылка не принимается вовсе
+    const err2 = await callError(client, "project_export_plan", { path: "x.plan" });
+    assert.equal(err2.code, "INVALID_ARGUMENT");
+    assert.equal(statSync(outsideDir).mode & 0o777, 0o755, "права внешнего каталога не изменились");
+    assert.deepEqual(readdirSync(outsideDir), ["keep.txt"], "содержимое внешнего каталога не изменилось");
+    assert.ok(!existsSync(join(outsideDir, "y.plan")), "файл не создан во внешнем каталоге");
+    assert.ok(!existsSync(join(outsideDir, "x.plan")), "файл не создан во внешнем каталоге");
+  } finally {
+    await client.close();
+    rmSync(PLANS_DIR, { force: true });
+    if (existsSync(bak)) renameSync(bak, PLANS_DIR);
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+test("plans-root: каталог состояния приложения (HOME) — symlink → отказ, цель не изменена", async () => {
+  const client = await start();
+  const outsideDir = mkdtempSync(join(tmpdir(), "plans-home-sym-"));
+  const bak = HOME_DIR + ".bak";
+  try {
+    writeFileSync(join(outsideDir, "keep.txt"), "keep");
+    chmodSync(outsideDir, 0o755);
+    renameSync(HOME_DIR, bak);
+    symlinkSync(outsideDir, HOME_DIR);
+    const err = await callError(client, "project_export_plan", { path: "x.plan" });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.match(err.message, /символическая ссылка/);
+    assert.equal(statSync(outsideDir).mode & 0o777, 0o755, "права внешнего каталога не изменились");
+    assert.deepEqual(readdirSync(outsideDir), ["keep.txt"], "внешний каталог не изменён");
+  } finally {
+    await client.close();
+    rmSync(HOME_DIR, { force: true });
+    if (existsSync(bak)) renameSync(bak, HOME_DIR);
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+// №2: соседний каталог с общим префиксом отклоняется лексическим слоем
+// (точное сообщение); при мутации «startsWith без разделителя + без realpath»
+// тест краснеет — путь уходит в plans-evil.
+test("plans-root: resolvePlanPath — соседний каталог plans-evil отклонён лексическим слоем", () => {
+  mkdirSync(join(HOME_DIR, "plans-evil"), { recursive: true });
+  try {
+    assert.throws(
+      () => resolvePlanPath(join(HOME_DIR, "plans-evil", "x.plan")),
+      (e: { code: string; message: string }) =>
+        e.code === "INVALID_ARGUMENT" && e.message.startsWith("путь выходит за корень plans ("),
+      "лексический слой (не realpath-слой) должен отклонить plans-evil",
+    );
+  } finally {
+    rmSync(join(HOME_DIR, "plans-evil"), { recursive: true, force: true });
+  }
+});
+
+// №5: имя, начинающееся с точек, внутри корня — не выход за корень
+test("plans-root: имя ..kitchen.plan внутри корня допустимо", async () => {
+  const client = await start();
+  try {
+    const res = resolvePlanPath("..kitchen.plan");
+    assert.equal(res.relative, "..kitchen.plan");
+    const out = parsed(await client.callTool({ name: "project_export_plan", arguments: { path: "..kitchen.plan" } }));
+    assert.equal(out["relative_path"], "..kitchen.plan");
+    assert.ok(existsSync(join(PLANS_DIR, "..kitchen.plan")));
+  } finally {
+    await client.close();
+    rmSync(join(PLANS_DIR, "..kitchen.plan"), { force: true });
+  }
+});
+
+// №6: расширение без учёта регистра (x.PLAN — принять), но имя без файла
+// сравнивается так же без учёта регистра (a/.PLAN — отклонить, как a/.plan)
+test("plans-root: регистр расширения — up.PLAN принимается, a/.PLAN отклоняется как имя без файла", async () => {
+  const client = await start();
+  try {
+    const out = parsed(await client.callTool({ name: "project_export_plan", arguments: { path: "up.PLAN" } }));
+    assert.equal(out["relative_path"], "up.PLAN");
+    assert.ok(existsSync(join(PLANS_DIR, "up.PLAN")));
+    const err = await callError(client, "project_export_plan", { path: "a/.PLAN" });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.match(err.message, /без имени файла/);
+  } finally {
+    await client.close();
+    rmSync(join(PLANS_DIR, "up.PLAN"), { force: true });
+  }
+});
+
+// №6: `~/x.plan` — отказ с подсказкой «относительно каталога plans», каталог `~` не создаётся
+test("plans-root: путь вида ~/… отклонён с подсказкой, каталог ~ не создан", async () => {
+  const client = await start();
+  try {
+    const err = await callError(client, "project_export_plan", { path: "~/x.plan" });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.match(err.message, /относительно каталога plans/);
+    assert.ok(!existsSync(join(PLANS_DIR, "~")), "каталог с именем ~ не создан");
+  } finally {
+    await client.close();
+  }
+});
+
+// №4: нулевой байт — явный INVALID_ARGUMENT, а не INTERNAL
+test("plans-root: нулевой байт в пути отклонён явно", () => {
+  assert.throws(
+    () => resolvePlanPath("x\u0000.plan"),
+    (e: { code: string; message: string }) => e.code === "INVALID_ARGUMENT" && /нулевой байт/.test(e.message),
+  );
+});
+
+// №4: ENAMETOOLONG и EEXIST — понятный INVALID_ARGUMENT, не INTERNAL
+test("plans-root: слишком длинное имя пути — INVALID_ARGUMENT, а не INTERNAL", async () => {
+  const client = await start();
+  try {
+    const err = await callError(client, "project_export_plan", { path: "a".repeat(300) + ".plan" });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.match(err.message, /слишком длинное/);
+  } finally {
+    await client.close();
+  }
+});
+
+test("plans-root: компонент пути — обычный файл (mkdir EEXIST) — INVALID_ARGUMENT, а не INTERNAL", async () => {
+  const client = await start();
+  try {
+    writeFileSync(join(PLANS_DIR, "f"), "x");
+    const err = await callError(client, "project_export_plan", { path: "f/x.plan" });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.match(err.message, /уже существует/);
+  } finally {
+    await client.close();
+    rmSync(join(PLANS_DIR, "f"), { force: true });
+  }
+});
+
+// №8: ошибка import показывает относительный путь целиком (с подкаталогом)
+test("plans-root: ошибка import для 2026/missing.plan показывает относительный путь с подкаталогом", async () => {
+  const client = await start();
+  try {
+    const err = await callError(client, "project_import_plan", { path: "2026/missing.plan", replace: true });
+    assert.equal(err.code, "NOT_FOUND");
+    assert.match(err.message, /2026\/missing\.plan/);
+  } finally {
+    await client.close();
+  }
+});
+
+// №7: жёсткая ссылка внутри plans на внешний файл — import отклоняется
+test("plans-root: import файла с несколькими жёсткими ссылками (nlink>1) отклонён", async () => {
+  const client = await start();
+  const outsideDir = mkdtempSync(join(tmpdir(), "plans-hl-"));
+  try {
+    writeFileSync(join(outsideDir, "secret.plan"), '{"walls":{}}');
+    linkSync(join(outsideDir, "secret.plan"), join(PLANS_DIR, "hl.plan"));
+    const err = await callError(client, "project_import_plan", { path: "hl.plan", replace: true });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.match(err.message, /жёстких ссылок/);
+  } finally {
+    await client.close();
+    rmSync(join(PLANS_DIR, "hl.plan"), { force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+// №3 (TOCTOU): подкаталог, подменённый на ссылку, не даёт записать файл наружу
+test("plans-root: подкаталог-ссылка после resolve — export отклонён, внешний каталог не изменён", async () => {
+  const client = await start();
+  const outsideDir = mkdtempSync(join(tmpdir(), "plans-toctou-"));
+  try {
+    resolvePlanPath("sub/x.plan");
+    chmodSync(outsideDir, 0o755);
+    symlinkSync(outsideDir, join(PLANS_DIR, "sub"));
+    const err = await callError(client, "project_export_plan", { path: "sub/x.plan" });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.deepEqual(readdirSync(outsideDir), [], "внешний каталог не изменён");
+  } finally {
+    await client.close();
+    rmSync(join(PLANS_DIR, "sub"), { force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
 });
