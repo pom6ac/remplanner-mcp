@@ -11,9 +11,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { McpError } from "../../src/errors.ts";
 import {
-  JournalWorkspace, recordingDeps, fixtureModel, addExtraWall,
-  recordOutcome, recordError, recordState, recordBackupFiles, journalSnapshot,
-  type SaveServer,
+  JournalWorkspace, recordingDeps, fixtureModel, addExtraWall, pinExtraWallId,
+  recordOutcome, recordError, recordState, recordBackupFiles, recordVerifiedState, journalSnapshot,
+  type RecordingOptions, type SaveServer,
 } from "./helpers/c2-save-journal.ts";
 
 const SNAPSHOT_DIR = join(import.meta.dirname, "snapshots");
@@ -32,9 +32,9 @@ function checkSnapshot(name: string, ws: JournalWorkspace): void {
   assert.equal(current, stored, `журнал вызовов save изменился (${name}) — рефакторинг не должен менять последовательность вызовов; переснятие — только осознанно`);
 }
 
-function newScenario(server: SaveServer): JournalWorkspace {
+function newScenario(server: SaveServer, opts: RecordingOptions = {}): JournalWorkspace {
   let ws: JournalWorkspace;
-  const { deps } = recordingDeps(server, {}, (e) => ws.record(e));
+  const { deps } = recordingDeps(server, opts, (e) => ws.record(e));
   ws = new JournalWorkspace(deps);
   return ws;
 }
@@ -165,4 +165,104 @@ test("c2s: журнал save без изменений (dirty=false) — та ж
   assert.equal(outcome.verified, true);
   assert.equal(ws.project!.dirty, false);
   checkSnapshot("unchanged", ws);
+});
+
+// --- 194-fix-c2s (ревью 193 №1/№2): адаптеры SaveHost закреплены наблюдаемым
+// состоянием после save — модель, roomSaveBase, кэш комнат (rooms()), dirty ---
+
+test("c2s: журнал save при уже открытом редакторе — чужой save_id принят без SAVE_CONFLICT, без повторного openEditor", async () => {
+  const server: SaveServer = { saveId: "s1", model: fixtureModel() };
+  const ws = newScenario(server);
+  await ws.open("207", "1");
+  addExtraWall(ws);
+  pinExtraWallId(ws, "extra1");
+  // редактор запущен до save (рендер/каталог): наш редактор легитимно продвигает
+  // save_id — свежий принимается как база, конфликт ловит только чужой
+  await ws.ensureEditor();
+  server.saveId = "s_other";
+  const outcome = await ws.save();
+  recordOutcome(ws, outcome);
+  recordBackupFiles(ws);
+  recordVerifiedState(ws);
+  assert.equal(outcome.verified, true);
+  assert.equal(ws.journal.filter((e) => e.op === "openEditor").length, 1, "повторного запуска редактора нет");
+  assert.equal(ws.project!.saveId, "s2", "save_id после записи — с сервера");
+  assert.equal(ws.project!.dirty, false);
+  checkSnapshot("editor-open-fresh-saveid", ws);
+});
+
+test("c2s: журнал verified с переименованием стены сервером — рабочая копия и база комнат взяты с сервера", async () => {
+  const server: SaveServer = { saveId: "s1", model: fixtureModel() };
+  let ws: JournalWorkspace;
+  // сервер при записи переименовал стену пользователя (сверка по осям проходит —
+  // verified): onVerified обязан заменить рабочую копию ответом сервера
+  const recording = recordingDeps(server, {
+    afterSave: (s) => {
+      const walls = s.model.walls as Record<string, { id: string; p1: { x: number; y: number } }>;
+      const extra = Object.keys(walls).find((id) => walls[id]!.p1.y === 600)!;
+      const w = walls[extra]!;
+      delete walls[extra];
+      w.id = "srv_renamed";
+      walls["srv_renamed"] = w;
+    },
+  }, (e) => ws.record(e));
+  ws = new JournalWorkspace(recording.deps);
+  await ws.open("208", "1");
+  addExtraWall(ws);
+  pinExtraWallId(ws, "extra1");
+  const outcome = await ws.save();
+  recordOutcome(ws, outcome);
+  recordBackupFiles(ws);
+  recordVerifiedState(ws);
+  assert.equal(outcome.verified, true);
+  assert.ok(Object.keys(ws.model.walls).includes("srv_renamed"), "рабочая копия заменена ответом сервера");
+  assert.ok(!Object.keys(ws.model.walls).includes("extra1"));
+  checkSnapshot("verified-server-renamed-wall", ws);
+});
+
+test("c2s: журнал normalize со списком комнат — кэш комнат обновлён, rooms() видит их после save", async () => {
+  const model = fixtureModel();
+  delete model.rooms2; // в канонической копии комнат нет — rooms() читает кэш нормализации
+  const server: SaveServer = { saveId: "s1", model };
+  const ws = newScenario(server, {
+    normalizeRooms: [{
+      id: "r_norm", name: "Гостиная", area: null, area_m2: 10.64, height: null,
+      polygon: [{ x: 10, y: 10 }, { x: 390, y: 10 }, { x: 390, y: 290 }, { x: 10, y: 290 }],
+    }],
+  });
+  await ws.open("209", "1");
+  addExtraWall(ws);
+  pinExtraWallId(ws, "extra1");
+  const outcome = await ws.save();
+  recordOutcome(ws, outcome);
+  recordBackupFiles(ws);
+  recordVerifiedState(ws);
+  assert.equal(outcome.verified, true);
+  assert.deepEqual(ws.rooms().map((r) => String(r.roomId)), ["r_norm"], "комнаты от normalize доступны через rooms()");
+  checkSnapshot("normalize-rooms-cache", ws);
+});
+
+test("c2s: журнал потери зоны комнаты при нормализации — сверка комнат от базы (roomSaveBase), NORMALIZATION_DROPPED", async () => {
+  const model = fixtureModel();
+  (model.rooms2!["r1"] as { zones?: unknown[] }).zones = [{ name: "Гостиная", is_micro_zone: false }];
+  const server: SaveServer = { saveId: "s1", model };
+  const ws = newScenario(server);
+  await ws.open("210", "1");
+  // пользователь убрал зону комнаты локально (без изменения стен): сверка до записи
+  // идёт от базы (модель с сервера), а не от рабочей копии — потеря зоны не «verified»
+  ws.apply("room_zone_remove", (m) => {
+    delete (m.rooms2 as Record<string, { zones?: unknown[] }>)["r1"]!.zones;
+  });
+  try {
+    await ws.save();
+    assert.fail("ожидался NORMALIZATION_DROPPED");
+  } catch (e) {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "NORMALIZATION_DROPPED");
+    recordError(ws, e);
+  }
+  // рабочая копия не заменена, dirty сохраняется, база комнат — с зоной с сервера
+  assert.equal(JSON.stringify(Object.keys(ws.model.rooms2 ?? {})), JSON.stringify(["r1"]));
+  recordVerifiedState(ws);
+  checkSnapshot("rooms-compare-from-base", ws);
 });

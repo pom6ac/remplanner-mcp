@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { BACKUPS_DIR } from "../../../src/config.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../../src/workspace.ts";
 import type { LoadedModel } from "../../../src/api.ts";
+import type { EditorRoom } from "../../../src/editor/adapter.ts";
 import type { Model, FixtureEnvelope } from "../../../src/model/types.ts";
 import { addWall } from "../../../src/model/walls.ts";
 
@@ -31,6 +32,8 @@ export type RecordingOptions = {
   failSave?: boolean;
   /** afterSave вызывается после каждой записи сервера (порча для verify mismatch). */
   afterSave?: (server: SaveServer, saveCount: number) => void;
+  /** Список комнат от редактора в результате normalize (norm.rooms, 194-fix-c2s). */
+  normalizeRooms?: EditorRoom[];
 };
 
 const COMPAT_NULL = {
@@ -102,7 +105,7 @@ export function recordingDeps(
       record({ op: "editor.normalize", model: counters });
       return {
         model: structuredClone(lastNormalized) as Record<string, unknown>,
-        rooms: [],
+        rooms: opts.normalizeRooms ?? [],
         before: counters,
         after: counters,
       };
@@ -149,6 +152,19 @@ export function addExtraWall(ws: JournalWorkspace): void {
   ws.apply("wall_add", (m) => addWall(m, { start: { x: 0, y: 6000 }, end: { x: 1000, y: 6000 } }));
 }
 
+/** Детерминированный id добавленной стены (addWall генерирует случайный id):
+ *  журналы 194-fix-c2s печатают id стен после save — снапшот обязан быть
+ *  детерминированным. Стена изолирована (без link-связей), перенос безопасен. */
+export function pinExtraWallId(ws: JournalWorkspace, id: string): void {
+  ws.apply("wall_pin_id", (m) => {
+    const wid = Object.keys(m.walls).find((k) => m.walls[k]!.p1.y === 600)!;
+    const w = m.walls[wid]!;
+    delete m.walls[wid];
+    w.id = id;
+    m.walls[id] = w;
+  });
+}
+
 /** Итог save в журнал: результат или код ошибки; содержимого модели нет. */
 export function recordOutcome(ws: JournalWorkspace, outcome: { save_id: string; save_id_before: string; backup_path: string; verified: boolean; rounds: number; will_delete: Record<string, number>; warnings: string[] }): void {
   ws.record({
@@ -185,6 +201,29 @@ export function recordState(ws: JournalWorkspace): void {
     save_id: ws.project?.saveId ?? null,
     walls: Object.keys(ws.model.walls).length,
     history_steps: ws.historyInfo().steps,
+  });
+}
+
+/**
+ * Наблюдаемое состояние workspace после verified (194-fix-c2s): рабочая копия
+ * заменена ответом сервера, база сверки комнат обновлена, кэш комнат (norm.rooms)
+ * доступен через rooms(), dirty сброшен. Печатаются только идентификаторы,
+ * не содержимое моделей. roomSaveBase/roomsCache — приватные поля Workspace,
+ * читаются приведением типа (журнальный тест, не production-код).
+ */
+export function recordVerifiedState(ws: JournalWorkspace): void {
+  const internals = ws as unknown as {
+    roomSaveBase: { rooms: Record<string, unknown>; walls: Record<string, unknown> } | null;
+  };
+  ws.record({
+    op: "workspace.after_verified",
+    dirty: ws.project?.dirty ?? null,
+    save_id: ws.project?.saveId ?? null,
+    model_wall_ids: Object.keys(ws.model.walls).sort(),
+    model_room_keys: Object.keys(ws.model.rooms2 ?? {}).sort(),
+    rooms_list_ids: ws.rooms().map((r) => String(r.roomId)).sort(),
+    room_save_base_room_keys: Object.keys(internals.roomSaveBase?.rooms ?? {}).sort(),
+    room_save_base_wall_ids: Object.keys(internals.roomSaveBase?.walls ?? {}).sort(),
   });
 }
 
