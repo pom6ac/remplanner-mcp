@@ -113,6 +113,15 @@ export const CLIMATE_PIPE_CONNECTABLE: Record<ClimatePipeKind, Set<string>> = {
 /** multi-предметы труб климата (is_multi менеджеров): ссылка-МАССИВ id труб. */
 export const CLIMATE_PIPE_MULTI_NAMES = new Set(["radiator_collector", "ext_manifold_box", "int_manifold_box", "ventilation_system"]);
 
+/**
+ * Сечение рёбер матрицы воздуховодов (ревью 251 №2): редактор пишет в каждое
+ * ребро сечение из defs.ventilation_pipe — {length, width: 20.4, type "flat",
+ * height: 6} (эталон ui-ref-climate2-vent-pipe-fan, проба 250-climate2-connect).
+ * MCP воспроизводит формат, чтобы воздуховод из MCP не отличался от нарисованного
+ * в UI и потеря сечения у воздуховода редактора ловилась сверкой.
+ */
+export const VENT_PIPE_EDGE_SECTION = { width: 20.4, type: "flat", height: 6 } as const;
+
 /** Все multi-предметы труб (вода + климат): массив vs скаляр в props. */
 export function isMultiPipeItem(itemName: string): boolean {
   return PIPE_MULTI_SPOTS.has(itemName) || CLIMATE_PIPE_MULTI_NAMES.has(itemName);
@@ -499,17 +508,21 @@ function chainVertices(model: Model, kind: PipeKind | ClimatePipeKind, path: Pip
 
 function pipeCandidate(id: string, kind: PipeKind | ClimatePipeKind, vertexes: GasLineVertex[]): Pipe {
   const n = vertexes.length;
-  const matrix: ({ length: number } | null)[][] = Array.from({ length: n }, () => Array.from({ length: n }, () => null));
-  for (let i = 0; i + 1 < n; i++) {
-    matrix[i]![i + 1] = { length: 1 };
-    matrix[i + 1]![i] = { length: 1 };
-  }
-  const items: Record<string, string> = {};
-  for (const v of vertexes) items[v.id] = v.type;
   const isClimate = kind in CLIMATE_PIPE_KINDS;
   const type = isClimate
     ? CLIMATE_PIPE_KINDS[kind as ClimatePipeKind]!.type
     : PIPE_TYPE_BY_KIND[kind as PipeKind]!;
+  // ревью 251 №2: у воздуховодов ребро несёт сечение из defs.ventilation_pipe
+  const edge: { length: number } & Record<string, unknown> = type === "ventpipe_out" || type === "ventpipe_in"
+    ? { length: 1, ...VENT_PIPE_EDGE_SECTION }
+    : { length: 1 };
+  const matrix: ({ length: number } | null)[][] = Array.from({ length: n }, () => Array.from({ length: n }, () => null));
+  for (let i = 0; i + 1 < n; i++) {
+    matrix[i]![i + 1] = { ...edge };
+    matrix[i + 1]![i] = { ...edge };
+  }
+  const items: Record<string, string> = {};
+  for (const v of vertexes) items[v.id] = v.type;
   const pipe: Pipe = {
     id,
     matrix,

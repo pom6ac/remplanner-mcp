@@ -221,11 +221,22 @@ export function gasLineGraphMismatches(
         if ((e0 !== null) !== (e !== null)) {
           out.push(`${id}: ребро ${i}–${j} ${e0 !== null ? "потеряно" : "добавлено"} на сервере (matrix изменилась)`);
         } else if (e0 !== null && e !== null) {
-          const l0 = (e0 as { length?: number }).length;
-          const l = (e as { length?: number }).length;
-          // matrix length — константа-заглушка {length:1} формата редактора (реальная
-          // длина только в line.length), сверяется как раньше — строго
-          if (!near(l, l0, GAS_LENGTH_TOL_M)) out.push(`${id}: длина ребра ${i}–${j} изменилась (на сервере ${l}; ожидалось ${l0})`);
+          // ревью 251 №2: payload ребра сверяется ЦЕЛИКОМ, по ключам обеих сторон:
+          // у воздуховодов ребро несёт сечение из defs.ventilation_pipe
+          // ({length, width, type, height}) — потеря/искажение сечения у
+          // воздуховода редактора раньше проходило сверку (сравнивался только length).
+          const samePayload = deepEqualTol(e0, e, GAS_LENGTH_TOL_M) && deepEqualTol(e, e0, GAS_LENGTH_TOL_M);
+          if (!samePayload) {
+            const l0 = (e0 as { length?: number }).length;
+            const l = (e as { length?: number }).length;
+            if (!near(l, l0, GAS_LENGTH_TOL_M)) {
+              // matrix length — константа-заглушка {length:1} формата редактора (реальная
+              // длина только в line.length), сверяется как раньше — строго
+              out.push(`${id}: длина ребра ${i}–${j} изменилась (на сервере ${l}; ожидалось ${l0})`);
+            } else {
+              out.push(`${id}: payload ребра ${i}–${j} изменился (на сервере ${JSON.stringify(e)}; ожидалось ${JSON.stringify(e0)})`);
+            }
+          }
         }
       }
     }

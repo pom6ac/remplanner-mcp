@@ -514,10 +514,34 @@ test("250: эталон ui-ref-climate2-vent-pipe-fan — сечение рёб�
   const { m, fan } = scenario();
   const pipe = addPipe(m, { kind: "vent_out", path: [{ itemId: fan.id }, { x: 2088.6, y: 1100 }] });
   const map = { id1: fan.id, id2: pipe.id, id3: pipe.vertexes[1]!.id };
+  // ревью 251 №2: MCP пишет сечение в рёбра матрицы воздуховода, как редактор
+  // (defs.ventilation_pipe: {length, width, type "flat", height})
+  const mcpEdge = ((m.pipes_ventilation as Record<string, Pipe>)[pipe.id]!.matrix as Array<Array<Record<string, unknown> | null>>)[0]![1]!;
+  assert.deepEqual(mcpEdge, { length: 1, width: 20.4, type: "flat", height: 6 }, "ребро воздуховода MCP несёт сечение из defs.ventilation_pipe");
   const expected = { warm_floors: structuredClone(m.warm_floors ?? {}) as never, pipes_ventilation: { [pipe.id]: stripPp(substitute(ref, map) as Record<string, unknown>) } };
   const itemsExpected = { [fan.id]: substitute(props, map) as Record<string, unknown> };
   assert.deepEqual(climateGraphMismatches(expected as never, m as never, { mode: "save", itemsExpected: itemsExpected as never, itemsGot: m.items as never }), []);
   assert.deepEqual(climateGraphMismatches({ pipes_ventilation: structuredClone((m as { pipes_ventilation?: Record<string, Pipe> }).pipes_ventilation ?? {}) } as never, { pipes_ventilation: { [pipe.id]: substitute(ref, map) } } as never, { mode: "save", itemsExpected: structuredClone(m.items) as never, itemsGot: { [fan.id]: substitute(props, map) } as never }), []);
+});
+
+test("ревью 251 №2: сервер потерял сечение ребра воздуховода → расхождение (сверка payload ребра целиком)", () => {
+  const fx = loadFixture("vent-pipe-fan");
+  const ref = structuredClone(fx.model_object!) as Record<string, unknown>;
+  const props = fx.item_props!;
+  const { m, fan } = scenario();
+  const pipe = addPipe(m, { kind: "vent_out", path: [{ itemId: fan.id }, { x: 2088.6, y: 1100 }] });
+  const map = { id1: fan.id, id2: pipe.id, id3: pipe.vertexes[1]!.id };
+  // сервер (редактор) отдал ребро без сечения — раньше сверка видела только length
+  const got = structuredClone(substitute(ref, map)) as { matrix: Array<Array<Record<string, unknown> | null>> };
+  got.matrix[0]![1] = { length: 1 };
+  got.matrix[1]![0] = { length: 1 };
+  const mism = climateGraphMismatches(
+    { pipes_ventilation: { [pipe.id]: structuredClone((m as { pipes_ventilation?: Record<string, Pipe> }).pipes_ventilation ?? {})[pipe.id]! } } as never,
+    { pipes_ventilation: { [pipe.id]: stripPp(got) } } as never,
+    { mode: "save", itemsExpected: structuredClone(m.items) as never, itemsGot: { [fan.id]: substitute(props, map) } as never },
+  );
+  assert.notEqual(mism.length, 0, "потеря сечения ребра — расхождение");
+  assert.ok(mism.some((s) => s.includes("ребро") || s.includes("payload")), JSON.stringify(mism));
 });
 
 test("250: эталоны климата ч.2 без внутренних ID сайта и без секретов", () => {
