@@ -21,6 +21,7 @@ import { addLightLine, updateLightLine, deleteLightLine } from "../../src/model/
 import { compactModel } from "../../src/model/compact.ts";
 import { clearEntityCollections, replaceEntityCollections, MODEL_ENTITY_COLLECTIONS } from "../../src/model/collections.ts";
 import { elecCableConnectionMismatches } from "../../src/verify/elec.ts";
+import { resolveCableLamp } from "../../src/dto/structures.ts";
 import { toToolEntry, type ToolEntry } from "../../src/catalog.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
@@ -350,6 +351,19 @@ test("239: cable_delete снимает props.cables у линии; deleteLightLi
   assert.equal(line.props?.cables, undefined);
   assert.equal(cablesReferencingLine(m, strip.id).length, 0);
   assert.doesNotThrow(() => deleteLightLine(m, "led", strip.id));
+});
+
+test("239: resolveCableLamp — предмет по id/метке, световая линия по LS/SL/LL и id сайта", () => {
+  const { m, sw } = stripScenario();
+  const strip = addLightLine(m, { kind: "led", path: [{ x: 1000, y: 800 }, { x: 3000, y: 800 }] });
+  const label = `LS${Object.keys(m.led_strips ?? {}).length}`; // единственная лента — LS1
+  assert.equal(resolveCableLamp(m, strip.id), strip.id);
+  assert.equal(resolveCableLamp(m, label), strip.id);
+  const swItem = m.items[sw.id] as unknown as Record<string, unknown>;
+  assert.equal(resolveCableLamp(m, sw.id), sw.id);
+  assert.equal(resolveCableLamp(m, "I1"), Object.values(m.items)[0]!.id);
+  void swItem;
+  assert.throws(() => resolveCableLamp(m, "no_such"), (e: unknown) => (e as { code?: string }).code === "NOT_FOUND");
 });
 
 // ---------- mock save ----------

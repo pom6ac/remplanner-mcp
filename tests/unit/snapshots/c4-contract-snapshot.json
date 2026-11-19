@@ -173,7 +173,7 @@
   },
   {
    "name": "cable_add",
-   "description": "Соединить выключатель со светильником (лист «Выключатели», инструмент «Соединительная линия», PRO в UI): switch_item_id — предмет-группа с выключателем (light_switch*, item_add), lamp_item_id — светильник (люстры, бра, светильники группы lights, вентилятор fan; трековые шины/ленты — следующий этап). switch_sub_id — id под-розетки-выключателя внутри группы (model_get items[].socket_group[].id); по умолчанию первая под-розетка со свободным ключом. path — промежуточные узлы (мм, опционально). У выключателя ограничение по клавишам (light_switch — 1 связь, double — 2, triple — 3); у светильника одно подключение. Коллекция cables — отдельная сущность; обратные ссылки на предметах ставятся автоматически (cables.cable_id). Ответ — компактная сущность CB: switch_item_id (группа), switch_sub_id (под-розетка) и lamp_item_id раздельно. После добавления вызывайте model_validate и project_save.",
+   "description": "Соединить выключатель со светильником или световой линией/шиной (лист «Выключатели», инструмент «Соединительная линия», PRO в UI): switch_item_id — предмет-группа с выключателем (light_switch*, item_add), lamp_item_id — светильник (люстры, бра, светильники группы lights, вентилятор fan) или световая линия led_strips/stripes_light/line_strips (led_strip, recessed_strip, surface_stripe, pendent_strip, line_light — метка LS/SL/LL<n> или id сайта). switch_sub_id — id под-розетки-выключателя внутри группы (model_get items[].socket_group[].id); по умолчанию первая под-розетка со свободным ключом. path — промежуточные узлы (мм, опционально). У выключателя ограничение по клавишам (light_switch — 1 связь, double — 2, triple — 3); у светильника и линии одно подключение. Коллекция cables — отдельная сущность; обратные ссылки на предметах и линиях ставятся автоматически (cables.cable_id). Ответ — компактная сущность CB: switch_item_id (группа), switch_sub_id (под-розетка) и lamp_item_id раздельно. После добавления вызывайте model_validate и project_save.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -189,7 +189,7 @@
      "lamp_item_id": {
       "type": "string",
       "minLength": 1,
-      "description": "светильник (I<n> из model_get или id сайта)"
+      "description": "светильник (I<n> из model_get или id сайта) или световая линия (LS/SL/LL<n> из model_get или id сайта)"
      },
      "path": {
       "description": "промежуточные узлы, мм; не более 32",
