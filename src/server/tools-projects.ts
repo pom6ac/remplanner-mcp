@@ -87,11 +87,28 @@ function planFileError(e: unknown, p: string, kind: "import" | "export" = "impor
 }
 
 /**
+ * Ревью 222 №1 (регрессия против 633b9bb): realpath всего кандидата разрешал
+ * ВСЕ символические ссылки существующего префикса — принимались внешняя ссылка
+ * внутрь plans и внутренняя ссылка, заданная реальным путём. Теперь ссылки
+ * разрешаются только в префиксе пути ДО корня: последние k компонентов
+ * кандидата берутся лексически, где realpathSync(префикс без них) === realRoot.
+ * Такого префикса нет — отказ «выходит за корень» (внешняя ссылка внутрь корня).
+ * Хвост внутри корня проверяет прежний цикл lstat (symlink в хвосте — отказ,
+ * как в #33), а операция идёт по join(realRoot, rel), а не по пути через
+ * внешнюю ссылку. Позитив №15 (абсолютный путь через реальную цель
+ * symlink-каталога состояния) и системные псевдонимы префикса
+ * (/tmp → /private/tmp) продолжают работать.
+ */
+const OUTSIDE_ROOT_MSG = (shown: string): string =>
+  `путь выходит за корень plans (.. и пути вне корня запрещены): ${shown}`;
+
+/**
  * B3 (аудит 65, решение пользователя): политика корневого каталога import/export.
  * `path` инструментов — путь ОТНОСИТЕЛЬНО корня plans (PLANS_DIR, рядом с
  * backups/renders). Абсолютный путь принимается, только если после resolve он
  * внутри корня. Отказ (INVALID_ARGUMENT) при: выходе за корень (`..`, абсолютный
- * путь вне корня), symlink в любом существующем компоненте пути внутри корня,
+ * путь вне корня, внешняя ссылка внутрь корня — ревью 222 №1), symlink в любом
+ * существующем компоненте пути внутри корня,
  * на сам файл или на корень plans (отказ до любых mkdir/chmod — ревью 214 №1;
  * каталог состояния приложения symlink-ом быть может — ревью 216 №11),
  * расширении не `.plan`, пустом имени, нулевом
@@ -101,7 +118,7 @@ function planFileError(e: unknown, p: string, kind: "import" | "export" = "impor
  * от его реального пути (ревью 216 №11).
  */
 export type ResolvedPlanPath = {
-  /** абсолютный путь внутри корня plans (после resolve) */
+  /** абсолютный путь внутри реального корня plans: join(realRoot, relative) */
   absolute: string;
   /** путь относительно корня plans, как его задал пользователь (нормализован) */
   relative: string;
@@ -172,19 +189,75 @@ export function resolvePlanPath(input: string): ResolvedPlanPath {
     realRoot = realpathSync(PLANS_DIR);
   } catch (e) {
     if (e instanceof McpError) throw e;
-    throw planFileError(e, input);
+    // ревью 218 №16: причина на стадии подготовки — в самом корне plans, а не в
+    // запрошенном файле; единый текст без имени пути пользователя (и без
+    // абсолютного пути корня)
+    const code = (e as NodeJS.ErrnoException).code;
+    throw new McpError("INVALID_ARGUMENT", `каталог plans недоступен (${code ?? "ошибка файловой системы"})`);
   }
   // resolve принимает и относительный (к корню), и абсолютный вход;
   // абсолютный вне корня сразу даёт rel с ".."
   const candidate = resolve(PLANS_DIR, input);
-  // ревью 214 №5: containment через relative с разделителем (см. containsInside)
-  if (!containsInside(PLANS_DIR, candidate)) {
-    throw new McpError("INVALID_ARGUMENT", `путь выходит за корень plans (.. и пути вне корня запрещены): ${shown}`);
+  // ревью 214 №5: containment через relative с разделителем (см. containsInside).
+  // Ревью 218 №15: если каталог состояния — symlink, абсолютный путь, заданный
+  // через реальную цель (realpath(HOME)/plans/…), указывает на тот же каталог —
+  // принимаем и по реальному корню, иначе ложный отказ «выходит за корень».
+  // Ревью 222 №1: ссылки за пределами корня разрешает подъём по префиксу
+  // (см. OUTSIDE_ROOT_MSG), внутри корня ссылок быть не должно — lstat ниже.
+  // Ревью 226 №1: совпадающих префиксов может быть несколько (ссылка внутри
+  // корня на сам корень, plans/sub/back → plans); берём САМЫЙ КОРОТКИЙ —
+  // тогда ссылка на сам корень остаётся в хвосте и ловится циклом lstat,
+  // как на 633b9bb
+  const insideLexical = containsInside(PLANS_DIR, candidate);
+  let rel: string;
+  let absolute: string;
+  if (insideLexical) {
+    rel = relative(PLANS_DIR, candidate);
+    absolute = candidate;
+  } else {
+    // ревью 222 №1: подъём по префиксу кандидата — ссылки разрешаются только
+    // ДО корня; хвост остаётся лексическим и проверяется циклом lstat ниже
+    let matchTail: string[] | undefined;
+    let tail: string[] = [];
+    let prefix = candidate;
+    for (;;) {
+      let real: string | undefined;
+      try {
+        real = realpathSync(prefix);
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        // ревью 222 №2: циклическая ссылка (ELOOP) и прочие ошибки ФС на
+        // существующем префиксе — понятный отказ, а не INTERNAL (сырое
+        // исключение уносило абсолютный путь в stderr сервера)
+        if (code !== "ENOENT" && code !== "ENOTDIR") {
+          throw new McpError("INVALID_ARGUMENT", OUTSIDE_ROOT_MSG(shown));
+        }
+      }
+      if (real !== undefined && real === realRoot) {
+        // совпадение запоминаем, подъём продолжается: более короткий (верхний)
+        // префикс оставит в хвосте больше компонентов — включая ссылки на сам
+        // корень — для цикла lstat
+        matchTail = [...tail];
+      }
+      const parent = dirname(prefix);
+      if (parent === prefix) {
+        // корень ФС: совпадений не было — путь вне корня; иначе берём хвост
+        // самого короткого совпадающего префикса
+        if (matchTail === undefined) {
+          throw new McpError("INVALID_ARGUMENT", OUTSIDE_ROOT_MSG(shown));
+        }
+        tail = matchTail;
+        break;
+      }
+      tail.push(basename(prefix));
+      prefix = parent;
+    }
+    rel = join(...tail.reverse());
+    absolute = join(realRoot, rel);
   }
-  const rel = relative(PLANS_DIR, candidate);
   // symlink в любом существующем компоненте пути (от корня до файла) — отказ;
   // несуществующий хвост пропускаем (его создаст export), ENOTDIR — как ENOENT
-  let deepest = PLANS_DIR;
+  let deepest = insideLexical ? PLANS_DIR : realRoot;
   for (const part of rel.split(sep)) {
     const cur = join(deepest, part);
     let st;
@@ -212,25 +285,49 @@ export function resolvePlanPath(input: string): ResolvedPlanPath {
   if (realDeepest !== realRoot && !containsInside(realRoot, realDeepest)) {
     throw new McpError("INVALID_ARGUMENT", `реальный путь выходит за корень plans: ${shown}`);
   }
-  return { absolute: candidate, relative: rel, realRoot };
+  return { absolute, relative: rel, realRoot };
 }
+
+/**
+ * Точка инъекции для тестов TOCTOU-обработчиков (ревью 218 №13): ESM-namespace
+ * node:fs не патчится, тесты подменяют realpathSync здесь — подмена каталога
+ * выполняется ровно между resolvePlanPath и проверкой в обработчике. Продовый
+ * код поле не трогает; по умолчанию — системная функция.
+ */
+export const fsCheckCalls: { realpathSync: typeof realpathSync } = { realpathSync };
 
 /**
  * Ревью 214 №3 (TOCTOU): между resolvePlanPath и операцией локальный процесс того
  * же пользователя мог подменить подкаталог на ссылку. Повторная проверка —
  * realpath каталога назначения всё ещё внутри реального корня. Отсутствующий
- * каталог назначения пропускается: его создаст ensurePrivateDir внутри корня.
+ * каталог назначения не пропускается (ревью 218 №14): проверяется realpath
+ * ближайшего существующего предка — иначе export успел бы создать подкаталог
+ * снаружи по подменённой ссылке (ensurePrivateDir идёт до второй проверки),
+ * и снаружи оставался бы пустой каталог. Исчезновение самого корня (ENOENT на
+ * realRoot) — отказ (ревью 222 №4): проверка поднимается к ближайшему
+ * существующему предку, а его realpath уже вне корня — ответ «реальный путь
+ * выходит за корень plans». Поведение fail-closed: пересоздание корня
+ * посредине операции не допускается, операцию нужно повторить.
  */
 function assertDirStillInside(res: ResolvedPlanPath): void {
-  let real: string;
-  try {
-    real = realpathSync(dirname(res.absolute));
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw planFileError(e, res.relative);
-  }
-  if (real !== res.realRoot && !containsInside(res.realRoot, real)) {
-    throw new McpError("INVALID_ARGUMENT", `реальный путь выходит за корень plans: ${res.relative}`);
+  let probe = dirname(res.absolute);
+  for (;;) {
+    let real: string;
+    try {
+      real = fsCheckCalls.realpathSync(probe);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT" && probe !== res.realRoot) {
+        const parent = dirname(probe);
+        if (parent === probe) throw planFileError(e, res.relative);
+        probe = parent;
+        continue;
+      }
+      throw planFileError(e, res.relative);
+    }
+    if (real !== res.realRoot && !containsInside(res.realRoot, real)) {
+      throw new McpError("INVALID_ARGUMENT", `реальный путь выходит за корень plans: ${res.relative}`);
+    }
+    return;
   }
 }
 // ревью 216 №10: экспорт для тестов TOCTOU-слоя (подмена между resolve и операцией)

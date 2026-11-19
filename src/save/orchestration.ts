@@ -668,9 +668,11 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         hint: "на сервере версия с расхождениями; рабочая копия не изменена (её копия в backup_path); повторите project_save",
         details: {
           // server_save_id — диагностическое поле: какая запись сейчас на сервере
-          // по GET-сверке (может быть уже чужой, см. выше про гонку)
+          // по GET-сверке (может быть уже чужой, см. выше про гонку). Ключ в
+          // ответе есть всегда: если GET не вернул save_id — null, а не пропавшее
+          // поле (ревью 202 nit №2)
           backup_path: backupPath,
-          server_save_id: after.save_id,
+          server_save_id: after.save_id ?? null,
           expected_walls: expected.walls, got_walls: Object.keys(wallsAfter).length,
           coverage_before_mm: Math.round(expected.coverage * 10), coverage_after_mm: Math.round(wallAxisCoverageCm(wallsAfter as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>) * 10),
           axis_segments_before: expected.segments.length, axis_segments_after: segmentsAfter.length,

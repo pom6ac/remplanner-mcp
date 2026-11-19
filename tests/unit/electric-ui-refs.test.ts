@@ -178,6 +178,41 @@ test("ревью 209 №3: выключатель на вогнутой стен
   assert.deepEqual(sub.center_prs, { x: 293, y: 83 });
 });
 
+// ---------- ревью 211 №4: ветки wallInwardNormal на реальной фикстуре ----------
+// Значения независимые: под-элемент лежит в 17 см от оси стены на стороне pc
+// (7 см от лица стены + 10 полутолщина). (а) ловит мутацию «якорь пробы —
+// середина стены»: у w5 середина (300,0) лежит в Т-узле с перегородкой w6,
+// проба там выбирает коридор, а предмет стоит в комнате ниже. (б) ловит
+// мутацию «запасная ветка (обе пробы или ни одной) всегда nl»: у перегородки
+// w6 пробы по обе стороны попадают в разные комнаты → сторона pc.
+
+function corridorFixtureModel(): Model {
+  const env = JSON.parse(readFileSync(join(here, "../fixtures/editor-corridor-3rooms.json"), "utf8")) as { model: Model };
+  return structuredClone(env.model);
+}
+
+test("ревью 211 №4а: выключатель на w5 у Т-узла с перегородкой — якорь пробы = проекция pc (center 17,−17), не середина стены", () => {
+  const m = corridorFixtureModel();
+  const sw = addItemByName(m, "light_switch", { againstWall: { wallId: "w5", offsetMm: 0, from: "start" } });
+  // pc: вдоль 0 + width/2 = 7 от p1 (10,0) → x=17; внутрь комнаты _uwwgk:
+  // грань y=−10, pc на 9 см → y=−19
+  assert.deepEqual(sw.pc, { x: 17, y: -19 });
+  assert.equal(sw.id_room, "_uwwgk");
+  const sub = (sw.socket_group as Array<{ center: { x: number; y: number } }>)[0]!;
+  // 17 см от оси на стороне pc; мутация «якорь = середина стены» даёт (17,−21)
+  assert.deepEqual(sub.center, { x: 17, y: -17 });
+});
+
+test("ревью 211 №4б: выключатель на перегородке w6 — запасная ветка (обе пробы в разных комнатах) берёт сторону pc, center (283,−283)", () => {
+  const m = corridorFixtureModel();
+  const sw = addItemByName(m, "light_switch", { againstWall: { wallId: "w6", offsetMm: 0, from: "start" } });
+  assert.equal(sw.id_room, "_uwwgk");
+  const sub = (sw.socket_group as Array<{ center: { x: number; y: number } }>)[0]!;
+  // вдоль: −290 + 7 = −283; поперёк: грань x=290, center на 7 см в сторону pc
+  // (283); мутация «запасная ветка всегда nl» даёт (279,−283)
+  assert.deepEqual(sub.center, { x: 283, y: -283 });
+});
+
 test("88: item_add socket_power/socket_380 — самостоятельные предметы, over_floor {value, display:true} без vd", () => {
   const m = baseModel();
   for (const name of STANDALONE_SOCKETS) {
