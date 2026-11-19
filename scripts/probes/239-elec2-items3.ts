@@ -15,6 +15,8 @@ if (process.argv[2] !== "run") {
 
 const OBJECT_ID = process.env.RP_OID;
 const PLAN_ID = process.env.RP_PLAN;
+// ревью 241 №11: без env ID — отказ до запуска браузера (URL и loadModel не получают undefined)
+if (!OBJECT_ID || !PLAN_ID) { console.error("нужны RP_OID и RP_PLAN"); process.exit(1); }
 const OUT = ".orca-reports/phase2-ui-refs";
 const session = loadSession(STATE_PATH);
 const shell = process.env.HOME + "/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell";
