@@ -951,7 +951,7 @@
   },
   {
    "name": "finish_ceiling_remove",
-   "description": "Снять покрытие потолка комнаты (инструмент ceiling_remove).",
+   "description": "Снять покрытие потолка комнаты (инструмент ceiling_remove). При закарнизных нишах — отказ (сначала finish_ceiling_niche_remove): ниши не стираются молча.",
    "inputSchema": {
     "type": "object",
     "properties": {

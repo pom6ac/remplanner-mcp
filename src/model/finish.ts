@@ -595,14 +595,26 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
   return { id: ceilings[0]!.id as string };
 }
 
-/** Снять покрытие потолка комнаты. */
+/** Снять покрытие потолка комнаты. При закарнизных нишах — отказ с подсказкой
+ *  finish_ceiling_niche_remove (по стандарту UI, как в setCeilingFinish):
+ *  молчаливо стирать ниши нельзя (ревью 248 A). */
 export function removeCeilingFinish(model: Model, roomRef: string): void {
   const { room } = resolveRoom(model, roomRef);
+  const ceilings = Array.isArray(room.ceilings) ? room.ceilings : [];
+  const prev = ceilings[0] as Record<string, unknown> | undefined;
+  const prevNiches = prev && Array.isArray(prev["niches"]) ? prev["niches"] as Array<Record<string, unknown>> : [];
+  const hasNiches = prevNiches.some((n) => (n as { exist?: unknown } | undefined)?.exist === true);
+  if (hasNiches) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `у комнаты ${roomRef} есть закарнизные ниши — сначала finish_ceiling_niche_remove (в UI ниша снимается до снятия потолка)`,
+    );
+  }
   const polygon = room.polygon ?? room.points ?? [];
-  const ceilings = Array.isArray(room.ceilings) ? [...room.ceilings] : [];
-  while (ceilings.length < 1) ceilings.push({ exist: false });
-  ceilings[0] = { exist: false, polygon: polygon.map((p) => ({ x: r2(p.x), y: r2(p.y) })) };
-  room.ceilings = ceilings;
+  const list = Array.isArray(room.ceilings) ? [...room.ceilings] : [];
+  while (list.length < 1) list.push({ exist: false });
+  list[0] = { exist: false, polygon: polygon.map((p) => ({ x: r2(p.x), y: r2(p.y) })) };
+  room.ceilings = list;
 }
 
 // ---------- семантическая сверка ----------
@@ -1266,10 +1278,14 @@ export function finishCompare(
       // пола в UI) не блокирует — дефицит не вырос; пол, следующий за сузившейся
       // комнатой при переносе стены, тоже. Без процентных порогов: абсолютный
       // допуск на численный шум вершин — периметр комнаты × COORD_TOL.
+      // Полигон пола у got пропал (cover цел) — это и есть потеря, не пропуск
+      // проверки (ревью 248 C).
       const expFloorPoly = ((room.floors as Array<Record<string, unknown>> | undefined) ?? [])[0]?.["polygon"] as Point[] | undefined;
       if (expFloorPoly && expFloorPoly.length >= 3) {
         const gotFloorPoly = ((match.floors as Array<Record<string, unknown>> | undefined) ?? [])[0]?.["polygon"] as Point[] | undefined;
-        if (gotFloorPoly && gotFloorPoly.length >= 3) {
+        if (!gotFloorPoly || gotFloorPoly.length < 3) {
+          problems.push(`room ${rid}: потерян полигон пола`);
+        } else {
           const expRoomPoly = roomPolygon(room) ?? [];
           const gotRoomPoly = roomPolygon(match) ?? [];
           /** Незакрытая площадь внутри комнаты: комната минус (пол ∩ комната). */

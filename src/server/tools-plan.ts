@@ -1518,7 +1518,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     finish_ceiling_remove: tool(
-      "Снять покрытие потолка комнаты (инструмент ceiling_remove).",
+      "Снять покрытие потолка комнаты (инструмент ceiling_remove). При закарнизных нишах — отказ " +
+        "(сначала finish_ceiling_niche_remove): ниши не стираются молча.",
       { room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты") },
       async (a) => {
         const ws = wsOf();

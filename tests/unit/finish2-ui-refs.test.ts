@@ -10,7 +10,7 @@ import {
   FLOOR_MOLDING_TYPES, CEILING_MOLDING_TYPE, FINISH_GEOMETRY,
   setFloorMolding, removeFloorMolding, setCeilingMolding, removeCeilingMolding,
   addCeilingNiche, removeCeilingNiche, setWallFinish, removeWallFinish,
-  setFloorFinish, setCeilingFinish, finishMismatches, finishList, finishSignature,
+  setFloorFinish, setCeilingFinish, removeCeilingFinish, finishMismatches, finishList, finishSignature,
 } from "../../src/model/finish.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
@@ -351,6 +351,19 @@ test("246 №2: finish_ceiling_set на краску/побелку с ниша�
   assert.equal(JSON.stringify(roomsOf(m)[room]!["ceilings"]), before, "ниши не тронуты (атомарно)");
 });
 
+test("248 A: finish_ceiling_remove при нишах — отказ с подсказкой finish_ceiling_niche_remove, ниши целы", () => {
+  const { m, room, wallId } = modelWithRefRoom();
+  setCeilingFinish(m, room, "gypsum_ceiling", {});
+  addCeilingNiche(m, room, wallId);
+  const before = JSON.stringify(roomsOf(m)[room]!["ceilings"]);
+  assert.throws(() => removeCeilingFinish(m, room), /finish_ceiling_niche_remove/, "снятие потолка с нишами — отказ с подсказкой");
+  assert.equal(JSON.stringify(roomsOf(m)[room]!["ceilings"]), before, "ниши и потолок не тронуты (атомарно)");
+  // без ниш снятие работает как раньше
+  removeCeilingNiche(m, room, wallId);
+  removeCeilingFinish(m, room);
+  assert.equal(((roomsOf(m)[room]!["ceilings"] as Array<Record<string, unknown>>)[0]!)["exist"], false);
+});
+
 test("246 №2: mock save — смена материала потолка не теряет нишу (verified, без NORMALIZATION_DROPPED)", async () => {
   const { m, room, wallId } = modelWithRefRoom();
   setCeilingFinish(m, room, "gypsum_ceiling", {});
@@ -432,6 +445,20 @@ test("246 №4: потеря 4% покрытия пола относительн
   const floor2 = ((got2[room]!["floors"] as Array<Record<string, unknown>>)[0]!["polygon"]) as Array<{ x: number; y: number }>;
   for (const p of floor2) p.x = cx + (p.x - cx) * 1.5;
   assert.deepEqual(finishMismatches(exp, got2), [], "расширение пола сервером — не блокировка");
+});
+
+test("248 C: у exp пол есть, у got пол без polygon — problem «потерян полигон пола»", () => {
+  const m = baseModel();
+  const room = firstRoomId(m);
+  setFloorFinish(m, room, "laminate", {});
+  const rooms = (m.rooms2 ?? {}) as Record<string, Record<string, unknown>>;
+  const exp = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  const got = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  delete ((got[room]!["floors"] as Array<Record<string, unknown>>)[0] as Record<string, unknown>)["polygon"];
+  assert.ok(
+    finishMismatches(exp, got).some((p) => p.includes("потерян полигон пола")),
+    "потеря полигона пола при сохранном cover — не молчаливый пропуск",
+  );
 });
 
 // ---------- 246 №10: полная проекция ниши и плинтуса ----------
