@@ -366,6 +366,39 @@ test("246 №2: mock save — смена материала потолка не 
   assert.equal(((c0["niches"] as Array<Record<string, unknown>>)[0]!["exist"]), true, "ниша дошла до сервера");
 });
 
+// ---------- 246 №3: направление «внутрь комнаты» ----------
+
+test("246 №3: плинтус в Г-комнате — ребро выемки смещается внутрь комнаты, выпуклое ребро — как в эталоне", () => {
+  const { m, room, wallId } = modelWithRefRoom();
+  const rooms = roomsOf(m);
+  const edges = rooms[room]!["edges"] as Array<{ pid?: string; p1?: { x: number; y: number }; p2?: { x: number; y: number } }>;
+  // Г-комната: ребро выемки y=100, комната со стороны y<100
+  rooms[room]!["polygon"] = [
+    { x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 100 },
+    { x: 100, y: 100 }, { x: 100, y: 400 }, { x: 0, y: 400 },
+  ];
+  edges[0]!.p1 = { x: 400, y: 100 };
+  edges[0]!.p2 = { x: 100, y: 100 };
+  setFloorMolding(m, room, wallId, "floor_molding_plastic", { fromMm: 1000, toMm: 2000 });
+  let part = Object.values((rooms[room]!["floorMoldings"] as Array<Record<string, unknown>>)[0]!["parts"] as Record<string, Record<string, unknown>>)[0]!;
+  let line = part["line"] as { p1: { x: number; y: number }; p2: { x: number; y: number } };
+  assert.equal(line.p1.y, 94, "напольный плинтус: 6 см внутрь комнаты (y<100), а не наружу");
+  assert.equal(line.p2.y, 94);
+  setCeilingMolding(m, room, wallId, { fromMm: 1000, toMm: 2000 });
+  part = Object.values((rooms[room]!["ceilingMoldings"] as Array<Record<string, unknown>>)[0]!["parts"] as Record<string, Record<string, unknown>>)[0]!;
+  line = part["line"] as { p1: { x: number; y: number }; p2: { x: number; y: number } };
+  assert.equal(line.p1.y, 95, "потолочный плинтус: 5 см внутрь комнаты");
+  assert.equal(line.p2.y, 95);
+  // выпуклая комната (эталонный прямоугольник): геометрия прежняя — x=284 (6 см от грани x=290)
+  rooms[room]!["polygon"] = structuredClone(FLOOR_MOLD_REF.room.polygon);
+  edges[0]!.p1 = { x: 290, y: -290 };
+  edges[0]!.p2 = { x: 290, y: -10 };
+  setFloorMolding(m, room, wallId, "floor_molding_plastic", { fromMm: 840, toMm: 1960 });
+  part = Object.values((rooms[room]!["floorMoldings"] as Array<Record<string, unknown>>)[0]!["parts"] as Record<string, Record<string, unknown>>)[0]!;
+  line = part["line"] as { p1: { x: number; y: number }; p2: { x: number; y: number } };
+  assert.deepEqual(line, FLOOR_MOLD_REF.floorMoldings![0]!["parts"] && (Object.values(FLOOR_MOLD_REF.floorMoldings![0]!["parts"] as Record<string, Record<string, unknown>>)[0]!["line"]), "выпуклое ребро: линия по эталону");
+});
+
 // ---------- mock save ----------
 
 const COMPAT = { global_version: null, planner_version: null, bundles: [], object_id: null, plan_id: null, present: { WALLS: true, ROOMS2: true, restore: true, draw: true, copy: true, save: true, canvas: true, wall_link1: true, wall_link2: true, wall_calc: true } };

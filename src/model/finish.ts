@@ -1,6 +1,7 @@
 import type { Model, Point } from "./types.ts";
 import { newId } from "./types.ts";
 import { roundTenthMm as r2 } from "./units.ts";
+import { edgeInwardNormal } from "./rooms.ts";
 import { McpError } from "../errors.ts";
 
 // Отделка (фаза 2, раздел «Отделка», этап 94, 2026-11-17). Материалы/покрытия
@@ -208,22 +209,29 @@ export type WallFinishParams = {
 };
 
 /** Линия, параллельная ребру комнаты, со смещением внутрь комнаты (insetCm)
- *  и подрезкой концов (trimCm с каждого конца). Направление внутрь — к центроиду
- *  полигона комнаты (эталоны 245: линия UI внутри комнаты на 5–6 см от грани). */
+ *  и подрезкой концов (trimCm с каждого конца). Направление внутрь — общим
+ *  помощником edgeInwardNormal (проба точки на ε от середины ребра, как
+ *  inwardSideByProbe для стен; ревью 246 №3: по центроиду вогнутая комната
+ *  уводила линию ребра выемки наружу), запасное правило — ориентация полигона. */
 function edgeInsetLine(room: RoomRec, edge: { p1?: Point; p2?: Point }, insetCm: number, trimCm = 0): { p1: Point; p2: Point } {
   const p1 = edge.p1 ?? { x: 0, y: 0 };
   const p2 = edge.p2 ?? { x: 0, y: 0 };
   const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
   if (len < 1e-9) return { p1: { x: r2(p1.x), y: r2(p1.y) }, p2: { x: r2(p2.x), y: r2(p2.y) } };
   const poly = (room.polygon ?? room.points ?? []) as Point[];
-  const cx = poly.length ? poly.reduce((s, p) => s + p.x, 0) / poly.length : p1.x;
-  const cy = poly.length ? poly.reduce((s, p) => s + p.y, 0) / poly.length : p1.y;
-  let nx = (p2.y - p1.y) / len, ny = -(p2.x - p1.x) / len;
-  if (nx * (cx - (p1.x + p2.x) / 2) + ny * (cy - (p1.y + p2.y) / 2) < 0) { nx = -nx; ny = -ny; }
+  const nx = (p2.y - p1.y) / len, ny = -(p2.x - p1.x) / len;
+  let ix = nx, iy = ny;
+  const inward = edgeInwardNormal(p1, p2, poly);
+  if (inward) {
+    ix = inward.x; iy = inward.y;
+  } else if (poly.length >= 3 && signedArea(poly) > 0) {
+    // полигон против часовой стрелки: внутренность слева от направления ребра
+    ix = -nx; iy = -ny;
+  }
   const t1 = Math.min(trimCm / len, 0.5), t2 = Math.max(1 - trimCm / len, 0.5);
   return {
-    p1: { x: r2(p1.x + (p2.x - p1.x) * t1 + nx * insetCm), y: r2(p1.y + (p2.y - p1.y) * t1 + ny * insetCm) },
-    p2: { x: r2(p1.x + (p2.x - p1.x) * t2 + nx * insetCm), y: r2(p1.y + (p2.y - p1.y) * t2 + ny * insetCm) },
+    p1: { x: r2(p1.x + (p2.x - p1.x) * t1 + ix * insetCm), y: r2(p1.y + (p2.y - p1.y) * t1 + iy * insetCm) },
+    p2: { x: r2(p1.x + (p2.x - p1.x) * t2 + ix * insetCm), y: r2(p1.y + (p2.y - p1.y) * t2 + iy * insetCm) },
   };
 }
 
