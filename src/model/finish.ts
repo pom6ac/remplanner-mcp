@@ -21,12 +21,18 @@ export const FLOOR_COVERS = [
   "linoleum", "fitted_carpet", "corky_floor", "floor_3d",
 ] as const;
 
-/** Отделка стен (лист «Отделка стен»; двухслойные painting_tile/wallpaper_tiles/apron — следующий PR). */
+/** Отделка стен (лист «Отделка стен»). Двухслойные пункты UI painting_tile/
+ *  wallpaper_tiles (плитка+краска/обои) и фартук wall_apron пишутся двумя/одним
+ *  слоем decors (layer 1/2) — setWallFinish, эталоны 245f5. */
 export const WALL_COVERS = [
   "wallpaper", "wallpaper_for_paint", "paint_wall", "walls_whitewash", "wall_chalk_paint",
   "wall_tile", "wall_mosaic", "wall_clinker", "wall_stone", "wall_wooden_panels", "plastic_panels",
   "wall_woodbatten", "wall_sheet_panels", "wall_tile_panels", "decorative_plaster", "venice_plaster",
+  "painting_tile", "wallpaper_tiles", "wall_apron",
 ] as const;
+
+/** Двухслойные пункты UI: слой 1 — wall_tile, слой 2 — краска/обои (фартук — только слой 2). */
+export const WALL_TWO_LAYER = ["painting_tile", "wallpaper_tiles", "wall_apron"] as const;
 
 /** Покрытия потолка (лист «Потолки», простые; многоуровневые complex_ceiling/ниши — следующий PR). */
 export const CEILING_COVERS = [
@@ -44,8 +50,18 @@ const BOARD_FLOOR_COVERS = new Set([
   "parquet_board", "engineer_board", "wood_board", "parquet", "terrace_board",
 ]);
 
-/** Профили потолка, известные из проб редактора (94-options-panel, эталон ui-ref-finish-ceiling). */
+/** Профили потолка, известные из проб редактора (94-options-panel, эталон ui-ref-finish-ceiling).
+ *  Разведка 245: в бандле редактора других значений profile нет (только "standard"). */
 export const CEILING_PROFILES = ["standard"] as const;
+
+/** Напольные плинтусы (лист «Напольные покрытия», группа molding — все PRO; эталоны 245). */
+export const FLOOR_MOLDING_TYPES = [
+  "floor_molding_plastic", "floor_molding_polyurethane", "floor_molding_mdf", "floor_molding_wood",
+  "floor_molding_tile", "floor_molding_with_light", "floor_molding_hidden",
+] as const;
+
+/** Потолочный плинтус (инструмент molding листа «Потолки», PRO) — один тип части. */
+export const CEILING_MOLDING_TYPE = "molding";
 
 /** Разумные пределы пользовательских параметров (ревью 95 R5): мм. */
 export const FINISH_LIMITS = {
@@ -53,6 +69,28 @@ export const FINISH_LIMITS = {
   stitchMaxMm: 100,
   wallHeightMaxMm: 30_000,
   ceilingLevelMax: 20,
+  /** Минимальная длина ребра для плинтуса (UI: отрезок короче ~20 см не создаётся, проба 245). */
+  moldingEdgeMinMm: 250,
+  /** Минимальная длина ребра для закарнизной ниши (UI: > 1.5*depth = 30 см). */
+  nicheEdgeMinMm: 300,
+} as const;
+
+/** Геометрия частей по эталонам 245 (см): отступ линии от ребра внутрь комнаты и подрезка. */
+export const FINISH_GEOMETRY = {
+  /** Напольный плинтус: линия в 6 см от грани (эталон 245f4: x=284 у ребра x=290). */
+  floorMoldingInsetCm: 6,
+  /** Потолочный плинтус и слои отделки стен: линия в 5 см от грани (эталон 245f5). */
+  ceilingMoldingInsetCm: 5,
+  decorInsetCm: 5,
+  /** Закарнизная ниша: линия короче ребра на 2.5 см с каждого конца (бандл, cursor_click). */
+  nicheEndTrimCm: 2.5,
+  /** Закарнизная ниша: глубина по умолчанию (defs.ceiling_niche.depth). */
+  nicheDepthCm: 20,
+  /** Фартук (wall_apron): слой 2, от пола 92 см, высота 60 см (эталон 245f5, decor-2 бандла). */
+  apronFromFloorCm: 92,
+  apronHeightCm: 60,
+  /** Второй слой painting_tile/wallpaper_tiles: краска/обои от 120 см до верха (бандл decor-2). */
+  twoLayerFromFloorCm: 120,
 } as const;
 
 export type FloorCover = (typeof FLOOR_COVERS)[number];
@@ -169,10 +207,251 @@ export type WallFinishParams = {
   heightMm?: number;
 };
 
-/** Записать отделку стороны стены, обращённой к комнате (decors по рёбрам с pid=wallId). */
+/** Линия, параллельная ребру комнаты, со смещением внутрь комнаты (insetCm)
+ *  и подрезкой концов (trimCm с каждого конца). Направление внутрь — к центроиду
+ *  полигона комнаты (эталоны 245: линия UI внутри комнаты на 5–6 см от грани). */
+function edgeInsetLine(room: RoomRec, edge: { p1?: Point; p2?: Point }, insetCm: number, trimCm = 0): { p1: Point; p2: Point } {
+  const p1 = edge.p1 ?? { x: 0, y: 0 };
+  const p2 = edge.p2 ?? { x: 0, y: 0 };
+  const len = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+  if (len < 1e-9) return { p1: { x: r2(p1.x), y: r2(p1.y) }, p2: { x: r2(p2.x), y: r2(p2.y) } };
+  const poly = (room.polygon ?? room.points ?? []) as Point[];
+  const cx = poly.length ? poly.reduce((s, p) => s + p.x, 0) / poly.length : p1.x;
+  const cy = poly.length ? poly.reduce((s, p) => s + p.y, 0) / poly.length : p1.y;
+  let nx = (p2.y - p1.y) / len, ny = -(p2.x - p1.x) / len;
+  if (nx * (cx - (p1.x + p2.x) / 2) + ny * (cy - (p1.y + p2.y) / 2) < 0) { nx = -nx; ny = -ny; }
+  const t1 = Math.min(trimCm / len, 0.5), t2 = Math.max(1 - trimCm / len, 0.5);
+  return {
+    p1: { x: r2(p1.x + (p2.x - p1.x) * t1 + nx * insetCm), y: r2(p1.y + (p2.y - p1.y) * t1 + ny * insetCm) },
+    p2: { x: r2(p1.x + (p2.x - p1.x) * t2 + nx * insetCm), y: r2(p1.y + (p2.y - p1.y) * t2 + ny * insetCm) },
+  };
+}
+
+function edgeLenCm(edge: { p1?: Point; p2?: Point }): number {
+  const p1 = edge.p1, p2 = edge.p2;
+  if (!p1 || !p2) return 0;
+  return Math.hypot(p2.x - p1.x, p2.y - p1.y);
+}
+
+/** Контейнер-массив по рёбрам комнаты в форме пустого проекта ({exist:false}×n). */
+function edgeContainer(room: RoomRec, key: string, edgesLen: number): Array<Record<string, unknown>> {
+  const arr = Array.isArray(room[key]) ? [...(room[key] as Array<Record<string, unknown>>)] : [];
+  while (arr.length < edgesLen) arr.push({ exist: false });
+  return arr;
+}
+
+/** Рёбра комнаты, приходящиеся на стену wallId (сторона комнаты). */
+function edgesOfWall(room: RoomRec, wallId: string): Array<{ edge: { p1?: Point; p2?: Point; pid?: string; length?: number }; index: number }> {
+  const edges = Array.isArray(room.edges) ? room.edges : [];
+  const out: Array<{ edge: { p1?: Point; p2?: Point; pid?: string; length?: number }; index: number }> = [];
+  edges.forEach((e, index) => {
+    if (e.pid === wallId) out.push({ edge: e, index });
+  });
+  return out;
+}
+
+/** Часть отрезка line между долями t1..t2 его длины. */
+function lineOnSpan(line: { p1: Point; p2: Point }, t1: number, t2: number): { p1: Point; p2: Point } {
+  return {
+    p1: { x: r2(line.p1.x + (line.p2.x - line.p1.x) * t1), y: r2(line.p1.y + (line.p2.y - line.p1.y) * t1) },
+    p2: { x: r2(line.p1.x + (line.p2.x - line.p1.x) * t2), y: r2(line.p1.y + (line.p2.y - line.p1.y) * t2) },
+  };
+}
+
+function moldingPart(id: string, type: string, layer: number, line: { p1: Point; p2: Point }, lineWall: { p1: Point; p2: Point }): Record<string, unknown> {
+  return {
+    id, type, layer,
+    line: { p1: { ...line.p1 }, p2: { ...line.p2 } },
+    line_wall: { p1: { ...lineWall.p1 }, p2: { ...lineWall.p2 } },
+    distance: r2(Math.hypot(line.p2.x - line.p1.x, line.p2.y - line.p1.y)),
+  };
+}
+
+const MOLDING_MIN_ERROR = (kind: string) =>
+  `ребро короче ${FINISH_LIMITS.moldingEdgeMinMm / 10} см — плинтус не ставится (${kind}); выберите стену длиннее`;
+
+/** Отрезок вдоль ребра [t1..t2] (доли 0..1) из смещений от начала стороны, мм. */
+function moldingSpan(edge: { p1?: Point; p2?: Point }, fromMm: number | undefined, toMm: number | undefined, minSegMm: number): [number, number] {
+  const lenMm = edgeLenCm(edge) * 10;
+  const t1 = Math.max(Math.min(fromMm ?? 0, lenMm), 0) / lenMm;
+  const t2 = Math.max(Math.min(toMm ?? lenMm, lenMm), 0) / lenMm;
+  if (t2 - t1 < minSegMm / lenMm) {
+    throw new McpError("INVALID_ARGUMENT", `отрезок плинтуса короче ${minSegMm / 10} см (from_mm/to_mm по стороне от её начала)`);
+  }
+  return [t1, t2];
+}
+
+/** Записать напольный плинтус вдоль стороны стены комнаты (floorMoldings по рёбрам; PRO).
+ *  from_mm/to_mm — границы отрезка по стороне от её начала (по умолчанию вся сторона). */
+export function setFloorMolding(model: Model, roomRef: string, wallId: string, type: (typeof FLOOR_MOLDING_TYPES)[number], params: { fromMm?: number; toMm?: number } = {}): { parts: number } {
+  if (!(FLOOR_MOLDING_TYPES as readonly string[]).includes(type)) {
+    throw new McpError("INVALID_ARGUMENT", `неизвестный плинтус «${type}» (допустимо: ${FLOOR_MOLDING_TYPES.join(", ")})`);
+  }
+  const { room } = resolveRoom(model, roomRef);
+  const targets = edgesOfWall(room, wallId);
+  if (targets.length === 0) {
+    throw new McpError("INVALID_ARGUMENT", `комната ${roomRef} не граничит со стеной ${wallId} (граничные стены — из finish_get/model_get)`);
+  }
+  for (const { edge } of targets) {
+    if (edgeLenCm(edge) * 10 < FINISH_LIMITS.moldingEdgeMinMm) throw new McpError("INVALID_ARGUMENT", MOLDING_MIN_ERROR("floor_molding"));
+  }
+  const edges = Array.isArray(room.edges) ? room.edges : [];
+  const moldings = edgeContainer(room, "floorMoldings", edges.length);
+  for (const { edge, index } of targets) {
+    const [t1, t2] = moldingSpan(edge, params.fromMm, params.toMm, 200);
+    const line = edgeInsetLine(room, edge, FINISH_GEOMETRY.floorMoldingInsetCm);
+    const seg = lineOnSpan(line, t1, t2);
+    const id = `_fm${newId(8)}`;
+    moldings[index] = { exist: true, parts: { [id]: moldingPart(id, type, 1, seg, { p1: { ...(edge.p1 as Point) }, p2: { ...(edge.p2 as Point) } }) } };
+  }
+  room.floorMoldings = moldings;
+  return { parts: targets.length };
+}
+
+/** Снять напольные плинтусы комнаты: со всех сторон или только со стороны стены wallId. */
+export function removeFloorMolding(model: Model, roomRef: string, wallId?: string): { parts: number } {
+  const { room } = resolveRoom(model, roomRef);
+  const edges = Array.isArray(room.edges) ? room.edges : [];
+  const moldings = edgeContainer(room, "floorMoldings", edges.length);
+  let n = 0;
+  for (let i = 0; i < edges.length; i++) {
+    if (wallId && edges[i]!.pid !== wallId) continue;
+    if (moldings[i]!["exist"] !== true) continue;
+    moldings[i] = { exist: false };
+    n++;
+  }
+  if (wallId && n === 0) {
+    throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет плинтусов на стене ${wallId}`);
+  }
+  room.floorMoldings = moldings;
+  return { parts: n };
+}
+
+/** Записать потолочный плинтус вдоль стороны стены комнаты (ceilingMoldings по рёбрам; PRO).
+ *  from_mm/to_mm — границы отрезка по стороне от её начала (по умолчанию вся сторона). */
+export function setCeilingMolding(model: Model, roomRef: string, wallId: string, params: { fromMm?: number; toMm?: number } = {}): { parts: number } {
+  const { room } = resolveRoom(model, roomRef);
+  const targets = edgesOfWall(room, wallId);
+  if (targets.length === 0) {
+    throw new McpError("INVALID_ARGUMENT", `комната ${roomRef} не граничит со стеной ${wallId} (граничные стены — из finish_get/model_get)`);
+  }
+  for (const { edge } of targets) {
+    if (edgeLenCm(edge) * 10 < FINISH_LIMITS.moldingEdgeMinMm) throw new McpError("INVALID_ARGUMENT", MOLDING_MIN_ERROR("molding"));
+  }
+  const edges = Array.isArray(room.edges) ? room.edges : [];
+  const moldings = edgeContainer(room, "ceilingMoldings", edges.length);
+  for (const { edge, index } of targets) {
+    const [t1, t2] = moldingSpan(edge, params.fromMm, params.toMm, 200);
+    const line = edgeInsetLine(room, edge, FINISH_GEOMETRY.ceilingMoldingInsetCm);
+    const seg = lineOnSpan(line, t1, t2);
+    const id = `_cm${newId(8)}`;
+    moldings[index] = { exist: true, parts: { [id]: moldingPart(id, CEILING_MOLDING_TYPE, 1, seg, { p1: { ...(edge.p1 as Point) }, p2: { ...(edge.p2 as Point) } }) } };
+  }
+  room.ceilingMoldings = moldings;
+  return { parts: targets.length };
+}
+
+/** Снять потолочные плинтусы комнаты: со всех сторон или только со стороны стены wallId. */
+export function removeCeilingMolding(model: Model, roomRef: string, wallId?: string): { parts: number } {
+  const { room } = resolveRoom(model, roomRef);
+  const edges = Array.isArray(room.edges) ? room.edges : [];
+  const moldings = edgeContainer(room, "ceilingMoldings", edges.length);
+  let n = 0;
+  for (let i = 0; i < edges.length; i++) {
+    if (wallId && edges[i]!.pid !== wallId) continue;
+    if (moldings[i]!["exist"] !== true) continue;
+    moldings[i] = { exist: false };
+    n++;
+  }
+  if (wallId && n === 0) {
+    throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет потолочных плинтусов на стене ${wallId}`);
+  }
+  room.ceilingMoldings = moldings;
+  return { parts: n };
+}
+
+/** Потолки, на которые нельзя ставить закарнизную нишу (правило UI, бандл cursor_click). */
+const NICHE_FORBIDDEN_MATERIALS = new Set(["paint_ceiling", "whitewash_ceiling"]);
+
+/** Добавить закарнизную нишу вдоль стороны стены комнаты (ceilings[0].niches; PRO). */
+export function addCeilingNiche(model: Model, roomRef: string, wallId: string): { id: string } {
+  const { room } = resolveRoom(model, roomRef);
+  const ceilings = Array.isArray(room.ceilings) ? room.ceilings : [];
+  const c0 = ceilings[0] as Record<string, unknown> | undefined;
+  if (!c0 || c0.exist !== true) {
+    throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет покрытия потолка — сначала finish_ceiling_set (в UI: «сначала добавьте потолок»)`);
+  }
+  if (typeof c0.material === "string" && NICHE_FORBIDDEN_MATERIALS.has(c0.material)) {
+    throw new McpError("INVALID_ARGUMENT", `закарнизная ниша не ставится на ${c0.material} (в UI доступна только для встраиваемых потолков)`);
+  }
+  const targets = edgesOfWall(room, wallId);
+  if (targets.length === 0) {
+    throw new McpError("INVALID_ARGUMENT", `комната ${roomRef} не граничит со стеной ${wallId} (граничные стены — из finish_get/model_get)`);
+  }
+  for (const { edge } of targets) {
+    if (edgeLenCm(edge) * 10 < FINISH_LIMITS.nicheEdgeMinMm) {
+      throw new McpError("INVALID_ARGUMENT", `ребро короче ${FINISH_LIMITS.nicheEdgeMinMm / 10} см — ниша не ставится; выберите стену длиннее`);
+    }
+  }
+  const edges = Array.isArray(room.edges) ? room.edges : [];
+  const niches = edgeContainer(c0 as RoomRec, "niches", edges.length);
+  let id = "";
+  for (const { edge, index } of targets) {
+    const line = edgeInsetLine(room, edge, 0, FINISH_GEOMETRY.nicheEndTrimCm);
+    id = `_ni${newId(8)}`;
+    niches[index] = {
+      exist: true,
+      parts: {
+        [id]: {
+          is_class: true, id, id_old: "", plan: "ceiling",
+          id_room: resolveRoom(model, roomRef).id,
+          id_ceiling: c0["id"],
+          line: { p1: { ...line.p1 }, p2: { ...line.p2 } },
+          line_wall: { p1: { ...(edge.p1 as Point) }, p2: { ...(edge.p2 as Point) } },
+          polygon: [], width: 0, area: 0, depth: FINISH_GEOMETRY.nicheDepthCm,
+        },
+      },
+    };
+  }
+  c0["niches"] = niches;
+  return { id };
+}
+
+/** Убрать закарнизные ниши комнаты: со всех сторон или только со стороны стены wallId. */
+export function removeCeilingNiche(model: Model, roomRef: string, wallId?: string): { parts: number } {
+  const { room } = resolveRoom(model, roomRef);
+  const ceilings = Array.isArray(room.ceilings) ? room.ceilings : [];
+  const c0 = ceilings[0] as Record<string, unknown> | undefined;
+  if (!c0 || c0.exist !== true) {
+    throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет покрытия потолка — ниш нет`);
+  }
+  const edges = Array.isArray(room.edges) ? room.edges : [];
+  const niches = edgeContainer(c0 as RoomRec, "niches", edges.length);
+  let n = 0;
+  for (let i = 0; i < edges.length; i++) {
+    if (wallId && edges[i]!.pid !== wallId) continue;
+    if (niches[i]!["exist"] !== true) continue;
+    niches[i] = { exist: false };
+    n++;
+  }
+  if (wallId && n === 0) {
+    throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет ниш на стене ${wallId}`);
+  }
+  c0["niches"] = niches;
+  return { parts: n };
+}
+
+/** Записать отделку стороны стены, обращённой к комнате (decors по рёбрам с pid=wallId).
+ *  Двухслойные пункты UI (painting_tile/wallpaper_tiles/wall_apron) пишут слой 2
+ *  (фартук) или слои 1+2 (плитка+краска/обои); части других слоёв на ребре
+ *  сохраняются — как union/split редактора. */
 export function setWallFinish(model: Model, roomRef: string, wallId: string, type: WallCover, params: WallFinishParams, partId?: string): { parts: number } {
   if (!(WALL_COVERS as readonly string[]).includes(type)) {
     throw new McpError("INVALID_ARGUMENT", `неизвестная отделка стены «${type}» (допустимо: ${WALL_COVERS.join(", ")})`);
+  }
+  const twoLayer = (WALL_TWO_LAYER as readonly string[]).includes(type);
+  if (twoLayer && (params.heightMm !== undefined || params.heightFromFloorMm !== undefined)) {
+    throw new McpError("INVALID_ARGUMENT", `у ${type} высота фиксирована редактором; height_mm/height_from_floor_mm не принимаются`);
   }
   const { room } = resolveRoom(model, roomRef);
   const edges = Array.isArray(room.edges) ? room.edges : [];
@@ -182,29 +461,48 @@ export function setWallFinish(model: Model, roomRef: string, wallId: string, typ
       throw new McpError("INVALID_ARGUMENT", `${key} должен быть числом от 0 до ${FINISH_LIMITS.wallHeightMaxMm} мм`);
     }
   }
-  const targets = edges
-    .map((e, index) => ({ e, index }))
-    .filter(({ e }) => e.pid === wallId);
+  const targets = edgesOfWall(room, wallId);
   if (targets.length === 0) {
     throw new McpError("INVALID_ARGUMENT", `комната ${roomRef} не граничит со стеной ${wallId} (граничные стены — из finish_get/model_get)`);
   }
-  const decors = Array.isArray(room.decors) ? [...room.decors] : [];
-  while (decors.length < edges.length) decors.push({ exist: false });
-  for (const { e, index } of targets) {
+  const decors = edgeContainer(room, "decors", edges.length);
+  for (const { edge: e, index } of targets) {
     const p1 = e.p1 ?? { x: 0, y: 0 };
     const p2 = e.p2 ?? { x: 0, y: 0 };
     const line = { p1: { x: r2(p1.x), y: r2(p1.y) }, p2: { x: r2(p2.x), y: r2(p2.y) } };
-    const part = {
-      id: partId ?? `_w${newId(8)}`,
-      type,
-      layer: 1,
-      line,
-      line_wall: { p1: { ...line.p1 }, p2: { ...line.p2 } },
+    const lineWall = { p1: { ...line.p1 }, p2: { ...line.p2 } };
+    const existing = (decors[index] as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined);
+    const parts: Record<string, Record<string, unknown>> = {};
+    for (const [pid, part] of Object.entries(existing?.parts ?? {})) {
+      const layer = num(part.layer) ?? 1;
+      const keep = twoLayer
+        ? (type === "wall_apron" ? layer !== 2 : !(layer === 1 || layer === 2))
+        : layer !== 1;
+      if (keep) parts[pid] = part;
+    }
+    const mkPart = (layer: number, ptype: string, hffCm: number, hCm: number, pid?: string): Record<string, unknown> => ({
+      id: pid ?? `_w${newId(8)}`,
+      type: ptype,
+      layer,
+      line: { p1: { ...line.p1 }, p2: { ...line.p2 } },
+      line_wall: { p1: { ...lineWall.p1 }, p2: { ...lineWall.p2 } },
       distance: e.length ?? Math.hypot(p2.x - p1.x, p2.y - p1.y),
-      height: params.heightMm !== undefined ? r2(params.heightMm / 10) : 0,
-      height_from_floor: params.heightFromFloorMm !== undefined ? r2(params.heightFromFloorMm / 10) : 0,
+      height: hCm,
+      height_from_floor: hffCm,
+    });
+    const put = (layer: number, ptype: string, hffCm: number, hCm: number) => {
+      const part = mkPart(layer, ptype, hffCm, hCm);
+      parts[part["id"] as string] = part;
     };
-    decors[index] = { exist: true, parts: { [part.id]: part } };
+    if (!twoLayer) {
+      put(1, type, params.heightFromFloorMm !== undefined ? r2(params.heightFromFloorMm / 10) : 0, params.heightMm !== undefined ? r2(params.heightMm / 10) : 0);
+    } else if (type === "wall_apron") {
+      put(2, "wall_tile", FINISH_GEOMETRY.apronFromFloorCm, FINISH_GEOMETRY.apronHeightCm);
+    } else {
+      put(1, "wall_tile", 0, 0);
+      put(2, type === "painting_tile" ? "paint_wall" : "wallpaper", FINISH_GEOMETRY.twoLayerFromFloorCm, 0);
+    }
+    decors[index] = { exist: true, parts };
   }
   room.decors = decors;
   return { parts: targets.length };
@@ -305,6 +603,12 @@ export type FinishSig = {
   floor?: { cover: string; width?: number; height?: number; stitch?: number; angle?: number; laying?: string };
   ceiling?: { material: string; level?: number; profile?: string };
   walls?: Array<{ pid?: string; line: [Point, Point]; type: string; layer: number; height: number; fromFloor: number }>;
+  /** Напольные плинтусы (245): части по рёбрам комнаты. */
+  floorMoldings?: Array<{ pid?: string; type: string; line: [Point, Point] }>;
+  /** Потолочный плинтус (245): части по рёбрам комнаты. */
+  ceilingMoldings?: Array<{ pid?: string; type: string; line: [Point, Point] }>;
+  /** Закарнизные ниши (245): части по рёбрам потолка ceilings[0]. */
+  niches?: Array<{ line: [Point, Point] }>;
 };
 
 /** Проём: то, что сверке нужно от wall.holes (край на оси или центр+ширина). */
@@ -518,11 +822,51 @@ function wallSigs(room: RoomRec, edges: RoomRec["edges"]): NonNullable<FinishSig
   return out;
 }
 
+/** Части контейнера по рёбрам комнаты (floorMoldings/ceilingMoldings) в виде сигнатур. */
+function moldingSigs(room: RoomRec, key: "floorMoldings" | "ceilingMoldings", edges: RoomRec["edges"]): NonNullable<FinishSig["floorMoldings"]> {
+  const out: NonNullable<FinishSig["floorMoldings"]> = [];
+  const arr = Array.isArray(room[key]) ? room[key] as Array<Record<string, unknown>> : [];
+  for (let i = 0; i < arr.length; i++) {
+    const e = arr[i] as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined;
+    if (!e || e.exist !== true) continue;
+    const edge = edges?.[i];
+    for (const part of Object.values(e.parts ?? {})) {
+      const type = typeof part.type === "string" ? part.type : undefined;
+      const line = part.line as { p1?: Point; p2?: Point } | undefined;
+      if (!type || !line?.p1 || !line?.p2) continue;
+      out.push({ pid: edge?.pid, type, line: [line.p1, line.p2] });
+    }
+  }
+  return out;
+}
+
+/** Закарнизные ниши (ceilings[0].niches) в виде сигнатур. */
+function nichesSig(room: RoomRec): NonNullable<FinishSig["niches"]> {
+  const out: NonNullable<FinishSig["niches"]> = [];
+  const c0 = (room.ceilings ?? [])[0] as Record<string, unknown> | undefined;
+  const arr = c0 && Array.isArray(c0["niches"]) ? c0["niches"] as Array<Record<string, unknown>> : [];
+  for (const e of arr) {
+    const rec = e as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined;
+    if (!rec || rec.exist !== true) continue;
+    for (const part of Object.values(rec.parts ?? {})) {
+      const line = part.line as { p1?: Point; p2?: Point } | undefined;
+      if (!line?.p1 || !line?.p2) continue;
+      out.push({ line: [line.p1, line.p2] });
+    }
+  }
+  return out;
+}
+
 /** Сигнатура отделки одной комнаты по id. */
 export function finishSignature(model: Model, roomId: string): FinishSig {
   const room = roomsOf(model)[roomId] ?? {};
   const edges = Array.isArray(room.edges) ? room.edges : undefined;
-  return { floor: floorSig(room), ceiling: ceilingSig(room), walls: wallSigs(room, edges) };
+  return {
+    floor: floorSig(room), ceiling: ceilingSig(room), walls: wallSigs(room, edges),
+    floorMoldings: moldingSigs(room, "floorMoldings", edges),
+    ceilingMoldings: moldingSigs(room, "ceilingMoldings", edges),
+    niches: nichesSig(room),
+  };
 }
 
 // ---------- сравнение значений (ревью 95 R4) ----------
@@ -855,6 +1199,17 @@ export function finishCompare(
       else if (!sameFloor(expFloor, gotFloor)) {
         problems.push(`room ${rid}: покрытие пола не совпало (${JSON.stringify(expFloor)} → ${JSON.stringify(gotFloor)})`);
       }
+      // площадь покрытия пола (хвост ревью 95): polygon пола не должен уступать
+      // комнате больше чем на 5% (замета пола зоной/потеря полигона — расхождение)
+      const matchPoly = roomPolygon(match) ?? [];
+      const floorPoly = ((match.floors as Array<Record<string, unknown>> | undefined) ?? [])[0]?.["polygon"] as Point[] | undefined;
+      const roomArea = polygonArea(matchPoly);
+      if (roomArea > 1 && floorPoly && floorPoly.length >= 3) {
+        const floorArea = polygonArea(floorPoly);
+        if (floorArea < roomArea * 0.95) {
+          problems.push(`room ${rid}: площадь покрытия пола ${(100 * floorArea / roomArea).toFixed(1)}% комнаты — полигон пола уступает комнате`);
+        }
+      }
     }
     if (expCeil) {
       const gotCeil = ceilingSig(match);
@@ -969,6 +1324,76 @@ export function finishCompare(
       }
     }
   }
+
+  // 5. плинтусы и ниши (245) — правила сопоставления те же, что у отделки сторон
+  //    (точное совпадение комнаты — строгое покрытие рёбер с допусками UI; split —
+  //    часть переживает разрез; merge — предупреждение; режим save — строго).
+  type EdgePartSig = { pid?: string; type: string; layer: number; height: number; fromFloor: number; line: [Point, Point] };
+  const containerSigsOf = (room: RoomRec, key: "floorMoldings" | "ceilingMoldings" | "__niches"): EdgePartSig[] => {
+    if (key === "__niches") {
+      return nichesSig(room).map((n) => ({ pid: undefined, type: "ceiling_niche", layer: 1, height: 0, fromFloor: 0, line: n.line }));
+    }
+    return moldingSigs(room, key, Array.isArray(room.edges) ? room.edges : undefined)
+      .map((m) => ({ pid: m.pid, type: m.type, layer: 1, height: 0, fromFloor: 0, line: m.line }));
+  };
+  for (const key of ["floorMoldings", "ceilingMoldings", "__niches"] as const) {
+    const label = key === "__niches" ? "ниша" : key === "floorMoldings" ? "плинтус" : "потолочный плинтус";
+    const gotSigsByRoom = new Map<string, EdgePartSig[]>();
+    for (const [gk, gr] of Object.entries(got)) {
+      gotSigsByRoom.set(gk, containerSigsOf(gr, key));
+    }
+    const sameParams = (w: EdgePartSig) => (g: EdgePartSig): boolean => g.type === w.type;
+    for (const [rid, room] of Object.entries(exp)) {
+      const expList = containerSigsOf(room, key);
+      if (expList.length === 0) continue;
+      const gid = exact.get(rid) ?? sameMatch(rid);
+      if (!gid) {
+        if (mode === "save") {
+          for (const sig of expList) {
+            problems.push(`room ${rid}: потерян ${label} ${sig.pid ?? ""} (${sig.type}) — комната не найдена на сервере`);
+          }
+          continue;
+        }
+        const heir = heirOf.get(rid) ?? null;
+        if (!heir) {
+          for (const sig of expList) {
+            problems.push(`room ${rid}: потерян ${label} ${sig.pid ?? ""} (${sig.type}) при split/merge`);
+          }
+          continue;
+        }
+        if (heir.kind === "merge") {
+          warnings.push(`finish_topology_changed: room ${rid}: ${label} (${expList.length}) при merge не сверяется — проверьте finish_get после сохранения`);
+          continue;
+        }
+        for (const w of expList) {
+          const survived = heir.partKeys.some((k) =>
+            (gotSigsByRoom.get(k) ?? []).some((g) => sameParams(w)(g) && gotPartNear(w, g, gotW) !== null && overlapsExpLine(w, g)),
+          );
+          if (!survived) {
+            problems.push(`room ${rid}: потерян ${label} ${w.pid ?? ""} (${w.type}) при split`);
+          }
+        }
+        continue;
+      }
+      for (const w of expList) {
+        const candidates = (gotSigsByRoom.get(gid) ?? []).filter(sameParams(w));
+        const onLine: Array<[Point, Point]> = [];
+        for (const g of candidates) {
+          if (gotPartNear(w, g, gotW) !== null) onLine.push(g.line);
+        }
+        const expWall = w.pid ? expW[w.pid] : undefined;
+        const gotWallForAxis = w.pid ? gotW[w.pid] : undefined;
+        const openingsLine = [
+          ...openingSpansOnLine(expWall, w.line[0], w.line[1], lineLen(w.line)),
+          ...openingSpansOnLine(gotWallForAxis, w.line[0], w.line[1], lineLen(w.line)),
+        ];
+        const covered = onLine.length > 0 && expectedAreaCovered(w.line, onLine, openingsLine);
+        if (!covered) {
+          problems.push(`room ${rid}: потерян ${label} ${w.pid ?? ""} (${w.type})`);
+        }
+      }
+    }
+  }
   return { problems, warnings };
 }
 
@@ -1018,6 +1443,24 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
     }
     const floor = floorSig(room);
     const ceiling = ceilingSig(room);
+    const floorMoldings: Array<{ wall: string | null; type: string }> = [];
+    for (const m of moldingSigs(room, "floorMoldings", edges)) {
+      floorMoldings.push({ wall: wallLabel(m.pid, model), type: m.type });
+    }
+    const ceilingMoldings: Array<{ wall: string | null }> = [];
+    for (const m of moldingSigs(room, "ceilingMoldings", edges)) {
+      ceilingMoldings.push({ wall: wallLabel(m.pid, model) });
+    }
+    const niches: Array<{ wall: string | null }> = [];
+    {
+      const edgesArr = Array.isArray(room.edges) ? room.edges : [];
+      const c0 = (room.ceilings ?? [])[0] as Record<string, unknown> | undefined;
+      const arr = c0 && Array.isArray(c0["niches"]) ? c0["niches"] as Array<Record<string, unknown>> : [];
+      for (let i = 0; i < arr.length; i++) {
+        const rec = arr[i] as { exist?: unknown } | undefined;
+        if (rec?.exist === true) niches.push({ wall: wallLabel(edgesArr[i]?.pid as string | undefined, model) });
+      }
+    }
     return {
       id: label,
       site_id: rid,
@@ -1031,6 +1474,9 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
       } } : {}),
       ...(ceiling ? { ceiling: { material: ceiling.material, level: ceiling.level ?? 0, ...(ceiling.profile ? { profile: ceiling.profile } : {}) } } : {}),
       walls,
+      ...(floorMoldings.length > 0 ? { floor_moldings: floorMoldings } : {}),
+      ...(ceilingMoldings.length > 0 ? { ceiling_moldings: ceilingMoldings } : {}),
+      ...(niches.length > 0 ? { niches } : {}),
     };
   });
 }

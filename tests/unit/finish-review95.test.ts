@@ -625,6 +625,9 @@ test("100 N4: wall-move — нормализация сократила отде
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
   let wrote = false;
   const ws = saveMock(server, () => { wrote = true; }, (norm) => {
+    // N6 (ревью 102): негативный тест повторяет смену контура из исходного воспроизведения —
+    // перед укорачиванием отделки подставляем комнаты после перемещения стены
+    norm["rooms2"] = structuredClone(after);
     const rooms = normRooms(norm);
     for (const rec of Object.values(rooms)) {
       const decors = rec["decors"] as Array<Record<string, unknown>>;

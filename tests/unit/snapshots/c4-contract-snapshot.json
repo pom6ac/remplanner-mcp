@@ -844,6 +844,112 @@
    }
   },
   {
+   "name": "finish_ceiling_molding_remove",
+   "description": "Снять потолочные плинтусы комнаты. Без wall_id — со всех сторон.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "wall_id": {
+      "description": "метка W<n> из model_get или id стены",
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [
+     "room_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_ceiling_molding_set",
+   "description": "Поставить потолочный плинтус вдоль стороны стены комнаты (лист «Потолки», инструмент «Потолочный плинтус»; PRO). Ставится на всю сторону (ребро не короче 25 см); повторный вызов заменяет плинтус этой стороны. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "wall_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка W<n> из model_get или id стены"
+     },
+     "from_mm": {
+      "description": "начало отрезка по стороне от её начала, мм (по умолчанию 0)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "to_mm": {
+      "description": "конец отрезка по стороне от её начала, мм (по умолчанию вся сторона)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "room_id",
+     "wall_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_ceiling_niche_add",
+   "description": "Добавить закарнизную нишу вдоль стороны стены комнаты (лист «Потолки», инструмент «Закарнизная ниша»; PRO). Требует покрытия потолка (finish_ceiling_set) не краской/побелкой и ребра не короче 30 см; глубина ниши 200 мм (умолчание редактора). Повторный вызов заменяет нишу этой стороны. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "wall_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка W<n> из model_get или id стены"
+     }
+    },
+    "required": [
+     "room_id",
+     "wall_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_ceiling_niche_remove",
+   "description": "Убрать закарнизные ниши комнаты. Без wall_id — со всех сторон.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "wall_id": {
+      "description": "метка W<n> из model_get или id стены",
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [
+     "room_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "finish_ceiling_remove",
    "description": "Снять покрытие потолка комнаты (инструмент ceiling_remove).",
    "inputSchema": {
@@ -892,6 +998,71 @@
     "required": [
      "room_id",
      "material"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_floor_molding_remove",
+   "description": "Снять напольные плинтусы комнаты (инструмент «ластик» на плинтусе). Без wall_id — со всех сторон.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "wall_id": {
+      "description": "метка W<n> из model_get или id стены",
+      "type": "string",
+      "minLength": 1
+     }
+    },
+    "required": [
+     "room_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_floor_molding_set",
+   "description": "Поставить напольный плинтус вдоль стороны стены комнаты (лист «Напольные покрытия», группа «Плинтусы»; PRO). Виды: floor_molding_plastic, floor_molding_polyurethane, floor_molding_mdf, floor_molding_wood, floor_molding_tile, floor_molding_with_light, floor_molding_hidden. Плинтус ставится на всю сторону (ребро не короче 25 см); повторный вызов заменяет плинтус этой стороны. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "wall_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка W<n> из model_get или id стены"
+     },
+     "type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "вид плинтуса (floor_molding_*)"
+     },
+     "from_mm": {
+      "description": "начало отрезка по стороне от её начала, мм (по умолчанию 0)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "to_mm": {
+      "description": "конец отрезка по стороне от её начала, мм (по умолчанию вся сторона)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "room_id",
+     "wall_id",
+     "type"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"
    }
@@ -970,7 +1141,7 @@
   },
   {
    "name": "finish_get",
-   "description": "Отделка комнат: покрытие пола (с параметрами раскладки), покрытие потолка и отделка сторон стен по комнатам (тип, слой, высота, высота от пола). wall — метка W<n>; side — сторона стены, обращённая к комнате. Без room_id — по всем комнатам.",
+   "description": "Отделка комнат: покрытие пола (с параметрами раскладки), покрытие потолка и отделка сторон стен по комнатам (тип, слой, высота, высота от пола), напольные и потолочный плинтусы, закарнизные ниши. wall — метка W<n>; side — сторона стены, обращённая к комнате. Без room_id — по всем комнатам.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -1008,7 +1179,7 @@
   },
   {
    "name": "finish_wall_set",
-   "description": "Отделить сторону стены, обращённую к комнате (лист «Отделка стен»; каждая сторона хранится своей комнатой — у смежных комнат стороны независимы). Покрытия: wallpaper, wallpaper_for_paint, paint_wall, walls_whitewash, wall_chalk_paint (PRO), wall_tile, wall_mosaic, wall_clinker (PRO), wall_stone (PRO), wall_wooden_panels, plastic_panels, wall_woodbatten (PRO), wall_sheet_panels (PRO), wall_tile_panels (PRO), decorative_plaster, venice_plaster. height_mm=0 — на всю высоту стены. После правки вызывайте model_validate и project_save.",
+   "description": "Отделить сторону стены, обращённую к комнате (лист «Отделка стен»; каждая сторона хранится своей комнатой — у смежных комнат стороны независимы). Покрытия: wallpaper, wallpaper_for_paint, paint_wall, walls_whitewash, wall_chalk_paint (PRO), wall_tile, wall_mosaic, wall_clinker (PRO), wall_stone (PRO), wall_wooden_panels, plastic_panels, wall_woodbatten (PRO), wall_sheet_panels (PRO), wall_tile_panels (PRO), decorative_plaster, venice_plaster. Двухслойные (PRO): painting_tile (плитка+краска от 120 см), wallpaper_tiles (плитка+обои от 120 см), wall_apron (фартук: плитка 92–152 см) — высота фиксирована редактором, height_* не принимаются; слой 1/2 других отделок на ребре сохраняется. height_mm=0 — на всю высоту стены. После правки вызывайте model_validate и project_save.",
    "inputSchema": {
     "type": "object",
     "properties": {

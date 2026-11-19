@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { Model } from "../../src/model/types.ts";
 import {
-  FLOOR_COVERS, WALL_COVERS, CEILING_COVERS, resolveRoom,
+  FLOOR_COVERS, WALL_COVERS, CEILING_COVERS, FLOOR_MOLDING_TYPES, CEILING_MOLDING_TYPE, resolveRoom,
   setFloorFinish, removeFloorFinish, setWallFinish, removeWallFinish, setCeilingFinish, removeCeilingFinish,
   finishMismatches, finishList,
 } from "../../src/model/finish.ts";
@@ -43,13 +43,15 @@ function firstRoomId(m: Model): string {
 
 // ---------- состав раздела и эталоны ----------
 
-test("94: состав раздела — покрытия пола/стен/потолка из UI-листов, плинтусы и сложные потолки вне ядра", () => {
+test("245: состав раздела ч.2 — двухслойные отделки и плинтусы в ядре, сложные потолки/зоны вне", () => {
   assert.ok(FLOOR_COVERS.includes("laminate") && FLOOR_COVERS.includes("terrace_board") && FLOOR_COVERS.includes("floor_tile"));
   assert.ok(FLOOR_COVERS.includes("stoneware_marble") && FLOOR_COVERS.includes("mosaic"), "PRO-покрытия в списке");
   assert.ok(WALL_COVERS.includes("wallpaper") && WALL_COVERS.includes("venice_plaster"));
-  assert.ok(!(WALL_COVERS as readonly string[]).includes("painting_tile") && !(WALL_COVERS as readonly string[]).includes("wall_apron"), "двухслойные — следующий PR");
+  assert.ok(WALL_COVERS.includes("painting_tile") && WALL_COVERS.includes("wallpaper_tiles") && WALL_COVERS.includes("wall_apron"), "двухслойные — этап 245");
   assert.ok(CEILING_COVERS.includes("paint_ceiling") && CEILING_COVERS.includes("stretch_ceiling"));
   assert.ok(!(CEILING_COVERS as readonly string[]).includes("complex_ceiling"), "многоуровневые — следующий PR");
+  assert.ok(FLOOR_MOLDING_TYPES.length === 7, "7 видов напольного плинтуса");
+  assert.equal(CEILING_MOLDING_TYPE, "molding");
 });
 
 test("94: эталоны UI — покрытие пола комнаты совпадает с канонической записью инструмента", () => {
