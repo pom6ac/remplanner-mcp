@@ -399,6 +399,41 @@ test("246 №3: плинтус в Г-комнате — ребро выемки 
   assert.deepEqual(line, FLOOR_MOLD_REF.floorMoldings![0]!["parts"] && (Object.values(FLOOR_MOLD_REF.floorMoldings![0]!["parts"] as Record<string, Record<string, unknown>>)[0]!["line"]), "выпуклое ребро: линия по эталону");
 });
 
+test("246 №4: унаследованный малый пол (зонирование в UI) не блокирует сверку", () => {
+  const m = baseModel();
+  const room = firstRoomId(m);
+  setFloorFinish(m, room, "laminate", {});
+  const rooms = (m.rooms2 ?? {}) as Record<string, Record<string, unknown>>;
+  // пол уже 80% комнаты до операции (унаследованное состояние) — exp == got
+  const exp = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  const shrinkFloor = (rs: Record<string, Record<string, unknown>>, k: number) => {
+    const floor = ((rs[room]!["floors"] as Array<Record<string, unknown>>)[0]!["polygon"]) as Array<{ x: number; y: number }>;
+    const cx = floor.reduce((s, q) => s + q.x, 0) / floor.length;
+    for (const p of floor) p.x = cx + (p.x - cx) * k;
+  };
+  shrinkFloor(exp, 0.8);
+  const got = structuredClone(exp) as Record<string, Record<string, unknown>>;
+  assert.deepEqual(finishMismatches(exp, got), [], "унаследованное состояние пола не блокирует save");
+});
+
+test("246 №4: потеря 4% покрытия пола относительно ожидания — расхождение (без процентного порога по комнате)", () => {
+  const m = baseModel();
+  const room = firstRoomId(m);
+  setFloorFinish(m, room, "laminate", {});
+  const rooms = (m.rooms2 ?? {}) as Record<string, Record<string, unknown>>;
+  const exp = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  const got = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  const floor = ((got[room]!["floors"] as Array<Record<string, unknown>>)[0]!["polygon"]) as Array<{ x: number; y: number }>;
+  const cx = floor.reduce((s, q) => s + q.x, 0) / floor.length;
+  for (const p of floor) p.x = cx + (p.x - cx) * 0.96;
+  assert.ok(finishMismatches(exp, got).some((p) => p.includes("пола")), "потеря 4% покрытия обнаруживается");
+  // обратное: пол сервера БОЛЬШЕ ожидания — не расхождение
+  const got2 = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  const floor2 = ((got2[room]!["floors"] as Array<Record<string, unknown>>)[0]!["polygon"]) as Array<{ x: number; y: number }>;
+  for (const p of floor2) p.x = cx + (p.x - cx) * 1.5;
+  assert.deepEqual(finishMismatches(exp, got2), [], "расширение пола сервером — не блокировка");
+});
+
 // ---------- mock save ----------
 
 const COMPAT = { global_version: null, planner_version: null, bundles: [], object_id: null, plan_id: null, present: { WALLS: true, ROOMS2: true, restore: true, draw: true, copy: true, save: true, canvas: true, wall_link1: true, wall_link2: true, wall_calc: true } };
@@ -498,5 +533,5 @@ test("245: сверка площади покрытия пола — полиг�
   const floor = ((got[room]!["floors"] as Array<Record<string, unknown>>)[0]!["polygon"] as Array<{ x: number; y: number }>);
   const cx = floor.reduce((s, q) => s + q.x, 0) / floor.length;
   for (const p of floor) p.x = cx + (p.x - cx) / 2;
-  assert.ok(finishMismatches(rooms, got).some((p) => p.includes("площадь покрытия пола")), "сжатый полигон пола — расхождение");
+  assert.ok(finishMismatches(rooms, got).some((p) => p.includes("потеря покрытия пола")), "сжатый полигон пола — расхождение");
 });

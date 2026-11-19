@@ -1230,15 +1230,28 @@ export function finishCompare(
       else if (!sameFloor(expFloor, gotFloor)) {
         problems.push(`room ${rid}: покрытие пола не совпало (${JSON.stringify(expFloor)} → ${JSON.stringify(gotFloor)})`);
       }
-      // площадь покрытия пола (хвост ревью 95): polygon пола не должен уступать
-      // комнате больше чем на 5% (замета пола зоной/потеря полигона — расхождение)
-      const matchPoly = roomPolygon(match) ?? [];
-      const floorPoly = ((match.floors as Array<Record<string, unknown>> | undefined) ?? [])[0]?.["polygon"] as Point[] | undefined;
-      const roomArea = polygonArea(matchPoly);
-      if (roomArea > 1 && floorPoly && floorPoly.length >= 3) {
-        const floorArea = polygonArea(floorPoly);
-        if (floorArea < roomArea * 0.95) {
-          problems.push(`room ${rid}: площадь покрытия пола ${(100 * floorArea / roomArea).toFixed(1)}% комнаты — полигон пола уступает комнате`);
+      // площадь покрытия пола (хвост ревью 95, ревью 246 №4): сравнение полигона
+      // пола exp ↔ got — блокируется только уменьшение покрытия относительно
+      // ожидания (потеря полигона при операции/на сервере); унаследованный малый
+      // пол (зонирование пола в UI) не блокирует. Без процентных порогов:
+      // абсолютный допуск на численный шум вершин — периметр × COORD_TOL.
+      const expFloorPoly = ((room.floors as Array<Record<string, unknown>> | undefined) ?? [])[0]?.["polygon"] as Point[] | undefined;
+      if (expFloorPoly && expFloorPoly.length >= 3) {
+        const gotFloorPoly = ((match.floors as Array<Record<string, unknown>> | undefined) ?? [])[0]?.["polygon"] as Point[] | undefined;
+        if (gotFloorPoly && gotFloorPoly.length >= 3) {
+          const expArea = polygonArea(expFloorPoly);
+          if (expArea > 1) {
+            const covered = overlapShare(expFloorPoly, gotFloorPoly);
+            const lostCm2 = (1 - covered) * expArea;
+            let per = 0;
+            for (let i = 0; i < expFloorPoly.length; i++) {
+              const a = expFloorPoly[i]!, b = expFloorPoly[(i + 1) % expFloorPoly.length]!;
+              per += Math.hypot(b.x - a.x, b.y - a.y);
+            }
+            if (lostCm2 > Math.max(per * COORD_TOL, 1)) {
+              problems.push(`room ${rid}: полигон пола уступает ожиданию на ${lostCm2.toFixed(1)} см² — потеря покрытия пола`);
+            }
+          }
         }
       }
     }
