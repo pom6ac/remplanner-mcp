@@ -6,6 +6,7 @@ import { McpError } from "../errors.ts";
 import { assignCandidate } from "./assign.ts";
 import { pointInPolygon, polygonInsidePolygon, segmentsCross } from "./geometry.ts";
 import { roomPolygons } from "./rooms.ts";
+import { refreshPipesForWarmFloor, pipesReferencingItem } from "./pipes.ts";
 
 /**
  * Тёплый пол (лист «Тёплые полы», этап 122, 2026-11-17): контуры model.warm_floors —
@@ -231,7 +232,13 @@ export function updateWarmFloor(
   if (wf.length_pipes !== undefined) {
     candidate.length_pipes = warmFloorPipesLengthM(pts, candidate.step ?? WARM_FLOOR_WATER_DEFAULTS.step, candidate.direction ?? "right");
   }
+  const oldP0 = poly[0];
   assignCandidate(wf, candidate);
+  // пересчёт только затронутых привязок: вершины-контуры магистралей тёплого пола
+  // следуют за новым polygon[0] контура (климат ч.2, этап 250)
+  if (oldP0 && (oldP0.x !== pts[0]!.x || oldP0.y !== pts[0]!.y)) {
+    refreshPipesForWarmFloor(model, wf.id, pts[0]!);
+  }
   return wf;
 }
 
@@ -241,10 +248,19 @@ function kindOf(type: string): WarmFloorKind {
   return "cable";
 }
 
-/** warm_floor_delete. */
+/** warm_floor_delete: контур с подключённой магистралью тёплого пола не удаляется —
+ *  у трубы осталась бы вершина-контур без объекта (сначала pipe_delete). */
 export function deleteWarmFloor(model: Model, warmFloorId: string): void {
   if (!model.warm_floors?.[warmFloorId]) {
     throw new McpError("NOT_FOUND", `контур тёплого пола ${warmFloorId} не найден`);
+  }
+  const linked = pipesReferencingItem(model, warmFloorId);
+  if (linked.length > 0) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `контур ${warmFloorId} подключён к магистрали тёплого пола ${linked.map((p) => p.id).join(", ")} — сначала удалите её (pipe_delete)`,
+      { details: { kind: "pipe_referenced", pipes: linked.map((p) => p.id) } },
+    );
   }
   delete model.warm_floors![warmFloorId];
 }

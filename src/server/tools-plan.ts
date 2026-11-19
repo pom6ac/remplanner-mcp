@@ -917,16 +917,20 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     pipe_add: tool(
       "Провести трубу (листы «Водоснабжение», «Тёплые полы», «Кондиционеры», «Радиаторы», «Вентиляция»): " +
         "kind=water (ХВС, water_pipe), hot (ГВС, water_hot_pipe), drainage (канализация, drainage_pipe) — " +
-        "с подключением выводов воды; климат-виды (PRO-инструменты редактора, только узлы): " +
+        "с подключением выводов воды; климат-виды (PRO-инструменты редактора): " +
         "warm_floor (магистрали тёплого пола, warm_floor_pipe), conditioner_drainage (дренаж кондиционера), " +
         "heat_hot/heat_cold (магистрали подачи/обратная отопления), vent_out/vent_in (воздуховод вытяжной/приточный). " +
-        "path — цепочка элементов по порядку: {x, y} (узел, мм) или {item_id} (подключение предмета — только для " +
-        "water/hot/drainage: выводы воды waterspot_*, стояки water/water_column_hot/water_column_cold/drainage_column, " +
-        "ввод ceiling_water, коллектор waterspot_collector; какие выводы к какой трубе подключаются, проверяется как " +
-        "в редакторе). Соседние элементы пути соединяются ребром; у предметов ставится обратная ссылка pipes.<вид>_id. " +
-        "Длина в модели — в метрах, пересчитывается автоматически. Все трубы — функции PRO-тарифа редактора: " +
-        "на бесплатном тарифе трубы могут не сохраниться — поведение free не проверялось. " +
-        "После добавления вызывайте model_validate и project_save.",
+        "path — цепочка элементов по порядку: {x, y} (узел, мм) или {item_id} (подключение предмета; какие предметы " +
+        "к какой трубе подключаются, проверяется как в редакторе: water/hot/drainage — выводы воды waterspot_*, стояки " +
+        "water/water_column_hot/water_column_cold/drainage_column, ввод ceiling_water, коллектор waterspot_collector; " +
+        "heat_hot/heat_cold — радиаторы radiator_*, конвекторы floor_convector/convector_on_floor, коллекторные узлы " +
+        "radiator_collector/ext_manifold_box/int_manifold_box (multi); conditioner_drainage — блоки кондиционера " +
+        "conditioner/floor_conditioner, канальные выводы; warm_floor — коллекторные узлы и водяной контур тёплого пола " +
+        "({item_id: \"<WF<n> или id контура>\"}); vent_out/vent_in — вентиляторы fan/fan_wall, установка ventilation_system). " +
+        "Соседние элементы пути соединяются ребром; у вершин-предметов ставится обратная ссылка в props (у водоснабжения " +
+        "pipes.<вид>_id, у климата — props.<коллекция>). Длина в модели — в метрах, пересчитывается автоматически. " +
+        "Все трубы — функции PRO-тарифа редактора: на бесплатном тарифе трубы могут не сохраниться — поведение free " +
+        "не проверялось. После добавления вызывайте model_validate и project_save.",
       {
         kind: z.enum(["water", "hot", "drainage", "warm_floor", "conditioner_drainage", "heat_hot", "heat_cold", "vent_out", "vent_in"])
           .describe("вид трубы: water — ХВС, hot — ГВС, drainage — канализация, warm_floor — магистрали тёплого пола, conditioner_drainage — дренаж кондиционера, heat_hot/heat_cold — магистрали отопления, vent_out/vent_in — воздуховоды"),
@@ -941,7 +945,13 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           kind: a["kind"] as PipeKind | ClimatePipeKind,
           path: (a["path"] as unknown[]).map((el) => {
             const e = el as Record<string, unknown>;
-            return "item_id" in e ? { itemId: resolveItem(m, String(e["item_id"])).id } : { x: Number(e["x"]), y: Number(e["y"]) };
+            if (!("item_id" in e)) return { x: Number(e["x"]), y: Number(e["y"]) };
+            const ref = String(e["item_id"]);
+            // вершина-контур магистрали тёплого пола (климат ч.2): метка WF<n> или id контура
+            if (a["kind"] === "warm_floor" && ((m.warm_floors ?? {})[ref] || /^WF\d+$/.test(ref))) {
+              return { itemId: resolveWarmFloor(m, ref).id };
+            }
+            return { itemId: resolveItem(m, ref).id };
           }),
         }));
         return ok(compactEntity(ws.model, (c) => [c.pipes, c.pipes_warm_floor, c.pipes_conditioner, c.pipes_heat, c.pipes_ventilation].flat().find((p) => p.site_id === pipe.id) ?? null));

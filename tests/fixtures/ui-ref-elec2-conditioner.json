@@ -1,5 +1,5 @@
 {
- "_source": "Синтетический эталон: формат cables_conditioner (conditioner_wire) в живой пробе не снят (подключаемые предметы кондиционера не ставились); структура по аналогии со снятым cables_warm_floor (проба 239-elec2-link6) — multi-вершина + узлы, обратная ссылка props.cables_conditioner.cable_conditioner_id. id обезличены (ревью 241 №7: ключи items совпадают с id вершин).",
+ "_source": "клик по UI (headless Chromium, проба 250-climate2-connect4, КЛИК БЕЗ СОХРАНЕНИЯ): провод conditioner_wire от внутреннего блока кондиционера к внешнему; model project.copy(\"server\"); id предмета/вершин обезличены (id1–id3), ID проекта/плана обезличены, координаты синтетические (расстояние сохранено). Ранее (этап 239) эталон был синтетическим с неверным ключом ссылки cable_conditioner_id — заменён живым: ключ conditioner_cable_id, вершины electrospot.",
  "model_object": {
   "id": "id1",
   "matrix": [
@@ -23,28 +23,22 @@
      "x": 100,
      "y": 100
     },
-    "type": "multi",
-    "pp": {
-     "id3": {
-      "i": 0,
-      "d": 0.5
-     }
-    }
+    "type": "electrospot"
    },
    {
     "id": "id3",
     "point": {
-     "x": 200,
-     "y": 100
+     "x": 100,
+     "y": 190
     },
-    "type": "node"
+    "type": "electrospot"
    }
   ],
   "items": {
-   "id2": "multi",
-   "id3": "node"
+   "id2": "electrospot",
+   "id3": "electrospot"
   },
   "type": "conditioner_wire",
-  "length": 1
+  "length": 0.9
  }
 }
