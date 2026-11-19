@@ -110,8 +110,10 @@ test("c4: снапшот публичного контракта (список �
 });
 
 // Ревью 188 №5: снапшот вне fixtures-guard, поэтому чистоту проверяет сам снапшот-тест.
-// Известные 7+-значные числа: лимит лимита редактора (1000000) и MAX_SAFE_INTEGER в схемах.
-const KNOWN_BIG_NUMBERS = new Set([1_000_000, Number.MAX_SAFE_INTEGER]);
+// Ревью 190 N4: порог снижен до 6 знаков (шестизначные реальные ID раньше проходили);
+// дробная часть числа (0.12345678) и hex-цвета (#000000) не считаются ID.
+// Известные большие числа: лимиты редактора (1000000, 132000) и MAX_SAFE_INTEGER в схемах.
+const KNOWN_BIG_NUMBERS = new Set([1_000_000, 132_000, Number.MAX_SAFE_INTEGER]);
 
 test("c4: снапшот не содержит локальных путей, email и неизвестных больших чисел", () => {
   const stored = readFileSync(SNAPSHOT, "utf8");
@@ -119,7 +121,7 @@ test("c4: снапшот не содержит локальных путей, em
   assert.ok(!stored.includes("/home/"), "в снапшоте локальный путь /home/ — HOME не нормализован");
   assert.ok(!stored.includes("<unset-home>"), "в снапшоте ненормализованный HOME (<unset-home>)");
   assert.doesNotMatch(stored, /[\w.+-]+@[\w-]+\.[\w.-]+/, "в снапшоте email");
-  const unexpected = [...new Set(stored.match(/\d{7,}/g) ?? [])]
+  const unexpected = [...new Set(stored.match(/(?<![\d.#])\d{6,}(?![\d.])/g) ?? [])]
     .filter((n) => !KNOWN_BIG_NUMBERS.has(Number(n)));
-  assert.deepEqual(unexpected, [], "в снапшоте неизвестные 7+-значные числа (реальные ID вместо синтетических?)");
+  assert.deepEqual(unexpected, [], "в снапшоте неизвестные 6+-значные числа (реальные ID вместо синтетических?)");
 });
