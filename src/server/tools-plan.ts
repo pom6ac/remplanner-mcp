@@ -35,6 +35,8 @@ import {
 import {
   setFloorFinish, removeFloorFinish, setWallFinish, removeWallFinish, setCeilingFinish, removeCeilingFinish,
   resolveRoom as resolveRoomFinish, finishList,
+  FLOOR_MOLDING_TYPES, setFloorMolding, removeFloorMolding, setCeilingMolding, removeCeilingMolding,
+  addCeilingNiche, removeCeilingNiche,
 } from "../model/finish.ts";
 import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
@@ -1450,7 +1452,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "своей комнатой — у смежных комнат стороны независимы). Покрытия: wallpaper, wallpaper_for_paint, " +
         "paint_wall, walls_whitewash, wall_chalk_paint (PRO), wall_tile, wall_mosaic, wall_clinker (PRO), " +
         "wall_stone (PRO), wall_wooden_panels, plastic_panels, wall_woodbatten (PRO), wall_sheet_panels (PRO), " +
-        "wall_tile_panels (PRO), decorative_plaster, venice_plaster. height_mm=0 — на всю высоту стены. " +
+        "wall_tile_panels (PRO), decorative_plaster, venice_plaster. Двухслойные (PRO): painting_tile " +
+        "(плитка+краска от 120 см), wallpaper_tiles (плитка+обои от 120 см), wall_apron (фартук: плитка " +
+        "92–152 см) — высота фиксирована редактором, height_* не принимаются; слой 1/2 других отделок " +
+        "на ребре сохраняется. height_mm=0 — на всю высоту стены. " +
         "После правки вызывайте model_validate и project_save.",
       {
         room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
@@ -1490,11 +1495,12 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     finish_ceiling_set: tool(
-      "Задать комнате покрытие потолка (лист «Потолки», простые покрытия; многоуровневые потолки, " +
-        "короба и ниши — инструментами следующих этапов). Покрытия: paint_ceiling, whitewash_ceiling, " +
+      "Задать комнате покрытие потолка (лист «Потолки», простые покрытия; многоуровневые потолки " +
+        "и короба — инструментами следующих этапов). Покрытия: paint_ceiling, whitewash_ceiling, " +
         "gypsum_ceiling, stretch_ceiling, stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, " +
-        "plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. После правки вызывайте " +
-        "model_validate и project_save.",
+        "plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. Закарнизные ниши переживают " +
+        "смену покрытия; на paint_ceiling/whitewash_ceiling при существующих нишах — отказ " +
+        "(сначала finish_ceiling_niche_remove). После правки вызывайте model_validate и project_save.",
       {
         room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
         material: z.string().min(1).describe("ключ покрытия потолка"),
@@ -1512,7 +1518,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     finish_ceiling_remove: tool(
-      "Снять покрытие потолка комнаты (инструмент ceiling_remove).",
+      "Снять покрытие потолка комнаты (инструмент ceiling_remove). При закарнизных нишах — отказ " +
+        "(сначала finish_ceiling_niche_remove): ниши не стираются молча.",
       { room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты") },
       async (a) => {
         const ws = wsOf();
@@ -1523,12 +1530,132 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     finish_get: tool(
       "Отделка комнат: покрытие пола (с параметрами раскладки), покрытие потолка и отделка сторон стен " +
-        "по комнатам (тип, слой, высота, высота от пола). wall — метка W<n>; side — сторона стены, " +
-        "обращённая к комнате. Без room_id — по всем комнатам.",
+        "по комнатам (тип, слой, высота, высота от пола), напольные и потолочный плинтусы, закарнизные ниши. " +
+        "wall — метка W<n>; side — сторона стены, обращённая к комнате. Без room_id — по всем комнатам.",
       { room_id: z.string().min(1).optional().describe("метка R<n> из model_get или id комнаты") },
       async (a) => {
         const ws = wsOf();
         return ok(finishList(ws.model, a["room_id"] as string | undefined));
+      },
+    ),
+
+    // ---------- Отделка ч.2: плинтусы, ниша, двухслойные (этап 245, все PRO) ----------
+    finish_floor_molding_set: tool(
+      "Поставить напольный плинтус вдоль стороны стены комнаты (лист «Напольные покрытия», группа " +
+        "«Плинтусы»; PRO). Виды: floor_molding_plastic, floor_molding_polyurethane, floor_molding_mdf, " +
+        "floor_molding_wood, floor_molding_tile, floor_molding_with_light, floor_molding_hidden. " +
+        "Плинтус ставится на всю сторону (ребро не короче 25 см); повторный вызов заменяет плинтус " +
+        "этой стороны. После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        wall_id: z.string().min(1).describe("метка W<n> из model_get или id стены"),
+        type: z.string().min(1).describe("вид плинтуса (floor_molding_*)"),
+        from_mm: mmInt.optional().describe("начало отрезка по стороне от её начала, мм (по умолчанию 0)"),
+        to_mm: mmInt.optional().describe("конец отрезка по стороне от её начала, мм (по умолчанию вся сторона)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_floor_molding_set", (m) => setFloorMolding(
+          m,
+          a["room_id"] as string,
+          resolveWall(m, a["wall_id"] as string).id,
+          a["type"] as never,
+          { fromMm: a["from_mm"] as number | undefined, toMm: a["to_mm"] as number | undefined },
+        ));
+        return ok({ room_id: a["room_id"], wall_id: a["wall_id"], type: a["type"], sides: res.parts, hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_floor_molding_remove: tool(
+      "Снять напольные плинтусы комнаты (инструмент «ластик» на плинтусе). Без wall_id — со всех сторон.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        wall_id: z.string().min(1).optional().describe("метка W<n> из model_get или id стены"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_floor_molding_remove", (m) => removeFloorMolding(
+          m,
+          a["room_id"] as string,
+          a["wall_id"] ? resolveWall(m, a["wall_id"] as string).id : undefined,
+        ));
+        return ok({ room_id: a["room_id"], wall_id: a["wall_id"] ?? null, sides: res.parts, hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_ceiling_molding_set: tool(
+      "Поставить потолочный плинтус вдоль стороны стены комнаты (лист «Потолки», инструмент " +
+        "«Потолочный плинтус»; PRO). Ставится на всю сторону (ребро не короче 25 см); повторный вызов " +
+        "заменяет плинтус этой стороны. После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        wall_id: z.string().min(1).describe("метка W<n> из model_get или id стены"),
+        from_mm: mmInt.optional().describe("начало отрезка по стороне от её начала, мм (по умолчанию 0)"),
+        to_mm: mmInt.optional().describe("конец отрезка по стороне от её начала, мм (по умолчанию вся сторона)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_ceiling_molding_set", (m) => setCeilingMolding(
+          m,
+          a["room_id"] as string,
+          resolveWall(m, a["wall_id"] as string).id,
+          { fromMm: a["from_mm"] as number | undefined, toMm: a["to_mm"] as number | undefined },
+        ));
+        return ok({ room_id: a["room_id"], wall_id: a["wall_id"], sides: res.parts, hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_ceiling_molding_remove: tool(
+      "Снять потолочные плинтусы комнаты. Без wall_id — со всех сторон.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        wall_id: z.string().min(1).optional().describe("метка W<n> из model_get или id стены"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_ceiling_molding_remove", (m) => removeCeilingMolding(
+          m,
+          a["room_id"] as string,
+          a["wall_id"] ? resolveWall(m, a["wall_id"] as string).id : undefined,
+        ));
+        return ok({ room_id: a["room_id"], wall_id: a["wall_id"] ?? null, sides: res.parts, hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_ceiling_niche_add: tool(
+      "Добавить закарнизную нишу вдоль стороны стены комнаты (лист «Потолки», инструмент " +
+        "«Закарнизная ниша»; PRO). Требует покрытия потолка (finish_ceiling_set) не краской/побелкой " +
+        "и ребра не короче 30 см; глубина ниши 200 мм (умолчание редактора). Повторный вызов заменяет " +
+        "нишу этой стороны. После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        wall_id: z.string().min(1).describe("метка W<n> из model_get или id стены"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_ceiling_niche_add", (m) => addCeilingNiche(
+          m,
+          a["room_id"] as string,
+          resolveWall(m, a["wall_id"] as string).id,
+        ));
+        return ok({ room_id: a["room_id"], wall_id: a["wall_id"], niche_id: res.id, hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_ceiling_niche_remove: tool(
+      "Убрать закарнизные ниши комнаты. Без wall_id — со всех сторон.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        wall_id: z.string().min(1).optional().describe("метка W<n> из model_get или id стены"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_ceiling_niche_remove", (m) => removeCeilingNiche(
+          m,
+          a["room_id"] as string,
+          a["wall_id"] ? resolveWall(m, a["wall_id"] as string).id : undefined,
+        ));
+        return ok({ room_id: a["room_id"], wall_id: a["wall_id"] ?? null, sides: res.parts, hint: SCENARIO_HINT });
       },
     ),
 

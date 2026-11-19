@@ -211,6 +211,10 @@ item_add conditioner/socket_thermo/fan/radiator_bimetal  # климат: кон�
 pipe_add kind=warm_floor|conditioner_drainage|heat_hot|heat_cold|vent_out|vent_in  # трубы климата (PRO)
 finish_floor_set / finish_wall_set / finish_ceiling_set  # отделка: покрытия пола, стен (по сторонам
                           #  комнат) и потолка (листы «Напольные покрытия»/«Отделка стен»/«Потолки»)
+finish_floor_molding_set / finish_ceiling_molding_set  # плинтусы (напольные 7 видов и потолочный, PRO)
+finish_ceiling_niche_add  # закарнизная ниша (PRO; требует потолок не краску/побелку)
+finish_wall_set type=wall_apron|painting_tile|wallpaper_tiles  # фартук и комбинированные (PRO, слои 1+2)
+finish_get               # отделка комнат: пол, потолок, стороны стен, плинтусы, ниши
 floor_hole_add            # проем в полу (прямоугольник в комнате, level_holes)
 terrace_add               # терраса (замкнутое кольцо границ terrace_borders) + terrace_fence_add / terrace_column_add
 territory_add             # участок (замкнутое кольцо границ territory_borders)

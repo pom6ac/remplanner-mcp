@@ -48,6 +48,9 @@ const EXPECTED_TOOLS = [
   // §7.4g — отделка: покрытия пола/стен/потолка по комнатам (этап 94)
   "finish_floor_set", "finish_floor_remove", "finish_wall_set", "finish_wall_remove",
   "finish_ceiling_set", "finish_ceiling_remove", "finish_get",
+  "finish_floor_molding_set", "finish_floor_molding_remove",
+  "finish_ceiling_molding_set", "finish_ceiling_molding_remove",
+  "finish_ceiling_niche_add", "finish_ceiling_niche_remove",
   // §7.4h — размеры и комментарии (нижняя панель, этап 113)
   "dim_add", "dim_update", "dim_delete", "dims_list",
   "comment_add", "comment_update", "comment_delete", "comments_list",

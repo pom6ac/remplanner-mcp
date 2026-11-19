@@ -42,6 +42,12 @@ const EDITOR_IDS_FORBIDDEN = new Set<string>([
   "ui-ref-elec2-strip-link.json",
   "ui-ref-elec2-warm-floor.json",
   "ui-ref-elec2-wire.json",
+  // Эталоны «Отделка» ч.2 (этап 245; ревью 246 №1): внутренние ID частей
+  // редактора (_aemao, _sv8gy) обезличены, набор — сквозной.
+  "ui-ref-finish2-ceiling-molding.json",
+  "ui-ref-finish2-ceiling-niche.json",
+  "ui-ref-finish2-floor-molding.json",
+  "ui-ref-finish2-wall-layers.json",
 ]);
 
 // Внутренний ID сайта: подчёркивание + 5 символов, опционально суффикс _<число>.

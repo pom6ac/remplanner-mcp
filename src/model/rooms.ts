@@ -49,3 +49,20 @@ export function inwardSideByProbe(wall: Wall, nl: Point, anchor: Point, rooms: R
   if (inMinus && !inPlus) return scale(nl, -1);
   return null;
 }
+
+/**
+ * Нормаль ребра (a→b), указывающая внутрь полигона (ревью 246 №3): пробная точка
+ * на ε от середины ребра по нормали и против неё — общий слой поверх
+ * inwardSideByProbe (та же проба, что у стороны стены, с нулевой толщиной).
+ * Обе/ни одна (вырожденный полигон) — null: запасное правило выбирает вызывающий.
+ */
+export function edgeInwardNormal(a: Point, b: Point, poly: Polygon): Point | null {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-9) return null;
+  const nl = { x: dy / len, y: -dx / len };
+  const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  // inwardSideByProbe использует только wall.depth; здесь ребро — грань полигона
+  const wall = { depth: 0 } as Wall;
+  return inwardSideByProbe(wall, nl, mid, [{ roomId: null, polygon: poly, areaCm2: 0, axisAreaCm2: null }]);
+}

@@ -856,9 +856,9 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
   (paint_ceiling, whitewash_ceiling, gypsum_ceiling, stretch_ceiling,
   stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, plastic_panels_ceiling,
   armstrong_ceiling, grillato_ceiling). Снятие — инструмент ceiling_remove.
-  Многоуровневые потолки (complex_ceiling), ниши (ceiling_niche, PRO), короба
-  (gypsum_box), потолочный плинтус (molding, PRO) и проём в потолке
-  (ceiling_hole) — следующий PR.
+  Умолчание level: 0 у paint/whitewash, 7.5 у остальных (класс Ceiling бандла).
+  Многоуровневые потолки (complex_ceiling), короба (gypsum_box) и проём в потолке
+  (ceiling_hole) — следующий PR; ниши и потолочный плинтус см. ниже.
 - **Стены** (`decors[i].parts`): часть отделки `{id, type, layer, line, line_wall,
   distance, height, height_from_floor, patch, floor_offset, line_decor}`;
   `type` — ключ отделки (wallpaper, wallpaper_for_paint, paint_wall, walls_whitewash,
@@ -866,9 +866,33 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
   venice_plaster; PRO: wall_chalk_paint, wall_clinker, wall_stone, wall_woodbatten,
   wall_sheet_panels, wall_tile_panels); `height` 0 — на всю высоту стены,
   `height_from_floor` — отступ от пола. Снятие — инструмент wall_cover_remove.
-  Двухслойные пункты (painting_tile = плитка+краска, wallpaper_tiles = плитка+обои,
-  wall_apron — фартук) пишут два слоя и — следующий PR. Плинтусы (floor_molding_*,
-  PRO) и настенные профили/ниши (wall_profile/wall_molding/wall_niche) — следующий PR.
+- **Двухслойные пункты UI** [пробы 245-fixtures4/5, 2026-11-20]: painting_tile =
+  плитка (слой 1) + краска (слой 2, от 120 см до верха), wallpaper_tiles = плитка +
+  обои (слой 2 от 120 см), wall_apron (фартук) = плитка слоем 2 от 92 см высотой
+  60 см. Высоты фиксированы редактором (у слоя 1 DecorLine принудительно ставит
+  height_from_floor=0); части обоих слоёв лежат в одном `decors[edge].parts`.
+- **Напольные плинтусы** (`floorMoldings[edge].parts`, PRO) [пробы 245-fixtures4/5]:
+  часть `{id, type, layer:1, line (6 см от грани, укороченная по кликам),
+  line_wall (ось ребра), distance}`; 7 видов floor_molding_plastic/polyurethane/
+  mdf/wood/tile/with_light/hidden. Высота плинтуса в модели не хранится — она в
+  `$Project.settings.floor_molding[type]` (умолчание 10 см, контекстное меню 3–100 см);
+  подключение света (floor_molding_with_light → props.cables) в MCP не поддержано.
+  Отступ 6 см — допущение: его задала сама проба (create_line ins(0.3, 6)), отступ UI
+  кликами офлайн не снят (ревью 246 №7).
+- **Потолочный плинтус** (`ceilingMoldings[edge].parts`, PRO, тип molding): та же
+  форма части, линия в 5 см от грани (рёбра потолка отстоят от стен на ~5 см внутрь).
+  Отступ 5 см — допущение: его задала сама проба (create_line ins(0.3, 5)), отступ UI
+  кликами офлайн не снят (ревью 246 №7).
+- **Закарнизная ниша** (`ceilings[0].niches[edge].parts`, PRO): часть `{id, plan:
+  "ceiling", id_room, id_ceiling, line (ребро короче на 2.5 см с концов), line_wall,
+  depth: 20 (defs.ceiling_niche.depth), width, area, polygon}`; ставится только при
+  существующем покрытии потолка и не на paint_ceiling/whitewash_ceiling (правило UI),
+  ребро длиннее 30 см. Полностью ниша закрывает ребро; parts могут дробить ребро.
+- **Зонирование потолка** (zone_ceiling) — линии-delimiters (граф vertexes/matrix,
+  хранится в `rooms2[rid].delimiters`, restore в глобальный ZONE_DELIMITERS с типом
+  zone_ceiling), концы магнитятся к потолочным ригелям и рёбрам; MCP не поддержано —
+  следующий PR (требует связки с потолочными ригелями, эталон кликами не снят).
+  Профили потолка: в бандле редактора единственное значение — "standard" (проба 245).
 - **Переживание операций со стенами**: покрытие пола/потолка остаётся за комнатой
   (при split комнате-наследнику отделка не копируется — у новой комнаты её нет),
   отделка сторон при разрезании/слиянии/переносе стен переезжает по рёбрам; редактор
@@ -879,9 +903,15 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
 - **MCP**: finish_floor_set/finish_floor_remove, finish_wall_set/finish_wall_remove,
   finish_ceiling_set/finish_ceiling_remove (запись канонической формы в rooms2,
   редактор досчитывает производное: polygons_layout, умолчания планок), finish_get
-  (отделка по комнатам; пол/потолок видны и в model_get). Сверка при нормализации и
-  после save — finishMismatches (сопоставление комнат по геометрии, отделка стен по
-  покрытию оси с допуском; производные поля раскладки не блокируют).
+  (отделка по комнатам; пол/потолок видны и в model_get). Отделка ч.2 [этап 245]:
+  finish_floor_molding_set/remove (7 видов), finish_ceiling_molding_set/remove,
+  finish_ceiling_niche_add/remove, finish_wall_set — двухслойные painting_tile/
+  wallpaper_tiles/wall_apron. Сверка при нормализации и после save —
+  finishMismatches (сопоставление комнат по геометрии, отделка стен/плинтусы/ниши
+  по покрытию рёбер с допусками; производные поля раскладки не блокируют; площадь
+  покрытия пола — сравнение дефицита покрытия до/после операции: блокируется только
+  прирост незакрытой полом площади внутри комнаты (унаследованный малый пол и пол,
+  следующий за сузившейся комнатой, не блокируют; ревью 246 №4)).
 
 ### 7.8. Перепланировка: демонтаж, перегородки, замена проёмов, ГКЛ-короб [код + пробы 103-*, 2026-11-17]
 
