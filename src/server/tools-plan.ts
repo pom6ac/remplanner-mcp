@@ -15,6 +15,7 @@ import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePi
 import { addWarmFloor, updateWarmFloor, deleteWarmFloor } from "../model/climate.ts";
 import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, type LightKind } from "../model/lighting.ts";
 import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.ts";
+import { addElecCable, updateElecCable, deleteElecCable, MAX_ELEC_PATH_NODES, SOCKET_CABLE_TOOLS, type ElecPathElement } from "../model/electric2.ts";
 import {
   addRuler, updateRuler, deleteRuler, addComment, updateComment, deleteComment,
   dimsList, commentsList, resolveRuler, resolveComment, unescapeCommentText,
@@ -1240,6 +1241,100 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           return true;
         });
         return ok({ deleted: a["cable_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Электропроводка, часть 2: кабели-проводка (лист «Электропроводка») ----------
+    wiring_add: tool(
+      "Провести кабель-проводку (лист «Электропроводка», PRO): path — точки пути по порядку " +
+        "(мм; элементы {x, y} — узел или {item_id} — предмет: электрощиток, распредел. коробка/КУП, " +
+        "розетка или вывод провода; не менее 2). tool — ключ кабеля из каталога UI: " +
+        "wire_2_05…wire_5_100 (2–5 жил), wire_earth_* (заземление), wire_tv/utp/hdmi/audio/phone/optical " +
+        "(слаботочные; коллекция cables_socket), warm_floor_wire (cables_warm_floor), " +
+        "conditioner_wire (cables_conditioner). У multi-предметов (щиток, коробки) допускается несколько " +
+        "кабелей; у розеток/выводов — один кабель на тип (повторное подключение отклоняется). " +
+        "Обратные ссылки на предметах ставятся автоматически. Длину с опусками до точек пересчитывает " +
+        "редактор. После добавления вызывайте model_validate и project_save.",
+      {
+        tool: z.enum([...SOCKET_CABLE_TOOLS]).optional()
+          .describe("кабель (устаревшее имя параметра; используйте kind)"),
+        kind: z.string().min(1).optional()
+          .describe("ключ кабеля из каталога UI (wire_3_25, warm_floor_wire, conditioner_wire и др.)"),
+        path: z.array(z.union([
+          z.object({ x: mm, y: mm }),
+          z.object({ item_id: z.string().min(1) }),
+        ])).min(2).max(MAX_ELEC_PATH_NODES).describe("точки пути по порядку, мм; не более 32"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const toolKey = (a["kind"] as string | undefined) ?? (a["tool"] as string | undefined);
+        if (!toolKey) {
+          throw new McpError("INVALID_ARGUMENT", "укажите kind — ключ кабеля из каталога UI (например wire_3_25, warm_floor_wire, conditioner_wire)");
+        }
+        const cable = ws.apply("wiring_add", (m) => addElecCable(m, {
+          tool: toolKey,
+          path: a["path"] as ElecPathElement[],
+        }));
+        return ok(compactEntity(ws.model, (c) => {
+          for (const key of ["cables_socket", "cables_warm_floor", "cables_conditioner"] as const) {
+            const found = (c[key] as { site_id: string }[] | undefined)?.find((g) => g.site_id === cable.id);
+            if (found) return found;
+          }
+          return null;
+        }));
+      },
+    ),
+
+    wiring_update: tool(
+      "Изменить кабель-проводку: перенести узлы графа. positions — список {vertex, x_mm, y_mm}; " +
+        "vertex — индекс вершины (0-based, как в model_get cables_socket[].vertexes); вершины-предметы " +
+        "следуют за своими предметами (item_update). Длину с опусками пересчитывает редактор.",
+      {
+        wiring_id: z.string().min(1).describe("метка CS/CW/CC<n> из model_get или id сайта"),
+        positions: z.array(z.object({
+          vertex: mmInt.describe("индекс узла (0-based)"),
+          x_mm: mmIntSigned,
+          y_mm: mmIntSigned,
+        })).min(1).max(MAX_ELEC_PATH_NODES),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const cable = ws.apply("wiring_update", (m) => {
+          const id = ["cables_socket", "cables_warm_floor", "cables_conditioner"].flatMap((k) => Object.values((m as Record<string, Record<string, { id: string }>>)[k] ?? {})).find((c) => c.id === (a["wiring_id"] as string))?.id
+            ?? compactModel(m).cables_socket.find((c) => c.id === (a["wiring_id"] as string) || c.site_id === (a["wiring_id"] as string))?.site_id
+            ?? compactModel(m).cables_warm_floor.find((c) => c.id === (a["wiring_id"] as string) || c.site_id === (a["wiring_id"] as string))?.site_id
+            ?? compactModel(m).cables_conditioner.find((c) => c.id === (a["wiring_id"] as string) || c.site_id === (a["wiring_id"] as string))?.site_id
+            ?? (a["wiring_id"] as string);
+          return updateElecCable(m, {
+            wiringId: id,
+            positions: (a["positions"] as { vertex: number; x_mm: number; y_mm: number }[]).map((p) => ({
+              vertex: p.vertex, x: p.x_mm, y: p.y_mm,
+            })),
+          });
+        });
+        return ok(compactEntity(ws.model, (c) => {
+          for (const key of ["cables_socket", "cables_warm_floor", "cables_conditioner"] as const) {
+            const found = (c[key] as { site_id: string }[] | undefined)?.find((g) => g.site_id === cable.id);
+            if (found) return found;
+          }
+          return null;
+        }));
+      },
+    ),
+
+    wiring_delete: tool(
+      "Удалить кабель-проводку (метка CS/CW/CC<n> из model_get): обратные ссылки предметов " +
+        "и под-розеток снимаются автоматически.",
+      { wiring_id: z.string().min(1).describe("метка CS/CW/CC<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("wiring_delete", (m) => {
+          const id = ["cables_socket", "cables_warm_floor", "cables_conditioner"].flatMap((k) => Object.values((m as Record<string, Record<string, { id: string }>>)[k] ?? {})).find((c) => c.id === (a["wiring_id"] as string))?.id
+            ?? (a["wiring_id"] as string);
+          deleteElecCable(m, id);
+          return true;
+        });
+        return ok({ deleted: a["wiring_id"], hint: SCENARIO_HINT });
       },
     ),
 
