@@ -68,10 +68,45 @@ const rawGet = async (tag: string): Promise<Raw> => {
 };
 
 const created = { items: [] as string[], walls: [] as string[], warm_floors: [] as string[], pipes: [] as string[], wiring: [] as string[] };
+// ревью 251 №4: список захваченных ID пишется в файл сразу после создания —
+// 250-cleanup удаляет только по нему (никакой очистки по коллекции/имени/позиции)
+const CREATED_FILE = `${OUT}/250-created.json`;
+const writeCreated = (): void => {
+  writeFileSync(CREATED_FILE, JSON.stringify(created, null, 1) + "\n");
+};
+
+// контрольный проект читается ДО любых записей — с ним сверяем в конце (ревью 251 №5)
+const roBefore = await loadModel(ctx.session(), READONLY_ID, "1");
+writeFileSync(`${OUT}/250-get-readonly-before.json`, JSON.stringify(roBefore, null, 1) + "\n");
+
+/**
+ * Удаление строго по захваченным при создании ID (ревью 251 №4, инцидент 240):
+ * перед каждым удалением ID ищется в свежем model_get (метки позиционные), объект
+ * с ID вне списка пробы не удаляется никогда. Возвращает число удалённых.
+ */
+const deleteCreated = async (ids: string[], key: string, tool: string, arg: string): Promise<number> => {
+  let n = 0;
+  for (const id of [...ids].reverse()) {
+    const coll = (await call("model_get", {})) as unknown as Record<string, { id?: string }[]>;
+    if (!(coll[key] ?? []).some((o) => o.id === id)) continue; // уже удалён каскадом
+    await call(tool, { [arg]: id });
+    n++;
+  }
+  return n;
+};
+/** Очистка пробы: только created.*, в обратном порядке зависимостей. */
+const cleanupCreated = async (): Promise<void> => {
+  await deleteCreated(created.wiring, "cables_conditioner", "wiring_delete", "wiring_id");
+  await deleteCreated(created.pipes, "pipes_warm_floor", "pipe_delete", "pipe_id");
+  await deleteCreated(created.pipes, "pipes_conditioner", "pipe_delete", "pipe_id");
+  await deleteCreated(created.pipes, "pipes_heat", "pipe_delete", "pipe_id");
+  await deleteCreated(created.warm_floors, "warm_floors", "warm_floor_delete", "warm_floor_id");
+  await deleteCreated(created.items, "items", "item_delete", "item_id");
+  await deleteCreated(created.walls, "walls", "wall_delete", "wall_id");
+  writeCreated();
+};
 
 try {
-  const roBefore = await loadModel(ctx.session(), READONLY_ID, "1");
-  writeFileSync(`${OUT}/250-get-readonly-before.json`, JSON.stringify(roBefore, null, 1) + "\n");
   const ownNow = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   if (strip(ownNow.model) !== strip(backup.model)) throw new Error("dev-проект изменился с момента бэкапа — стоп");
   console.log("бэкап актуален, контрольный GET OK");
@@ -109,6 +144,7 @@ try {
   created.pipes.push(entityId(await call("pipe_add", { kind: "warm_floor", path: [{ item_id: wf }, { x: ox + 200, y: oy + 200 }] })));
   created.wiring.push(entityId(await call("wiring_add", { kind: "conditioner_wire", path: [{ item_id: cond }, { item_id: eng }] })));
   console.log("pipes:", created.pipes.join(" "), "wiring:", created.wiring.join(" "));
+  writeCreated(); // ревью 251 №4: список ID захвачен до любых рискованных шагов
 
   // 4. validate → save
   const v1 = await call("model_validate", {});
@@ -146,9 +182,20 @@ try {
 
   // 6. split: разрез верхней и нижней стен, перегородка между узлами (контур левее)
   const sx = ox + 1700;
+  // ревью 251 №4: split может породить НОВЫЕ id частей — они тоже захватываются
+  const knownWalls = (): Set<string> => new Set([...wallsBefore, ...created.walls]);
+  const captureNewWalls = async (): Promise<void> => {
+    const mgNow = (await call("model_get", {})) as unknown as { walls: { id: string }[] };
+    const known = knownWalls();
+    for (const w of mgNow.walls) {
+      if (w.id && !known.has(w.id)) created.walls.push(w.id);
+    }
+    writeCreated();
+  };
   console.log("split: topWall", JSON.stringify(topWall), "oy", oy);
   const topFrom = Math.min(topWall.from[0], topWall.to[0]);
   await call("wall_split", { wall_id: topWall.id, at_mm: sx - topFrom });
+  await captureNewWalls();
   const mg2 = (await call("model_get", {})) as unknown as { walls: { id: string; from: [number, number]; to: [number, number] }[] };
   console.log("split: горизонтальные стены после разреза:", JSON.stringify(mg2.walls.filter((w) => w.from[1] === w.to[1])));
   // нижняя стена пробы: горизонтальная с максимальной y (оси комнатных стен: верх
@@ -159,6 +206,7 @@ try {
   console.log("split: bottom", bottom.id, JSON.stringify(bottom.from), JSON.stringify(bottom.to));
   const bottomFrom = Math.min(bottom.from[0], bottom.to[0]);
   await call("wall_split", { wall_id: bottom.id, at_mm: sx - bottomFrom });
+  await captureNewWalls();
   const partRes = await call("wall_add", { kind: "partition", start: { x: sx, y: topWall.from[1] }, end: { x: sx, y: bottom.from[1] }, thickness_mm: 100 });
   const partId = (partRes["entity"] as { id?: string })?.id ?? (partRes["entity"] as { walls?: { id: string }[] })?.walls?.[0]?.id;
   if (!partId) throw new Error(`wall_add: нет id: ${JSON.stringify(partRes).slice(0, 200)}`);
@@ -190,56 +238,51 @@ try {
   const renderPath = png["path"] as string | undefined;
   console.log("render:", renderPath ?? JSON.stringify(png).slice(0, 160));
 
-  // 9. очистка по захваченным site-id (обратный порядок)
-  // метки позиционные: перед каждым удалением берём свежую метку (инцидент 240)
-  type C = { id?: string; name?: string };
-  const mg = async (): Promise<Record<string, C[]>> => (await call("model_get", {})) as unknown as Record<string, C[]>;
-  const deleteFirst = async (key: string, tool: string, arg: string): Promise<boolean> => {
-    const first = (await mg())[key]?.[0];
-    if (!first?.id) return false;
-    await call(tool, { [arg]: first.id });
-    return true;
-  };
-  while (await deleteFirst("cables_conditioner", "wiring_delete", "wiring_id")) {}
-  while (await deleteFirst("pipes_heat", "pipe_delete", "pipe_id")) {}
-  while (await deleteFirst("pipes_conditioner", "pipe_delete", "pipe_id")) {}
-  while (await deleteFirst("pipes_warm_floor", "pipe_delete", "pipe_id")) {}
-  while (await deleteFirst("warm_floors", "warm_floor_delete", "warm_floor_id")) {}
-  for (const name of ["radiator_bimetal", "conditioner", "conditioner_engine"]) {
-    for (;;) {
-      const found = (await mg()).items?.find((it) => it.name === name);
-      if (!found?.id) break;
-      await call("item_delete", { item_id: found.id });
-    }
-  }
-  // стены пробы — позиции после исходного числа стен
-  const baseWalls = wallsFull0.walls.length;
-  for (;;) {
-    const wallsNow = (await mg()).walls ?? [];
-    const extra = wallsNow.length - baseWalls;
-    if (extra <= 0) break;
-    const target = wallsNow[baseWalls]!;
-    if (created.walls.includes(target.id!)) {
-      await call("wall_delete", { wall_id: target.id! });
-    } else {
-      throw new Error(`стена ${target.id} вне пробы — отмена очистки`);
-    }
-  }
+  // 9. очистка по захваченным при создании ID (ревью 251 №4, инцидент 240):
+  // никакого удаления по коллекции целиком, по имени или по позиции
+  await pause();
+  await cleanupCreated();
   await pause();
   const s4 = await call("project_save", {});
   console.log("save#4 (очистка):", JSON.stringify(s4).slice(0, 240));
   if (s4["verified"] !== true) throw new Error("save#4 (очистка) не verified");
+  // после очистки в коллекциях пробы не должно остаться созданных объектов
+  const left = (await call("model_get", {})) as unknown as Record<string, { id?: string }[]>;
+  const leftoverPairs: [string, string[]][] = [
+    ["cables_conditioner", created.wiring],
+    ["pipes_heat", created.pipes],
+    ["pipes_conditioner", created.pipes],
+    ["pipes_warm_floor", created.pipes],
+    ["warm_floors", created.warm_floors],
+    ["items", created.items],
+    ["walls", created.walls],
+  ];
+  const leftovers = leftoverPairs.flatMap(([coll, ids]) => ids.filter((id) => (left[coll] ?? []).some((o) => o.id === id)));
+  if (leftovers.length > 0) throw new Error(`очистка неполна: ${leftovers.join(", ")}`);
 } catch (e) {
   console.error("FAIL:", (e as Error).message);
+  // ревью 251 №4: восстановление в finally — попытка убрать созданное пробой
+  // даже при сбое (best effort; список ID в 250-created.json остаётся для 250-cleanup)
+  try {
+    await cleanupCreated();
+    await call("project_save", {});
+    console.error("cleanup после сбоя выполнен");
+  } catch (ce) {
+    console.error("cleanup после сбоя не удался (объекты останутся в 250-created.json):", (ce as Error).message);
+    writeCreated();
+  }
   const ro = await loadModel(ctx.session(), READONLY_ID, "1");
   writeFileSync(`${OUT}/250-get-readonly-after-fail.json`, JSON.stringify(ro, null, 1) + "\n");
   await closeBrowser().catch(() => {});
   process.exit(1);
+} finally {
+  await closeBrowser().catch(() => {});
 }
 
 const roAfter = await loadModel(ctx.session(), READONLY_ID, "1");
 writeFileSync(`${OUT}/250-get-readonly-after.json`, JSON.stringify(roAfter, null, 1) + "\n");
-console.log("контрольный проект не изменился:", strip(roAfter.model) === strip((await loadModel(ctx.session(), READONLY_ID, "1")).model) ? "(same-run)" : "");
+// ревью 251 №5: сверка с roBefore (GET до пробы), а не с повторным GET того же проекта
+console.log("контрольный проект не изменился:", strip(roAfter.model) === strip(roBefore.model) ? "OK" : "ИЗМЕНИЛСЯ");
 const ownAfter = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
 writeFileSync(`${OUT}/250-get-own-after.json`, JSON.stringify(ownAfter, null, 1) + "\n");
 const same = strip(ownAfter.model) === strip(backup.model);
