@@ -4,7 +4,7 @@
 // (cables_socket ×2, cables_warm_floor) → cable_add (выключатель → лента) →
 // model_validate → project_save (verified, без NORMALIZATION_DROPPED) → reopen →
 // model_get сверка → render_plan PNG → очистка созданных объектов по ID → save.
-// GET 7886243-подобного рабочего проекта — только чтение до и после, сверка.
+// GET рабочего проекта (env) — только чтение до и после, сверка.
 // Запуск: node --experimental-strip-types scripts/probes/240-elec2-live.ts run
 import { mkdirSync, writeFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -187,7 +187,7 @@ try {
     allOk = cleanupOk && wallsClean;
   }
 
-  // 8. GET 7886243-подобного проекта после прогона — не изменился;
+  // 8. GET рабочего проекта (env) после прогона — не изменился;
   // свой план dev-проекта после очистки — как до прогона
   const readonlyAfter = await snap(READONLY_ID, "after");
   const sameReadonly = JSON.stringify(readonlyBefore.model) === JSON.stringify(readonlyAfter.model);
