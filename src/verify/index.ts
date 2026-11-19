@@ -17,5 +17,5 @@ export { cableConnectionMismatches, cableLinkFormMismatches, type CableLinkItem,
 export { elecCableConnectionMismatches, type ElecLinkItem } from "./elec.ts";
 export type { ElecCableColl } from "../model/electric2.ts";
 export { wallAxisCoveredBy, wallRoleMismatches, balconyWallPropertyMismatches, type BalconyWallProps } from "./walls.ts";
-export { pipeConnectionMismatches, type PipeLinkItem, ALL_PIPE_TYPES, WATER_PIPE_KEYS } from "./pipes.ts";
+export { pipeConnectionMismatches, type PipeLinkItem, ALL_PIPE_TYPES, WATER_PIPE_KEYS, WATER_PIPE_TYPES } from "./pipes.ts";
 export { climateGraphMismatches } from "./climate.ts";

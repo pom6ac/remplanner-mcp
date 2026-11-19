@@ -39,7 +39,7 @@ import {
   stripVertexIdRoom,
   wallAxisCoveredBy,
   wallRoleMismatches,
-  WATER_PIPE_KEYS,
+  WATER_PIPE_TYPES,
   type BalconyWallProps,
   type CableLinkItem,
   type ElecLinkItem,
@@ -331,7 +331,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     host.model().items as Record<string, PipeLinkItem>,
     (norm.model as { pipes?: Record<string, GasLineSig> }).pipes ?? {},
     (norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {},
-    { onlyKeys: WATER_PIPE_KEYS },
+    { onlyTypes: WATER_PIPE_TYPES },
   );
   // этап 64: потери границ и проёмов пола при нормализации
   const bordersNorm = checkBordersAfterNormalize(host.model(), norm.model as Model);
@@ -572,7 +572,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       expectedItems as Record<string, PipeLinkItem>,
       pipesAfter as Record<string, GasLineSig>,
       (itemsAfter as Record<string, PipeLinkItem>) ?? {},
-      { onlyKeys: WATER_PIPE_KEYS },
+      { onlyTypes: WATER_PIPE_TYPES },
     );
     // этап 64: границы террас/участка и проёмы в полу после save — по нормализованной семантике
     const bordersAfter = {

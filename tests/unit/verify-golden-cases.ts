@@ -28,7 +28,7 @@ export type GoldenVerifiers = {
     expectedItems: Record<string, unknown>,
     gotPipes: Record<string, unknown>,
     gotItems: Record<string, unknown>,
-    opts?: { onlyKeys?: Set<string> },
+    opts?: { onlyTypes?: Set<string> },
   ): string[];
   cableConnectionMismatches(
     expectedCables: Record<string, unknown>,
@@ -213,7 +213,7 @@ export function runGoldenCases(V: GoldenVerifiers): Record<string, string[]> {
   cases["pipe-conn/scalar-array-violation"] = V.pipeConnectionMismatches(clone(water), clone(connExpItems), clone(water), connScalarArray);
   cases["pipe-conn/climate-only-keys"] = V.pipeConnectionMismatches(
     clone(water), clone(connExpItems), clone(water), clone(connExpItems),
-    { onlyKeys: new Set(["pipe_warm_floor_id"]) },
+    { onlyTypes: new Set(["warm_floor_pipe"]) },
   );
 
   // --- под-розетки socket_group ---

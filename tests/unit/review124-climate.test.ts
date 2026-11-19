@@ -120,7 +120,9 @@ function heatScenario(): { model: Model; wf: WarmFloor; pipe: Pipe; itemId: stri
   v.type = "waterspot";
   v.point = { x: (item.pc as { x: number; y: number }).x, y: (item.pc as { x: number; y: number }).y };
   pipe.items[item.id] = "waterspot";
-  (item as unknown as { pipes: Record<string, string> }).pipes = { heat_pipe_hot_id: pipe.id };
+  // климат ч.2: обратная ссылка в props.pipes_heat (name_object_lines менеджера,
+  // проба 250-connect-heat), ключ heat_pipe_hot_id
+  (item as unknown as { pipes_heat: Record<string, string> }).pipes_heat = { heat_pipe_hot_id: pipe.id };
   return { model, wf, pipe, itemId: item.id };
 }
 
@@ -194,7 +196,7 @@ test("124 R2: сервер удалил обратную ссылку предм
   const { model, itemId } = heatScenario();
   const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
   const ws = saveMock(server, (s) => {
-    delete (s.model as { items?: Record<string, { pipes?: Record<string, string> }> }).items![itemId]!.pipes!.heat_pipe_hot_id;
+    delete (s.model as { items?: Record<string, { pipes_heat?: Record<string, string> }> }).items![itemId]!.pipes_heat!.heat_pipe_hot_id;
   });
   await ws.open("0", "1");
   await assert.rejects(ws.save(), (e: unknown) => {
@@ -208,7 +210,7 @@ test("124 R2: сервер добавил ссылку на несуществу
   const { model, itemId } = heatScenario();
   const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
   const ws = saveMock(server, (s) => {
-    (s.model as { items?: Record<string, { pipes?: Record<string, string> }> }).items![itemId]!.pipes!.heat_pipe_cold_id = "ghost";
+    (s.model as { items?: Record<string, { pipes_heat?: Record<string, string> }> }).items![itemId]!.pipes_heat!.heat_pipe_cold_id = "ghost";
   });
   await ws.open("0", "1");
   await assert.rejects(ws.save(), (e: unknown) => {
@@ -223,7 +225,7 @@ test("124 R2: нормализатор удалил обратную ссылк�
   const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
   let saves = 0;
   const ws = saveMock(server, () => { saves++; }, (m) => {
-    delete (m as { items?: Record<string, { pipes?: Record<string, string> }> }).items![itemId]!.pipes!.heat_pipe_hot_id;
+    delete (m as { items?: Record<string, { pipes_heat?: Record<string, string> }> }).items![itemId]!.pipes_heat!.heat_pipe_hot_id;
   });
   await ws.open("0", "1");
   await assert.rejects(ws.save(), (e: unknown) => e instanceof McpError && e.code === "NORMALIZATION_DROPPED");
@@ -235,7 +237,7 @@ test("124 R2: нормализатор добавил ссылку на несу
   const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
   let saves = 0;
   const ws = saveMock(server, () => { saves++; }, (m) => {
-    (m as { items?: Record<string, { pipes?: Record<string, string> }> }).items![itemId]!.pipes!.heat_pipe_cold_id = "ghost";
+    (m as { items?: Record<string, { pipes_heat?: Record<string, string> }> }).items![itemId]!.pipes_heat!.heat_pipe_cold_id = "ghost";
   });
   await ws.open("0", "1");
   await assert.rejects(ws.save(), (e: unknown) => e instanceof McpError && e.code === "NORMALIZATION_DROPPED");

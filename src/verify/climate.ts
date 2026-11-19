@@ -72,7 +72,7 @@ export function climateGraphMismatches(
       for (const coll of climateColls) Object.assign(merged, (src[coll] ?? {}) as Record<string, GasLineSig>);
       return merged;
     };
-    const onlyKeys = new Set(Object.values(CLIMATE_PIPE_KINDS).map((c) => PIPE_LINK_KEY_BY_TYPE[c.type] ?? `${c.type}_id`));
+    const onlyTypes = new Set(Object.values(CLIMATE_PIPE_KINDS).map((c) => c.type));
     // держатели ссылок: предметы плюс водяные контуры (вершина-контур магистрали
     // хранит обратную ссылку в props контура — climate ч.2)
     const holdersExpected = { ...opts.itemsExpected } as Record<string, PipeLinkItem>;
@@ -88,7 +88,7 @@ export function climateGraphMismatches(
       holdersExpected,
       mergeColls(norm),
       holdersGot,
-      { onlyKeys },
+      { onlyTypes },
     );
     if (conn.length > 0) out.push(`подключения труб климата: ${JSON.stringify(conn)}`);
   }
