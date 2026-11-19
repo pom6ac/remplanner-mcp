@@ -1,0 +1,70 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, проба 250-climate2-connect, КЛИК БЕЗ СОХРАНЕНИЯ): воздуховод ventpipe_out, протянутый от вентилятора fan; model project.copy(\"server\"); id предмета/вершин обезличены (id1–id3), ID проекта/плана обезличены, координаты синтетические (смещения сохранены). Рёбра матрицы воздуховодов несут сечение из defs.ventilation_pipe: {length, width, type \"flat\", height}; у линии spots {}. pp вершины-предмета — точка подключения на габарите вентилятора. Обратная ссылка props.pipes_ventilation.ventpipe_out_id.",
+ "model_object": {
+  "id": "id2",
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1,
+     "width": 20.4,
+     "type": "flat",
+     "height": 6
+    }
+   ],
+   [
+    {
+     "length": 1,
+     "width": 20.4,
+     "type": "flat",
+     "height": 6
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "id1",
+    "point": {
+     "x": 100,
+     "y": 100
+    },
+    "type": "waterspot",
+    "pp": {
+     "id3": {
+      "i": 3,
+      "d": 0.0905
+     }
+    }
+   },
+   {
+    "id": "id3",
+    "point": {
+     "x": 208.86,
+     "y": 110
+    },
+    "type": "node"
+   }
+  ],
+  "items": {
+   "id1": "waterspot",
+   "id3": "node"
+  },
+  "type": "ventpipe_out",
+  "length": 1.01,
+  "spots": {}
+ },
+ "item_props": {
+  "name": "fan",
+  "pc": {
+   "x": 100,
+   "y": 100
+  },
+  "width": 20,
+  "height": 20,
+  "angle": 0,
+  "pipes_ventilation": {
+   "ventpipe_out_id": "id2"
+  }
+ }
+}

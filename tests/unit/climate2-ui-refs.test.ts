@@ -393,3 +393,129 @@ test("250: mock save — сервер испортил тип вершины р�
   await ws.open("0", "1");
   await assert.rejects(ws.save(), (e: unknown) => e instanceof McpError && (e as McpError).code === "SITE_ERROR");
 });
+
+// ---------- живые эталоны ui-ref-climate2-* (пробы 250-connect*) в обе стороны ----------
+
+import { climateGraphMismatches } from "../../src/verify/climate.ts";
+import { gasLineLengthM } from "../../src/model/pipes.ts";
+
+type Fixture = { _source: string; model_object: Record<string, unknown>; item_props?: Record<string, unknown>; warm_floor_object?: Record<string, unknown> };
+
+const loadFixture = (name: string): Fixture =>
+  JSON.parse(readFileSync(join(here, `../fixtures/ui-ref-climate2-${name}.json`), "utf8")) as Fixture;
+
+/** Переименование id эталона под фактические id сценария (обезличенные id1… → модельные). */
+function substitute(node: unknown, map: Record<string, string>): unknown {
+  if (typeof node === "string") return map[node] ?? node;
+  if (Array.isArray(node)) return node.map((x) => substitute(x, map));
+  if (node && typeof node === "object") {
+    return Object.fromEntries(Object.entries(node as Record<string, unknown>).map(([k, v]) => [substitute(k, map) as string, substitute(v, map)]));
+  }
+  return node;
+}
+
+/** Убрать pp (MCP не воспроизводит точку захвата мыши — производное поле протяжки). */
+function stripPp(pipe: Record<string, unknown>): Record<string, unknown> {
+  const copy = structuredClone(pipe) as { vertexes?: Record<string, unknown>[] };
+  for (const v of copy.vertexes ?? []) delete v.pp;
+  return copy;
+}
+
+test("250: эталон ui-ref-climate2-heat-pipe — формат из редактора и проекция MCP совпадают (обе стороны)", () => {
+  const fx = loadFixture("heat-pipe");
+  const ref = structuredClone(fx.model_object!) as Record<string, unknown>;
+  const props = fx.item_props!;
+  // живой формат: pp на вершине-предмете, ключ heat_pipe_hot_id в props.pipes_heat
+  const refVertex = (ref.vertexes as Record<string, unknown>[])[0]!;
+  
+  assert.ok((refVertex as { pp: Record<string, unknown> }).pp, "в редакторе у вершины-предмета есть pp");
+  assert.equal(((props.pipes_heat as Record<string, unknown>).heat_pipe_hot_id), "id2");
+  // обратная сторона: MCP воспроизводит семантику (pp и длина от грани — производные)
+  const { m, radiator } = scenario();
+  const pipe = addPipe(m, { kind: "heat_hot", path: [{ itemId: radiator.id }, { x: 1807.2, y: -211.8 }] });
+  const nodeId = pipe.vertexes[1]!.id;
+  const map = { id1: radiator.id, id2: pipe.id, id3: nodeId };
+  const expected = { warm_floors: structuredClone(m.warm_floors ?? {}) as never, pipes_heat: { [pipe.id]: stripPp(substitute(ref, map) as Record<string, unknown>) } };
+  const itemsExpected = { [radiator.id]: substitute(props, map) as Record<string, unknown> };
+  const mism = climateGraphMismatches(expected as never, m as never, {
+    mode: "save",
+    itemsExpected: itemsExpected as never,
+    itemsGot: m.items as never,
+  });
+  assert.deepEqual(mism, []);
+  // обратная сторона: модель MCP как ожидание против эталона редактора
+  const mism2 = climateGraphMismatches({ pipes_heat: structuredClone((m as { pipes_heat?: Record<string, Pipe> }).pipes_heat ?? {}) } as never, { pipes_heat: { [pipe.id]: substitute(ref, map) } } as never, {
+    mode: "save",
+    itemsExpected: structuredClone(m.items) as never,
+    itemsGot: { [radiator.id]: substitute(props, map) } as never,
+  });
+  assert.deepEqual(mism2, []);
+});
+
+test("250: эталон ui-ref-climate2-conditioner-drainage — ссылка drainage_pipe_id в props.pipes_conditioner", () => {
+  const fx = loadFixture("conditioner-drainage");
+  const ref = structuredClone(fx.model_object!) as Record<string, unknown>;
+  const props = fx.item_props!;
+  assert.equal((props.pipes_conditioner as Record<string, unknown>).drainage_pipe_id, "id2");
+  const { m, cond } = scenario();
+  const pipe = addPipe(m, { kind: "conditioner_drainage", path: [{ itemId: cond.id }, { x: -0.93, y: 1000 }] });
+  const map = { id1: cond.id, id2: pipe.id, id3: pipe.vertexes[1]!.id };
+  const expected = { warm_floors: structuredClone(m.warm_floors ?? {}) as never, pipes_conditioner: { [pipe.id]: stripPp(substitute(ref, map) as Record<string, unknown>) } };
+  const itemsExpected = { [cond.id]: substitute(props, map) as Record<string, unknown> };
+  assert.deepEqual(climateGraphMismatches(expected as never, m as never, { mode: "save", itemsExpected: itemsExpected as never, itemsGot: m.items as never }), []);
+  assert.deepEqual(climateGraphMismatches({ pipes_conditioner: structuredClone((m as { pipes_conditioner?: Record<string, Pipe> }).pipes_conditioner ?? {}) } as never, { pipes_conditioner: { [pipe.id]: substitute(ref, map) } } as never, { mode: "save", itemsExpected: structuredClone(m.items) as never, itemsGot: { [cond.id]: substitute(props, map) } as never }), []);
+});
+
+test("250: эталон ui-ref-climate2-warm-floor-pipe-contour — вершина-контур и ссылка в props контура", () => {
+  const fx = loadFixture("warm-floor-pipe-contour");
+  const wfRef = fx.warm_floor_object as Record<string, unknown>;
+  const ref = fx.model_object as Record<string, unknown>;
+  // живой формат: вершина type "warm_floor" у polygon[0], pp на ребре контура,
+  // ссылка pipe_warm_floor_id в props КОНТУРА
+  const refVertex = (ref.vertexes as Record<string, unknown>[])[0]!;
+  assert.equal(refVertex.type, "warm_floor");
+  assert.ok(refVertex.pp, "pp точки подключения на полигоне контура");
+  assert.equal(((wfRef.props as Record<string, unknown>).pipes_warm_floor as Record<string, unknown>).pipe_warm_floor_id, "id2");
+  // обратная сторона: магистраль MCP с вершиной-контуром семантически совпадает с эталоном
+  const { m, wf } = scenario();
+  (wf as unknown as { length_pipes: number }).length_pipes = 6.18;
+    const p0 = wf.polygon[0]!;
+  const pipe = addPipe(m, { kind: "warm_floor", path: [{ itemId: wf.id }, { x: (p0.x - 61.12) * 10, y: (p0.y - 40.75) * 10 }] });
+  const map = { id1: wf.id, id2: pipe.id, id3: pipe.vertexes[1]!.id, id8: String(wf.id_room) };
+  const expectedPipe = stripPp(substitute(ref, map) as Record<string, unknown>) as { vertexes: { point?: { x: number; y: number } }[]; length: number };
+  expectedPipe.vertexes[0]!.point = { ...wf.polygon[0]! };
+  expectedPipe.vertexes[1]!.point = { ...pipe.vertexes[1]!.point! };
+  expectedPipe.length = pipe.length;
+  assert.deepEqual(climateGraphMismatches({ warm_floors: structuredClone(m.warm_floors ?? {}) as never, pipes_warm_floor: { [pipe.id]: expectedPipe } } as never, m as never, { mode: "save", itemsExpected: structuredClone(m.items) as never, itemsGot: m.items as never }), []);
+});
+
+test("250: эталон ui-ref-climate2-vent-pipe-fan — сечение рёбер, spots {}, ключ ventpipe_out_id", () => {
+  const fx = loadFixture("vent-pipe-fan");
+  const ref = structuredClone(fx.model_object!) as Record<string, unknown>;
+  const props = fx.item_props!;
+  // живой формат: ребро с сечением, spots {}, ссылка в props.pipes_ventilation
+  const edge = (ref.matrix as Array<Array<Record<string, unknown> | null>>)[0]![1]!;
+  assert.equal(edge.width, 20.4);
+  assert.equal(edge.type, "flat");
+  assert.equal(edge.height, 6);
+  assert.deepEqual(ref.spots, {});
+  assert.equal((props.pipes_ventilation as Record<string, unknown>).ventpipe_out_id, "id2");
+  const { m, fan } = scenario();
+  const pipe = addPipe(m, { kind: "vent_out", path: [{ itemId: fan.id }, { x: 2088.6, y: 1100 }] });
+  const map = { id1: fan.id, id2: pipe.id, id3: pipe.vertexes[1]!.id };
+  const expected = { warm_floors: structuredClone(m.warm_floors ?? {}) as never, pipes_ventilation: { [pipe.id]: stripPp(substitute(ref, map) as Record<string, unknown>) } };
+  const itemsExpected = { [fan.id]: substitute(props, map) as Record<string, unknown> };
+  assert.deepEqual(climateGraphMismatches(expected as never, m as never, { mode: "save", itemsExpected: itemsExpected as never, itemsGot: m.items as never }), []);
+  assert.deepEqual(climateGraphMismatches({ pipes_ventilation: structuredClone((m as { pipes_ventilation?: Record<string, Pipe> }).pipes_ventilation ?? {}) } as never, { pipes_ventilation: { [pipe.id]: substitute(ref, map) } } as never, { mode: "save", itemsExpected: structuredClone(m.items) as never, itemsGot: { [fan.id]: substitute(props, map) } as never }), []);
+});
+
+test("250: эталоны климата ч.2 без внутренних ID сайта и без секретов", () => {
+  for (const name of ["heat-pipe", "conditioner-drainage", "warm-floor-pipe-contour", "vent-pipe-fan"]) {
+    const raw = readFileSync(join(here, `../fixtures/ui-ref-climate2-${name}.json`), "utf8");
+    assert.doesNotMatch(raw, /"id":\s*"_[a-z0-9]{5}"/, `${name}: внутренние ID сайта обезличены`);
+    assert.match(raw, /обезличены/, `${name}: _source фиксирует обезличивание`);
+  }
+});
+
+void gasLineLengthM;
+void updatePipe;
