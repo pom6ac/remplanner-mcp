@@ -969,7 +969,7 @@
   },
   {
    "name": "finish_ceiling_set",
-   "description": "Задать комнате покрытие потолка (лист «Потолки», простые покрытия; многоуровневые потолки, короба и ниши — инструментами следующих этапов). Покрытия: paint_ceiling, whitewash_ceiling, gypsum_ceiling, stretch_ceiling, stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. После правки вызывайте model_validate и project_save.",
+   "description": "Задать комнате покрытие потолка (лист «Потолки», простые покрытия; многоуровневые потолки и короба — инструментами следующих этапов). Покрытия: paint_ceiling, whitewash_ceiling, gypsum_ceiling, stretch_ceiling, stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. Закарнизные ниши переживают смену покрытия; на paint_ceiling/whitewash_ceiling при существующих нишах — отказ (сначала finish_ceiling_niche_remove). После правки вызывайте model_validate и project_save.",
    "inputSchema": {
     "type": "object",
     "properties": {

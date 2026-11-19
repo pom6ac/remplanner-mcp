@@ -318,6 +318,54 @@ test("245: пустая модель и комнаты без контейнер
   assert.deepEqual(finishMismatches({ [room]: roomsOf(m)[room]! }, fixtureRooms), []);
 });
 
+// ---------- смена покрытия потолка и ниши (ревью 246 №2) ----------
+
+test("246 №2: finish_ceiling_set переносит ниши на новый потолок (id_ceiling обновлён)", () => {
+  const { m, room, wallId } = modelWithRefRoom();
+  setCeilingFinish(m, room, "gypsum_ceiling", {});
+  addCeilingNiche(m, room, wallId);
+  const rooms = roomsOf(m);
+  setCeilingFinish(m, room, "stretch_ceiling", {});
+  const c0 = (rooms[room]!["ceilings"] as Array<Record<string, unknown>>)[0]!;
+  assert.equal(c0["material"], "stretch_ceiling");
+  const niche = Object.values((c0["niches"] as Array<Record<string, unknown>>)[0]!["parts"] as Record<string, Record<string, unknown>>)[0]!;
+  assert.equal(niche["depth"], FINISH_GEOMETRY.nicheDepthCm, "глубина ниши сохранена");
+  assert.equal(niche["id_ceiling"], c0["id"], "id_ceiling указывает на новый потолок");
+  // ожидание сверки (модель после операции) учитывает нишу: сервер с нишей — совпадение,
+  // сервер без ниши — расхождение
+  const exp = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  assert.deepEqual(finishMismatches(exp, structuredClone(rooms) as Record<string, Record<string, unknown>>), []);
+  const gotNoNiche = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  for (const n of (gotNoNiche[room]!["ceilings"] as Array<Record<string, unknown>>)[0]!["niches"] as Array<Record<string, unknown>>) n["exist"] = false;
+  assert.ok(finishMismatches(exp, gotNoNiche).some((p) => p.includes("ниша")), "потеря ниши сервером обнаруживается");
+});
+
+test("246 №2: finish_ceiling_set на краску/побелку с нишами — отказ, ниши целы", () => {
+  const { m, room, wallId } = modelWithRefRoom();
+  setCeilingFinish(m, room, "gypsum_ceiling", {});
+  addCeilingNiche(m, room, wallId);
+  const before = JSON.stringify(roomsOf(m)[room]!["ceilings"]);
+  for (const material of ["paint_ceiling", "whitewash_ceiling"] as const) {
+    assert.throws(() => setCeilingFinish(m, room, material, {}), /ниш[ау].*finish_ceiling_niche_remove|сначала finish_ceiling_niche_remove/, `${material}: отказ с подсказкой`);
+  }
+  assert.equal(JSON.stringify(roomsOf(m)[room]!["ceilings"]), before, "ниши не тронуты (атомарно)");
+});
+
+test("246 №2: mock save — смена материала потолка не теряет нишу (verified, без NORMALIZATION_DROPPED)", async () => {
+  const { m, room, wallId } = modelWithRefRoom();
+  setCeilingFinish(m, room, "gypsum_ceiling", {});
+  addCeilingNiche(m, room, wallId);
+  setCeilingFinish(m, room, "stretch_ceiling", {});
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {});
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true);
+  const c0 = (((server.model as Record<string, unknown>)["rooms2"] as Record<string, Record<string, unknown>>)[room]!["ceilings"] as Array<Record<string, unknown>>)[0]!;
+  assert.equal(c0["material"], "stretch_ceiling");
+  assert.equal(((c0["niches"] as Array<Record<string, unknown>>)[0]!["exist"]), true, "ниша дошла до сервера");
+});
+
 // ---------- mock save ----------
 
 const COMPAT = { global_version: null, planner_version: null, bundles: [], object_id: null, plan_id: null, present: { WALLS: true, ROOMS2: true, restore: true, draw: true, copy: true, save: true, canvas: true, wall_link1: true, wall_link2: true, wall_calc: true } };

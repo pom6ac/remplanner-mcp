@@ -534,7 +534,10 @@ export type CeilingFinishParams = {
   profile?: string;
 };
 
-/** Записать/заменить покрытие потолка комнаты (rooms2[room].ceilings[0]). */
+/** Записать/заменить покрытие потолка комнаты (rooms2[room].ceilings[0]).
+ *  Закарнизные ниши переживают смену материала (переносятся на новый потолок
+ *  с обновлением id_ceiling — ревью 246 №2); на краску/побелку ниша в UI не
+ *  ставится, поэтому при нишах такой материал отклоняется до правки. */
 export function setCeilingFinish(model: Model, roomRef: string, material: CeilingCover, params: CeilingFinishParams): { id: string } {
   if (!(CEILING_COVERS as readonly string[]).includes(material)) {
     throw new McpError("INVALID_ARGUMENT", `неизвестное покрытие потолка «${material}» (допустимо: ${CEILING_COVERS.join(", ")})`);
@@ -546,17 +549,37 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
   if (params.profile !== undefined && !(CEILING_PROFILES as readonly string[]).includes(params.profile)) {
     throw new McpError("INVALID_ARGUMENT", `неизвестный профиль потолка «${params.profile}» (поддержано: ${CEILING_PROFILES.join(", ")})`);
   }
-  const polygon = room.polygon ?? room.points ?? [];
   const ceilings = Array.isArray(room.ceilings) ? [...room.ceilings] : [];
   while (ceilings.length < 1) ceilings.push({ exist: false });
-  ceilings[0] = {
+  const prev = ceilings[0] as Record<string, unknown> | undefined;
+  const prevNiches = prev && Array.isArray(prev["niches"]) ? prev["niches"] as Array<Record<string, unknown>> : [];
+  const hasNiches = prevNiches.some((n) => (n as { exist?: unknown } | undefined)?.exist === true);
+  if (hasNiches && NICHE_FORBIDDEN_MATERIALS.has(material)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `у комнаты ${roomRef} есть закарнизные ниши — на ${material} ниша не ставится; сначала finish_ceiling_niche_remove (в UI ниша доступна только для встраиваемых потолков)`,
+    );
+  }
+  const polygon = room.polygon ?? room.points ?? [];
+  const id0 = `_c${newId(8)}`;
+  const entry: Record<string, unknown> = {
     exist: true,
-    id: `_c${newId(8)}`,
+    id: id0,
     polygon: polygon.map((p) => ({ x: r2(p.x), y: r2(p.y) })),
     material,
     level: params.level ?? 0,
     profile: params.profile ?? "standard",
   };
+  if (hasNiches) {
+    // ниши переносятся как есть (line/depth/plan), id_ceiling — на новый потолок
+    entry["niches"] = structuredClone(prevNiches).map((n) => {
+      const rec = n as { exist?: unknown; parts?: Record<string, Record<string, unknown>> };
+      if (rec?.exist !== true) return n;
+      for (const part of Object.values(rec.parts ?? {})) part["id_ceiling"] = id0;
+      return n;
+    });
+  }
+  ceilings[0] = entry;
   room.ceilings = ceilings;
   return { id: ceilings[0]!.id as string };
 }

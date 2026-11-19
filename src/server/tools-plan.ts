@@ -1495,11 +1495,12 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     finish_ceiling_set: tool(
-      "Задать комнате покрытие потолка (лист «Потолки», простые покрытия; многоуровневые потолки, " +
-        "короба и ниши — инструментами следующих этапов). Покрытия: paint_ceiling, whitewash_ceiling, " +
+      "Задать комнате покрытие потолка (лист «Потолки», простые покрытия; многоуровневые потолки " +
+        "и короба — инструментами следующих этапов). Покрытия: paint_ceiling, whitewash_ceiling, " +
         "gypsum_ceiling, stretch_ceiling, stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, " +
-        "plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. После правки вызывайте " +
-        "model_validate и project_save.",
+        "plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. Закарнизные ниши переживают " +
+        "смену покрытия; на paint_ceiling/whitewash_ceiling при существующих нишах — отказ " +
+        "(сначала finish_ceiling_niche_remove). После правки вызывайте model_validate и project_save.",
       {
         room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
         material: z.string().min(1).describe("ключ покрытия потолка"),
