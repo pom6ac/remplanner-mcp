@@ -267,6 +267,68 @@ test("250: к трассе кондиционера подключаются б�
   assert.equal(elecLinkKey("cables_conditioner", "conditioner_wire"), "conditioner_cable_id");
 });
 
+// ---------- миграция legacy-ключа трассы кондиционера (ревью 251 №3) ----------
+
+import { toModel } from "../../src/model/canonical.ts";
+
+/** Модель в формате PR #36 (этап 239): ключ трассы кондиционера cable_conditioner_id. */
+function legacyConditionerModel(): Model {
+  const { m, cond, eng } = scenario();
+  const cableId = "c1";
+  (cond as unknown as Record<string, Record<string, unknown>>).cables_conditioner = { cable_conditioner_id: cableId };
+  (eng as unknown as Record<string, Record<string, unknown>>).cables_conditioner = { cable_conditioner_id: cableId };
+  (m as unknown as Record<string, Record<string, unknown>>).cables_conditioner = {
+    [cableId]: {
+      id: cableId,
+      type: "conditioner_wire",
+      matrix: [[null, { length: 1 }], [{ length: 1 }, null]],
+      vertexes: [
+        { id: cond.id, point: { ...cond.pc }, type: "electrospot" },
+        { id: eng.id, point: { ...eng.pc }, type: "electrospot" },
+      ],
+      items: { [cond.id]: "electrospot", [eng.id]: "electrospot" },
+      length: 1.5,
+    },
+  };
+  return m;
+}
+
+test("ревью 251 №3: toModel мигрирует legacy cable_conditioner_id → conditioner_cable_id (скаляр, массив, под-розетки)", () => {
+  const m = legacyConditionerModel();
+  // массивная форма у multi-предмета и под-розетка группы с legacy-ключом
+  const shield = structuredClone(m.items![Object.keys(m.items!)[0]!]!) as unknown as Record<string, unknown>;
+  shield.id = "sh1";
+  shield.name = "electric_shield";
+  shield.cables_conditioner = { cable_conditioner_id: ["c1"] };
+  shield.socket_group = [{ id: "sg1", name: "socket_thermo", cables_conditioner: { cable_conditioner_id: "c1" } }];
+  (m.items as Record<string, unknown>)["sh1"] = shield;
+  const canon = toModel(JSON.parse(JSON.stringify(m)) as Record<string, unknown>);
+  for (const id of [condIdOf(canon, "conditioner"), condIdOf(canon, "conditioner_engine")]) {
+    const box = (canon.items![id] as unknown as Record<string, Record<string, unknown>>).cables_conditioner!;
+    assert.equal(box.conditioner_cable_id, "c1", `${id}: скаляр мигрировал`);
+    assert.equal("cable_conditioner_id" in box, false, `${id}: legacy-ключ удалён`);
+  }
+  const sh = canon.items!["sh1"] as unknown as Record<string, Record<string, unknown>>;
+  assert.deepEqual(sh.cables_conditioner!.conditioner_cable_id, ["c1"], "массив мигрировал с сохранением формы");
+  const sub = (sh.socket_group as Record<string, Record<string, unknown>>[])[0]!;
+  assert.equal(sub.cables_conditioner!.conditioner_cable_id, "c1", "под-розетка мигрировала");
+});
+
+function condIdOf(m: Model, name: string): string {
+  const found = Object.values(m.items ?? {}).find((it) => it.name === name);
+  assert.ok(found, `нет предмета ${name}`);
+  return found.id;
+}
+
+test("ревью 251 №3: mock save — legacy-модель PR #36 сохраняется verified (сверка не падает на старом ключе)", async () => {
+  const model = legacyConditionerModel();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {});
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true, "legacy-модель сохраняется без расхождений сверки");
+});
+
 // ---------- компакт, реестр, mock save ----------
 
 test("250: компактный API — трубы климата с подключениями (PW/PC/PH/PV), мм", () => {
