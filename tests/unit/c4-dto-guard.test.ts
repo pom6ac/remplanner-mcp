@@ -125,3 +125,20 @@ test("сторож ловит runtime-импорт в файле без точе
   assert.equal(violations.length, 1, `ожидалось 1 нарушение, получено: ${JSON.stringify(violations, null, 1)}`);
   assert.match(violations[0]!, /ns\.ts.*"\.\.\/server\/x\.ts"/);
 });
+
+// Ревью 231 R5: хвост после закрывающей кавычки без `;` — строчный и блочный
+// комментарий, import attributes. c4 комментарии не вырезает; на b511493 общий
+// RE_STMT требовал после кавычки `;`/перевод строки/конец файла и терял эти формы
+// (633b9bb их ловил).
+test("сторож ловит runtime-импорт с хвостом без ; — комментарий, with {type} (самотест ревью 231 R5)", () => {
+  const violations = violationsOf([
+    synthetic("lc.ts", `import { x } from "../server/x.ts" // note\n`),
+    synthetic("bc.ts", `import { x } from "../server/x.ts" /* n */\n`),
+    synthetic("ja.ts", `import j from "../server/x.ts" with { type: "json" };\n`),
+    synthetic("re.ts", `export { x } from "../server/x.ts" // note\n`),
+  ]);
+  assert.equal(violations.length, 4, `ожидались 4 нарушения, получено: ${JSON.stringify(violations, null, 1)}`);
+  for (const [i, name] of ["lc", "bc", "ja", "re"].entries()) {
+    assert.match(violations[i]!, new RegExp(`^${name}\\.ts: runtime-импорт "\\.\\./server/x\\.ts"`));
+  }
+});

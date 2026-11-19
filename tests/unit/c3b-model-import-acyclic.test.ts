@@ -183,3 +183,16 @@ test("самотест: комментарии не считаются импо�
   // консервативно виден (у RE_DYNAMIC нет якоря начала строки)
   assert.deepEqual(q(`// await import("./fake.ts");\n`, {}), ["./fake.ts"]);
 });
+
+test("самотест 231 R5: хвост после кавычки без ; не теряет ребро (с stripComments и без)", () => {
+  // на b511493 хвостовой lookahead RE_STMT требовал после кавычки `;`/перевод
+  // строки/конец файла: `with { type: "json" }` терялся и в c3b, комментарии — в c4
+  for (const opts of [{ stripComments: true }, {}]) {
+    assert.deepEqual(q(`import { a } from "./a.ts" // note\nimport { b } from "./b.ts"\n`, opts), ["./a.ts", "./b.ts"]);
+    assert.deepEqual(q(`import { a } from "./a.ts" /* n */\n`, opts), ["./a.ts"]);
+    assert.deepEqual(q(`import j from "./data.json" with { type: "json" };\n`, opts), ["./data.json"]);
+    assert.deepEqual(q(`import j from "./data.json" with { type: "json" }\nimport type { T } from "./t.ts"\n`, opts), [
+      "./data.json",
+    ]);
+  }
+});
