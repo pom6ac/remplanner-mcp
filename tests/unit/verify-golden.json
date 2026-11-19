@@ -231,7 +231,9 @@
   "climate/item-refs-lost": [
     "подключения труб климата: [\"n1: обратная ссылка warm_floor_pipe_id → 0 потеряна на сервере\"]"
   ],
-  "climate/normalize-id-room-regenerated": [],
+  "climate/normalize-id-room-binding-unconfirmed": [
+    "контуры тёплого пола: потеряны []; расхождения [\"0: привязка рабочей копии не подтверждается геометрией (комната 0)\"]"
+  ],
   "climate/normalize-id-room-room-missing": [
     "контуры тёплого пола: потеряны []; расхождения [\"0: id_room указывает на несуществующую комнату (на сервере «room_regenerated_1»)\"]"
   ]

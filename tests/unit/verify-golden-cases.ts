@@ -389,16 +389,19 @@ export function runGoldenCases(V: GoldenVerifiers): Record<string, string[]> {
     itemsExpected: clone(climateItemsExp),
     itemsGot: { n1: { name: "radiator", pipes: {} } },
   });
-  // ревью 185 №3: режим normalize (ревью 124 R1) — привязка контура к комнате
-  // по геометрии, ID комнат штатно регенерируются: id_room сменился на новую
-  // комнату с тем же полигоном — штатно; комнаты нет — расхождение
+  // ревью 185 №3 + 223 №3: режим normalize (ревью 124 R1) — привязка контура к
+  // комнате по геометрии, ID комнат штатно регенерируются. Кейс различает режимы:
+  // комнаты ожидания не содержат комнату w0 («0») — normalize видит расхождение
+  // «привязка рабочей копии не подтверждается геометрией», а save с той же парой
+  // аргументов пуст (id_room указывает на комнату, содержащую контур).
+  // Комнаты нет вовсе — расхождение в обоих режимах (room-missing ниже).
   const climateNormGot = clone(climateLocal);
   (((climateNormGot["warm_floors"] as Record<string, unknown>)["0"] as Record<string, unknown>)["id_room"] = "room_regenerated_1");
   const wfPolygon = (((climateLocal["warm_floors"] as Record<string, unknown>)["0"] as Record<string, unknown>)["polygon"]);
   const climateRooms = { "0": { polygon: structuredClone(wfPolygon) } };
-  cases["climate/normalize-id-room-regenerated"] = V.climateGraphMismatches(clone(climateLocal), climateNormGot, {
+  cases["climate/normalize-id-room-binding-unconfirmed"] = V.climateGraphMismatches(clone(climateLocal), climateNormGot, {
     mode: "normalize",
-    roomsExpected: clone(climateRooms),
+    roomsExpected: {},
     roomsGot: { room_regenerated_1: { polygon: structuredClone(wfPolygon) } },
   });
   cases["climate/normalize-id-room-room-missing"] = V.climateGraphMismatches(clone(climateLocal), climateNormGot, {
