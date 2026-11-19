@@ -25,7 +25,7 @@
    "exist": true,
    "parts": {
     "0": {
-     "id": "_aemao",
+     "id": "0",
      "type": "floor_molding_plastic",
      "layer": 1,
      "line": {
