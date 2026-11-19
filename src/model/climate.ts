@@ -232,6 +232,19 @@ export function updateWarmFloor(
   if (wf.length_pipes !== undefined) {
     candidate.length_pipes = warmFloorPipesLengthM(pts, candidate.step ?? WARM_FLOOR_WATER_DEFAULTS.step, candidate.direction ?? "right");
   }
+  // ревью 251 №1: кандидат собирается с нуля (props = {id, name}) — все
+  // пользовательские поля props контура (обратные ссылки климата:
+  // props.pipes_warm_floor.pipe_warm_floor_id и другие боксы PIPE_LINK_BOXES)
+  // переносятся из прежнего props, иначе update подключённого контура молча
+  // стирает ссылку трубы на контур (контейнер не стирает вложенное молча).
+  // id/name — идентичность контура, остаются из кандидата.
+  const oldProps = (wf.props ?? {}) as Record<string, unknown>;
+  const newProps = { ...(candidate.props as Record<string, unknown>) };
+  for (const [k, v] of Object.entries(oldProps)) {
+    if (k === "id" || k === "name") continue;
+    newProps[k] = structuredClone(v);
+  }
+  candidate.props = newProps as WarmFloor["props"];
   const oldP0 = poly[0];
   assignCandidate(wf, candidate);
   // пересчёт только затронутых привязок: вершины-контуры магистралей тёплого пола

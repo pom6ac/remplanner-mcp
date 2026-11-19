@@ -185,6 +185,17 @@ test("250: pipe_delete снимает ссылки предметов и кон�
   assert.equal(box.heat_pipe_hot_id, undefined, "ссылка радиатора снята");
 });
 
+test("ревью 251 №1: warm_floor_update не стирает props контура (обратная ссылка pipes_warm_floor)", () => {
+  const { m, wf } = scenario();
+  const pipe = addPipe(m, { kind: "warm_floor", path: [{ itemId: wf.id }, { x: 100, y: 100 }] });
+  // перенос обоих углов: кандидат собирается с нуля — пользовательские поля props
+  // (обратная ссылка магистрали) обязаны переехать в нового кандидата
+  updateWarmFloor(m, { warmFloorId: wf.id, corner1: { x: 300, y: 700 }, corner2: { x: 1700, y: 2100 } });
+  const props = wf.props as { pipes_warm_floor?: Record<string, unknown> };
+  assert.equal(props.pipes_warm_floor!.pipe_warm_floor_id, pipe.id, "ссылка контура на магистраль пережила update");
+  assert.equal(Object.values(m.pipes_warm_floor ?? {})[0]!.vertexes.some((v) => v.id === wf.id && v.type === "warm_floor"), true, "вершина-контур у магистрали на месте");
+});
+
 test("250: warm_floor_update пересчитывает вершины-контуры магистралей (point = новый polygon[0])", () => {
   const { m, wf } = scenario();
   const pipe = addPipe(m, { kind: "warm_floor", path: [{ itemId: wf.id }, { x: 100, y: 100 }] });
