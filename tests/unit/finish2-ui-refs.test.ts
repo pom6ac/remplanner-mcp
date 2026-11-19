@@ -434,6 +434,64 @@ test("246 №4: потеря 4% покрытия пола относительн
   assert.deepEqual(finishMismatches(exp, got2), [], "расширение пола сервером — не блокировка");
 });
 
+// ---------- 246 №10: полная проекция ниши и плинтуса ----------
+
+test("246 №10: проекция ниши сверяет depth, plan и id_ceiling (ссылка на свой потолок)", () => {
+  const { m, room, wallId } = modelWithRefRoom();
+  setCeilingFinish(m, room, "gypsum_ceiling", {});
+  addCeilingNiche(m, room, wallId);
+  const rooms = roomsOf(m);
+  const exp = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  const nicheOf = (rs: Record<string, Record<string, unknown>>) =>
+    Object.values((((rs[room]!["ceilings"] as Array<Record<string, unknown>>)[0]!["niches"]) as Array<Record<string, unknown>>)[0]!["parts"] as Record<string, Record<string, unknown>>)[0]!;
+  // потеря depth — расхождение
+  let got = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  nicheOf(got)["depth"] = 10;
+  assert.ok(finishMismatches(exp, got).some((p) => p.includes("ниша")), "изменение depth обнаруживается");
+  // depth в допуске численного шума — не расхождение
+  got = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  nicheOf(got)["depth"] = (nicheOf(got)["depth"] as number) - 0.01;
+  assert.deepEqual(finishMismatches(exp, got), []);
+  // plan изменён — расхождение
+  got = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  nicheOf(got)["plan"] = "floor";
+  assert.ok(finishMismatches(exp, got).some((p) => p.includes("ниша")), "изменение plan обнаруживается");
+  // id_ceiling оторван от своего потолка — расхождение
+  got = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  nicheOf(got)["id_ceiling"] = "_cforeign";
+  assert.ok(finishMismatches(exp, got).some((p) => p.includes("ниша")), "оторванный id_ceiling обнаруживается");
+  // id_ceiling удалён — расхождение
+  got = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  delete nicheOf(got)["id_ceiling"];
+  assert.ok(finishMismatches(exp, got).some((p) => p.includes("ниша")), "удаление id_ceiling обнаруживается");
+});
+
+test("246 №10: проекция плинтуса сверяет layer и line_wall (ось своей стены)", () => {
+  const { m, room, wallId } = modelWithRefRoom();
+  setFloorMolding(m, room, wallId, "floor_molding_mdf");
+  const rooms = roomsOf(m);
+  const exp = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  const partOf = (rs: Record<string, Record<string, unknown>>) =>
+    Object.values((rs[room]!["floorMoldings"] as Array<Record<string, unknown>>)[0]!["parts"] as Record<string, Record<string, unknown>>)[0]!;
+  let got = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  partOf(got)["layer"] = 2;
+  assert.ok(finishMismatches(exp, got).some((p) => p.includes("плинтус")), "изменение layer обнаруживается");
+  // line_wall смещён с оси стены — расхождение
+  got = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  partOf(got)["line_wall"] = { p1: { x: 100, y: -290 }, p2: { x: 100, y: -10 } };
+  assert.ok(finishMismatches(exp, got).some((p) => p.includes("плинтус")), "смещённый line_wall обнаруживается");
+  // перенос стены: line_wall на новой оси той же стены (gotWalls передан) — не расхождение
+  got = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  const part = partOf(got);
+  const shift = (p: { x: number; y: number }) => ({ x: p.x - 20, y: p.y });
+  const pl = part["line"] as { p1: { x: number; y: number }; p2: { x: number; y: number } };
+  const pw = part["line_wall"] as { p1: { x: number; y: number }; p2: { x: number; y: number } };
+  part["line"] = { p1: shift(pl.p1), p2: shift(pl.p2) };
+  part["line_wall"] = { p1: shift(pw.p1), p2: shift(pw.p2) };
+  const gotWalls = { [wallId]: { p1: { x: 270, y: -290 }, p2: { x: 270, y: -10 } } };
+  assert.deepEqual(finishMismatches(exp, got, { [wallId]: { p1: { x: 290, y: -290 }, p2: { x: 290, y: -10 } } }, gotWalls), [], "плинтус переехал со стеной");
+});
+
 // ---------- mock save ----------
 
 const COMPAT = { global_version: null, planner_version: null, bundles: [], object_id: null, plan_id: null, present: { WALLS: true, ROOMS2: true, restore: true, draw: true, copy: true, save: true, canvas: true, wall_link1: true, wall_link2: true, wall_calc: true } };

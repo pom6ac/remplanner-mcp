@@ -634,12 +634,13 @@ export type FinishSig = {
   floor?: { cover: string; width?: number; height?: number; stitch?: number; angle?: number; laying?: string };
   ceiling?: { material: string; level?: number; profile?: string };
   walls?: Array<{ pid?: string; line: [Point, Point]; type: string; layer: number; height: number; fromFloor: number }>;
-  /** Напольные плинтусы (245): части по рёбрам комнаты. */
-  floorMoldings?: Array<{ pid?: string; type: string; line: [Point, Point] }>;
-  /** Потолочный плинтус (245): части по рёбрам комнаты. */
-  ceilingMoldings?: Array<{ pid?: string; type: string; line: [Point, Point] }>;
-  /** Закарнизные ниши (245): части по рёбрам потолка ceilings[0]. */
-  niches?: Array<{ line: [Point, Point] }>;
+  /** Напольные плинтусы (245): части по рёбрам комнаты (полная проекция — ревью 246 №10). */
+  floorMoldings?: Array<{ pid?: string; type: string; layer: number; line: [Point, Point]; lineWall?: [Point, Point] }>;
+  /** Потолочный плинтус (245): части по рёбрам комнаты (полная проекция — ревью 246 №10). */
+  ceilingMoldings?: Array<{ pid?: string; type: string; layer: number; line: [Point, Point]; lineWall?: [Point, Point] }>;
+  /** Закарнизные ниши (245): части по рёбрам потолка ceilings[0]; idCeiling — ссылка части,
+   *  selfCeiling — id ceilings[0] этой же комнаты (проверка привязки, ревью 246 №10). */
+  niches?: Array<{ line: [Point, Point]; depth?: number; plan?: string; idCeiling?: string; selfCeiling?: string }>;
 };
 
 /** Проём: то, что сверке нужно от wall.holes (край на оси или центр+ширина). */
@@ -853,6 +854,12 @@ function wallSigs(room: RoomRec, edges: RoomRec["edges"]): NonNullable<FinishSig
   return out;
 }
 
+/** Ось ребра части (line_wall) в виде пары точек или undefined. */
+function lineWallOf(part: Record<string, unknown>): [Point, Point] | undefined {
+  const lw = part["line_wall"] as { p1?: Point; p2?: Point } | undefined;
+  return lw?.p1 && lw?.p2 ? [lw.p1, lw.p2] : undefined;
+}
+
 /** Части контейнера по рёбрам комнаты (floorMoldings/ceilingMoldings) в виде сигнатур. */
 function moldingSigs(room: RoomRec, key: "floorMoldings" | "ceilingMoldings", edges: RoomRec["edges"]): NonNullable<FinishSig["floorMoldings"]> {
   const out: NonNullable<FinishSig["floorMoldings"]> = [];
@@ -865,16 +872,17 @@ function moldingSigs(room: RoomRec, key: "floorMoldings" | "ceilingMoldings", ed
       const type = typeof part.type === "string" ? part.type : undefined;
       const line = part.line as { p1?: Point; p2?: Point } | undefined;
       if (!type || !line?.p1 || !line?.p2) continue;
-      out.push({ pid: edge?.pid, type, line: [line.p1, line.p2] });
+      out.push({ pid: edge?.pid, type, layer: num(part.layer) ?? 1, line: [line.p1, line.p2], lineWall: lineWallOf(part) });
     }
   }
   return out;
 }
 
-/** Закарнизные ниши (ceilings[0].niches) в виде сигнатур. */
+/** Закарнизные ниши (ceilings[0].niches) в виде сигнатур (полная проекция — ревью 246 №10). */
 function nichesSig(room: RoomRec): NonNullable<FinishSig["niches"]> {
   const out: NonNullable<FinishSig["niches"]> = [];
   const c0 = (room.ceilings ?? [])[0] as Record<string, unknown> | undefined;
+  const selfCeiling = typeof c0?.["id"] === "string" ? c0["id"] as string : undefined;
   const arr = c0 && Array.isArray(c0["niches"]) ? c0["niches"] as Array<Record<string, unknown>> : [];
   for (const e of arr) {
     const rec = e as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined;
@@ -882,7 +890,13 @@ function nichesSig(room: RoomRec): NonNullable<FinishSig["niches"]> {
     for (const part of Object.values(rec.parts ?? {})) {
       const line = part.line as { p1?: Point; p2?: Point } | undefined;
       if (!line?.p1 || !line?.p2) continue;
-      out.push({ line: [line.p1, line.p2] });
+      out.push({
+        line: [line.p1, line.p2],
+        depth: num(part.depth),
+        plan: typeof part.plan === "string" ? part.plan : undefined,
+        idCeiling: typeof part.id_ceiling === "string" ? part.id_ceiling : undefined,
+        selfCeiling,
+      });
     }
   }
   return out;
@@ -1372,13 +1386,20 @@ export function finishCompare(
   // 5. плинтусы и ниши (245) — правила сопоставления те же, что у отделки сторон
   //    (точное совпадение комнаты — строгое покрытие рёбер с допусками UI; split —
   //    часть переживает разрез; merge — предупреждение; режим save — строго).
-  type EdgePartSig = { pid?: string; type: string; layer: number; height: number; fromFloor: number; line: [Point, Point] };
+  //    Полная проекция (ревью 246 №10): у плинтуса — layer и line_wall (ось своей
+  //    стены, в том числе переехавшей); у ниши — depth (с допуском), plan и
+  //    id_ceiling (ссылка на потолок СВОЕЙ комнаты — устойчиво к перегенерации id).
+  type EdgePartSig = {
+    pid?: string; type: string; layer: number; height: number; fromFloor: number; line: [Point, Point];
+    lineWall?: [Point, Point];
+    depth?: number; plan?: string; idCeiling?: string; selfCeiling?: string;
+  };
   const containerSigsOf = (room: RoomRec, key: "floorMoldings" | "ceilingMoldings" | "__niches"): EdgePartSig[] => {
     if (key === "__niches") {
-      return nichesSig(room).map((n) => ({ pid: undefined, type: "ceiling_niche", layer: 1, height: 0, fromFloor: 0, line: n.line }));
+      return nichesSig(room).map((n) => ({ pid: undefined, type: "ceiling_niche", layer: 1, height: 0, fromFloor: 0, line: n.line, depth: n.depth, plan: n.plan, idCeiling: n.idCeiling, selfCeiling: n.selfCeiling }));
     }
     return moldingSigs(room, key, Array.isArray(room.edges) ? room.edges : undefined)
-      .map((m) => ({ pid: m.pid, type: m.type, layer: 1, height: 0, fromFloor: 0, line: m.line }));
+      .map((m) => ({ pid: m.pid, type: m.type, layer: m.layer, height: 0, fromFloor: 0, line: m.line, lineWall: m.lineWall }));
   };
   for (const key of ["floorMoldings", "ceilingMoldings", "__niches"] as const) {
     const label = key === "__niches" ? "ниша" : key === "floorMoldings" ? "плинтус" : "потолочный плинтус";
@@ -1386,7 +1407,29 @@ export function finishCompare(
     for (const [gk, gr] of Object.entries(got)) {
       gotSigsByRoom.set(gk, containerSigsOf(gr, key));
     }
-    const sameParams = (w: EdgePartSig) => (g: EdgePartSig): boolean => g.type === w.type;
+    /** Полные поля части (ревью 246 №10): у плинтуса — layer; у ниши — depth (допуск),
+     *  plan и привязка id_ceiling к потолку своей комнаты. */
+    const sameParams = (w: EdgePartSig) => (g: EdgePartSig): boolean => {
+      if (g.type !== w.type || g.layer !== w.layer) return false;
+      if (key === "__niches") {
+        if (w.depth !== undefined && (g.depth === undefined || Math.abs(g.depth - w.depth) > NUM_TOL)) return false;
+        if (w.plan !== undefined && g.plan !== w.plan) return false;
+        if (w.idCeiling !== undefined && (g.idCeiling === undefined || g.selfCeiling === undefined || g.idCeiling !== g.selfCeiling)) return false;
+      }
+      return true;
+    };
+    /** line_wall части лежит на оси своей стены: ожидаемой либо (после переноса)
+     *  фактической оси той же стены. Поле не записано — сверить нечего. */
+    const lineWallOk = (w: EdgePartSig, g: EdgePartSig): boolean => {
+      if (!g.lineWall || !w.lineWall) return true;
+      if (projD(g.lineWall[0], w.lineWall[0], w.lineWall[1]) <= PERP_TOL &&
+          projD(g.lineWall[1], w.lineWall[0], w.lineWall[1]) <= PERP_TOL) return true;
+      const gw = g.pid ? gotW[g.pid] : undefined;
+      if (gw?.p1 && gw?.p2 &&
+          projD(g.lineWall[0], gw.p1, gw.p2) <= PERP_TOL + 12 &&
+          projD(g.lineWall[1], gw.p1, gw.p2) <= PERP_TOL + 12) return true;
+      return false;
+    };
     for (const [rid, room] of Object.entries(exp)) {
       const expList = containerSigsOf(room, key);
       if (expList.length === 0) continue;
@@ -1423,7 +1466,7 @@ export function finishCompare(
         const candidates = (gotSigsByRoom.get(gid) ?? []).filter(sameParams(w));
         const onLine: Array<[Point, Point]> = [];
         for (const g of candidates) {
-          if (gotPartNear(w, g, gotW) !== null) onLine.push(g.line);
+          if (gotPartNear(w, g, gotW) !== null && lineWallOk(w, g)) onLine.push(g.line);
         }
         const expWall = w.pid ? expW[w.pid] : undefined;
         const gotWallForAxis = w.pid ? gotW[w.pid] : undefined;
