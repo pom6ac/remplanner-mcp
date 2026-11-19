@@ -120,8 +120,6 @@ test("сторож ловит side-effect, динамический импорт
     synthetic("se.ts", `import "../server/x.ts";\n`),
     synthetic("dyn.ts", `const m = await import("../server/x.ts");\n`),
     synthetic("sq.ts", `import { x } from '../server/x.ts';\n`),
-    // type-only из server по-прежнему допустим, нерелятивный type-импорт не
-    // проглатывает следующий runtime-импорт (ревью 182 №1 — та же ошибка парсера)
     // type-only из server допустим, но нерелятивный type-импорт не проглатывает
     // следующий runtime-импорт (та же ошибка парсера, что в ревью 182 №1)
     synthetic("ok3.ts", `import type { Stats } from "node:fs";\nimport { x } from "../server/x.ts";\n`),

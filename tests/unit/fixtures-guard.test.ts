@@ -169,7 +169,6 @@ for (const name of readdirSync(FIXTURES).filter((f) => f.endsWith(".json")).sort
 function collectJson(dir: string, out: string[] = []): string[] {
   for (const e of readdirSync(dir)) {
     const p = join(dir, e);
-    if (p === FIXTURES) continue;
     try {
       if (statSync(p).isDirectory()) collectJson(p, out);
       else if (e.endsWith(".json")) out.push(p);

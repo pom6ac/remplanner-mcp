@@ -33,16 +33,15 @@ function rect(model: Model) {
   return { top: walls[0]!, right: walls[1]!, bottom: walls[2]!, left: walls[3]! };
 }
 
-// Ревью 179 m2: тест identity сверяет и содержимое, и ссылку — target не
-// подменяется новым объектом (identity проверяется через держателя ссылки).
-test("assignCandidate: identity — target остаётся тем же объектом, значения обновляются", () => {
+// Ревью 179 m2, 223 №6: тест identity проверяет содержимое; ассерт
+// `holder.x === target` убран как тавтология — assignCandidate получает ссылку
+// и физически не может переприсвоить holder.x.
+test("assignCandidate: identity — значения обновляются на месте", () => {
   const target = { a: 1, b: 10 };
   const candidate = { a: 2, b: 20 };
-  const holder = { x: target };
   assignCandidate(target, candidate);
   assert.equal(target.a, 2);
   assert.equal(target.b, 20);
-  assert.equal(holder.x, target); // ссылка не подменена
 });
 
 test("assignCandidate: ключи, которых нет у кандидата, удаляются", () => {
