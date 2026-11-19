@@ -24,7 +24,7 @@ export const ELEC_CABLE_COLLECTIONS = ["cables_socket", "cables_warm_floor", "ca
 
 export type ElecCableColl = (typeof ELEC_CABLE_COLLECTIONS)[number];
 
-/** Кабели листа «Электропроводка» (30 типов из каталога, prобы 239-elec2-scout). */
+/** Кабели листа «Электропроводка» (31 тип из каталога, пробы 239-elec2-scout). */
 export const SOCKET_CABLE_TOOLS = [
   "wire_2_05", "wire_2_07", "wire_2_15", "wire_2_25", "wire_2_40", "wire_2_60",
   "wire_3_15", "wire_3_25", "wire_3_40", "wire_3_60", "wire_3_100",

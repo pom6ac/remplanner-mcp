@@ -1290,8 +1290,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     wiring_update: tool(
       "Изменить кабель-проводку: перенести узлы графа. positions — список {vertex, x_mm, y_mm}; " +
-        "vertex — индекс вершины (0-based, как в model_get cables_socket[].vertexes); вершины-предметы " +
-        "следуют за своими предметами (item_update). Длину с опусками пересчитывает редактор.",
+        "vertex — индекс вершины (0-based) из model_get cables_socket[].vertex_list (там же координаты " +
+        "узлов в мм и разбор вершин-предметов на item_id/sub_id); вершины-предметы следуют за своими " +
+        "предметами (item_update). Длину с опусками пересчитывает редактор.",
       {
         wiring_id: z.string().min(1).describe("метка CS/CW/CC<n> из model_get или id сайта"),
         positions: z.array(z.object({

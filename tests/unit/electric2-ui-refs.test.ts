@@ -75,7 +75,7 @@ function scenario(): { m: Model; shield: ItemProps; box: ItemProps; wire: ItemPr
 
 // ---------- состав раздела ----------
 
-test("239: состав раздела — 30 типов кабелей cables_socket + warm_floor_wire + conditioner_wire", () => {
+test("239: состав раздела — 31 тип кабелей cables_socket + warm_floor_wire + conditioner_wire", () => {
   assert.equal(SOCKET_CABLE_TOOLS.length, 31);
   for (const t of ["wire_2_25", "wire_5_100", "wire_earth_1_40", "wire_tv", "wire_utp", "wire_optical"]) {
     assert.ok((SOCKET_CABLE_TOOLS as readonly string[]).includes(t), t);

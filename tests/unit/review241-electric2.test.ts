@@ -19,6 +19,7 @@ import { addItem, updateItem } from "../../src/model/items.ts";
 import { addElecCable } from "../../src/model/electric2.ts";
 import { addCable } from "../../src/model/electric.ts";
 import { addLightLine } from "../../src/model/lighting.ts";
+import { compactModel } from "../../src/model/compact.ts";
 import { toToolEntry, type ToolEntry } from "../../src/catalog.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
@@ -226,8 +227,29 @@ test("ревью 241 №3/№10: wiring_add — kind enum всех кабеле�
 
 // ---------- №4: три механизма без теста ----------
 
-test("ревью 241 №4a: ws-мутация — нормализатор потерял кабель-проводку → INVALID_GEOMETRY", async () => {
+// ---------- №9: вершины кабеля в компактном API ----------
+
+test("ревью 241 №9: compact — vertex_list с индексами, item_id/sub_id и узлами в мм", () => {
   const m = elecBaseModel();
+  const shield = addItem(m, { name: "electric_shield", position: { againstWall: { wallId: elecTopWall(m), offsetMm: 3000 } }, catalogEntry: elecEntry("electric_shield") } as never);
+  const wire = addItem(m, { name: "wire", position: { againstWall: { wallId: elecTopWall(m), offsetMm: 500 } }, catalogEntry: elecEntry("wire") } as never);
+  addElecCable(m, { tool: "wire_3_25", path: [{ itemId: shield.id }, { x: 2000, y: 1500 }, { itemId: wire.id }] });
+  const c = compactModel(m);
+  const cs = c.cables_socket[0]!;
+  assert.equal(cs.vertex_list.length, 3);
+  const [v0, v1, v2] = cs.vertex_list;
+  assert.deepEqual(v0, { index: 0, kind: "item", item_id: shield.id, x_mm: Math.round(shield.pc.x * 10), y_mm: Math.round(shield.pc.y * 10) });
+  assert.deepEqual(v1, { index: 1, kind: "node", x_mm: 2000, y_mm: 1500 });
+  assert.deepEqual(v2, { index: 2, kind: "item", item_id: wire.id, x_mm: Math.round(wire.pc.x * 10), y_mm: 70 });
+  // аддитивность: прежние ключи на месте
+  assert.ok("connected" in cs && "vertexes" in cs && "length_mm" in cs && "type" in cs && "site_id" in cs && "id" in cs);
+  // вершина-предмет следом за item_update: индексы сохраняются, точка обновляется
+  updateItem(m, { itemId: shield.id, angleDeg: shield.angle });
+  const cs2 = compactModel(m).cables_socket[0]!;
+  assert.deepEqual(cs2.vertex_list[0], { index: 0, kind: "item", item_id: shield.id, x_mm: Math.round(shield.pc.x * 10), y_mm: Math.round(shield.pc.y * 10) });
+});
+
+test("ревью 241 №4a: ws-мутация — нормализатор потерял кабель-проводку → INVALID_GEOMETRY", async () => {  const m = elecBaseModel();
   const shield = addItem(m, { name: "electric_shield", position: { againstWall: { wallId: elecTopWall(m), offsetMm: 3000 } }, catalogEntry: elecEntry("electric_shield") } as never);
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
   let normalized: Record<string, unknown> | null = null;

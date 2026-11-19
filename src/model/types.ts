@@ -389,7 +389,7 @@ export type Cable = {
 
 /**
  * Кабель-проводка листа «Электропроводка» (часть 2, 2026-11-19): model.cables_socket
- * (кабели 2–5 жил, заземление, слаботочные — 30 типов wire_*), model.cables_warm_floor
+ * (кабели 2–5 жил, заземление, слаботочные — 31 тип wire_*), model.cables_warm_floor
  * (warm_floor_wire) и model.cables_conditioner (conditioner_wire). Классы
  * CableSocket/CableWarnFloor/CableConditioner extends GraphLines — формат графа тот же,
  * что pipes/pipes_gas: vertexes/matrix/items, type — ключ инструмента UI ("wire_3_25" и
