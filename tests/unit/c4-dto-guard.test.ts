@@ -7,11 +7,15 @@
 // Ревью 190 N2: регулярка ограничена одним оператором (до `;`) и видит
 // side-effect `import "../server/x.ts"`, динамический `import("../server/x.ts")`
 // и одинарные кавычки.
+// Ревью 227 R2: парсер импортов общий с c3b — tests/unit/import-graph.ts
+// (ревью 223 №4/№5); c4 без stripComments — консервативен, импорт в комментарии
+// в src/dto даёт срабатывание.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { runtimeImportTargets } from "./import-graph.ts";
 
 const dtoDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "dto");
 const saveDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "save");
@@ -36,25 +40,6 @@ const FORBIDDEN = [
 // Запрещённые runtime-зависимости save-оркестрации (194-fix-c2s, ревью 193 №8):
 // сервер и workspace (workspace и так импортирует src/save, обратное — цикл).
 const FORBIDDEN_SAVE = [/^server\//, /^workspace\.ts$/];
-
-/** Один оператор import/export (лениво до `;`), кавычки одинарные или двойные. */
-const RE_STMT = /(?:^|[;\n])(import|export)\b([^;]*?)from\s*(["'])(\.[^"']+)\3/g;
-/** Side-effect импорт без from: import "../server/x.ts". */
-const RE_SIDE_EFFECT = /(?:^|[;\n])import\s*(["'])(\.[^"']+)\1/g;
-/** Динамический импорт: import("../server/x.ts"). */
-const RE_DYNAMIC = /\bimport\s*\(\s*(["'])(\.[^"']+)\1\s*\)/g;
-
-/** Цели runtime-импортов одного файла: обычные, side-effect и динамические. */
-export function runtimeImportTargets(code: string): string[] {
-  const targets: string[] = [];
-  for (const m of code.matchAll(RE_STMT)) {
-    if (/^\s*type\b/.test(m[2]!)) continue; // import type / export type — стираются
-    targets.push(m[4]!);
-  }
-  for (const m of code.matchAll(RE_SIDE_EFFECT)) targets.push(m[2]!);
-  for (const m of code.matchAll(RE_DYNAMIC)) targets.push(m[2]!);
-  return targets;
-}
 
 type SourceFile = { name: string; dir: string; code: string };
 
@@ -129,4 +114,14 @@ test("сторож ловит side-effect, динамический импорт
   assert.match(violations[1]!, /dyn\.ts.*"\.\.\/server\/x\.ts"/);
   assert.match(violations[2]!, /sq\.ts.*"\.\.\/server\/x\.ts"/);
   assert.match(violations[3]!, /ok3\.ts.*"\.\.\/server\/x\.ts"/);
+});
+
+// Ревью 227 R2: файл без точек с запятой — type-импорт из нерелятивного модуля
+// не проглатывает следующий runtime-импорт (та же форма, что самотест 223 №5 у c3b).
+test("сторож ловит runtime-импорт в файле без точек с запятой (самотест ревью 227 R2)", () => {
+  const violations = violationsOf([
+    synthetic("ns.ts", `import type { Stats } from "node:fs"\nimport { x } from "../server/x.ts"\n`),
+  ]);
+  assert.equal(violations.length, 1, `ожидалось 1 нарушение, получено: ${JSON.stringify(violations, null, 1)}`);
+  assert.match(violations[0]!, /ns\.ts.*"\.\.\/server\/x\.ts"/);
 });
