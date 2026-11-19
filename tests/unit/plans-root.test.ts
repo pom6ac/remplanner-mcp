@@ -13,7 +13,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertDirStillInside, readPlanFile, resolvePlanPath } from "../../src/server/tools-projects.ts";
+import { assertDirStillInside, fsCheckCalls, readPlanFile, resolvePlanPath } from "../../src/server/tools-projects.ts";
 import { fsWriteCalls } from "../../src/fs-safe.ts";
 import { HOME_DIR, PLANS_DIR } from "../../src/config.ts";
 
@@ -454,12 +454,12 @@ test("plans-root: HOME без записи (0500), plans ещё нет — expor
     chmodSync(HOME_DIR, 0o500);
     const err = await callError(client, "project_export_plan", { path: "x.plan" });
     assert.equal(err.code, "INVALID_ARGUMENT", `ожидался INVALID_ARGUMENT, получено: ${err.code} ${err.message}`);
-    assert.match(err.message, /нет доступа/);
+    assert.match(err.message, /каталог plans недоступен/);
     assert.doesNotMatch(err.message, /внутренняя ошибка/);
     // тот же отказ и для import
     const err2 = await callError(client, "project_import_plan", { path: "x.plan", replace: true });
     assert.equal(err2.code, "INVALID_ARGUMENT");
-    assert.match(err2.message, /нет доступа/);
+    assert.match(err2.message, /каталог plans недоступен/);
   } finally {
     await client.close();
     chmodSync(HOME_DIR, prev);
@@ -542,5 +542,200 @@ test("plans-root: путь вида ~user/x.plan отклонён с подск�
     assert.ok(!existsSync(join(PLANS_DIR, "~user")), "каталог ~user не создан");
   } finally {
     await client.close();
+  }
+});
+
+// ---------- ревью 218: №13–№16 ----------
+
+/** Подмена каталога в момент первой повторной проверки realpath (fsCheckCalls):
+ *  выполняется ровно между resolvePlanPath и проверкой в обработчике — тест
+ *  краснеет, если вызов assertDirStillInside убран из обработчика (№13). */
+function swapOnFirstCheck(swap: () => void): void {
+  const real = fsCheckCalls.realpathSync;
+  let swapped = false;
+  fsCheckCalls.realpathSync = ((p: Parameters<typeof real>[0]) => {
+    if (!swapped) {
+      swapped = true;
+      swap();
+    }
+    return real(p);
+  }) as typeof real;
+}
+
+// №13: подмена подкаталога между resolve и операцией — через САМ обработчик
+// export (не прямой вызов assertDirStillInside): удаление проверки из
+// обработчика красит тест — подмена не выполнится и export запишет наружу.
+test("plans-root №13: обработчик export отклоняет подкаталог, подменённый после resolve (fsCheckCalls), снаружи ничего не записано", async () => {
+  const client = await start();
+  const outsideDir = mkdtempSync(join(tmpdir(), "plans-h13-exp-"));
+  const sub = join(PLANS_DIR, "sub");
+  const subBak = sub + ".bak";
+  const real = fsCheckCalls.realpathSync;
+  try {
+    mkdirSync(sub, { recursive: true });
+    resolvePlanPath("sub/x.plan");
+    chmodSync(outsideDir, 0o755);
+    swapOnFirstCheck(() => {
+      renameSync(sub, subBak);
+      symlinkSync(outsideDir, sub);
+    });
+    const err = await callError(client, "project_export_plan", { path: "sub/x.plan" });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.match(err.message, /выходит за корень plans/);
+    assert.deepEqual(readdirSync(outsideDir), [], "внешний каталог не изменён");
+  } finally {
+    fsCheckCalls.realpathSync = real;
+    await client.close();
+    rmSync(sub, { force: true });
+    if (existsSync(subBak)) {
+      renameSync(subBak, sub);
+      rmSync(sub, { recursive: true, force: true });
+    }
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+// №13: то же для обработчика import — по ссылке лежит валидная модель, поэтому
+// без проверки в обработчике импорт чужого файла прошёл бы (тест краснеет).
+test("plans-root №13: обработчик import отклоняет подкаталог, подменённый после resolve, чужая модель не импортируется", async () => {
+  const client = await start();
+  const outsideDir = mkdtempSync(join(tmpdir(), "plans-h13-imp-"));
+  const sub = join(PLANS_DIR, "sub");
+  const subBak = sub + ".bak";
+  const real = fsCheckCalls.realpathSync;
+  try {
+    mkdirSync(sub, { recursive: true });
+    // внутри plans — пустая модель, в цели ссылки — валидная чужая модель:
+    // без проверки в обработчике импорт прочитал бы именно её
+    const evilModel = { v: 3, id: "0", plan_id: "0", walls: {}, items: {}, pillars: {}, rulers: {}, comments: {}, total_height: 270, final: true };
+    writeFileSync(join(sub, "x.plan"), JSON.stringify({ walls: {} }));
+    writeFileSync(join(outsideDir, "x.plan"), JSON.stringify(evilModel));
+    resolvePlanPath("sub/x.plan");
+    swapOnFirstCheck(() => {
+      renameSync(sub, subBak);
+      symlinkSync(outsideDir, sub);
+    });
+    const err = await callError(client, "project_import_plan", { path: "sub/x.plan", replace: true });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.match(err.message, /выходит за корень plans/);
+    assert.equal(readFileSync(join(outsideDir, "x.plan"), "utf8"), JSON.stringify(evilModel), "чужой файл не изменён");
+  } finally {
+    fsCheckCalls.realpathSync = real;
+    await client.close();
+    rmSync(sub, { force: true });
+    if (existsSync(subBak)) {
+      renameSync(subBak, sub);
+      rmSync(sub, { recursive: true, force: true });
+    }
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+// №14: корень plans подменён после resolve, каталога назначения ещё нет —
+// проверяется ближайший существующий предок; снаружи не создаётся даже
+// пустого каталога (ensurePrivateDir не выполняется по подменённой ссылке).
+test("plans-root №14: подмена корня plans после resolve при несуществующем подкаталоге — export отклонён, снаружи не создано ничего", async () => {
+  const client = await start();
+  const outsideDir = mkdtempSync(join(tmpdir(), "plans-h14-"));
+  const plansBak = PLANS_DIR + ".h14bak";
+  const real = fsCheckCalls.realpathSync;
+  try {
+    resolvePlanPath("sub/x.plan");
+    chmodSync(outsideDir, 0o755);
+    swapOnFirstCheck(() => {
+      renameSync(PLANS_DIR, plansBak);
+      symlinkSync(outsideDir, PLANS_DIR);
+    });
+    const err = await callError(client, "project_export_plan", { path: "sub/x.plan" });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.match(err.message, /выходит за корень plans/);
+    assert.deepEqual(readdirSync(outsideDir), [], "снаружи не создано даже пустого каталога");
+  } finally {
+    fsCheckCalls.realpathSync = real;
+    await client.close();
+    rmSync(PLANS_DIR, { force: true });
+    if (existsSync(plansBak)) renameSync(plansBak, PLANS_DIR);
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+// №15: HOME — symlink, абсолютный путь через РЕАЛЬНУЮ цель (realpath(HOME)/plans)
+// указывает на тот же каталог — принимается (ложного отказа «выходит за корень»
+// нет); путь через ссылку и отказ для пути вне корня не меняются
+test("plans-root №15: HOME-symlink — абсолютный путь через реальную цель ссылки принимается", async () => {
+  const client = await start();
+  const outsideDir = mkdtempSync(join(tmpdir(), "plans-h15-"));
+  const bak = HOME_DIR + ".h15bak";
+  try {
+    renameSync(HOME_DIR, bak);
+    symlinkSync(outsideDir, HOME_DIR);
+    const realPlans = join(outsideDir, "plans");
+    const abs = join(realPlans, "real.plan");
+    const out = parsed(await client.callTool({ name: "project_export_plan", arguments: { path: abs } }));
+    assert.equal(out["path"], abs);
+    assert.equal(out["relative_path"], "real.plan");
+    assert.ok(existsSync(abs), "файл внутри plans цели ссылки");
+    // import того же реального пути — тоже принимается
+    const imp = parsed(await client.callTool({ name: "project_import_plan", arguments: { path: abs, replace: true } }));
+    assert.equal(imp["relative_path"], "real.plan");
+    // путь через саму ссылку HOME работает, как раньше
+    await client.callTool({ name: "project_export_plan", arguments: { path: "via-link.plan" } });
+    assert.ok(existsSync(join(realPlans, "via-link.plan")));
+    // абсолютный путь вне корня по-прежнему отклонён
+    const err = await callError(client, "project_export_plan", { path: join(outsideDir, "esc.plan") });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+  } finally {
+    await client.close();
+    rmSync(HOME_DIR, { force: true });
+    if (existsSync(bak)) renameSync(bak, HOME_DIR);
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+// №16: ошибки стадии подготовки корня называют корень plans, а не путь
+// пользователя; единый текст для export и import, без абсолютных путей
+test("plans-root №16: plans — обычный файл → «каталог plans недоступен» без имени пути пользователя", async () => {
+  const client = await start();
+  const plansBak = PLANS_DIR + ".h16a";
+  try {
+    renameSync(PLANS_DIR, plansBak);
+    writeFileSync(PLANS_DIR, "x");
+    for (const [name, args] of [
+      ["project_export_plan", { path: "x.plan" }],
+      ["project_import_plan", { path: "x.plan", replace: true }],
+    ] as const) {
+      const err = await callError(client, name, args as Record<string, unknown>);
+      assert.equal(err.code, "INVALID_ARGUMENT", name);
+      assert.match(err.message, /каталог plans недоступен/, name);
+      assert.doesNotMatch(err.message, /x\.plan/, `${name}: путь пользователя в ошибке подготовки корня не называется`);
+    }
+  } finally {
+    await client.close();
+    rmSync(PLANS_DIR, { force: true });
+    if (existsSync(plansBak)) renameSync(plansBak, PLANS_DIR);
+  }
+});
+
+// №16: HOME — обычный файл (ENOTDIR у корня) — тот же понятный отказ,
+// а не NOT_FOUND «файл не найден: x.plan»
+test("plans-root №16: HOME — обычный файл → «каталог plans недоступен»", async () => {
+  const client = await start();
+  const homeBak = HOME_DIR + ".h16b";
+  try {
+    renameSync(HOME_DIR, homeBak);
+    writeFileSync(HOME_DIR, "x");
+    for (const [name, args] of [
+      ["project_export_plan", { path: "x.plan" }],
+      ["project_import_plan", { path: "x.plan", replace: true }],
+    ] as const) {
+      const err = await callError(client, name, args as Record<string, unknown>);
+      assert.equal(err.code, "INVALID_ARGUMENT", name);
+      assert.match(err.message, /каталог plans недоступен/, name);
+      assert.doesNotMatch(err.message, /x\.plan/, name);
+    }
+  } finally {
+    await client.close();
+    rmSync(HOME_DIR, { force: true });
+    if (existsSync(homeBak)) renameSync(homeBak, HOME_DIR);
   }
 });
