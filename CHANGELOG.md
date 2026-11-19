@@ -12,6 +12,51 @@
   `finish_topology_changed`, а не строгую сверку: эталона наследования отделки
   сторон при merge нет; доводка до эталона — следующий PR.
 
+## Не выпущено
+
+### Добавлено (климат, часть 2 — подключения к трубам)
+
+- **Подключения предметов к трубам климата** (листы «Радиаторы», «Кондиционеры»,
+  «Тёплые полы», «Вентиляция»; все трубы — PRO в UI; эталоны —
+  `tests/fixtures/ui-ref-climate2-*.json` из живых проб). **pipe_add** kind:
+  - `heat_hot`/`heat_cold` — радиаторы и конвекторы (`radiator_bimetal`,
+    `radiator_steel`, `radiator_iron`, `radiator_tubular_vert/horizontal`,
+    `vertical_radiator`, `floor_convector`, `convector_on_floor`, `radiator_old`)
+    и коллекторные узлы (`radiator_collector`, `ext_manifold_box`,
+    `int_manifold_box` — multi, ссылка-массив); радиатор подключается и к подаче,
+    и к обратке (разные ключи), повторное подключение того же вида —
+    INVALID_ARGUMENT;
+  - `conditioner_drainage` — блоки кондиционеров (`conditioner`,
+    `floor_conditioner`, канальные/кассетные блоки, `breezer`) и канализационные
+    выводы/стояки; обратная ссылка — `props.pipes_conditioner.drainage_pipe_id`
+    (ключ редактора, тот же, что у канализации водоснабжения, но в своём боксе);
+  - `warm_floor` — коллекторные узлы (multi, тип вершины `collector`) и водяной
+    контур тёплого пола (`{item_id: "<WF<n> или id контура>"}`): вершина
+    type `warm_floor` с point = polygon[0] контура, ссылка — в props КОНТУРА
+    (`props.pipes_warm_floor.pipe_warm_floor_id`); warm_floor_update
+    пересчитывает вершины-контуры, warm_floor_delete при подключённой
+    магистрали — INVALID_ARGUMENT;
+  - `vent_out`/`vent_in` — вентиляторы (`fan`, `fan_wall`), установка
+    `ventilation_system` (multi), клапаны и канальные блоки.
+  Обратные ссылки климата хранятся в `props.<коллекция>` (у водоснабжения —
+  `props.pipes`), ключи — `names_line_id_by_tool` редактора:
+  `heat_pipe_hot_id`, `heat_pipe_cold_id`, `drainage_pipe_id`,
+  `pipe_warm_floor_id`, `ventpipe_out_id`, `ventpipe_in_id`; у multi-предметов —
+  массив. Сверка подключений (нормализация и после save) различает бокс и ключ
+  (drainage_pipe_id в `props.pipes` — канализация, в `props.pipes_conditioner` —
+  дренаж кондиционера); длина магистралей сверяется с допуском по габаритам
+  предметов (редактор считает её от точки подключения на габарите).
+- **Трасса кондиционера** — исправлен ключ обратной ссылки `conditioner_wire`:
+  редактор хранит `props.cables_conditioner.conditioner_cable_id` (эталон
+  `ui-ref-elec2-conditioner` заменён живым, вершины — electrospot с point = pc).
+  **wiring_add kind=conditioner_wire** теперь подключает блоки кондиционеров
+  (`conditioner`, `conditioner_engine`, `floor_conditioner`,
+  `external_block_multisplit`, канальные/кассетные блоки, `inflow_valve`,
+  `breezer`, `recuperator`) — внутренний и внешний блоки связываются трассой.
+- Кабель тёплого пола к контурам (`warm_floor_wire` → `warm_floor`/`warm_floor_ir`
+  с точкой подключения на полигоне) и тёплая стена (`warm_wall_cable`) —
+  следующий PR.
+
 ### Добавлено (отделка, часть 2 — плинтусы, ниша, двухслойные отделки)
 
 - **Напольные плинтусы** (лист «Напольные покрытия», группа «Плинтусы», PRO) —
