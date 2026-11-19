@@ -724,12 +724,16 @@ test("plans-root 222 A: внешняя ссылка внутрь plans откл�
   }
 });
 
-// ревью 222 №1/B: внутренняя ссылка plans/link → plans/sub, заданная РЕАЛЬНЫМ
-// путём корня (realRoot/link/…; на macOS лексически вне PLANS_DIR из-за
-// /var → /private/var). На 4773b1a realpath кандидата разрешал ссылку и путь
-// принимался; после фикса symlink в хвосте ловит прежний цикл lstat (#33)
+// ревью 222 №1/B: внутренняя ссылка plans/link → plans/sub. Ревью 226 №2:
+// путь задаётся через внешнюю ссылку на HOME (<ext>/up/plans/link/…, как в E) —
+// он нелексический на ЛЮБОЙ ОС (раньше путь realRoot/link/… попадал в ветку
+// !insideLexical только на macOS, где tmpdir лежит под /var → /private/var;
+// на Linux realRoot == PLANS_DIR и тест проверял лексическую ветку).
+// На 4773b1a realpath кандидата разрешал ссылку и путь принимался; после
+// фикса symlink в хвосте ловит прежний цикл lstat (#33)
 test("plans-root 222 B: внутренняя ссылка по реальному пути корня отклонена (export и import)", async () => {
   const client = await start();
+  const outsideDir = mkdtempSync(join(tmpdir(), "plans-222b-"));
   const sub = join(PLANS_DIR, "sub");
   const link = join(PLANS_DIR, "link");
   try {
@@ -737,11 +741,11 @@ test("plans-root 222 B: внутренняя ссылка по реальном�
     const evilModel = { v: 3, id: "0", plan_id: "0", walls: {}, items: {}, pillars: {}, rulers: {}, comments: {}, total_height: 270, final: true };
     writeFileSync(join(sub, "m.plan"), JSON.stringify(evilModel));
     symlinkSync(sub, link);
-    const realRoot = realpathSync(PLANS_DIR);
-    const err = await callError(client, "project_export_plan", { path: join(realRoot, "link", "b.plan") });
+    symlinkSync(HOME_DIR, join(outsideDir, "up"));
+    const err = await callError(client, "project_export_plan", { path: join(outsideDir, "up", "plans", "link", "b.plan") });
     assert.equal(err.code, "INVALID_ARGUMENT");
     assert.match(err.message, /символическую ссылку/);
-    const err2 = await callError(client, "project_import_plan", { path: join(realRoot, "link", "m.plan"), replace: true });
+    const err2 = await callError(client, "project_import_plan", { path: join(outsideDir, "up", "plans", "link", "m.plan"), replace: true });
     assert.equal(err2.code, "INVALID_ARGUMENT");
     assert.match(err2.message, /символическую ссылку/);
     assert.ok(!existsSync(join(sub, "b.plan")), "файл по ссылке не создан");
@@ -749,6 +753,7 @@ test("plans-root 222 B: внутренняя ссылка по реальном�
     await client.close();
     rmSync(link, { force: true });
     rmSync(sub, { recursive: true, force: true });
+    rmSync(outsideDir, { recursive: true, force: true });
   }
 });
 
@@ -790,6 +795,47 @@ test("plans-root 222 E: путь через внешнюю ссылку на к�
     assert.ok(existsSync(join(PLANS_DIR, "e.plan")), "файл создан внутри plans");
   } finally {
     await client.close();
+    rmSync(outsideDir, { recursive: true, force: true });
+  }
+});
+
+// ревью 226 №1: ссылка ВНУТРИ корня на сам корень (plans/sub/back → plans,
+// plans/self → plans). Подъём по префиксу раньше останавливался на самом
+// глубоком совпадении — хвост после ссылки «проглатывался» и путь принимался
+// (регрессия против 633b9bb); после фикса берётся самый короткий совпадающий
+// префикс, ссылка в хвосте ловит цикл lstat — «символическую ссылку».
+// S1/S2 — путь по реальному корню (на macOS лексически вне PLANS_DIR из-за
+// /var → /private/var), S3 — через внешнюю ссылку на HOME: гарантированно
+// нелексический на любой ОС
+test("plans-root 226 S: ссылка внутри корня на сам корень отклонена (export и import)", async () => {
+  const client = await start();
+  const outsideDir = mkdtempSync(join(tmpdir(), "plans-226s-"));
+  const sub = join(PLANS_DIR, "sub");
+  const back = join(sub, "back");
+  const self = join(PLANS_DIR, "self");
+  try {
+    mkdirSync(sub, { recursive: true });
+    symlinkSync(PLANS_DIR, back);
+    symlinkSync(PLANS_DIR, self);
+    const realRoot = realpathSync(PLANS_DIR);
+    symlinkSync(HOME_DIR, join(outsideDir, "up"));
+    const err = await callError(client, "project_export_plan", { path: join(realRoot, "sub", "back", "s1.plan") });
+    assert.equal(err.code, "INVALID_ARGUMENT");
+    assert.match(err.message, /символическую ссылку/);
+    const err2 = await callError(client, "project_import_plan", { path: join(realRoot, "self", "s2.plan"), replace: true });
+    assert.equal(err2.code, "INVALID_ARGUMENT");
+    assert.match(err2.message, /символическую ссылку/);
+    const err3 = await callError(client, "project_export_plan", { path: join(outsideDir, "up", "plans", "self", "s3.plan") });
+    assert.equal(err3.code, "INVALID_ARGUMENT");
+    assert.match(err3.message, /символическую ссылку/);
+    assert.ok(!existsSync(join(realRoot, "s1.plan")), "файл не создан в корне (S1)");
+    assert.ok(!existsSync(join(realRoot, "s2.plan")), "файл не создан в корне (S2)");
+    assert.ok(!existsSync(join(realRoot, "s3.plan")), "файл не создан в корне (S3)");
+  } finally {
+    await client.close();
+    rmSync(back, { force: true });
+    rmSync(self, { force: true });
+    rmSync(sub, { recursive: true, force: true });
     rmSync(outsideDir, { recursive: true, force: true });
   }
 });

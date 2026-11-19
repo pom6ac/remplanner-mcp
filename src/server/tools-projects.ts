@@ -204,6 +204,10 @@ export function resolvePlanPath(input: string): ResolvedPlanPath {
   // принимаем и по реальному корню, иначе ложный отказ «выходит за корень».
   // Ревью 222 №1: ссылки за пределами корня разрешает подъём по префиксу
   // (см. OUTSIDE_ROOT_MSG), внутри корня ссылок быть не должно — lstat ниже.
+  // Ревью 226 №1: совпадающих префиксов может быть несколько (ссылка внутри
+  // корня на сам корень, plans/sub/back → plans); берём САМЫЙ КОРОТКИЙ —
+  // тогда ссылка на сам корень остаётся в хвосте и ловится циклом lstat,
+  // как на 633b9bb
   const insideLexical = containsInside(PLANS_DIR, candidate);
   let rel: string;
   let absolute: string;
@@ -213,7 +217,8 @@ export function resolvePlanPath(input: string): ResolvedPlanPath {
   } else {
     // ревью 222 №1: подъём по префиксу кандидата — ссылки разрешаются только
     // ДО корня; хвост остаётся лексическим и проверяется циклом lstat ниже
-    const tail: string[] = [];
+    let matchTail: string[] | undefined;
+    let tail: string[] = [];
     let prefix = candidate;
     for (;;) {
       let real: string | undefined;
@@ -228,10 +233,21 @@ export function resolvePlanPath(input: string): ResolvedPlanPath {
           throw new McpError("INVALID_ARGUMENT", OUTSIDE_ROOT_MSG(shown));
         }
       }
-      if (real !== undefined && real === realRoot) break;
+      if (real !== undefined && real === realRoot) {
+        // совпадение запоминаем, подъём продолжается: более короткий (верхний)
+        // префикс оставит в хвосте больше компонентов — включая ссылки на сам
+        // корень — для цикла lstat
+        matchTail = [...tail];
+      }
       const parent = dirname(prefix);
       if (parent === prefix) {
-        throw new McpError("INVALID_ARGUMENT", OUTSIDE_ROOT_MSG(shown));
+        // корень ФС: совпадений не было — путь вне корня; иначе берём хвост
+        // самого короткого совпадающего префикса
+        if (matchTail === undefined) {
+          throw new McpError("INVALID_ARGUMENT", OUTSIDE_ROOT_MSG(shown));
+        }
+        tail = matchTail;
+        break;
       }
       tail.push(basename(prefix));
       prefix = parent;
