@@ -354,6 +354,46 @@ test("c2s: ответ save без save_id при устойчивом расхо
   checkSnapshot("verify-mismatch-save-without-id", ws);
 });
 
+test("c2s: GET-сверка без save_id — details.server_save_id есть всегда (null), ключ не пропадает (ревью 202 nit №2)", async () => {
+  const server: SaveServer = { saveId: "s1", model: fixtureModel() };
+  let ws: JournalWorkspace;
+  const recording = recordingDeps(server, {
+    afterSave: (s) => {
+      const walls = s.model.walls as Record<string, unknown>;
+      delete walls[Object.keys(walls)[0]!];
+    },
+  }, (e) => ws.record(e));
+  // GET после записи не вернул save_id (сайт не отдал id): диагностическое поле
+  // server_save_id обязано остаться в details со значением null
+  let loads = 0;
+  const baseLoad = recording.deps.loadModel.bind(recording.deps);
+  recording.deps.loadModel = async (s, objectId, planId) => {
+    loads++;
+    const res = await baseLoad(s, objectId, planId);
+    // загрузки 1 (open) и 2 (сверка до записи) не трогаем — иначе сработал бы
+    // pre-check по save_id; начиная с GET после первой попытки — id нет
+    if (loads >= 3) res.save_id = undefined as never;
+    return res;
+  };
+  ws = new JournalWorkspace(recording.deps);
+  await ws.open("216", "1");
+  addExtraWall(ws);
+  let mismatch: McpError | null = null;
+  try {
+    await ws.save();
+    assert.fail("ожидался SITE_ERROR");
+  } catch (e) {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "SITE_ERROR");
+    mismatch = e;
+    recordError(ws, e);
+  }
+  const details = mismatch!.details as Record<string, unknown>;
+  assert.ok("server_save_id" in details, "ключ server_save_id присутствует даже без save_id у GET");
+  assert.equal(details["server_save_id"], null);
+  recordState(ws);
+});
+
 test("c2s: журнал save без изменений (dirty=false) — та же последовательность сверок", async () => {
   const server: SaveServer = { saveId: "s1", model: fixtureModel() };
   const ws = newScenario(server);
