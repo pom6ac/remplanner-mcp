@@ -414,9 +414,11 @@ export function deleteElecCable(model: Model, wiringId: string): void {
 
 /**
  * Пересчитать вершины-предметы кабелей проводки после переноса предмета
- * (транзитивный пересчёт затронутых привязок): multi — точка pc; electrospot —
- * center под-розетки (refreshSocketGroupSubs пересчитывает под-розетки до этого
- * вызова) или точка на 7 см от грани стены. Длина пересчитывается по рёбрам.
+ * (транзитивный пересчёт затронутых привязок): multi (щитки/коробки, ревью 241
+ * №2) — точка pc предмета БЕЗ сдвига «7 см от грани» (тот сдвиг — только для
+ * выводов); electrospot — center под-розетки (refreshSocketGroupSubs
+ * пересчитывает под-розетки до этого вызова) или точка на 7 см от грани стены.
+ * Длина пересчитывается по рёбрам.
  */
 export function refreshElecCablesForItem(model: Model, itemId: string): void {
   for (const coll of ELEC_CABLE_COLLECTIONS) {
@@ -431,6 +433,13 @@ export function refreshElecCablesForItem(model: Model, itemId: string): void {
         if (gid !== itemId) continue;
         const item = model.items[itemId] as ItemProps | undefined;
         if (!item) continue;
+        if (ELEC_MULTI_ITEMS.has(item.name)) {
+          // ревью 241 №2: у multi-предметов вершина = pc (как в addElecCable);
+          // сдвиг «7 см от грани» относится только к выводам (electrospot)
+          v.point = { ...item.pc };
+          changed = true;
+          continue;
+        }
         const subs = item.socket_group as SocketGroupSub[] | undefined;
         const sub = subId && Array.isArray(subs) ? subs.find((s) => s.id === subId) : undefined;
         const pt = sub ? elecVertexPoint(model, item, sub) : elecVertexPoint(model, item);
