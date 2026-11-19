@@ -265,6 +265,20 @@ const PIPE_TYPE_TO_COLL: Record<string, string> = {
   ventpipe_in: "pipes_ventilation",
 };
 
+/** Кабели-проводка (часть 2): ключ инструмента UI → коллекция (как в ELEC_CABLE_TOOLS). */
+const ELEC_TOOL_TO_COLL: Record<string, string> = {
+  warm_floor_wire: "cables_warm_floor",
+  conditioner_wire: "cables_conditioner",
+};
+for (const t of ["wire_2_05", "wire_2_07", "wire_2_15", "wire_2_25", "wire_2_40", "wire_2_60",
+  "wire_3_15", "wire_3_25", "wire_3_40", "wire_3_60", "wire_3_100",
+  "wire_4_15", "wire_4_25", "wire_4_40", "wire_4_60", "wire_4_100",
+  "wire_5_15", "wire_5_25", "wire_5_40", "wire_5_60", "wire_5_100",
+  "wire_earth_1_40", "wire_earth_1_100", "wire_earth_3_15", "wire_earth_3_60",
+  "wire_tv", "wire_utp", "wire_hdmi", "wire_audio", "wire_phone", "wire_optical"]) {
+  ELEC_TOOL_TO_COLL[t] = "cables_socket";
+}
+
 /** Эталон(ы) сущности из фикстуры → [коллекция, сущность]. Не эталон — пусто. */
 function fixtureEntities(name: string, root: Record<string, unknown>): [string, unknown][] {
   const out: [string, unknown][] = [];
@@ -282,7 +296,8 @@ function fixtureEntities(name: string, root: Record<string, unknown>): [string, 
     else if (name.startsWith("ui-ref-comm-gas_line")) push("pipes_gas", mo);
     else if (name.startsWith("ui-ref-pipe-")) push(PIPE_TYPE_TO_COLL[String((mo as { type?: string })["type"])] ?? "pipes", mo);
     else {
-      const coll = PIPE_TYPE_TO_COLL[String((mo as { type?: string })["type"])];
+      const coll = PIPE_TYPE_TO_COLL[String((mo as { type?: string })["type"])]
+        ?? ELEC_TOOL_TO_COLL[String((mo as { type?: string })["type"])];
       if (coll !== undefined) push(coll, mo);
       else push("items", mo);
     }

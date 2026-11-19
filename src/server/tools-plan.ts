@@ -15,6 +15,7 @@ import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePi
 import { addWarmFloor, updateWarmFloor, deleteWarmFloor } from "../model/climate.ts";
 import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, type LightKind } from "../model/lighting.ts";
 import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.ts";
+import { addElecCable, updateElecCable, deleteElecCable, MAX_ELEC_PATH_NODES, SOCKET_CABLE_TOOLS, type ElecPathElement } from "../model/electric2.ts";
 import {
   addRuler, updateRuler, deleteRuler, addComment, updateComment, deleteComment,
   dimsList, commentsList, resolveRuler, resolveComment, unescapeCommentText,
@@ -51,7 +52,7 @@ import { throwNotFound } from "../dto/common.ts";
 import { resolveWall, wallRef, thickness, resolveWallMaterial } from "../dto/walls.ts";
 import { swing, resolveOpeningWall, openingAddArgs, openingUpdateParams } from "../dto/openings.ts";
 import { position, positionMove, resolveItem, normalizePosition, againstWallCenter, itemsInRoom, catalogFoundView, catalogEntryView } from "../dto/items.ts";
-import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGasLine, resolvePipe, resolveWarmFloor, resolveLightLine, resolveFloorHole } from "../dto/structures.ts";
+import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGasLine, resolvePipe, resolveWarmFloor, resolveLightLine, resolveFloorHole, resolveCableLamp } from "../dto/structures.ts";
 import { resolveBorder, borderResponse } from "../dto/borders.ts";
 import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInternal, sheetPublic, commentTextWarnings } from "../dto/dims.ts";
 import { rawEditorPayload } from "../dto/model-payload.ts";
@@ -620,7 +621,12 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           elevationMm: a["elevation_mm"] as number | undefined,
           catalogEntry: entry,
         }, ws.rooms()));
-        return ok(compactEntity(ws.model, (c) => c.items.find((i) => i.name === item.name) ?? null));
+        // точная метка по id сайта: у электрических групп name общий ("socket_group"),
+        // поиск по имени возвращал метку первой группы (240, живая проверка)
+        return ok(compactEntity(ws.model, (c) => {
+          const idx = Object.values(ws.model.items).findIndex((it) => it.id === item.id);
+          return idx >= 0 ? c.items[idx] ?? null : (c.items.find((i) => i.name === item.name) ?? null);
+        }));
       },
     ),
 
@@ -1198,21 +1204,22 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
     ),
 
-    // ---------- Электрика: связь «выключатель → светильник» (лист «Выключатели», этап 88) ----------
+    // ---------- Электрика: связь «выключатель → светильник/световая линия» (лист «Выключатели», этап 88, часть 2) ----------
     cable_add: tool(
-      "Соединить выключатель со светильником (лист «Выключатели», инструмент «Соединительная линия», PRO в UI): " +
+      "Соединить выключатель со светильником или световой линией/шиной (лист «Выключатели», инструмент «Соединительная линия», PRO в UI): " +
         "switch_item_id — предмет-группа с выключателем (light_switch*, item_add), lamp_item_id — светильник " +
-        "(люстры, бра, светильники группы lights, вентилятор fan; трековые шины/ленты — следующий этап). " +
+        "(люстры, бра, светильники группы lights, вентилятор fan) или световая линия led_strips/stripes_light/" +
+        "line_strips (led_strip, recessed_strip, surface_stripe, pendent_strip, line_light — метка LS/SL/LL<n> или id сайта). " +
         "switch_sub_id — id под-розетки-выключателя внутри группы (model_get items[].socket_group[].id); " +
         "по умолчанию первая под-розетка со свободным ключом. path — промежуточные узлы (мм, опционально). " +
         "У выключателя ограничение по клавишам (light_switch — 1 связь, double — 2, triple — 3); у светильника " +
-        "одно подключение. Коллекция cables — отдельная сущность; обратные ссылки на предметах ставятся " +
+        "и линии одно подключение. Коллекция cables — отдельная сущность; обратные ссылки на предметах и линиях ставятся " +
         "автоматически (cables.cable_id). Ответ — компактная сущность CB: switch_item_id (группа), switch_sub_id " +
         "(под-розетка) и lamp_item_id раздельно. После добавления вызывайте model_validate и project_save.",
       {
         switch_item_id: z.string().min(1).describe("предмет-группа с выключателем (I<n> из model_get или id сайта)"),
         switch_sub_id: z.string().optional().describe("id под-розетки-выключателя (socket_group[].id); по умолчанию первый свободный"),
-        lamp_item_id: z.string().min(1).describe("светильник (I<n> из model_get или id сайта)"),
+        lamp_item_id: z.string().min(1).describe("светильник (I<n> из model_get или id сайта) или световая линия (LS/SL/LL<n> из model_get или id сайта)"),
         path: z.array(mmPoint).max(MAX_CABLE_PATH_NODES).optional().describe("промежуточные узлы, мм; не более 32"),
       },
       async (a) => {
@@ -1220,7 +1227,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const cable = ws.apply("cable_add", (m) => addCable(m, {
           switchItemId: resolveItem(m, a["switch_item_id"] as string).id,
           switchSubId: a["switch_sub_id"] as string | undefined,
-          lampItemId: resolveItem(m, a["lamp_item_id"] as string).id,
+          lampItemId: resolveCableLamp(m, a["lamp_item_id"] as string),
           path: a["path"] as MmPoint[] | undefined,
         }));
         return ok(compactEntity(ws.model, (c) => c.cables.find((g) => g.site_id === cable.id) ?? null));
@@ -1240,6 +1247,107 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           return true;
         });
         return ok({ deleted: a["cable_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Электропроводка, часть 2: кабели-проводка (лист «Электропроводка») ----------
+    wiring_add: tool(
+      "Провести кабель-проводку (лист «Электропроводка», PRO): path — точки пути по порядку " +
+        "(мм; элементы {x, y} — узел или {item_id} — предмет: электрощиток, распредел. коробка/КУП, " +
+        "розетка или вывод провода; не менее 2). kind — ключ кабеля из каталога UI: " +
+        "wire_2_05…wire_5_100 (2–5 жил), wire_earth_* (заземление), wire_tv/utp/hdmi/audio/phone/optical " +
+        "(слаботочные; коллекция cables_socket), warm_floor_wire (cables_warm_floor), " +
+        "conditioner_wire (cables_conditioner). У multi-предметов (щиток, коробки) допускается несколько " +
+        "кабелей; у розеток/выводов — один кабель на тип (повторное подключение отклоняется). " +
+        "Обратные ссылки на предметах ставятся автоматически. Длину с опусками до точек пересчитывает " +
+        "редактор. После добавления вызывайте model_validate и project_save.",
+      {
+        kind: z.enum([...SOCKET_CABLE_TOOLS, "warm_floor_wire", "conditioner_wire"])
+          .describe("ключ кабеля из каталога UI (wire_3_25, warm_floor_wire, conditioner_wire и др.)"),
+        path: z.array(z.union([
+          mmPoint,
+          z.object({ item_id: z.string().min(1).max(MAX_KEY_CHARS) }),
+        ])).min(2).max(MAX_ELEC_PATH_NODES).describe("точки пути по порядку, мм; не более 32"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const toolKey = a["kind"] as string;
+        const cable = ws.apply("wiring_add", (m) => addElecCable(m, {
+          tool: toolKey,
+          // DTO: {item_id} публичного API → {itemId} модельного слоя
+          path: (a["path"] as Array<{ x?: number; y?: number; item_id?: string }>).map((p) =>
+            p["item_id"] !== undefined ? { itemId: resolveItem(m, p["item_id"]!).id } : { x: p.x!, y: p.y! }),
+        }));
+        return ok(compactEntity(ws.model, (c) => {
+          for (const key of ["cables_socket", "cables_warm_floor", "cables_conditioner"] as const) {
+            const found = (c[key] as { site_id: string }[] | undefined)?.find((g) => g.site_id === cable.id);
+            if (found) return found;
+          }
+          return null;
+        }));
+      },
+    ),
+
+    wiring_update: tool(
+      "Изменить кабель-проводку: перенести узлы графа. positions — список {vertex, x_mm, y_mm}; " +
+        "vertex — индекс вершины (0-based) из model_get cables_socket[].vertex_list (там же координаты " +
+        "узлов в мм и разбор вершин-предметов на item_id/sub_id); вершины-предметы следуют за своими " +
+        "предметами (item_update). Длину с опусками пересчитывает редактор.",
+      {
+        wiring_id: z.string().min(1).describe("метка CS/CW/CC<n> из model_get или id сайта"),
+        positions: z.array(z.object({
+          vertex: mmInt.describe("индекс узла (0-based)"),
+          x_mm: mmIntSigned,
+          y_mm: mmIntSigned,
+        })).min(1).max(MAX_ELEC_PATH_NODES),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const cable = ws.apply("wiring_update", (m) => {
+          // метка CS/CW/CC<n> из model_get или id сайта (одна карта меток, как в wiring_delete)
+          const compact = compactModel(m);
+          const labelToSite = new Map(
+            [...compact.cables_socket, ...compact.cables_warm_floor, ...compact.cables_conditioner].map((c) => [c.id, c.site_id]),
+          );
+          const ref = a["wiring_id"] as string;
+          const id = labelToSite.get(ref)
+            ?? [...compact.cables_socket, ...compact.cables_warm_floor, ...compact.cables_conditioner].find((c) => c.site_id === ref)?.site_id
+            ?? ref;
+          return updateElecCable(m, {
+            wiringId: id,
+            positions: (a["positions"] as { vertex: number; x_mm: number; y_mm: number }[]).map((p) => ({
+              vertex: p.vertex, x: p.x_mm, y: p.y_mm,
+            })),
+          });
+        });
+        return ok(compactEntity(ws.model, (c) => {
+          for (const key of ["cables_socket", "cables_warm_floor", "cables_conditioner"] as const) {
+            const found = (c[key] as { site_id: string }[] | undefined)?.find((g) => g.site_id === cable.id);
+            if (found) return found;
+          }
+          return null;
+        }));
+      },
+    ),
+
+    wiring_delete: tool(
+      "Удалить кабель-проводку (метка CS/CW/CC<n> из model_get): обратные ссылки предметов " +
+        "и под-розеток снимаются автоматически.",
+      { wiring_id: z.string().min(1).describe("метка CS/CW/CC<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("wiring_delete", (m) => {
+          // метка CS/CW/CC<n> из model_get или id сайта (как в wiring_update)
+          const compact = compactModel(m);
+          const labelToSite = new Map(
+            [...compact.cables_socket, ...compact.cables_warm_floor, ...compact.cables_conditioner].map((c) => [c.id, c.site_id]),
+          );
+          const ref = a["wiring_id"] as string;
+          const id = labelToSite.get(ref) ?? ref;
+          deleteElecCable(m, id);
+          return true;
+        });
+        return ok({ deleted: a["wiring_id"], hint: SCENARIO_HINT });
       },
     ),
 

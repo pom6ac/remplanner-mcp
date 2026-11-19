@@ -1,0 +1,50 @@
+{
+ "_source": "Синтетический эталон: формат cables_conditioner (conditioner_wire) в живой пробе не снят (подключаемые предметы кондиционера не ставились); структура по аналогии со снятым cables_warm_floor (проба 239-elec2-link6) — multi-вершина + узлы, обратная ссылка props.cables_conditioner.cable_conditioner_id. id обезличены (ревью 241 №7: ключи items совпадают с id вершин).",
+ "model_object": {
+  "id": "id1",
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "id2",
+    "point": {
+     "x": 100,
+     "y": 100
+    },
+    "type": "multi",
+    "pp": {
+     "id3": {
+      "i": 0,
+      "d": 0.5
+     }
+    }
+   },
+   {
+    "id": "id3",
+    "point": {
+     "x": 200,
+     "y": 100
+    },
+    "type": "node"
+   }
+  ],
+  "items": {
+   "id2": "multi",
+   "id3": "node"
+  },
+  "type": "conditioner_wire",
+  "length": 1
+ }
+}

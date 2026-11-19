@@ -22,6 +22,7 @@ import { dimsMismatches } from "../model/dims.ts";
 import {
   balconyWallPropertyMismatches,
   cableConnectionMismatches,
+  elecCableConnectionMismatches,
   cableLinkFormMismatches,
   checkBordersAfterNormalize,
   checkLevelHolesAfterNormalize,
@@ -41,6 +42,8 @@ import {
   WATER_PIPE_KEYS,
   type BalconyWallProps,
   type CableLinkItem,
+  type ElecLinkItem,
+  type ElecCableColl,
   type CableLinkLines,
   type GasLineSig,
   type ItemSig,
@@ -119,6 +122,9 @@ const ENTITY_DELETE_LABELS: Record<Exclude<ModelEntityCollection, "walls">, stri
   stripes_light: "трековые шины",
   line_strips: "линии линейного освещения",
   cables: "соединительные провода",
+  cables_socket: "кабели-проводка",
+  cables_warm_floor: "провода тёплого пола",
+  cables_conditioner: "трассы кондиционеров",
   rulers: "размеры",
   comments: "текстовые комментарии",
   warm_floors: "контуры тёплого пола",
@@ -279,6 +285,11 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
   const expectedLineStrips = structuredClone((norm.model as { line_strips?: Record<string, GasLineSig> }).line_strips ?? {});
   // этап 88: ожидаемые связи «выключатель → светильник» — из нормализованной модели
   const expectedCables = structuredClone((norm.model as { cables?: Record<string, GasLineSig> }).cables ?? {});
+  // часть 2: ожидаемые кабели-проводка — из нормализованной модели (длина — производная)
+  const expectedElec: Partial<Record<"cables_socket" | "cables_warm_floor" | "cables_conditioner", Record<string, GasLineSig>>> = {};
+  for (const coll of ["cables_socket", "cables_warm_floor", "cables_conditioner"] as const) {
+    expectedElec[coll] = structuredClone(((norm.model as Record<string, unknown>)[coll] ?? {}) as Record<string, GasLineSig>);
+  }
   const localLedIds = new Set(Object.keys(host.model().led_strips ?? {}));
   const localStripeIds = new Set(Object.keys(host.model().stripes_light ?? {}));
   const localLineIds = new Set(Object.keys(host.model().line_strips ?? {}));
@@ -367,6 +378,29 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       line_strips: ((norm.model as Record<string, unknown>).line_strips ?? {}) as Record<string, unknown>,
     },
   );
+  // часть 2: кабели-проводка до записи сверяются с нормализованной моделью
+  // (граф + обе стороны обратных ссылок); длина — производная (опуски редактора)
+  const elecCollKeys = ["cables_socket", "cables_warm_floor", "cables_conditioner"] as const;
+  const elecNorm: { lost: string[]; graph: string[]; conn: string[]; coll: string }[] = [];
+  for (const coll of elecCollKeys) {
+    const wsElec = stripVertexIdRoom(structuredClone((host.model()[coll] ?? {}) as Record<string, GasLineSig>)) as Record<string, GasLineSig>;
+    const normElec = ((norm.model as Record<string, unknown>)[coll] ?? {}) as Record<string, unknown>;
+    const lostElec = missingIds(new Set(Object.keys(wsElec)), new Set(Object.keys(normElec)));
+    const graphNorm = gasLineGraphMismatches(structuredClone(wsElec), normElec, "кабель-проводка", false, undefined, { skipLength: true });
+
+    const elecAll = (src: Model, itemsOverride?: Record<string, ElecLinkItem>): [Partial<Record<ElecCableColl, Record<string, GasLineSig>>>, Record<string, ElecLinkItem>] => [
+      {
+        cables_socket: structuredClone((src.cables_socket ?? {}) as Record<string, GasLineSig>),
+        cables_warm_floor: structuredClone((src.cables_warm_floor ?? {}) as Record<string, GasLineSig>),
+        cables_conditioner: structuredClone((src.cables_conditioner ?? {}) as Record<string, GasLineSig>),
+      },
+      itemsOverride ?? ((src.items ?? {}) as unknown as Record<string, ElecLinkItem>),
+    ];
+    const [expElecAll, expElecItems] = elecAll(host.model(), host.model().items as unknown as Record<string, ElecLinkItem>);
+    const [gotElecAll, gotElecItems] = elecAll(norm.model as Model, ((norm.model as { items?: Record<string, ElecLinkItem> }).items ?? {}) as Record<string, ElecLinkItem>);
+    const connNorm = elecCableConnectionMismatches(expElecAll, expElecItems, gotElecAll, gotElecItems, coll); // ревью 241 №6
+    elecNorm.push({ lost: lostElec, graph: graphNorm, conn: connNorm, coll });
+  }
   // ревью 90 R1, 92 R1a: состав и пользовательские свойства под-розеток сверяются
   // до записи; производная геометрия — только после save против нормализованного ожидания
   const subsNorm = socketGroupSubsUserMismatches(
@@ -443,7 +477,8 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     lostCables.length > 0 ||
     ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0 ||
     cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 ||
-    dimsNorm.length > 0 || climateNorm.length > 0 || roomsNormProblems.length > 0
+    dimsNorm.length > 0 || climateNorm.length > 0 || roomsNormProblems.length > 0 ||
+    elecNorm.some((e) => e.lost.length > 0 || e.graph.length > 0 || e.conn.length > 0)
   ) {
     throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
       details: {
@@ -481,6 +516,11 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         dims_mismatches: dimsNorm,
         climate_mismatches: climateNorm,
         room_mismatches: roomsNormProblems,
+        ...Object.fromEntries(elecNorm.flatMap((e) => [
+          [`lost_${e.coll}`, e.lost],
+          [`${e.coll}_mismatches`, e.graph],
+          [`${e.coll}_connection_mismatches`, e.conn],
+        ])),
       },
     });
   }
@@ -577,6 +617,27 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       expectedItems as Record<string, CableLinkItem>,
       itemsAfter,
     );
+    // часть 2: кабели-проводка после save — граф и обе стороны обратных ссылок
+    // по нормализованному ожиданию (длина — производная)
+    const elecAfter: { graph: string[]; conn: string[]; coll: string }[] = [];
+    for (const coll of ["cables_socket", "cables_warm_floor", "cables_conditioner"] as const) {
+      const elecCollAfter = (after.model[coll] as Record<string, unknown> | undefined) ?? {};
+      elecAfter.push({
+        coll,
+        graph: gasLineGraphMismatches(stripVertexIdRoom(structuredClone(expectedElec[coll] ?? {})) as Record<string, GasLineSig>, elecCollAfter, "кабель-проводка", false, undefined, { skipLength: true }),
+        conn: elecCableConnectionMismatches(
+          structuredClone(expectedElec),
+          (expectedItems as Record<string, ElecLinkItem>) ?? {},
+          {
+            cables_socket: structuredClone(((after.model["cables_socket"] as Record<string, unknown> | undefined) ?? {}) as Record<string, GasLineSig>),
+            cables_warm_floor: structuredClone(((after.model["cables_warm_floor"] as Record<string, unknown> | undefined) ?? {}) as Record<string, GasLineSig>),
+            cables_conditioner: structuredClone(((after.model["cables_conditioner"] as Record<string, unknown> | undefined) ?? {}) as Record<string, GasLineSig>),
+          },
+          (itemsAfter as Record<string, ElecLinkItem>) ?? {},
+          coll, // ревью 241 №6: только текущая коллекция — без дублей под чужими ключами
+        ),
+      });
+    }
     // ревью 90 R1, 92 R1a/R1b: состав и пользовательские свойства под-розеток
     // после save; производная геометрия (center/real_center/vd) — против
     // нормализованного ожидания с допуском
@@ -647,7 +708,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
       "save",
     ).problems;
-    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && !roomsLost) {
+    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
       verified = true;
       finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
       host.onVerified(toModel(structuredClone(after.model)));
@@ -698,6 +759,10 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
           demolition_mismatches: demolitionAfter,
           dims_mismatches: dimsAfter,
           climate_mismatches: climateAfter,
+          ...Object.fromEntries(elecAfter.flatMap((e) => [
+            [`${e.coll}_mismatches`, e.graph],
+            [`${e.coll}_connection_mismatches`, e.conn],
+          ])),
         },
       });
     }

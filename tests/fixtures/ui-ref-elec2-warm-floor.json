@@ -1,0 +1,44 @@
+{
+ "_source": "UI-проба scripts/probes/239-elec2-link6.ts (dev-проект из env, без сохранения): лист «Тёплые полы», провод warm_floor_wire от терморегулятора (socket_group/socket_thermo, вершина «<gid>|s|<subId>» type socket_thermo) к свободной точке (узел); обратная ссылка props.cables_warm_floor.cable_warm_floor_id — скаляр. Идентификаторы и координаты синтетические (scripts/anonymize.ts, ревью 241 №7); ключи items совпадают с id вершин (форма «<gid>|s|<subId>» сохранена).",
+ "model_object": {
+  "id": "id1",
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "id2|s|id4",
+    "point": {
+     "x": 300,
+     "y": 200
+    },
+    "type": "socket_thermo"
+   },
+   {
+    "id": "id3",
+    "point": {
+     "x": 200,
+     "y": 250
+    },
+    "type": "node"
+   }
+  ],
+  "items": {
+   "id2|s|id4": "socket_thermo",
+   "id3": "node"
+  },
+  "type": "warm_floor_wire",
+  "length": 1.12
+ }
+}

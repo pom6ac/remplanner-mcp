@@ -1,4 +1,4 @@
-import type { Cable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip, WarmFloor } from "./types.ts";
+import type { Cable, ElecCable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip, WarmFloor } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
 import { roomPolygons, type RoomPolygon } from "./rooms.ts";
 import { holeOffsetFromStart } from "./openings.ts";
@@ -195,6 +195,37 @@ export type CompactCable = {
   length_mm: number;
 };
 
+/** Вершина кабеля-проводки в списке (ревью 241 №9): узел или предмет. */
+export type CompactElecCableVertex = {
+  /** Индекс в vertexes (0-based) — для wiring_update positions.vertex. */
+  index: number;
+  /** node — узел графа, item — вершина-предмет (multi/electrospot/под-элемент). */
+  kind: "node" | "item";
+  /** id предмета-держателя (для kind=item; у под-розетки — id группы). */
+  item_id?: string;
+  /** id под-розетки внутри группы (вершина «<gid>|s|<subId>»). */
+  sub_id?: string;
+  /** Точка вершины, мм. */
+  x_mm: number;
+  y_mm: number;
+};
+
+/** Кабель-проводка (лист «Электропроводка», часть 2). */
+export type CompactElecCable = {
+  id: string;
+  site_id: string;
+  /** Ключ кабеля из каталога UI (wire_3_25, warm_floor_wire, conditioner_wire). */
+  type: string;
+  /** Подключённые предметы (id вершин; у под-розеток — «<gid>|s|<subId>»). */
+  connected: string[];
+  /** Вершины списком (ревью 241 №9): индексы для wiring_update и координаты узлов в мм. */
+  vertex_list: CompactElecCableVertex[];
+  /** Число вершин графа (включая промежуточные узлы). */
+  vertexes: number;
+  /** Длина, мм (в модели редактора метры, с опусками редактора). */
+  length_mm: number;
+};
+
 /** Контур тёплого пола (лист «Тёплые полы», этап 122). */
 export type CompactWarmFloor = {
   id: string;
@@ -253,6 +284,9 @@ export type CompactModel = {
   stripes_light: CompactLightStrip[];
   line_strips: CompactLightStrip[];
   cables: CompactCable[];
+  cables_socket: CompactElecCable[];
+  cables_warm_floor: CompactElecCable[];
+  cables_conditioner: CompactElecCable[];
   warm_floors: CompactWarmFloor[];
   pipes_warm_floor: CompactPipe[];
   pipes_conditioner: CompactPipe[];
@@ -540,6 +574,34 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       };
     });
 
+  // кабели-проводка (часть 2): метки CS/CW/CC
+  const compactElecCables = (src: Record<string, ElecCable> | undefined, label: string): CompactElecCable[] =>
+    Object.values(src ?? {}).map((cable, i) => {
+      // ревью 241 №9: вершины списком — индексы для wiring_update (узлы и
+      // предметы), item_id/sub_id без сырой формы «<gid>|s|<subId>», точки в мм
+      const vertexList: CompactElecCableVertex[] = cable.vertexes.map((v, index) => {
+        const at = v.id.indexOf("|s|");
+        const isItem = v.type !== "node";
+        return {
+          index,
+          kind: isItem ? ("item" as const) : ("node" as const),
+          ...(isItem ? { item_id: at > 0 ? v.id.slice(0, at) : v.id } : {}),
+          ...(isItem && at > 0 ? { sub_id: v.id.slice(at + 3) } : {}),
+          x_mm: round0(cmToMm(v.point?.x ?? 0)),
+          y_mm: round0(cmToMm(v.point?.y ?? 0)),
+        };
+      });
+      return {
+        id: `${label}${i + 1}`,
+        site_id: cable.id,
+        type: cable.type,
+        connected: cable.vertexes.filter((v) => v.type !== "node").map((v) => v.id),
+        vertex_list: vertexList,
+        vertexes: cable.vertexes.length,
+        length_mm: Math.round((cable.length ?? 0) * 1000),
+      };
+    });
+
   // контуры тёплого пола (этап 122): метки WF
   const compactWarmFloors = (src: Record<string, WarmFloor> | undefined): CompactWarmFloor[] =>
     Object.values(src ?? {}).map((wf, i) => {
@@ -593,6 +655,9 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     stripes_light: compactLightStrips(model.stripes_light, "SL"),
     line_strips: compactLightStrips(model.line_strips, "LL"),
     cables: compactCables(model.cables),
+    cables_socket: compactElecCables(model.cables_socket, "CS"),
+    cables_warm_floor: compactElecCables(model.cables_warm_floor, "CW"),
+    cables_conditioner: compactElecCables(model.cables_conditioner, "CC"),
     warm_floors: compactWarmFloors(model.warm_floors),
     pipes_warm_floor: compactClimatePipes(model.pipes_warm_floor, "PW"),
     pipes_conditioner: compactClimatePipes(model.pipes_conditioner, "PC"),

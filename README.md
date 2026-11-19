@@ -199,7 +199,12 @@ pipe_add                  # трубы водоснабжения/канализ
 led_strip_add / stripe_add / line_light_add  # освещение: лента, трековые шины (recessed|surface|pendent),
                           #  линейный свет (лист «Освещение», ломаные; светильники — item_add)
 item_add socket/light_switch + cable_add      # электрика: розетки и выключатели (листы «Розетки»/«Выключатели»,
-                          #  предмет-группа socket_group) и связь «выключатель → светильник» (cables)
+                          #  предмет-группа socket_group) и связь «выключатель → светильник/световая линия» (cables)
+item_add electric_shield/electric_box/wire     # электрика ч.2: щитки и коробки (у стены), выводы проводов,
+                          #  узел electrospot_node (листы «Розетки»/«Электропроводка», PRO)
+wiring_add / wiring_update / wiring_delete     # кабели-проводка (лист «Электропроводка», PRO): path — узлы и
+                          #  предметы (щиток, коробки, розетки, выводы); kind: wire_2_05…wire_5_100,
+                          #  wire_earth_*, wire_tv/utp/… (cables_socket), warm_floor_wire, conditioner_wire
 warm_floor_add            # тёплый пол (лист «Тёплые полы»): контур kind: cable|infrared|water (водяной — PRO)
 item_add conditioner/socket_thermo/fan/radiator_bimetal  # климат: кондиционеры (у стены), терморегулятор,
                           #  вентиляторы, радиаторы (листы «Кондиционеры»/«Вентиляция»/«Радиаторы»)

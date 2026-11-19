@@ -71,10 +71,12 @@ export const CABLE_LAMP_ITEMS = new Set([
   "fan", "fan_wall", "fan_channel", "backlit_mirror", "round_mirror_led",
   "floor_molding_with_light",
   // led_strip/line_light/recessed_strip/surface_stripe/pendent_strip подключаются
-  // к выключателю тем же классом Cabling (lamps), но обратная ссылка на полосе
-  // (props LED_STRIPS/STRIPES_LIGHT/LINE_STRIPS) пробой 88-strip-link не снята —
-  // подключение к шинам/лентам — следующий PR (отчёт 88)
+  // к выключателю тем же классом Cabling (lamps) — вершина "<lineId>|t|<vertexId>"
+  // (проба 239-elec2-link6, часть 2): точка — вершина линии, sc — перекрёстная
+  // ссылка на вершину выключателя, обратная ссылка props.cables.cable_id (скаляр)
 ]);
+/** Световые линии, подключаемые к выключателю (вершина «<lineId>|t|<vertexId>»). */
+export const CABLE_LINE_ITEMS = new Set(["led_strip", "line_light", "recessed_strip", "surface_stripe", "pendent_strip"]);
 
 /** Тип вершины светильника в связи (Cable.getTypeItem). */
 export function cableLampVertexType(itemName: string): "lamp" {
@@ -148,7 +150,7 @@ function finitePoint(name: string, p: MmPoint): void {
  * надёжный ориентир. Обе или ни одна проба в комнате (перегородка, стена вне
  * помещений) — сторона pc предмета, как раньше сторона его комнаты.
  */
-function wallInwardNormal(model: Model, wall: Wall, item: ItemProps): Point {
+export function wallInwardNormal(model: Model, wall: Wall, item: ItemProps): Point {
   const dir = sub(wall.p2, wall.p1);
   const u = scale(dir, 1 / (Math.hypot(dir.x, dir.y) || 1));
   const nl = leftNormal(dir.x, dir.y);
@@ -257,13 +259,18 @@ function subCableIds(sub: SocketGroupSub): string[] {
 }
 
 /**
- * cable_add: связь «выключатель → светильник» (мм): switch_item_id — предмет-группа
- * с под-розеткой-выключателем, lamp_item_id — светильник из CABLE_LAMP_ITEMS,
+ * cable_add: связь «выключатель → светильник/световая линия» (мм): switch_item_id —
+ * предмет-группа с под-розеткой-выключателем, lamp_item_id — светильник из
+ * CABLE_LAMP_ITEMS или световая линия (led_strip/line_light/трековые шины —
+ * вершина "<lineId>|t|<vertexId>", проба 239-elec2-link6),
  * path — промежуточные узлы (мм, опционально). У под-розетки должен быть свободный
  * ключ (число подключённых связей < SWITCH_MAX_KEYS), у светильника — занятый слот
- * cables.cable_id отвергается (скалярная ссылка). Вершина выключателя —
+ * cables.cable_id отвергается (скалярная ссылка); у линии props.cables.cable_id
+ * скалярен — занятая линия отвергается. Вершина выключателя —
  * "<itemId>|s|<subId>" с точкой center под-розетки; вершина светильника — id
- * предмета с точкой pc. Кандидат-копия; при ошибке модель не меняется.
+ * предмета с точкой pc; вершина линии — "<lineId>|t|<vertexId>" с точкой вершины
+ * линии и sc {вершинаВыключателя: idВершиныЛинии}. Кандидат-копия; при ошибке
+ * модель не меняется.
  */
 export function addCable(
   model: Model,
@@ -277,20 +284,52 @@ export function addCable(
       details: { kind: "not_a_switch" },
     });
   }
-  const lamp = model.items[params.lampItemId] as ItemProps | undefined;
-  if (!lamp) throw new McpError("NOT_FOUND", `светильник ${params.lampItemId} не найден`);
-  if (!CABLE_LAMP_ITEMS.has(lamp.name)) {
+  // цель: предмет-светильник или световая линия (led_strips/stripes_light/line_strips)
+  let lamp: ItemProps | undefined = model.items[params.lampItemId] as ItemProps | undefined;
+  let lineColl: "led_strips" | "stripes_light" | "line_strips" | undefined;
+  let lineVertexId: string | undefined;
+  let lineType: string | undefined;
+  if (!lamp) {
+    for (const coll of ["led_strips", "stripes_light", "line_strips"] as const) {
+      const line = (model[coll] as Record<string, { id: string; type: string; vertexes: { id: string; point: Point }[]; props?: { cables?: { cable_id?: unknown } } }> | undefined)?.[params.lampItemId];
+      if (line) {
+        if (!CABLE_LINE_ITEMS.has(line.type)) {
+          throw new McpError("INVALID_ARGUMENT", `линия «${line.type}» не подключается к выключателю (в редакторе у связи другой список светильников)`, {
+            details: { kind: "not_connectable", item: line.type },
+          });
+        }
+        lineColl = coll;
+        lineType = line.type;
+        lineVertexId = line.vertexes[0]?.id;
+        break;
+      }
+    }
+    if (!lineColl) throw new McpError("NOT_FOUND", `светильник ${params.lampItemId} не найден`);
+  }
+  if (lamp && !CABLE_LAMP_ITEMS.has(lamp.name)) {
     throw new McpError("INVALID_ARGUMENT", `предмет «${lamp.name}» не подключается к выключателю (в редакторе у связи другой список светильников)`, {
       details: { kind: "not_connectable", item: lamp.name },
     });
   }
-  const lampLinked = (lamp as ItemProps & { cables?: { cable_id?: unknown } }).cables?.cable_id;
-  if (typeof lampLinked === "string" ? lampLinked !== "" : Array.isArray(lampLinked) ? lampLinked.length > 0 : lampLinked !== undefined && lampLinked !== null) {
-    throw new McpError(
-      "INVALID_ARGUMENT",
-      `светильник ${lamp.id} уже подключён к связи ${JSON.stringify(lampLinked)} — у светильника одно подключение; сначала удалите связь cable_delete`,
-      { details: { kind: "already_connected", item: lamp.id } },
-    );
+  if (lamp) {
+    const lampLinked = (lamp as ItemProps & { cables?: { cable_id?: unknown } }).cables?.cable_id;
+    if (typeof lampLinked === "string" ? lampLinked !== "" : Array.isArray(lampLinked) ? lampLinked.length > 0 : lampLinked !== undefined && lampLinked !== null) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `светильник ${lamp.id} уже подключён к связи ${JSON.stringify(lampLinked)} — у светильника одно подключение; сначала удалите связь cable_delete`,
+        { details: { kind: "already_connected", item: lamp.id } },
+      );
+    }
+  } else {
+    const line = (model[lineColl!] as Record<string, { props?: { cables?: { cable_id?: unknown } } }> | undefined)![params.lampItemId]!;
+    const linked = line.props?.cables?.cable_id;
+    if (typeof linked === "string" ? linked !== "" : Array.isArray(linked) ? linked.length > 0 : linked !== undefined && linked !== null) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `линия ${params.lampItemId} уже подключена к связи ${JSON.stringify(linked)} — у линии одно подключение; сначала удалите связь cable_delete`,
+        { details: { kind: "already_connected", item: params.lampItemId } },
+      );
+    }
   }
   const candidates = subs.filter((s) => SWITCH_MAX_KEYS[s.name] !== undefined);
   if (candidates.length === 0) {
@@ -334,8 +373,17 @@ export function addCable(
   for (const p of path) finitePoint("точка пути", p);
 
   const switchVertex: CableVertex = { id: switchVertexId(swItem.id, sub.id), point: { ...(sub.center ?? swItem.pc) }, type: "switch" };
-  const lampVertex: CableVertex = { id: lamp.id, point: { ...lamp.pc }, type: cableLampVertexType(lamp.name) };
-  const nodeVertexes: CableVertex[] = path.map((p) => ({ id: `_${newId(5)}`, point: cmPoint(p), type: "node" }));
+  // вершина-цель: светильник (id предмета, точка pc) или световая линия
+  // ("<lineId>|t|<vertexId>", точка вершины линии, sc — перекрёстная ссылка, проба 239)
+  const lampVertex: CableVertex = lamp
+    ? { id: lamp.id, point: { ...lamp.pc }, type: cableLampVertexType(lamp.name) }
+    : {
+        id: `${params.lampItemId}|t|${lineVertexId}`,
+        point: { ...((model[lineColl!] as Record<string, { vertexes: { id: string; point: Point }[] }>)[params.lampItemId]!.vertexes.find((v) => v.id === lineVertexId))!.point },
+        type: lineType!,
+        sc: { [switchVertex.id]: lineVertexId },
+      };
+  const nodeVertexes: CableVertex[] = (params.path ?? []).map((p) => ({ id: `_${newId(5)}`, point: cmPoint(p), type: "node" }));
   const vertexes = [switchVertex, ...nodeVertexes, lampVertex];
   const n = vertexes.length;
   const matrix: ({ length: number } | null)[][] = Array.from({ length: n }, () => Array.from({ length: n }, () => null));
@@ -365,7 +413,13 @@ export function addCable(
     const arr = subCableIds(sub);
     arr.push(candidate.id);
     sub.cables = { cable_id: arr };
-    (lamp as ItemProps & { cables?: { cable_id: string } }).cables = { cable_id: candidate.id };
+    if (lamp) {
+      (lamp as ItemProps & { cables?: { cable_id: string } }).cables = { cable_id: candidate.id };
+    } else {
+      const line = (model[lineColl!] as Record<string, { props?: { cables?: { cable_id?: unknown } }; type?: string }>)[params.lampItemId]!;
+      line.props ??= { id: params.lampItemId, name: line.type ?? "" } as never;
+      line.props.cables = { cable_id: candidate.id };
+    }
   } catch (e) {
     if (backupCables) model.cables = backupCables;
     else delete model.cables;
@@ -452,6 +506,41 @@ export function cablesReferencingItem(model: Model, itemId: string): Cable[] {
     }
   }
   return out;
+}
+
+/** Ссылается ли какая-нибудь связь на световую линию (вершина "<lineId>|t|<vertexId>"). */
+export function cablesReferencingLine(model: Model, lineId: string): Cable[] {
+  const out: Cable[] = [];
+  for (const cable of Object.values(model.cables ?? {})) {
+    for (const v of cable.vertexes) {
+      if (v.type !== "node" && v.type !== "switch" && typeof v.id === "string" && v.id.startsWith(`${lineId}|t|`)) {
+        out.push(cable);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Пересчитать вершины-линии связей после переноса световой линии (транзитивный
+ * пересчёт затронутых привязок): точка вершины связи = точка вершины линии по sc.
+ */
+export function refreshCablesForLine(model: Model, lineId: string): void {
+  for (const cable of Object.values(model.cables ?? {})) {
+    let changed = false;
+    for (const v of cable.vertexes) {
+      if (v.type === "node" || v.type === "switch") continue;
+      if (typeof v.id !== "string" || !v.id.startsWith(`${lineId}|t|`)) continue;
+      const stripVertexId = v.id.slice(lineId.length + 3);
+      for (const coll of ["led_strips", "stripes_light", "line_strips"] as const) {
+        const line = (model[coll] as Record<string, { vertexes: { id: string; point: Point }[] }> | undefined)?.[lineId];
+        const sv = line?.vertexes.find((x) => x.id === stripVertexId);
+        if (sv) { v.point = { ...sv.point }; changed = true; break; }
+      }
+    }
+    if (changed) cable.length = gasLineLengthM(cable);
+  }
 }
 
 /**

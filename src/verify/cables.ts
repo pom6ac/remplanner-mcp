@@ -14,6 +14,9 @@ export type CableLinkLines = {
   line_strips?: Record<string, unknown>;
 };
 
+/** Световая линия с обратной ссылкой связи (props.cables, часть 2). */
+type CableLinkLine = { props?: { cables?: { cable_id?: unknown } } };
+
 /** Коллекция световой линии по типу вершины связи (ревью 90 R2) — зеркало electric.ts. */
 const CABLE_LINE_BY_VERTEX: Record<string, keyof CableLinkLines> = {
   led_strip: "led_strips",
@@ -68,11 +71,13 @@ export function cableConnectionMismatches(
     return [];
   };
   /** Держатель ссылки — вершина этой связи? (ревью 90 R3: лишняя ссылка — расхождение). */
-  const holderIsVertex = (cable: GasLineSig | undefined, kind: "sub" | "item", itemId: string, subId: string): boolean => {
+  const holderIsVertex = (cable: GasLineSig | undefined, kind: "sub" | "item" | "line", itemId: string, subId: string): boolean => {
     if (!cable) return false;
     for (const v of cable.vertexes ?? []) {
       if (kind === "sub") {
         if (v.type === "switch" && v.id === `${itemId}|s|${subId}`) return true;
+      } else if (kind === "line") {
+        if (v.type !== "node" && v.type !== "switch" && typeof v.id === "string" && v.id.startsWith(`${itemId}|t|`)) return true;
       } else if (v.type !== "node" && v.type !== "switch" && v.id === itemId) {
         return true;
       }
@@ -80,9 +85,9 @@ export function cableConnectionMismatches(
     return false;
   };
   /** Ссылки ожидаемой стороны: id связи → множество «предмет(под-розетка)». */
-  const collectRefs = (cables: Record<string, GasLineSig>, items: Record<string, CableLinkItem>, side: string): Map<string, Set<string>> => {
+  const collectRefs = (cables: Record<string, GasLineSig>, items: Record<string, CableLinkItem>, side: string, linesOf: Record<string, Record<string, unknown> | undefined> = {}): Map<string, Set<string>> => {
     const refs = new Map<string, Set<string>>();
-    const addRef = (cableId: string, holder: string, kind: "sub" | "item", itemId: string, subId: string): boolean => {
+    const addRef = (cableId: string, holder: string, kind: "sub" | "item" | "line", itemId: string, subId: string): boolean => {
       if (!cables[cableId]) {
         out.push(`${side}: висячая ссылка на связь ${cableId} (у ${holder}) — связи нет`);
         return false;
@@ -105,10 +110,17 @@ export function cableConnectionMismatches(
       }
       for (const id of cableIdsOf(item.cables)) addRef(id, `предмет ${itemId}`, "item", itemId, "");
     }
+    // световые линии: props.cables.cable_id — скаляр (часть 2, проба 239-elec2-link6)
+    for (const [coll, lines] of Object.entries(linesOf)) {
+      for (const [lineId, line] of Object.entries(lines ?? {})) {
+        const link = (line as CableLinkLine).props?.cables;
+        for (const id of cableIdsOf(link)) addRef(id, `линия ${lineId} (${coll})`, "line", lineId, "");
+      }
+    }
     return refs;
   };
-  const expRefs = collectRefs(expectedCables, expectedItems, "ожидание");
-  const gotRefs = collectRefs(gotCables, gotItems, "сервер");
+  const expRefs = collectRefs(expectedCables, expectedItems, "ожидание", expectedLines as Record<string, Record<string, unknown> | undefined>);
+  const gotRefs = collectRefs(gotCables, gotItems, "сервер", gotLines as Record<string, Record<string, unknown> | undefined>);
   for (const [cableId, holders] of expRefs) {
     for (const holder of holders) {
       if (!gotRefs.get(cableId)?.has(holder)) {
@@ -145,8 +157,10 @@ export function cableConnectionMismatches(
         if (v.type === "node" || v.type === "switch") continue;
         const collKey = CABLE_LINE_BY_VERTEX[String(v.type)];
         if (collKey) {
-          const line = (lines[collKey] ?? {})[String(v.id)];
-          if (!line) out.push(`${label}: ${cableId} — линия ${String(v.id)} (type ${String(v.type)}) не найдена в ${collKey}`);
+          const vid = String(v.id);
+          const lineId = vid.includes("|t|") ? vid.slice(0, vid.indexOf("|t|")) : vid;
+          const line = (lines[collKey] ?? {})[lineId] as CableLinkLine | undefined;
+          if (!line) out.push(`${label}: ${cableId} — линия ${lineId} (type ${String(v.type)}) не найдена в ${collKey}`);
           continue;
         }
         const item = items[String(v.id)];

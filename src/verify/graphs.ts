@@ -142,6 +142,7 @@ export function gasLineGraphMismatches(
   entityLabel = "газовая линия",
   lenientItemVertices = false,
   itemGeom?: Record<string, { pc?: Point; width?: number; height?: number; angle?: number }>,
+  opts: { skipLength?: boolean } = {},
 ): VerificationMismatches {
   const out: string[] = [];
   const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
@@ -270,7 +271,10 @@ export function gasLineGraphMismatches(
           return ranged ? [dminSum, dmaxSum] as const : null;
         })()
       : null;
-    if (lenRange) {
+    if (opts.skipLength) {
+      // длина — производная (кабели-проводка: редактор считает с опусками до точек,
+      // формула не воспроизведена) — в сверке не участвует
+    } else if (lenRange) {
       // регион в см, длина линии — в метрах
       const dminM = lenRange[0] / 100;
       const dmaxM = lenRange[1] / 100;

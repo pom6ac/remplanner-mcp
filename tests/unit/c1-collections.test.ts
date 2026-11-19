@@ -19,7 +19,8 @@ import { modelCounts, modelIsContentEmpty } from "../../src/workspace.ts";
 import { compactModel } from "../../src/model/compact.ts";
 import { PLANS_DIR } from "../../src/config.ts";
 import type { ModelEntityCollection } from "../../src/model/collections.ts";
-import type { Model, GasLine, LevelHole, LedStrip, LineStrip, Pipe, StripLight, WarmFloor, FixtureEnvelope } from "../../src/model/types.ts";
+import type { Model, GasLine, LevelHole, LedStrip, LineStrip, Pipe, StripLight, WarmFloor, FixtureEnvelope, ElecCable } from "../../src/model/types.ts";
+// ElecCable импортируется в списке типов ниже
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const FIXTURE = join(ROOT, "tests/fixtures/anon-rect-4000x3000.json");
@@ -114,6 +115,20 @@ function warmFloor(id: string): WarmFloor {
   };
 }
 
+function elecCable(id: string, type: string): ElecCable {
+  return {
+    id,
+    matrix: [[null, { length: 1 }], [{ length: 1 }, null]],
+    vertexes: [
+      { id: "_n1", point: POINT, type: "multi" },
+      { id: "_n2", point: { x: 200, y: 100 }, type: "node" },
+    ],
+    items: { _n1: "multi", _n2: "node" },
+    type,
+    length: 1,
+  };
+}
+
 /**
  * Эталон: все коллекции реестра, по одной сущности в каждой (включая ригель
  * и газовую линию). Тип Pick<Model, ModelEntityCollection> требует, чтобы при
@@ -134,6 +149,9 @@ const FULL_COLLECTIONS: Pick<Model, ModelEntityCollection> = {
   stripes_light: { sl1: stripLight("sl1", "pendent_strip") },
   line_strips: { ll1: lineStrip("ll1") },
   cables: { cb1: { ...pipe("cb1", "cable"), color_custom: "", on_arc: 0 } },
+  cables_socket: { cs1: elecCable("cs1", "wire_3_25") },
+  cables_warm_floor: { cw1: elecCable("cw1", "warm_floor_wire") },
+  cables_conditioner: { cc1: elecCable("cc1", "conditioner_wire") },
   rulers: { ru1: { id: "ru1", p1: { x: 0, y: 0 }, p2: { x: 10, y: 0 }, offset: { val: 5, side: "a" }, plan: "a", plan_: 0, prs: { room: 0, mode: 1 }, color: "#ed143d" } },
   comments: { c1: { id: "c1", pc: POINT, points: [POINT], text: "тест", label: "free", plan: "a", plan_: 0, prs: { room: 0, mode: 1 }, font_size: 10 } },
   warm_floors: { wf1: warmFloor("wf1") },

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { throwNotFound } from "./common.ts";
+import { resolveItem } from "./items.ts";
 import { findPipe } from "../model/pipes.ts";
 import { RIGEL_CEILING_TYPES } from "../model/rigels.ts";
 import { LIGHT_COLLECTION_BY_KIND, type LightKind } from "../model/lighting.ts";
@@ -94,6 +95,24 @@ export function resolveLightLine(model: Model, kind: LightKind, ref: string): Le
     if (line) return line;
   }
   return throwNotFound(`световая линия ${ref} не найдена (id сайта или метка ${label}<n> из model_get)`);
+}
+
+/**
+ * Цель связи «выключатель → …» (часть 2, 240): предмет (id сайта или I<n>) или
+ * световая линия led_strips/stripes_light/line_strips (id сайта или LS/SL/LL<n>).
+ * Возвращает id сущности в модели; различение предмет/линия — в addCable.
+ */
+export function resolveCableLamp(model: Model, ref: string): string {
+  if (model.items[ref]) return ref;
+  if (/^I\d+$/.test(ref)) return resolveItem(model, ref).id;
+  for (const kind of ["led", "recessed", "surface", "pendent", "line"] as const) {
+    try {
+      return resolveLightLine(model, kind, ref).id;
+    } catch {
+      // не линия этого вида — пробуем следующий
+    }
+  }
+  return resolveItem(model, ref).id; // NOT_FOUND с сообщением про предмет
 }
 
 /** Проём в полу по site-id или метке FH1…FH_n из model_get. */

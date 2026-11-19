@@ -27,6 +27,7 @@ import { roomsSaveCompare, roomsChangePolicy, type RoomsChangePolicy } from "./m
 import { dimsMismatches } from "./model/dims.ts";
 import {
   cableConnectionMismatches,
+  elecCableConnectionMismatches,
   checkBordersAfterNormalize,
   checkLevelHolesAfterNormalize,
   climateGraphMismatches,
@@ -38,6 +39,8 @@ import {
   WATER_PIPE_KEYS,
   type CableLinkItem,
   type CableLinkLines,
+  type ElecLinkItem,
+  type ElecCableColl,
   type GasLineSig,
   type PipeLinkItem,
   type SubsItemSig,
@@ -510,6 +513,33 @@ export class Workspace {
         wsLinesNorm,
         normLinesNorm,
       );
+      // часть 2: кабели-проводка (cables_socket/warm_floor/conditioner) после нормализации
+      // не теряются и не искажаются (граф + обе стороны обратных ссылок); длина —
+      // производная (опуски редактора), вершины-предметы — точки по правилу 7 см
+      const elecCollKeys = ["cables_socket", "cables_warm_floor", "cables_conditioner"] as const;
+      for (const coll of elecCollKeys) {
+        const wsElec = stripVertexIdRoom(structuredClone((this.modelInternal![coll] ?? {}) as Record<string, GasLineSig>)) as Record<string, GasLineSig>;
+        const normElec = ((norm.model as Record<string, unknown>)[coll] ?? {}) as Record<string, unknown>;
+        const lostElec = missingIds(new Set(Object.keys(wsElec)), new Set(Object.keys(normElec)));
+        const elecGraphNorm = gasLineGraphMismatches(structuredClone(wsElec), normElec, "кабель-проводка", false, undefined, { skipLength: true });
+        const elecAll = (src: Model): Partial<Record<ElecCableColl, Record<string, GasLineSig>>> => ({
+          cables_socket: structuredClone((src.cables_socket ?? {}) as Record<string, GasLineSig>),
+          cables_warm_floor: structuredClone((src.cables_warm_floor ?? {}) as Record<string, GasLineSig>),
+          cables_conditioner: structuredClone((src.cables_conditioner ?? {}) as Record<string, GasLineSig>),
+        });
+        const elecConnNorm = elecCableConnectionMismatches(
+          elecAll(this.modelInternal!),
+          this.modelInternal!.items as Record<string, ElecLinkItem>,
+          elecAll(norm.model as Model),
+          ((norm.model as { items?: Record<string, ElecLinkItem> }).items ?? {}) as Record<string, ElecLinkItem>,
+          coll, // ревью 241 №6: только текущая коллекция — без дублей под чужими ключами
+        );
+        if (lostElec.length > 0 || elecGraphNorm.length > 0 || elecConnNorm.length > 0) {
+          throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил кабели-проводку (${coll}) — мутация отменена`, {
+            details: { [`lost_${coll}`]: lostElec, [`${coll}_mismatches`]: elecGraphNorm, [`${coll}_connection_mismatches`]: elecConnNorm },
+          });
+        }
+      }
       // ревью 90 R1, 92 R1a: состав и пользовательские свойства под-розеток
       // сверяются при нормализации независимо от связей; производная геометрия
       // (center/real_center/vd) не сверяется — редактор легитимно пересчитывает её
