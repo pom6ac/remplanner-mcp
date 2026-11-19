@@ -17,6 +17,8 @@ import type { Model, ItemProps, ElecCable } from "../../src/model/types.ts";
 import { addRoomRect } from "../../src/model/walls.ts";
 import { addItem, updateItem } from "../../src/model/items.ts";
 import { addElecCable } from "../../src/model/electric2.ts";
+import { addCable } from "../../src/model/electric.ts";
+import { addLightLine } from "../../src/model/lighting.ts";
 import { toToolEntry, type ToolEntry } from "../../src/catalog.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
@@ -78,6 +80,7 @@ const ELEC_CATALOG: Record<string, Record<string, unknown>> = {
   electric_shield: { id: 28, group: "furniture", width: 30, height: 11, self_height: 25, plan: { cables: 31, sockets: 9 }, anchor: "wall", over_floor: { value: 120, display: false }, title: "Накладной электрощиток" },
   electric_box: { id: 512, group: "furniture", width: 15, height: 15, self_height: 0, plan: { cables: 31 }, anchor: "free", over_floor: false, title: "Распред. короб" },
   wire: { id: 609, group: "wires", width: 14, height: 20, self_height: 0, plan: { sockets: 9 }, anchor: "wall", over_floor: { value: 30, display: false }, title: "Вывод провода 220В" },
+  light_switch: { id: 577, group: "switches", width: 14, height: 18, self_height: 0, plan: { light_connections: 29 }, anchor: "wall", over_floor: { value: 90, display: false }, title: "1-клавишный выключатель" },
 };
 
 function elecEntry(name: string): ToolEntry {
@@ -219,4 +222,90 @@ test("ревью 241 №3/№10: wiring_add — kind enum всех кабеле�
   } finally {
     await close();
   }
+});
+
+// ---------- №4: три механизма без теста ----------
+
+test("ревью 241 №4a: ws-мутация — нормализатор потерял кабель-проводку → INVALID_GEOMETRY", async () => {
+  const m = elecBaseModel();
+  const shield = addItem(m, { name: "electric_shield", position: { againstWall: { wallId: elecTopWall(m), offsetMm: 3000 } }, catalogEntry: elecEntry("electric_shield") } as never);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  let normalized: Record<string, unknown> | null = null;
+  const editor = {
+    objectId: "0", planId: "1",
+    async normalize(mm: Record<string, unknown>) {
+      normalized = structuredClone(mm);
+      delete (normalized as Record<string, unknown>).cables_socket;
+      const walls = Object.keys(mm.walls as Record<string, unknown>).length;
+      const c = { walls, holes: 0, items: 0, pillars: 0, rigels: 0 };
+      return { model: structuredClone(normalized!), rooms: [], before: c, after: c };
+    },
+    async save() { return { ok: true, saveId: "s2", conflict: false }; },
+    async renderPng() { return Buffer.from(""); },
+    async compatInfo() { return COMPAT; },
+    async close() {},
+  };
+  const deps: WorkspaceDeps = {
+    session: { cookies: [] },
+    async loadModel(): Promise<LoadedModel> {
+      return { object_id: "0", plan_id: "1", save_id: server.saveId, units: "cm", data_empty: false, model: structuredClone(server.model) };
+    },
+    async openEditor() { return editor as never; },
+  };
+  const ws = new Workspace(deps);
+  ws.writeBackup = () => "/mock/no-write";
+  await ws.open("0", "1");
+  await assert.rejects(
+    () => ws.applyWalls("wiring_add", (mm) => {
+      addElecCable(mm, { tool: "wire_3_25", path: [{ x: 1000, y: 1000 }, { itemId: shield.id }] });
+      return true;
+    }),
+    (e: unknown) => {
+      const err = e as McpError;
+      return err instanceof McpError && err.code === "INVALID_GEOMETRY"
+        && err.details !== undefined && "lost_cables_socket" in (err.details as Record<string, unknown>);
+    },
+  );
+});
+
+test("ревью 241 №4b: mock save — сервер вернул скаляр у multi-щитка → SITE_ERROR (форма ссылки)", async () => {
+  const m = elecBaseModel();
+  const shield = addItem(m, { name: "electric_shield", position: { againstWall: { wallId: elecTopWall(m), offsetMm: 3000 } }, catalogEntry: elecEntry("electric_shield") } as never);
+  const box = addItem(m, { name: "electric_box", position: { center: { x: 2000, y: 1500 } }, catalogEntry: elecEntry("electric_box") } as never);
+  const cable = addElecCable(m, { tool: "wire_3_25", path: [{ itemId: box.id }, { itemId: shield.id }] });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    // подмена формы ссылки у multi-предмета: массив → скаляр
+    const it = (s.model.items as Record<string, { cables_socket?: Record<string, unknown> }>)[shield.id]!;
+    it.cables_socket!["cable_wire_3_25_id"] = cable.id;
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const err = e as McpError;
+    const d = (err.details ?? {}) as Record<string, unknown>;
+    const list = d["cables_socket_connection_mismatches"] as string[] | undefined;
+    return err instanceof McpError && err.code === "SITE_ERROR"
+      && Array.isArray(list) && list.some((s) => s.includes("массивом") || s.includes(cable.id));
+  });
+});
+
+test("ревью 241 №4c: mock save — сервер снял props.cables у ленты → SITE_ERROR cables_connection_mismatches", async () => {
+  const m = elecBaseModel();
+  const sw = addItem(m, { name: "light_switch", position: { againstWall: { wallId: elecTopWall(m), offsetMm: 500 } }, catalogEntry: elecEntry("light_switch") } as never);
+  const strip = addLightLine(m, { kind: "led", path: [{ x: 1000, y: 800 }, { x: 3000, y: 800 }] });
+  addCable(m, { switchItemId: sw.id, lampItemId: strip.id });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    // сервер потерял обратную ссылку линии
+    const line = ((s.model.led_strips as Record<string, { props?: { cables?: unknown } }>)[strip.id]!);
+    delete line.props!.cables;
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const err = e as McpError;
+    const d = (err.details ?? {}) as Record<string, unknown>;
+    const list = d["cables_connection_mismatches"] as string[] | undefined;
+    return err instanceof McpError && err.code === "SITE_ERROR"
+      && Array.isArray(list) && list.length > 0;
+  });
 });
