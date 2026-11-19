@@ -877,8 +877,12 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
   mdf/wood/tile/with_light/hidden. Высота плинтуса в модели не хранится — она в
   `$Project.settings.floor_molding[type]` (умолчание 10 см, контекстное меню 3–100 см);
   подключение света (floor_molding_with_light → props.cables) в MCP не поддержано.
+  Отступ 6 см — допущение: его задала сама проба (create_line ins(0.3, 6)), отступ UI
+  кликами офлайн не снят (ревью 246 №7).
 - **Потолочный плинтус** (`ceilingMoldings[edge].parts`, PRO, тип molding): та же
   форма части, линия в 5 см от грани (рёбра потолка отстоят от стен на ~5 см внутрь).
+  Отступ 5 см — допущение: его задала сама проба (create_line ins(0.3, 5)), отступ UI
+  кликами офлайн не снят (ревью 246 №7).
 - **Закарнизная ниша** (`ceilings[0].niches[edge].parts`, PRO): часть `{id, plan:
   "ceiling", id_room, id_ceiling, line (ребро короче на 2.5 см с концов), line_wall,
   depth: 20 (defs.ceiling_niche.depth), width, area, polygon}`; ставится только при

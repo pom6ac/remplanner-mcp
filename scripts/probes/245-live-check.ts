@@ -178,9 +178,16 @@ try {
   const roomKeys = Object.keys((before.model["rooms2"] ?? before.model["rooms1"] ?? {}) as Record<string, unknown>);
   const roomIndex = Number(/^R(\d+)$/.exec(roomId)?.[1] ?? "0") - 1;
   const roomRec = (before.model["rooms2"] ?? {}) as Record<string, { edges?: Array<{ pid?: string; length?: number }> }>;
-  const targetRoom = roomRec[roomIndex >= 0 ? (Object.keys(roomRec)[roomIndex] ?? roomId) : roomId];
+  const roomSiteId = roomIndex >= 0 ? (Object.keys(roomRec)[roomIndex] ?? roomId) : roomId; // id сайта комнаты (ревью 246 №9)
+  const targetRoom = roomRec[roomSiteId];
   if (!targetRoom) throw new Error(`комната ${roomId} не найдена в сырой модели`);
-  const edge = (targetRoom.edges ?? []).filter((e) => e.pid && (e.length ?? 0) >= 30).sort((x, y) => (y.length ?? 0) - (x.length ?? 0))[0];
+  // ребро с индексом: восстановление и проверка пустоты стороны — по нему же
+  let edgeIndex = -1;
+  let edge: { pid?: string; length?: number } | undefined;
+  (targetRoom.edges ?? []).forEach((e, i) => {
+    if (edge) return;
+    if (e.pid && (e.length ?? 0) >= 30) { edge = e; edgeIndex = i; }
+  });
   if (!edge?.pid) throw new Error(`у комнаты ${roomId} нет ребра >= 25 см со стеной`);
   // метка W<n> — по порядку model_get
   const wallIds = Object.keys((before.model["walls"] ?? {}) as Record<string, unknown>);
@@ -188,6 +195,20 @@ try {
   if (wallIndex < 0) throw new Error(`стена ${edge.pid} не найдена`);
   const wallId = `W${wallIndex + 1}`;
   console.log("цель:", roomId, wallId, `(${edge.pid}, ребро ${Math.round(edge.length ?? 0)} см)`);
+  // сторона и потолок ДО записи должны быть пусты — иначе восстановление
+  // задело бы прежнюю отделку (ревью 246 №9): стоп до записи
+  const asArr = (v: unknown): Array<Record<string, unknown>> => (Array.isArray(v) ? v as Array<Record<string, unknown>> : []);
+  const sideEmpty = (key: string): boolean => {
+    const rec = asArr(targetRoom[key])[edgeIndex] as { exist?: unknown } | undefined;
+    return !rec || rec["exist"] !== true;
+  };
+  const ceilBefore = asArr(targetRoom["ceilings"])[0] as { exist?: unknown } | undefined;
+  if (!sideEmpty("decors") || !sideEmpty("floorMoldings") || !sideEmpty("ceilingMoldings")) {
+    throw new Error(`сторона ${wallId} комнаты ${roomId} уже отделана — стоп до записи (восстановление тронуло бы чужую отделку)`);
+  }
+  if (ceilBefore && ceilBefore["exist"] === true) {
+    throw new Error(`у комнаты ${roomId} уже есть покрытие потолка — стоп до записи (восстановление тронуло бы чужой потолок)`);
+  }
 
   // 3. запись: плинтусы, ниша (потолок сначала), двухслойная отделка
   await call("finish_ceiling_set", { room_id: roomId, material: "gypsum_ceiling" });
@@ -226,10 +247,11 @@ try {
   await call("finish_ceiling_niche_remove", { room_id: roomId, wall_id: wallId });
   await call("finish_ceiling_molding_remove", { room_id: roomId, wall_id: wallId });
   await call("finish_floor_molding_remove", { room_id: roomId, wall_id: wallId });
-  // потолок: прежнее состояние из бэкапа (exist или нет)
+  // потолок: прежнее состояние из бэкапа — комната по id сайта из сырой модели
+  // (метка R<n> маппится на ключ rooms2, ревью 246 №9)
   const backupModel = (JSON.parse(readFileSync(backupPath, "utf8")) as { model: Record<string, unknown> }).model;
   const bRooms = (backupModel["rooms2"] ?? backupModel["rooms1"] ?? {}) as Record<string, Record<string, unknown>>;
-  const bRoom = bRooms[roomId];
+  const bRoom = bRooms[roomSiteId];
   const bCeil = bRoom ? (bRoom["ceilings"] as Array<Record<string, unknown>> | undefined)?.[0] : undefined;
   if (bCeil && bCeil["exist"] === true) {
     await call("finish_ceiling_set", {
