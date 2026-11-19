@@ -444,7 +444,7 @@ test("239: mock save — нормализатор потерял кабель �
 
 test("239: mock save — сервер испортил узел и ребро кабеля → SITE_ERROR с cables_socket_mismatches", async () => {
   const { m, shield, box } = scenario();
-  addElecCable(m, { tool: "wire_3_25", path: [{ itemId: box.id }, { itemId: shield.id }] });
+  const cable = addElecCable(m, { tool: "wire_3_25", path: [{ itemId: box.id }, { itemId: shield.id }] });
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
   const ws = saveMock(server, (s) => {
     const cable = Object.values((s.model.cables_socket as Record<string, ElecCable>))[0]!;
@@ -454,13 +454,17 @@ test("239: mock save — сервер испортил узел и ребро к
   await ws.open("0", "1");
   await assert.rejects(() => ws.save(), (e: unknown) => {
     const err = e as McpError;
-    return err instanceof McpError && err.code === "SITE_ERROR" && JSON.stringify(err.details).includes("cables_socket_mismatches");
+    if (!(err instanceof McpError && err.code === "SITE_ERROR")) return false;
+    // ревью 241 №5: ключ есть в details всегда (пустым) — проверяем массив непустой
+    // и с расхождением по этому кабелю
+    const list = (err.details as Record<string, unknown>)["cables_socket_mismatches"] as string[] | undefined;
+    return Array.isArray(list) && list.some((s) => s.includes(cable.id));
   });
 });
 
 test("239: mock save — сервер оторвал обратную ссылку multi-предмета → SITE_ERROR с cables_socket_connection_mismatches", async () => {
   const { m, shield, box } = scenario();
-  addElecCable(m, { tool: "wire_3_25", path: [{ itemId: box.id }, { itemId: shield.id }] });
+  const cable = addElecCable(m, { tool: "wire_3_25", path: [{ itemId: box.id }, { itemId: shield.id }] });
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
   const ws = saveMock(server, (s) => {
     const it = s.model.items as Record<string, { cables_socket?: Record<string, unknown> }>;
@@ -469,7 +473,10 @@ test("239: mock save — сервер оторвал обратную ссылк
   await ws.open("0", "1");
   await assert.rejects(() => ws.save(), (e: unknown) => {
     const err = e as McpError;
-    return err instanceof McpError && err.code === "SITE_ERROR" && JSON.stringify(err.details).includes("cables_socket_connection_mismatches");
+    if (!(err instanceof McpError && err.code === "SITE_ERROR")) return false;
+    // ревью 241 №5: массив непустой и содержит расхождение по этому кабелю
+    const list = (err.details as Record<string, unknown>)["cables_socket_connection_mismatches"] as string[] | undefined;
+    return Array.isArray(list) && list.some((s) => s.includes(cable.id));
   });
 });
 

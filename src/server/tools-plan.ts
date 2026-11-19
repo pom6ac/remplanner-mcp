@@ -1303,11 +1303,15 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         const ws = wsOf();
         const cable = ws.apply("wiring_update", (m) => {
-          const id = ["cables_socket", "cables_warm_floor", "cables_conditioner"].flatMap((k) => Object.values((m as Record<string, Record<string, { id: string }>>)[k] ?? {})).find((c) => c.id === (a["wiring_id"] as string))?.id
-            ?? compactModel(m).cables_socket.find((c) => c.id === (a["wiring_id"] as string) || c.site_id === (a["wiring_id"] as string))?.site_id
-            ?? compactModel(m).cables_warm_floor.find((c) => c.id === (a["wiring_id"] as string) || c.site_id === (a["wiring_id"] as string))?.site_id
-            ?? compactModel(m).cables_conditioner.find((c) => c.id === (a["wiring_id"] as string) || c.site_id === (a["wiring_id"] as string))?.site_id
-            ?? (a["wiring_id"] as string);
+          // метка CS/CW/CC<n> из model_get или id сайта (одна карта меток, как в wiring_delete)
+          const compact = compactModel(m);
+          const labelToSite = new Map(
+            [...compact.cables_socket, ...compact.cables_warm_floor, ...compact.cables_conditioner].map((c) => [c.id, c.site_id]),
+          );
+          const ref = a["wiring_id"] as string;
+          const id = labelToSite.get(ref)
+            ?? [...compact.cables_socket, ...compact.cables_warm_floor, ...compact.cables_conditioner].find((c) => c.site_id === ref)?.site_id
+            ?? ref;
           return updateElecCable(m, {
             wiringId: id,
             positions: (a["positions"] as { vertex: number; x_mm: number; y_mm: number }[]).map((p) => ({

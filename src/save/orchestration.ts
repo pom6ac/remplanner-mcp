@@ -398,7 +398,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     ];
     const [expElecAll, expElecItems] = elecAll(host.model(), host.model().items as unknown as Record<string, ElecLinkItem>);
     const [gotElecAll, gotElecItems] = elecAll(norm.model as Model, ((norm.model as { items?: Record<string, ElecLinkItem> }).items ?? {}) as Record<string, ElecLinkItem>);
-    const connNorm = elecCableConnectionMismatches(expElecAll, expElecItems, gotElecAll, gotElecItems);
+    const connNorm = elecCableConnectionMismatches(expElecAll, expElecItems, gotElecAll, gotElecItems, coll); // ревью 241 №6
     elecNorm.push({ lost: lostElec, graph: graphNorm, conn: connNorm, coll });
   }
   // ревью 90 R1, 92 R1a: состав и пользовательские свойства под-розеток сверяются
@@ -634,6 +634,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
             cables_conditioner: structuredClone(((after.model["cables_conditioner"] as Record<string, unknown> | undefined) ?? {}) as Record<string, GasLineSig>),
           },
           (itemsAfter as Record<string, ElecLinkItem>) ?? {},
+          coll, // ревью 241 №6: только текущая коллекция — без дублей под чужими ключами
         ),
       });
     }

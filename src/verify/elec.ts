@@ -26,12 +26,16 @@ function linksOf(item: ElecLinkItem | undefined, coll: ElecCableColl, key: strin
  * чьи вершины содержат этот предмет (вершина под-розетки — "<gid>|s|<subId>").
  * Форма ссылки (скаляр/массив) сверяется с ролью предмета: multi — массив,
  * electrospot — скаляр (пробы 239-elec2-attach5/link6).
+ * only (ревью 241 №6): сверять только одну коллекцию — вызывающий цикл по
+ * коллекциям передаёт текущую, чтобы расхождение не дублировалось под ключами
+ * остальных коллекций.
  */
 export function elecCableConnectionMismatches(
   expected: Partial<Record<ElecCableColl, Record<string, GasLineSig>>>,
   expectedItems: Record<string, ElecLinkItem>,
   got: Partial<Record<ElecCableColl, Record<string, GasLineSig>>>,
   gotItems: Record<string, ElecLinkItem>,
+  only?: ElecCableColl,
 ): VerificationMismatches {
   const out: string[] = [];
   /** Держатель вершины: [itemId, subId | undefined]. */
@@ -40,6 +44,7 @@ export function elecCableConnectionMismatches(
     return idx > 0 ? [vid.slice(0, idx), vid.slice(idx + 3)] : [vid, undefined];
   };
   for (const coll of COLLS) {
+    if (only && coll !== only) continue;
     const expCables = expected[coll] ?? {};
     const gotCables = got[coll] ?? {};
     const keyOf = (cable: GasLineSig): string => elecLinkKey(coll, String(cable.type ?? ""));

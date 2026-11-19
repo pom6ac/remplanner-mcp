@@ -532,6 +532,7 @@ export class Workspace {
           this.modelInternal!.items as Record<string, ElecLinkItem>,
           elecAll(norm.model as Model),
           ((norm.model as { items?: Record<string, ElecLinkItem> }).items ?? {}) as Record<string, ElecLinkItem>,
+          coll, // ревью 241 №6: только текущая коллекция — без дублей под чужими ключами
         );
         if (lostElec.length > 0 || elecGraphNorm.length > 0 || elecConnNorm.length > 0) {
           throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил кабели-проводку (${coll}) — мутация отменена`, {
