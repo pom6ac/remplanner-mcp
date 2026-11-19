@@ -9,7 +9,7 @@ import type { Model, Point } from "../../src/model/types.ts";
 import {
   setFloorMolding, setCeilingMolding, setCeilingFinish, addCeilingNiche,
   removeFloorMolding, removeCeilingMolding, removeCeilingNiche,
-  setFloorFinish, finishCompare, finishMismatches,
+  setFloorFinish, setWallFinish, finishCompare, finishMismatches,
 } from "../../src/model/finish.ts";
 
 const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
@@ -228,4 +228,69 @@ test("246 №6: режим save строг — split без наследован
   assert.ok(save.problems.some((p) => p.includes("плинтус") && p.includes("не найдена")), "save: плинтус без наследника — problem");
   assert.ok(save.problems.some((p) => p.includes("ниша")), "save: ниша без наследника — problem");
   assert.ok(save.problems.some((p) => p.includes("потолочный плинтус")), "save: потолочный плинтус без наследника — problem");
+});
+
+// ---------- 248 B: nearRoom — часть вне комнаты-наследника не засчитывается ----------
+
+/** Split исходной комнаты: _partA — левая половина (наследует запись целиком),
+ *  _partB — правая половина (контейнер key очищен). Линия части остаётся на
+ *  стене x=290 — на территории _partB, а не _partA. */
+function splitWithStaleSide(
+  rooms: Record<string, Record<string, unknown>>,
+  room: string,
+  clearKey: "decors" | "floorMoldings",
+): Record<string, Record<string, unknown>> {
+  const partA = structuredClone(rooms[room]!) as unknown as Record<string, unknown>;
+  partA["polygon"] = [{ x: 10, y: -290 }, { x: 150, y: -290 }, { x: 150, y: -10 }, { x: 10, y: -10 }];
+  const partB = structuredClone(rooms[room]!) as unknown as Record<string, unknown>;
+  partB["polygon"] = [{ x: 150, y: -290 }, { x: 290, y: -290 }, { x: 290, y: -10 }, { x: 150, y: -10 }];
+  for (const rec of (partB[clearKey] as Array<Record<string, unknown>>) ?? []) rec["exist"] = false;
+  return { _partA: partA, _partB: partB };
+}
+
+test("248 B: split — отделка стороны, оставшаяся вне комнаты-наследника, — problem (Mnear4)", () => {
+  const { m, room, wallId } = rectRoom();
+  setWallFinish(m, room, wallId, "wallpaper", {});
+  const rooms = roomsOf(m);
+  const exp = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  const got = splitWithStaleSide(rooms, room, "decors");
+  const res = finishCompare(exp, got, undefined, undefined, "normalize");
+  assert.ok(
+    res.problems.some((p) => p.includes("потеряна отделка стены") && p.includes("при split")),
+    `отделка вне части — потеря при split: ${JSON.stringify(res.problems)}`,
+  );
+});
+
+test("248 B: split — плинтус, оставшийся вне комнаты-наследника, — problem (Mnear)", () => {
+  const { m, room, wallId } = rectRoom();
+  setFloorMolding(m, room, wallId, "floor_molding_mdf");
+  const rooms = roomsOf(m);
+  const exp = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  const got = splitWithStaleSide(rooms, room, "floorMoldings");
+  const res = finishCompare(exp, got, undefined, undefined, "normalize");
+  assert.ok(
+    res.problems.some((p) => p.includes("плинтус") && p.includes("при split")),
+    `плинтус вне части — потеря при split: ${JSON.stringify(res.problems)}`,
+  );
+});
+
+test("248 B: перенос стены — отделка стороны на старом месте, вне комнаты, — problem (Mnear4)", () => {
+  const { m, room, wallId } = rectRoom();
+  setWallFinish(m, room, wallId, "wallpaper", {});
+  const rooms = roomsOf(m);
+  const exp = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  // стена переехала на x=230, отделка осталась на старом месте (x=290) — вне комнаты
+  const shift = (p: Point): Point => ({ x: p.x - 60, y: p.y });
+  rooms[room]!["polygon"] = (rooms[room]!["polygon"] as Point[]).map(shift);
+  const edges = rooms[room]!["edges"] as Array<{ pid?: string; p1?: Point; p2?: Point }>;
+  edges[0]!.p1 = shift(edges[0]!.p1!);
+  edges[0]!.p2 = shift(edges[0]!.p2!);
+  const got = structuredClone(rooms) as Record<string, Record<string, unknown>>;
+  const expWalls = { [wallId]: { p1: { x: 290, y: -290 }, p2: { x: 290, y: -10 } } };
+  const gotWalls = { [wallId]: { p1: { x: 230, y: -290 }, p2: { x: 230, y: -10 } } };
+  const res = finishCompare(exp, got, expWalls, gotWalls, "normalize");
+  assert.ok(
+    res.problems.some((p) => p.includes("потеряна отделка стены")),
+    `отделка не переехала со стеной — потеря: ${JSON.stringify(res.problems)}`,
+  );
 });
