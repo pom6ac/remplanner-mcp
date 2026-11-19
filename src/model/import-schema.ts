@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { McpError } from "../errors.ts";
+import { MODEL_ENTITY_COLLECTIONS } from "./collections.ts";
 import {
   MAX_IMPORT_WALLS,
   MAX_IMPORT_ENTITIES,
@@ -168,22 +169,16 @@ function collection(schema: z.ZodType, max: number): z.ZodType {
   });
 }
 
-const GRAPH_COLLECTIONS = [
-  "pipes_gas",
-  "pipes",
-  "terrace_borders",
-  "territory_borders",
-  "level_holes",
-  "led_strips",
-  "stripes_light",
-  "line_strips",
-  "cables",
-  "warm_floors",
-  "pipes_warm_floor",
-  "pipes_conditioner",
-  "pipes_heat",
-  "pipes_ventilation",
-] as const;
+/**
+ * Граф-коллекции схемы импорта — выводятся из реестра MODEL_ENTITY_COLLECTIONS
+ * (ревью 241 №1): у схемы импорта больше нет своего перечня, который отстал от
+ * реестра (cables_socket/cables_warm_floor/cables_conditioner проходили импорт
+ * без схемы графа и лимитов). Не-графовые коллекции реестра имеют собственные
+ * схемы в collectionsSchema() (walls/items/pillars/rigels/rulers/comments).
+ */
+const NON_GRAPH_COLLECTIONS = new Set(["walls", "items", "pillars", "rigels", "rulers", "comments"]);
+
+const GRAPH_COLLECTIONS = MODEL_ENTITY_COLLECTIONS.filter((c) => !NON_GRAPH_COLLECTIONS.has(c));
 
 function collectionsSchema(): Record<string, z.ZodType> {
   const out: Record<string, z.ZodType> = {
