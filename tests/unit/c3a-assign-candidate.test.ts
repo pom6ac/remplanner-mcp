@@ -33,7 +33,10 @@ function rect(model: Model) {
   return { top: walls[0]!, right: walls[1]!, bottom: walls[2]!, left: walls[3]! };
 }
 
-test("assignCandidate: identity — target остаётся тем же объектом, значения обновляются", () => {
+// Ревью 179 m2, 223 №6: тест identity проверяет содержимое; ассерт
+// `holder.x === target` убран как тавтология — assignCandidate получает ссылку
+// и физически не может переприсвоить holder.x.
+test("assignCandidate: identity — значения обновляются на месте", () => {
   const target = { a: 1, b: 10 };
   const candidate = { a: 2, b: 20 };
   assignCandidate(target, candidate);
@@ -144,4 +147,60 @@ test("updateOpening: отказ валидации (смена типа) — п�
   );
   assert.equal(top.holes[hole.id], hole);
   assert.deepEqual(hole, snapshot);
+});
+
+// --- Ревью 179 m1/m3: поздние отказы — после построения кандидата и его мутаций ---
+// Отказ срабатывает на финальных проверках (assertPillarInvariants / перенос пары
+// замены / containingRoom), когда кандидат уже изменён. Тест ловит мутантов
+// «candidate = объект» (без клона) и «assign раньше поздней проверки»: в обоих
+// случаях исходный объект оказался бы изменён к моменту отказа.
+
+test("updatePillar: поздний отказ (пересечение с другой колонной) — колонна не изменена", () => {
+  const model = emptyModel();
+  rect(model);
+  const p1 = addPillar(model, { center: { x: 1000, y: 1000 } });
+  addPillar(model, { center: { x: 1300, y: 1000 } });
+  const snapshot = structuredClone(p1);
+  // assertPillarInvariants отклоняет наложение колонн после buildCandidate/finalize:
+  // мутант «assign до инвариантов» или «без клона» испортил бы p1 до отказа
+  assert.throws(
+    () => updatePillar(model, { pillarId: p1.id, center: { x: 1300, y: 1000 } }),
+    (e: unknown) => e instanceof McpError && e.code === "GEOMETRY_CONFLICT",
+  );
+  assert.equal(model.pillars[p1.id], p1);
+  assert.deepEqual(p1, snapshot);
+});
+
+test("updateWarmFloor: поздний отказ (corner2 вне комнаты) — контур не изменён", () => {
+  const model = emptyModel();
+  rect(model);
+  model.rooms2 = { r1: { polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }], area: 12 } as never };
+  const wf = addWarmFloor(model, { kind: "cable", corner1: { x: 500, y: 500 }, corner2: { x: 1000, y: 1000 } });
+  const snapshot = structuredClone(wf);
+  // validateRect проходит, отказ даёт containingRoom (OUTSIDE_ROOM) после него:
+  // мутант «assign до containingRoom» испортил бы контур до отказа
+  assert.throws(
+    () => updateWarmFloor(model, { warmFloorId: wf.id, corner2: { x: 5000, y: 1000 } }),
+    (e: unknown) => e instanceof McpError && e.code === "OUTSIDE_ROOM",
+  );
+  assert.equal(model.warm_floors![wf.id], wf);
+  assert.deepEqual(wf, snapshot);
+});
+
+test("updateOpening: поздний отказ (перенос уводит пару замены с места) — проём не изменён", () => {
+  const model = emptyModel();
+  const { top } = rect(model);
+  const door = addOpening(model, { wallId: top.id, type: "door", centerMm: 1000 });
+  const replacement = addOpening(model, { wallId: top.id, type: "window", widthMm: 1600, replacesHoleId: door.id });
+  const snapshot = structuredClone(door);
+  // дверь (80 см) помещается на новом месте, а замена (160 см, следует за ней) — нет:
+  // отказ возникает ПОСЛЕ записи width/at в кандидата и refreshHole, до assignCandidate —
+  // мутант «assign до проверки пары» или «без клона» испортил бы дверь
+  assert.throws(
+    () => updateOpening(model, { wallId: top.id, holeId: door.id, centerMm: 3400 }),
+    (e: unknown) => e instanceof McpError && e.code === "GEOMETRY_CONFLICT",
+  );
+  assert.equal(top.holes[door.id], door);
+  assert.deepEqual(door, snapshot);
+  assert.equal(top.holes[replacement.id], replacement);
 });

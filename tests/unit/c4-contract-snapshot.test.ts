@@ -110,8 +110,39 @@ test("c4: снапшот публичного контракта (список �
 });
 
 // Ревью 188 №5: снапшот вне fixtures-guard, поэтому чистоту проверяет сам снапшот-тест.
-// Известные 7+-значные числа: лимит лимита редактора (1000000) и MAX_SAFE_INTEGER в схемах.
-const KNOWN_BIG_NUMBERS = new Set([1_000_000, Number.MAX_SAFE_INTEGER]);
+// Ревью 190 N4: порог снижен до 6 знаков (шестизначные реальные ID раньше проходили).
+// Ревью 223 №2: граница числа — не цифра с обеих сторон: ID в конце предложения
+// («… 5550123.»), перед запятой/скобкой ловятся; настоящая дробная часть
+// (0.123456, 123456.5) и hex-цвет из ровно 6 знаков (#a1b2c3) не считаются ID.
+// Ревью 227 R1: ID после «слово.» (id.5550123, план.5550123) тоже ловится —
+// точка после цифры (дробная часть) исключает число, точка после буквы — нет.
+// 7+ знаков после # — не hex-цвет, ловится. Известные большие числа: лимиты
+// редактора (1000000, 132000) и MAX_SAFE_INTEGER в схемах.
+const KNOWN_BIG_NUMBERS = new Set([1_000_000, 132_000, Number.MAX_SAFE_INTEGER]);
+
+/** Hex-цвет строго из 6 знаков: #a1b2c3 (граница по \b — #1234567 не подходит). */
+const HEX_COLOR_RE = /#[0-9a-fA-F]{6}\b/g;
+
+/**
+ * 6+-значное число: не продолжение большего, дальше — не цифра и не дробная
+ * часть; перед числом не цифра и не «цифра.», то есть 12.5550123 — дробь,
+ * а id.5550123 — ID (ревью 223 №2, 227 R1).
+ */
+const BIG_NUMBER_RE = /(?<!\d)(?<!\d\.)\d{6,}(?!\d)(?!\.\d)/g;
+
+/** Неизвестные 6+-значные числа снапшота (ревью 223 №2 — чистая функция для самотестов). */
+export function unexpectedBigNumbers(stored: string, known: Set<number>): string[] {
+  const hex = new Set<number>();
+  for (const m of stored.matchAll(HEX_COLOR_RE)) {
+    for (let i = m.index; i < m.index + m[0].length; i++) hex.add(i);
+  }
+  const out: string[] = [];
+  for (const m of stored.matchAll(BIG_NUMBER_RE)) {
+    const inHexColor = [...hex].some((i) => i >= m.index && i < m.index + m[0].length);
+    if (!inHexColor && !known.has(Number(m[0]))) out.push(m[0]);
+  }
+  return out;
+}
 
 test("c4: снапшот не содержит локальных путей, email и неизвестных больших чисел", () => {
   const stored = readFileSync(SNAPSHOT, "utf8");
@@ -119,7 +150,48 @@ test("c4: снапшот не содержит локальных путей, em
   assert.ok(!stored.includes("/home/"), "в снапшоте локальный путь /home/ — HOME не нормализован");
   assert.ok(!stored.includes("<unset-home>"), "в снапшоте ненормализованный HOME (<unset-home>)");
   assert.doesNotMatch(stored, /[\w.+-]+@[\w-]+\.[\w.-]+/, "в снапшоте email");
-  const unexpected = [...new Set(stored.match(/\d{7,}/g) ?? [])]
-    .filter((n) => !KNOWN_BIG_NUMBERS.has(Number(n)));
-  assert.deepEqual(unexpected, [], "в снапшоте неизвестные 7+-значные числа (реальные ID вместо синтетических?)");
+  assert.deepEqual(
+    unexpectedBigNumbers(stored, KNOWN_BIG_NUMBERS),
+    [],
+    "в снапшоте неизвестные 6+-значные числа (реальные ID вместо синтетических?)",
+  );
+});
+
+// --- Самотесты границы числа (ревью 223 №2) — чистая функция unexpectedBigNumbers ---
+
+const SCAN = (s: string): string[] => unexpectedBigNumbers(s, KNOWN_BIG_NUMBERS);
+
+test("самотест 223 №2: ID на границе предложения и перед запятой/скобкой ловятся", () => {
+  assert.deepEqual(SCAN("Длина 5550123. "), ["5550123"]);
+  assert.deepEqual(SCAN("id (5550123)"), ["5550123"]);
+  assert.deepEqual(SCAN("5550123, 5550124"), ["5550123", "5550124"]);
+  assert.deepEqual(SCAN("конец 5550123\n"), ["5550123"]);
+});
+
+test("самотест 223 №2: дробная часть и hex-цвет не считаются ID, 7+ знаков после # ловится", () => {
+  assert.deepEqual(SCAN("дробь 0.123456"), []);
+  assert.deepEqual(SCAN("дробь 123456.5"), []);
+  assert.deepEqual(SCAN("hex #a1b2c3"), []);
+  assert.deepEqual(SCAN("hex-числа #123456"), []);
+  assert.deepEqual(SCAN("7-зн с решёткой #1234567"), ["1234567"]);
+});
+
+// Ревью 227 R1: ID после «слово.» (id.5550123, проект.5550123, plan.5550123) —
+// тоже ID: перед числом точка, но не дробная часть. Десятичная дробь
+// (12.5550123) по-прежнему не считается ID.
+test("самотест 227 R1: ID после «слово.» ловится, дробь и hex-цвет — нет", () => {
+  assert.deepEqual(SCAN("id.5550123"), ["5550123"]);
+  assert.deepEqual(SCAN("проект.5550123 "), ["5550123"]);
+  assert.deepEqual(SCAN("5550123."), ["5550123"]);
+  assert.deepEqual(SCAN("(5550123)"), ["5550123"]);
+  assert.deepEqual(SCAN("5550123,"), ["5550123"]);
+  assert.deepEqual(SCAN("дробь 12.5550123"), []);
+  assert.deepEqual(SCAN("hex #a1b2c3"), []);
+});
+
+test("самотест 223 №2: известные большие числа и хвосты длинных чисел не срабатывают", () => {
+  assert.deepEqual(SCAN("лимит 1000000"), []);
+  assert.deepEqual(SCAN("неизвестное 7654321"), ["7654321"]);
+  // 1320000 внутри длинного числа — не отдельное совпадение «132000»/«320000»
+  assert.deepEqual(SCAN("длинное 11320000"), ["11320000"]);
 });

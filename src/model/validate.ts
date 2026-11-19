@@ -1,6 +1,6 @@
 import type { Model, ItemProps, Point } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
-import { roomPolygons, type RoomPolygon } from "./items.ts";
+import { roomPolygons, type RoomPolygon } from "./rooms.ts";
 import {
   pointInPolygon, segmentsCross, dist, closestPoint, projectionLength, lineIntersection,
   polygonArea, polygonSignedArea, overlapArea, type Segment, type Polygon,

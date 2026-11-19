@@ -5,7 +5,7 @@ import type { MmPoint } from "./walls.ts";
 import { McpError } from "../errors.ts";
 import { assignCandidate } from "./assign.ts";
 import { pointInPolygon, polygonInsidePolygon, segmentsCross } from "./geometry.ts";
-import { roomPolygons } from "./items.ts";
+import { roomPolygons } from "./rooms.ts";
 
 /**
  * Тёплый пол (лист «Тёплые полы», этап 122, 2026-11-17): контуры model.warm_floors —

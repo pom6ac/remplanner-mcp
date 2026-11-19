@@ -514,7 +514,9 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
     ),
 
     project_export_plan: tool(
-        "Экспортировать текущую планировку в файл .plan (JSON модели; scope full — со всеми полями модели). " +
+        "Экспортировать текущую планировку в файл .plan (JSON сырой модели сайта в см). " +
+        "scope current — модель без обёртки, scope full — {model, saved_at}; в обеих ветках " +
+        "поля одинаковы, разница только в обёртке. " +
         "path — путь ОТНОСИТЕЛЬНО корневого каталога plans (~/.remplanner-mcp/plans, рядом с backups/renders), " +
         "например kitchen.plan или 2026/kitchen.plan; подкаталоги создаются сами. " +
         "Абсолютный путь принимается, только если он внутри каталога plans. Выход за корень (..), " +
@@ -526,7 +528,7 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
           "путь к файлу (.plan) относительно каталога plans (~/.remplanner-mcp/plans), например kitchen.plan или 2026/kitchen.plan; " +
             "абсолютный — только внутри plans; .., ~/… и symlink запрещены",
         ),
-        scope: z.enum(["current", "full"]).optional().describe("current — компактная модель, full — полная (по умолчанию full)"),
+        scope: z.enum(["current", "full"]).optional().describe("current — сырая модель без обёртки, full — {model, saved_at}; поля одинаковы, обе в см (по умолчанию full)"),
       },
       async (args) => {
         const ws = ctx.workspace();

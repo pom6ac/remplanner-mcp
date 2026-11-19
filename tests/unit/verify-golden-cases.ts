@@ -132,9 +132,11 @@ export function runGoldenCases(V: GoldenVerifiers): Record<string, string[]> {
   const gasLoop = clone(gas);
   ((gasLoop["0"] as Record<string, unknown>)["matrix"] as unknown[][])[0]![0] = { length: 1 };
   cases["gas-graph/loop-added"] = V.gasLineGraphMismatches(clone(gas), gasLoop);
+  // ревью 185 №1: type-changed мутирует СВОЮ копию gasType (раньше — уже испорченный
+  // gasVertexShift, кейс смешивал две ошибки), мёртвая переменная удалена
   const gasType = clone(gas);
-  (gasVertexShift["0"] as Record<string, unknown>)["type"] = "water_pipe";
-  cases["gas-graph/type-changed"] = V.gasLineGraphMismatches(clone(gas), gasVertexShift);
+  ((gasType["0"] as Record<string, unknown>)["type"] = "water_pipe");
+  cases["gas-graph/type-changed"] = V.gasLineGraphMismatches(clone(gas), gasType);
   const gasPlan = clone(gas);
   (gasPlan["0"] as Record<string, unknown>)["plan"] = "b";
   cases["gas-graph/plan-changed"] = V.gasLineGraphMismatches(clone(gas), gasPlan);
@@ -169,11 +171,19 @@ export function runGoldenCases(V: GoldenVerifiers): Record<string, string[]> {
   cases["water-pipe/identity"] = V.gasLineGraphMismatches(clone(water), clone(water), "труба");
   const waterShiftSmall = clone(water);
   (((waterShiftSmall["0"] as Record<string, unknown>)["vertexes"] as Record<string, unknown>[])[0]!["point"] as Record<string, number>)["x"]! += 0.05;
-  cases["water-pipe/lenient-vertex-within-tol"] = V.gasLineGraphMismatches(clone(water), waterShiftSmall, "труба", true, clone(waterItemGeom));
+  // ревью 185 №2: названия кейсов соответствуют смыслу — lenient вершину-предмет
+  // не сверяет по точке вообще (обе пустые), strict при сдвиге в допуске тоже пуст
+  cases["water-pipe/lenient-vertex-item-ignored"] = V.gasLineGraphMismatches(clone(water), waterShiftSmall, "труба", true, clone(waterItemGeom));
   const waterShiftBig = clone(water);
   (((waterShiftBig["0"] as Record<string, unknown>)["vertexes"] as Record<string, unknown>[])[0]!["point"] as Record<string, number>)["x"]! += 25;
-  cases["water-pipe/lenient-vertex-beyond-tol"] = V.gasLineGraphMismatches(clone(water), waterShiftBig, "труба", true, clone(waterItemGeom));
-  cases["water-pipe/strict-vertex-shift"] = V.gasLineGraphMismatches(clone(water), waterShiftSmall, "труба");
+  cases["water-pipe/lenient-vertex-item-ignored-big-shift"] = V.gasLineGraphMismatches(clone(water), waterShiftBig, "труба", true, clone(waterItemGeom));
+  cases["water-pipe/strict-vertex-within-tol"] = V.gasLineGraphMismatches(clone(water), waterShiftSmall, "труба");
+  // положительный кейс «строгий сдвиг трубы больше допуска» (ревью 185 №2)
+  cases["water-pipe/strict-vertex-beyond-tol"] = V.gasLineGraphMismatches(clone(water), waterShiftBig, "труба");
+  // ревью 185 №3: lenient-длина ВНУТРИ диапазона точек подключения — пусто
+  const waterLenInRange = clone(water);
+  (waterLenInRange["0"] as Record<string, unknown>)["length"] = 2.05;
+  cases["water-pipe/lenient-length-within-range"] = V.gasLineGraphMismatches(clone(water), waterLenInRange, "труба", true, clone(waterItemGeom));
   const waterLong = clone(water);
   (waterLong["0"] as Record<string, unknown>)["length"] = 5;
   cases["water-pipe/lenient-length-out-of-range"] = V.gasLineGraphMismatches(clone(water), waterLong, "труба", true, clone(waterItemGeom));
@@ -262,6 +272,20 @@ export function runGoldenCases(V: GoldenVerifiers): Record<string, string[]> {
   const cableFormScalar = clone(cableItems);
   (((cableFormScalar["id2"] as Record<string, unknown>)["socket_group"] as Record<string, unknown>[])[0]!)["cables"] = { cable_id: "id1" };
   cases["cables-form/sub-form-changed"] = V.cableLinkFormMismatches(clone(cableItems), cableFormScalar);
+  // ревью 185 №3: вершина-линия разрешается по коллекциям световых линий
+  // (expectedLines/gotLines, ревью 90 R2) — identity и пропуск линии
+  const cableLine = clone(cable) as Record<string, unknown>;
+  (cableLine["vertexes"] as unknown[]).push({ id: "l1", point: { x: 220, y: 100 }, type: "led_strip" });
+  const cableLineItems = clone(cableItems);
+  const cableLines = { led_strips: { l1: { id: "l1", name: "led" } } };
+  cases["cables-conn/line-vertex-found"] = V.cableConnectionMismatches(
+    { id1: clone(cableLine) }, clone(cableLineItems), { id1: clone(cableLine) }, clone(cableLineItems),
+    clone(cableLines), clone(cableLines),
+  );
+  cases["cables-conn/line-not-found"] = V.cableConnectionMismatches(
+    { id1: clone(cableLine) }, clone(cableLineItems), { id1: clone(cableLine) }, clone(cableLineItems),
+    clone(cableLines), { led_strips: {} },
+  );
 
   // --- колонны ---
   const pillar = clone(load("ui-ref-pillar-wall.json")["model_object"]) as Record<string, unknown>;
@@ -271,7 +295,7 @@ export function runGoldenCases(V: GoldenVerifiers): Record<string, string[]> {
   const pillarShifted = clone(pillars);
   ((pillarShifted["0"] as Record<string, unknown>)["pc"] as Record<string, number>)["x"]! += 5;
   cases["pillars/pc-shifted"] = V.pillarVerificationMismatches(clone(pillars), pillarShifted);
-  const pillarAngle = clone(pillars);
+  // ревью 185 №1: мёртвая переменная pillarAngle удалена (кейс пользуется pillarAngleChanged)
   cases["pillars/angle-changed"] = V.pillarVerificationMismatches(clone(pillars), pillarAngleChanged(pillars));
   const pillarRole = clone(pillars);
   (pillarRole["0"] as Record<string, unknown>)["role"] = "wall";
@@ -364,6 +388,26 @@ export function runGoldenCases(V: GoldenVerifiers): Record<string, string[]> {
   cases["climate/item-refs-lost"] = V.climateGraphMismatches(clone(climateLocal), clone(climateLocal), {
     itemsExpected: clone(climateItemsExp),
     itemsGot: { n1: { name: "radiator", pipes: {} } },
+  });
+  // ревью 185 №3 + 223 №3: режим normalize (ревью 124 R1) — привязка контура к
+  // комнате по геометрии, ID комнат штатно регенерируются. Кейс различает режимы:
+  // комнаты ожидания не содержат комнату w0 («0») — normalize видит расхождение
+  // «привязка рабочей копии не подтверждается геометрией», а save с той же парой
+  // аргументов пуст (id_room указывает на комнату, содержащую контур).
+  // Комнаты нет вовсе — расхождение в обоих режимах (room-missing ниже).
+  const climateNormGot = clone(climateLocal);
+  (((climateNormGot["warm_floors"] as Record<string, unknown>)["0"] as Record<string, unknown>)["id_room"] = "room_regenerated_1");
+  const wfPolygon = (((climateLocal["warm_floors"] as Record<string, unknown>)["0"] as Record<string, unknown>)["polygon"]);
+  const climateRooms = { "0": { polygon: structuredClone(wfPolygon) } };
+  cases["climate/normalize-id-room-binding-unconfirmed"] = V.climateGraphMismatches(clone(climateLocal), climateNormGot, {
+    mode: "normalize",
+    roomsExpected: {},
+    roomsGot: { room_regenerated_1: { polygon: structuredClone(wfPolygon) } },
+  });
+  cases["climate/normalize-id-room-room-missing"] = V.climateGraphMismatches(clone(climateLocal), climateNormGot, {
+    mode: "normalize",
+    roomsExpected: clone(climateRooms),
+    roomsGot: {},
   });
 
   return cases;

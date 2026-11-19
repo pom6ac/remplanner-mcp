@@ -1,7 +1,6 @@
 import type { Cable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip, WarmFloor } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
-import type { RoomPolygon } from "./items.ts";
-import { roomPolygons } from "./items.ts";
+import { roomPolygons, type RoomPolygon } from "./rooms.ts";
 import { holeOffsetFromStart } from "./openings.ts";
 import { wallFaces } from "./wall-geometry.ts";
 import { projectionLength, type Segment } from "./geometry.ts";

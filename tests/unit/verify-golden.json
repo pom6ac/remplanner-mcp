@@ -51,7 +51,6 @@
     "0: петля на узле 0 добавлена на сервере (matrix[i][i] изменилась)"
   ],
   "gas-graph/type-changed": [
-    "0: узел 1 сместился (на сервере 832.19,661.47; ожидалось 827.19,661.47)",
     "0: тип изменился (на сервере «water_pipe»; ожидалось «gas_line»)"
   ],
   "gas-graph/plan-changed": [
@@ -71,9 +70,13 @@
     "0: узел 2, поле id_room изменилось (на сервере null; ожидалось \"0\")"
   ],
   "water-pipe/identity": [],
-  "water-pipe/lenient-vertex-within-tol": [],
-  "water-pipe/lenient-vertex-beyond-tol": [],
-  "water-pipe/strict-vertex-shift": [],
+  "water-pipe/lenient-vertex-item-ignored": [],
+  "water-pipe/lenient-vertex-item-ignored-big-shift": [],
+  "water-pipe/strict-vertex-within-tol": [],
+  "water-pipe/strict-vertex-beyond-tol": [
+    "0: узел 0 сместился (на сервере 125,100; ожидалось 100,100)"
+  ],
+  "water-pipe/lenient-length-within-range": [],
   "water-pipe/lenient-length-out-of-range": [
     "0: длина изменилась вне допустимого диапазона точек подключения (на сервере 5; допустимо 1.84–2.16)"
   ],
@@ -146,6 +149,10 @@
   ],
   "cables-form/sub-form-changed": [
     "id2/id3: форма ссылки изменилась (ожидание array, сервер scalar)"
+  ],
+  "cables-conn/line-vertex-found": [],
+  "cables-conn/line-not-found": [
+    "сервер: id1 — линия l1 (type led_strip) не найдена в led_strips"
   ],
   "pillars/identity": [],
   "pillars/missing": [
@@ -223,5 +230,11 @@
   "climate/item-refs-identity": [],
   "climate/item-refs-lost": [
     "подключения труб климата: [\"n1: обратная ссылка warm_floor_pipe_id → 0 потеряна на сервере\"]"
+  ],
+  "climate/normalize-id-room-binding-unconfirmed": [
+    "контуры тёплого пола: потеряны []; расхождения [\"0: привязка рабочей копии не подтверждается геометрией (комната 0)\"]"
+  ],
+  "climate/normalize-id-room-room-missing": [
+    "контуры тёплого пола: потеряны []; расхождения [\"0: id_room указывает на несуществующую комнату (на сервере «room_regenerated_1»)\"]"
   ]
 }

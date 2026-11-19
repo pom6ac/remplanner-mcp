@@ -14,8 +14,8 @@
 // Исключения — только через allowlist ниже, с обоснованием.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import { isSecretKey } from "../../src/errors.ts";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
@@ -160,6 +160,39 @@ for (const name of readdirSync(FIXTURES).filter((f) => f.endsWith(".json")).sort
       [],
       "фикстура не проходит сторож: числовые ID/секреты/пути/email или нет _source",
     );
+  });
+}
+
+// --- Ревью 185 №4: сторож покрывает и сгенерированные снимки в tests/unit ---
+// (tests/unit/verify-golden.json, tests/unit/snapshots/*.json): те же правила
+// утечек, но без требования _source — это артефакты тестов, а не фикстуры.
+function collectJson(dir: string, out: string[] = []): string[] {
+  for (const e of readdirSync(dir)) {
+    const p = join(dir, e);
+    try {
+      if (statSync(p).isDirectory()) collectJson(p, out);
+      else if (e.endsWith(".json")) out.push(p);
+    } catch { /* исчез между readdir и stat — не наша забота */ }
+  }
+  return out;
+}
+
+const UNIT_JSON_DIR = join(import.meta.dirname);
+
+for (const path of collectJson(UNIT_JSON_DIR).sort()) {
+  const name = relative(UNIT_JSON_DIR, path)!;
+  test(`сторож снимков tests/unit: ${name}`, () => {
+    const text = readFileSync(path, "utf8");
+    const problems: string[] = [];
+    let json: unknown;
+    try {
+      json = JSON.parse(text) as Record<string, unknown>;
+    } catch (e) {
+      problems.push(`файл не парсится как JSON: ${(e as Error).message}`);
+    }
+    if (json !== undefined) for (const v of scanFile(name, json)) problems.push(`${v.where}: ${v.what}`);
+    for (const re of TEXT_RE) if (re.test(text)) problems.push(`запрещённый шаблон ${re} в тексте файла`);
+    assert.deepEqual(problems, [], "снимок tests/unit не проходит сторож: ID/секреты/пути/email");
   });
 }
 
