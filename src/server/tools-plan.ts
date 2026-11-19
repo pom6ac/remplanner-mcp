@@ -1254,7 +1254,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     wiring_add: tool(
       "Провести кабель-проводку (лист «Электропроводка», PRO): path — точки пути по порядку " +
         "(мм; элементы {x, y} — узел или {item_id} — предмет: электрощиток, распредел. коробка/КУП, " +
-        "розетка или вывод провода; не менее 2). tool — ключ кабеля из каталога UI: " +
+        "розетка или вывод провода; не менее 2). kind — ключ кабеля из каталога UI: " +
         "wire_2_05…wire_5_100 (2–5 жил), wire_earth_* (заземление), wire_tv/utp/hdmi/audio/phone/optical " +
         "(слаботочные; коллекция cables_socket), warm_floor_wire (cables_warm_floor), " +
         "conditioner_wire (cables_conditioner). У multi-предметов (щиток, коробки) допускается несколько " +
@@ -1262,21 +1262,16 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "Обратные ссылки на предметах ставятся автоматически. Длину с опусками до точек пересчитывает " +
         "редактор. После добавления вызывайте model_validate и project_save.",
       {
-        tool: z.enum([...SOCKET_CABLE_TOOLS]).optional()
-          .describe("кабель (устаревшее имя параметра; используйте kind)"),
-        kind: z.string().min(1).optional()
+        kind: z.enum([...SOCKET_CABLE_TOOLS, "warm_floor_wire", "conditioner_wire"])
           .describe("ключ кабеля из каталога UI (wire_3_25, warm_floor_wire, conditioner_wire и др.)"),
         path: z.array(z.union([
-          z.object({ x: mm, y: mm }),
-          z.object({ item_id: z.string().min(1) }),
+          mmPoint,
+          z.object({ item_id: z.string().min(1).max(MAX_KEY_CHARS) }),
         ])).min(2).max(MAX_ELEC_PATH_NODES).describe("точки пути по порядку, мм; не более 32"),
       },
       async (a) => {
         const ws = wsOf();
-        const toolKey = (a["kind"] as string | undefined) ?? (a["tool"] as string | undefined);
-        if (!toolKey) {
-          throw new McpError("INVALID_ARGUMENT", "укажите kind — ключ кабеля из каталога UI (например wire_3_25, warm_floor_wire, conditioner_wire)");
-        }
+        const toolKey = a["kind"] as string;
         const cable = ws.apply("wiring_add", (m) => addElecCable(m, {
           tool: toolKey,
           // DTO: {item_id} публичного API → {itemId} модельного слоя

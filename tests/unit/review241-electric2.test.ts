@@ -173,3 +173,50 @@ test("ревью 241 №2: mock save — перенос щитка с кабел
   const vAfter = Object.values(sm)[0]!.vertexes.find((v) => v.id === shield.id)!.point;
   assert.deepEqual(vAfter, { x: shield.pc.x, y: shield.pc.y }, "на сервере вершина = pc щитка, а не «7 см от грани»");
 });
+
+// ---------- №3 + №10: wiring_add — mmPoint/enum/лимиты, без дубля-параметра tool ----------
+
+async function startOffline(): Promise<{ client: import("@modelcontextprotocol/sdk/client/index.js").Client; close: () => Promise<void> }> {
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const { buildServer } = await import("../../src/server.ts");
+  const { ServerContext } = await import("../../src/server/context.ts");
+  const ctx = new ServerContext({ offlineFixture: join(here, "../fixtures/anon-rect-4000x3000.json") });
+  const server = buildServer(ctx);
+  const client = new Client({ name: "review241", version: "0.0.0" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(b), client.connect(a)]);
+  return { client, close: () => client.close() };
+}
+
+test("ревью 241 №3/№10: wiring_add — kind enum всех кабелей, mmPoint с лимитом, item_id max, параметра tool нет", async () => {
+  const { client, close } = await startOffline();
+  try {
+    const { tools } = await client.listTools();
+    const schema = tools.find((t) => t.name === "wiring_add")!.inputSchema as {
+      properties: Record<string, { type?: string; enum?: string[]; maxLength?: number }>;
+      required?: string[];
+    };
+    assert.ok(!("tool" in schema.properties), "дубля-параметра tool больше нет");
+    const kind = schema.properties["kind"]!;
+    assert.deepEqual(kind.type, "string");
+    assert.ok(Array.isArray(kind.enum) && kind.enum.includes("wire_3_25") && kind.enum.includes("warm_floor_wire") && kind.enum.includes("conditioner_wire"));
+    assert.equal(kind.enum!.length, 31 + 2, "enum = все ключи ELEC_CABLE_TOOLS (31 + 2)");
+    // узел пути: целые мм в диапазоне TOOL_COORD_LIMIT_MM (mmPoint), item_id с максимумом
+    const path = schema.properties["path"] as { items?: { anyOf?: Array<Record<string, unknown>> } };
+    const variants = path.items!.anyOf ?? path.items!["oneOf" as never] ?? [];
+    assert.ok(variants.length >= 2, "path — union узла и предмета");
+    const node = variants.find((v) => "properties" in (v as object) && "x" in ((v as Record<string, unknown>)["properties"] as object)) as { properties: { x: { type: string; maximum?: number } } };
+    assert.equal(node.properties.x.type, "integer");
+    assert.equal(node.properties.x.maximum, 1_000_000);
+    const item = variants.find((v) => "properties" in (v as object) && "item_id" in ((v as Record<string, unknown>)["properties"] as object)) as { properties: { item_id: { maxLength?: number } } };
+    assert.equal(item.properties.item_id.maxLength, 64);
+    // enum отклоняет мусорный kind и бесконечную координату (MCP-уровень)
+    const r1 = await client.callTool({ name: "wiring_add", arguments: { kind: "x".repeat(80), path: [{ x: 0, y: 0 }, { x: 100, y: 0 }] } });
+    assert.ok(r1.isError, "мусорный kind отклонён схемой");
+    const r2 = await client.callTool({ name: "wiring_add", arguments: { kind: "wire_3_25", path: [{ x: 1e300, y: 0 }, { x: 100, y: 0 }] } });
+    assert.ok(r2.isError, "координата 1e300 отклонена (лимит мм)");
+  } finally {
+    await close();
+  }
+});
