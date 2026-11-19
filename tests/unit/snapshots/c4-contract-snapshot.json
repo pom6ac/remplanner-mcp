@@ -4118,12 +4118,11 @@
   },
   {
    "name": "wiring_add",
-   "description": "Провести кабель-проводку (лист «Электропроводка», PRO): path — точки пути по порядку (мм; элементы {x, y} — узел или {item_id} — предмет: электрощиток, распредел. коробка/КУП, розетка или вывод провода; не менее 2). tool — ключ кабеля из каталога UI: wire_2_05…wire_5_100 (2–5 жил), wire_earth_* (заземление), wire_tv/utp/hdmi/audio/phone/optical (слаботочные; коллекция cables_socket), warm_floor_wire (cables_warm_floor), conditioner_wire (cables_conditioner). У multi-предметов (щиток, коробки) допускается несколько кабелей; у розеток/выводов — один кабель на тип (повторное подключение отклоняется). Обратные ссылки на предметах ставятся автоматически. Длину с опусками до точек пересчитывает редактор. После добавления вызывайте model_validate и project_save.",
+   "description": "Провести кабель-проводку (лист «Электропроводка», PRO): path — точки пути по порядку (мм; элементы {x, y} — узел или {item_id} — предмет: электрощиток, распредел. коробка/КУП, розетка или вывод провода; не менее 2). kind — ключ кабеля из каталога UI: wire_2_05…wire_5_100 (2–5 жил), wire_earth_* (заземление), wire_tv/utp/hdmi/audio/phone/optical (слаботочные; коллекция cables_socket), warm_floor_wire (cables_warm_floor), conditioner_wire (cables_conditioner). У multi-предметов (щиток, коробки) допускается несколько кабелей; у розеток/выводов — один кабель на тип (повторное подключение отклоняется). Обратные ссылки на предметах ставятся автоматически. Длину с опусками до точек пересчитывает редактор. После добавления вызывайте model_validate и project_save.",
    "inputSchema": {
     "type": "object",
     "properties": {
-     "tool": {
-      "description": "кабель (устаревшее имя параметра; используйте kind)",
+     "kind": {
       "type": "string",
       "enum": [
        "wire_2_05",
@@ -4156,13 +4155,11 @@
        "wire_hdmi",
        "wire_audio",
        "wire_phone",
-       "wire_optical"
-      ]
-     },
-     "kind": {
-      "description": "ключ кабеля из каталога UI (wire_3_25, warm_floor_wire, conditioner_wire и др.)",
-      "type": "string",
-      "minLength": 1
+       "wire_optical",
+       "warm_floor_wire",
+       "conditioner_wire"
+      ],
+      "description": "ключ кабеля из каталога UI (wire_3_25, warm_floor_wire, conditioner_wire и др.)"
      },
      "path": {
       "minItems": 2,
@@ -4174,25 +4171,31 @@
          "type": "object",
          "properties": {
           "x": {
-           "type": "number",
-           "description": "мм"
+           "type": "integer",
+           "minimum": -1000000,
+           "maximum": 1000000,
+           "description": "мм, целое (может быть отрицательным), X вправо"
           },
           "y": {
-           "type": "number",
-           "description": "мм"
+           "type": "integer",
+           "minimum": -1000000,
+           "maximum": 1000000,
+           "description": "мм, целое (может быть отрицательным), Y вниз"
           }
          },
          "required": [
           "x",
           "y"
-         ]
+         ],
+         "description": "точка плана в мм, X вправо, Y вниз"
         },
         {
          "type": "object",
          "properties": {
           "item_id": {
            "type": "string",
-           "minLength": 1
+           "minLength": 1,
+           "maxLength": 64
           }
          },
          "required": [
@@ -4205,6 +4208,7 @@
      }
     },
     "required": [
+     "kind",
      "path"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"
