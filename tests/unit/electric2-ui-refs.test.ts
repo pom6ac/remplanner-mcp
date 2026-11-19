@@ -489,3 +489,97 @@ test("239: mock save — связь выключатель → лента (ве�
   const res = await ws.save();
   assert.equal(res.verified, true, JSON.stringify(res).slice(0, 400));
 });
+
+// ---------- ревью 241 №8: вывод инструмента ≅ эталон (обе стороны, не только cable-socket) ----------
+
+/** Структурные поля эталона, обязанные совпадать с выводом инструмента. */
+function assertFixtureShape(fixture: Record<string, unknown>, produced: Record<string, unknown>, keys: string[]): void {
+  for (const k of keys) {
+    assert.ok(k in produced, `в выводе нет поля ${k}`);
+    assert.deepEqual(produced[k], fixture[k], `поле ${k}: вывод ≠ эталон`);
+  }
+}
+
+test("ревью 241 №8: item_add electric_shield у стены ≅ эталон ui-ref-elec2-shield", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-elec2-shield.json"), "utf8")) as { model_object: Record<string, unknown> };
+  const { m, shield } = scenario();
+  void m;
+  // article/plan_parent пишет редактор при постановке через UI (item_add их не
+  // пишет — эталон это показывает, тест проверяет их форму в эталоне)
+  assert.equal(fx.model_object["plan_parent"], "cables");
+  assert.equal(typeof fx.model_object["article"], "string");
+  assertFixtureShape(fx.model_object, shield as unknown as Record<string, unknown>, [
+    "name", "width", "height", "self_height", "plan", "over_floor", "dimensions",
+  ]);
+  const s = shield as unknown as Record<string, unknown>;
+  assert.equal(typeof s["angle"], "number");
+  assert.ok(s["comment"] && typeof s["comment"] === "object", "comment присутствует");
+  assert.equal(typeof s["id_wall"], "string", "щиток у стены несёт id_wall");
+  // wall_line/projection/icon_center/center3d — производные редактора: эталон их
+  // документирует, item_add их не пишет (появят после normalize/GET)
+  for (const k of ["wall_line", "projection", "icon_center", "center3d"]) {
+    assert.ok(fx.model_object[k] && typeof fx.model_object[k] === "object", `эталон документирует ${k}`);
+  }
+});
+
+test("ревью 241 №8: item_add wire у стены ≅ эталон ui-ref-elec2-wire", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-elec2-wire.json"), "utf8")) as { model_object: Record<string, unknown> };
+  const { m, wire } = scenario();
+  void m;
+  assertFixtureShape(fx.model_object, wire as unknown as Record<string, unknown>, [
+    "name", "width", "height", "self_height", "plan", "dimensions",
+  ]);
+  const w = wire as unknown as Record<string, unknown>;
+  // over_floor: значение 30 совпадает; display зависит от каталога теста, сверяем value
+  assert.deepEqual((w["over_floor"] as { value: number }).value, (fx.model_object["over_floor"] as { value: number }).value);
+  assert.equal(typeof w["angle"], "number");
+  assert.ok(w["comment"] && typeof w["comment"] === "object", "comment присутствует");
+  assert.equal(typeof w["id_wall"], "string", "вывод у стены несёт id_wall");
+  // wall_line/projection/icon_center/center3d — производные редактора (эталон
+  // документирует, item_add не пишет — появят после normalize/GET)
+  for (const k of ["wall_line", "projection", "icon_center", "center3d"]) {
+    assert.ok(fx.model_object[k] && typeof fx.model_object[k] === "object", `эталон документирует ${k}`);
+  }
+});
+
+test("ревью 241 №8: wiring_add warm_floor_wire ≅ эталон ui-ref-elec2-warm-floor (форма и keys items = id вершин)", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-elec2-warm-floor.json"), "utf8")) as { model_object: ElecCable };
+  const ref = fx.model_object;
+  const { m, box } = scenario();
+  const thermo = addItem(m, { name: "socket", position: { againstWall: { wallId: topWall(m), offsetMm: 1500 } }, catalogEntry: entry("socket") } as never);
+  (thermo.socket_group as Array<{ name: string }>)[0]!.name = "socket_thermo";
+  const cable = addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: thermo.id }, { x: 2500, y: 2000 }] });
+  assert.equal(cable.type, ref.type, "тип кабеля");
+  assert.deepEqual(cable.vertexes.map((v) => v.type), ref.vertexes.map((v) => v.type), "типы вершин: socket_thermo + node");
+  assert.deepEqual(cable.items, Object.fromEntries(cable.vertexes.map((v) => [v.id, v.type])), "ключи items = id вершин");
+  assert.ok(cable.vertexes[0]!.id.includes("|s|"), "вершина терморегулятора в форме <gid>|s|<subId>");
+  const holder = m.items[thermo.id] as unknown as { socket_group: Array<{ cables_warm_floor?: { cable_warm_floor_id?: unknown } }> };
+  assert.equal(holder.socket_group[0]!.cables_warm_floor?.cable_warm_floor_id, cable.id, "обратная ссылка — скаляр");
+});
+
+test("ревью 241 №8: cable_add выключатель → лента ≅ эталон ui-ref-elec2-strip-link (форма |t|, sc, props.cables)", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-elec2-strip-link.json"), "utf8")) as { model_cable: Cable };
+  const ref = fx.model_cable;
+  const { m, sw, strip } = stripScenario();
+  const cable = addCable(m, { switchItemId: sw.id, lampItemId: strip.id });
+  assert.equal(cable.type, ref.type);
+  assert.deepEqual(cable.vertexes.map((v) => v.type), ref.vertexes.map((v) => v.type), "типы вершин: switch + led_strip");
+  const lineVertex = cable.vertexes.find((v) => v.type === "led_strip")!;
+  assert.ok(lineVertex.id.startsWith(`${strip.id}|t|`), "вершина линии в форме <lineId>|t|<vid>");
+  const sc = lineVertex.sc as Record<string, string>;
+  const swVertex = cable.vertexes.find((v) => v.type === "switch")!;
+  assert.equal(sc[swVertex.id], lineVertex.id.slice(`${strip.id}|t|`.length), "sc — хвост после |t|");
+  assert.deepEqual(cable.items, Object.fromEntries(cable.vertexes.map((v) => [v.id, v.type])), "ключи items = id вершин");
+  const line = (m.led_strips as Record<string, { props?: { cables?: { cable_id?: unknown } } }>)[strip.id]!;
+  assert.equal(line.props?.cables?.cable_id, cable.id, "обратная ссылка линии — скаляр");
+});
+
+test("ревью 241 №8: ui-ref-elec2-conditioner — синтетический эталон (живьём не снят), структура и items = id вершин", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-elec2-conditioner.json"), "utf8")) as { _source: string; model_object: ElecCable };
+  // помечено синтетическим в _source — живой пробы нет, подключаемые предметы
+  // кондиционера не сняты (открытый вопрос)
+  assert.match(fx._source, /Синтетический эталон/);
+  const ref = fx.model_object;
+  assert.deepEqual(ref.items, Object.fromEntries(ref.vertexes.map((v) => [v.id, v.type])), "ключи items = id вершин");
+  assert.equal(ref.type, "conditioner_wire");
+});

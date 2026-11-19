@@ -1,5 +1,5 @@
 {
- "_source": "UI-проба scripts/probes/239-elec2-items3.ts (dev-проект из env, без сохранения): лист «Электропроводка», клик «Накладной электрощиток» (electric_shield) у стены — предмет каталога (group furniture), over_floor {value:120, display:false}, self_height 25, plan_parent cables, article A. id обезличены, координаты синтетические.",
+ "_source": "UI-проба scripts/probes/239-elec2-items3.ts (dev-проект из env, без сохранения): лист «Электропроводка», клик «Накладной электрощиток» (electric_shield) у стены — предмет каталога (group furniture), over_floor {value:120, display:false}, self_height 25, plan_parent cables, article A. Идентификаторы и координаты синтетические (scripts/anonymize.ts, ревью 241 №7): стена слева (wall_direction l), ось стены — вертикаль x=98.5, точка pc на 1.5 см от оси (7 − height/2), wall_line — грань щитка вдоль стены (длина = width 30), projection на оси, icon_center/center3d — с тем же смещением, что в пробе.",
  "model_object": {
   "name": "electric_shield",
   "pc": {
@@ -8,8 +8,8 @@
   },
   "angle": -90,
   "projection": {
-   "x": 367.3,
-   "y": 327.799
+   "x": 98.5,
+   "y": 100
   },
   "width": 30,
   "height": 11,
@@ -42,26 +42,26 @@
    "h": {}
   },
   "icon_center": {
-   "x": 361.8,
-   "y": 327.799
+   "x": 94.5,
+   "y": 100
   },
   "center3d": {
-   "x": 361.8,
-   "y": 327.799
+   "x": 94.5,
+   "y": 100
   },
-  "id_room": "_g7yhv",
-  "id_room_zone": "_xdcuo",
-  "id_wall": "zrslo37ysb",
-  "id_wall_old": "zrslo37ysb",
+  "id_room": "id4",
+  "id_room_zone": "id5",
+  "id_wall": "id3",
+  "id_wall_old": "id3",
   "wall_direction": "l",
   "wall_line": {
    "p1": {
-    "x": 367.3,
-    "y": 312.799
+    "x": 98.5,
+    "y": 85
    },
    "p2": {
-    "x": 367.3,
-    "y": 342.799
+    "x": 98.5,
+    "y": 115
    }
   }
  }

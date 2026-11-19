@@ -28,13 +28,20 @@ const ALLOW_NO_SOURCE = new Set<string>([]);
 const ALLOW_NUMERIC_IDS = new Map<string, string>([]);
 
 // Фикстуры, для которых внутренние ID сайта (_xxxxx) запрещены полностью:
-// обезличивание этих пяти эталонов сквозное (scripts/anonymize.ts).
+// обезличивание этих эталонов сквозное (scripts/anonymize.ts). ui-ref-elec2-*
+// добавлены ревью 241 №7 (id_room/id_wall/items оставались из dev-проекта).
 const EDITOR_IDS_FORBIDDEN = new Set<string>([
   "ui-ref-room.json",
   "ui-ref-door.json",
   "ui-ref-window.json",
   "ui-ref-roomname.json",
   "ui-ref-sofa.json",
+  "ui-ref-elec2-cable-socket.json",
+  "ui-ref-elec2-conditioner.json",
+  "ui-ref-elec2-shield.json",
+  "ui-ref-elec2-strip-link.json",
+  "ui-ref-elec2-warm-floor.json",
+  "ui-ref-elec2-wire.json",
 ]);
 
 // Внутренний ID сайта: подчёркивание + 5 символов, опционально суффикс _<число>.
