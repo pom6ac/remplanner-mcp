@@ -4115,6 +4115,170 @@
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"
    }
+  },
+  {
+   "name": "wiring_add",
+   "description": "Провести кабель-проводку (лист «Электропроводка», PRO): path — точки пути по порядку (мм; элементы {x, y} — узел или {item_id} — предмет: электрощиток, распредел. коробка/КУП, розетка или вывод провода; не менее 2). tool — ключ кабеля из каталога UI: wire_2_05…wire_5_100 (2–5 жил), wire_earth_* (заземление), wire_tv/utp/hdmi/audio/phone/optical (слаботочные; коллекция cables_socket), warm_floor_wire (cables_warm_floor), conditioner_wire (cables_conditioner). У multi-предметов (щиток, коробки) допускается несколько кабелей; у розеток/выводов — один кабель на тип (повторное подключение отклоняется). Обратные ссылки на предметах ставятся автоматически. Длину с опусками до точек пересчитывает редактор. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "tool": {
+      "description": "кабель (устаревшее имя параметра; используйте kind)",
+      "type": "string",
+      "enum": [
+       "wire_2_05",
+       "wire_2_07",
+       "wire_2_15",
+       "wire_2_25",
+       "wire_2_40",
+       "wire_2_60",
+       "wire_3_15",
+       "wire_3_25",
+       "wire_3_40",
+       "wire_3_60",
+       "wire_3_100",
+       "wire_4_15",
+       "wire_4_25",
+       "wire_4_40",
+       "wire_4_60",
+       "wire_4_100",
+       "wire_5_15",
+       "wire_5_25",
+       "wire_5_40",
+       "wire_5_60",
+       "wire_5_100",
+       "wire_earth_1_40",
+       "wire_earth_1_100",
+       "wire_earth_3_15",
+       "wire_earth_3_60",
+       "wire_tv",
+       "wire_utp",
+       "wire_hdmi",
+       "wire_audio",
+       "wire_phone",
+       "wire_optical"
+      ]
+     },
+     "kind": {
+      "description": "ключ кабеля из каталога UI (wire_3_25, warm_floor_wire, conditioner_wire и др.)",
+      "type": "string",
+      "minLength": 1
+     },
+     "path": {
+      "minItems": 2,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "anyOf": [
+        {
+         "type": "object",
+         "properties": {
+          "x": {
+           "type": "number",
+           "description": "мм"
+          },
+          "y": {
+           "type": "number",
+           "description": "мм"
+          }
+         },
+         "required": [
+          "x",
+          "y"
+         ]
+        },
+        {
+         "type": "object",
+         "properties": {
+          "item_id": {
+           "type": "string",
+           "minLength": 1
+          }
+         },
+         "required": [
+          "item_id"
+         ]
+        }
+       ]
+      },
+      "description": "точки пути по порядку, мм; не более 32"
+     }
+    },
+    "required": [
+     "path"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wiring_delete",
+   "description": "Удалить кабель-проводку (метка CS/CW/CC<n> из model_get): обратные ссылки предметов и под-розеток снимаются автоматически.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "wiring_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка CS/CW/CC<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "wiring_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wiring_update",
+   "description": "Изменить кабель-проводку: перенести узлы графа. positions — список {vertex, x_mm, y_mm}; vertex — индекс вершины (0-based, как в model_get cables_socket[].vertexes); вершины-предметы следуют за своими предметами (item_update). Длину с опусками пересчитывает редактор.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "wiring_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка CS/CW/CC<n> из model_get или id сайта"
+     },
+     "positions": {
+      "minItems": 1,
+      "maxItems": 32,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "vertex": {
+         "type": "integer",
+         "minimum": 0,
+         "maximum": 1000000,
+         "description": "индекс узла (0-based)"
+        },
+        "x_mm": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным)"
+        },
+        "y_mm": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным)"
+        }
+       },
+       "required": [
+        "vertex",
+        "x_mm",
+        "y_mm"
+       ]
+      }
+     }
+    },
+    "required": [
+     "wiring_id",
+     "positions"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
   }
  ],
  "responses": {
@@ -4237,6 +4401,9 @@
    "stripes_light": [],
    "line_strips": [],
    "cables": [],
+   "cables_socket": [],
+   "cables_warm_floor": [],
+   "cables_conditioner": [],
    "warm_floors": [],
    "pipes_warm_floor": [],
    "pipes_conditioner": [],

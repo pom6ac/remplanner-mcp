@@ -1,0 +1,68 @@
+{
+ "_source": "UI-проба scripts/probes/239-elec2-items3.ts (dev-проект из env, без сохранения): лист «Электропроводка», клик «Накладной электрощиток» (electric_shield) у стены — предмет каталога (group furniture), over_floor {value:120, display:false}, self_height 25, plan_parent cables, article A. id обезличены, координаты синтетические.",
+ "model_object": {
+  "name": "electric_shield",
+  "pc": {
+   "x": 100,
+   "y": 100
+  },
+  "angle": -90,
+  "projection": {
+   "x": 367.3,
+   "y": 327.799
+  },
+  "width": 30,
+  "height": 11,
+  "plan": {
+   "cables": 31,
+   "sockets": 9
+  },
+  "id": "id1",
+  "item_id": 28,
+  "plan_parent": "cables",
+  "article": "A",
+  "over_floor": {
+   "value": 120,
+   "display": false
+  },
+  "self_height": 25,
+  "comment": {
+   "id": "id2"
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 361.8,
+   "y": 327.799
+  },
+  "center3d": {
+   "x": 361.8,
+   "y": 327.799
+  },
+  "id_room": "_g7yhv",
+  "id_room_zone": "_xdcuo",
+  "id_wall": "zrslo37ysb",
+  "id_wall_old": "zrslo37ysb",
+  "wall_direction": "l",
+  "wall_line": {
+   "p1": {
+    "x": 367.3,
+    "y": 312.799
+   },
+   "p2": {
+    "x": 367.3,
+    "y": 342.799
+   }
+  }
+ }
+}

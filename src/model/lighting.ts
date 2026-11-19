@@ -6,6 +6,7 @@ import { McpError } from "../errors.ts";
 import { assignCandidate } from "./assign.ts";
 import { dist } from "./geometry.ts";
 import { gasLineLengthM } from "./pipes.ts";
+import { cablesReferencingLine, refreshCablesForLine } from "./electric.ts";
 
 /**
  * Световые линии листа «Освещение» (этап 84, 2026-11-17): светодиодные ленты
@@ -207,6 +208,8 @@ export function updateLightLine(
   }
   candidate.length = lightLengthM(candidate);
   assignCandidate(line, candidate);
+  // часть 2: вершины связей «выключатель → линия» следуют за вершинами линии
+  refreshCablesForLine(model, params.lineId);
   return line;
 }
 
@@ -228,6 +231,16 @@ export function deleteLightLine(model: Model, kind: LightKind, lineId: string): 
   const coll = model[key];
   if (!coll?.[lineId]) {
     throw new McpError("NOT_FOUND", `световая линия ${lineId} не найдена в ${key}`);
+  }
+  // часть 2: связь «выключатель → линия» держит обратную ссылку на линии
+  // (props.cables) — удаление оставило бы висячую ссылку
+  const linkedCables = cablesReferencingLine(model, lineId);
+  if (linkedCables.length > 0) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `линия ${lineId} подключена к связи «выключатель → светильник» (${linkedCables.map((c) => c.id).join(", ")}) — сначала удалите связь cable_delete`,
+      { details: { kind: "cable_referenced", cables: linkedCables.map((c) => c.id) } },
+    );
   }
   if (key === "stripes_light") {
     const backRefs = linkedSpotIds(model, lineId);

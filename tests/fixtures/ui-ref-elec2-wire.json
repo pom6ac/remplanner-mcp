@@ -1,0 +1,65 @@
+{
+ "_source": "UI-проба scripts/probes/239-elec2-items3.ts (dev-проект из env, без сохранения): лист «Розетки», клик «Вывод провода 220В» (wire) у стены — самостоятельный предмет (не socket_group), over_floor {value:30, display:true}, угол = ось стены + 180°, id_wall/wall_direction/wall_line — производные редактора. id обезличены, координаты синтетические.",
+ "model_object": {
+  "name": "wire",
+  "pc": {
+   "x": 207.199,
+   "y": 122.999
+  },
+  "angle": 180,
+  "projection": {
+   "x": 207.199,
+   "y": 112.999
+  },
+  "id_room": "_g7yhv",
+  "width": 14,
+  "height": 20,
+  "plan": {
+   "sockets": 9
+  },
+  "id": "id1",
+  "item_id": 34,
+  "over_floor": {
+   "value": 30,
+   "display": true
+  },
+  "self_height": 0,
+  "comment": {
+   "id": "id2"
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 207.199,
+   "y": 122.999
+  },
+  "center3d": {
+   "x": 207.199,
+   "y": 122.999
+  },
+  "id_room_zone": "_xdcuo",
+  "id_wall": "7kmwa9hpxx",
+  "id_wall_old": "7kmwa9hpxx",
+  "wall_direction": "r",
+  "wall_line": {
+   "p1": {
+    "x": 200.199,
+    "y": 112.999
+   },
+   "p2": {
+    "x": 214.199,
+    "y": 112.999
+   }
+  }
+ }
+}

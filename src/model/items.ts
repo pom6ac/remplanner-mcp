@@ -9,6 +9,7 @@ import type { MmPoint } from "./walls.ts";
 import type { ToolEntry } from "../catalog.ts";
 import { McpError } from "../errors.ts";
 import { pipesReferencingItem, refreshPipeForItem } from "./pipes.ts";
+import { elecCablesReferencingItem, refreshElecCablesForItem } from "./electric2.ts";
 import { detachRulerItemTargets, itemComments, deleteComment, refreshRulersForItem, refreshItemComments } from "./dims.ts";
 import {
   CABLE_LAMP_ITEMS, cablesReferencingItem, refreshCablesForItem, refreshSocketGroupSubs,
@@ -260,6 +261,15 @@ export function againstWallPlacement(
   return { pc, angleDeg: angle };
 }
 
+/**
+ * Часть 2: щитки и настенные коробки — over_floor из каталога с display:false
+ * (проба 239-elec2-items3); electric_box — свободный, over_floor нет.
+ */
+const ELEC_SHIELD_CATALOG_OVER_FLOOR = new Set([
+  "electric_shield", "electric_shield_internal", "lowcurrent_shield", "lowcurrent_shield_internal",
+  "electric_box_wall", "electric_kup",
+]);
+
 /** item_add: центр / у стены (с касанием внутренней грани при gap=0) / в углу помещения.
  *  rooms — комнаты из кеша workspace (нормализованная модель), если в model.rooms2 их ещё нет. */
 export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon[]): ItemProps {
@@ -294,10 +304,12 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
       details: { kind: "cable_tool_required" },
     });
   }
-  // этап 88: выводы проводов (лист «Розетки», группа wires) и кабели — отдельный PR
-  if (entry && entry.group === "wires") {
-    throw new McpError("INVALID_ARGUMENT", `«${entry.name}» (вывод провода, группа wires) пока не поддержан — раздел «Электропроводка» отдельным этапом`, {
-      details: { kind: "not_supported_yet", item: entry.name },
+  // часть 2: кабели-коллекции листа «Электропроводка» (wire_*, warm_floor_wire,
+  // conditioner_wire) — отдельные сущности-графы, ставятся инструментом wiring_add;
+  // electrospot_node («Узел») — обычный предмет
+  if (entry && entry.group === "cables" && entry.name !== "electrospot_node") {
+    throw new McpError("INVALID_ARGUMENT", `«${entry.name}» — кабель-проводка, ставится инструментом wiring_add (редактор пишет его в отдельную коллекцию-граф, а не в items)`, {
+      details: { kind: "wiring_tool_required", item: entry.name },
     });
   }
   /** Розетка/выключатель у стены — группа socket_group (проба 88-elec-groups:
@@ -370,8 +382,20 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
           // этап 88: самостоятельные розетки (socket_power/socket_380) — редактор
           // включает display (эталон ui-ref-elec-socket_power: {value:30, display:true})
           ? { value: r2((entry.over_floor as { value: number }).value), display: true }
+          : entry && entry.group === "wires" && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
+          // часть 2: выводы проводов у стены — редактор включает display
+          // (проба 239-elec2-items3: {value:30, display:true}); floor_wire/ceiling_wire
+          // свободные — over_floor в модели нет
+          ? { value: r2((entry.over_floor as { value: number }).value), display: true }
+          : entry && ELEC_SHIELD_CATALOG_OVER_FLOOR.has(entry.name) && entry.over_floor && typeof entry.over_floor === "object" && typeof (entry.over_floor as { value?: unknown }).value === "number"
+          // часть 2: щитки и настенные коробки — каталог целиком, display:false
+          // (проба 239-elec2-items3: electric_shield {value:120, display:false})
+          ? { value: r2((entry.over_floor as { value: number }).value), display: false }
           : null;
   let props: ItemProps;
+  // часть 2: выводы проводов у стены — угол как у розеток (ось стены + 180°,
+  // проба 239-elec2-items3: angle 180 на горизонтальной оси)
+  if (entry?.group === "wires" && idWall) angle = socketGroupAngleDeg(angle);
   if (electricGroup) {
     // этап 88: группа socket_group с одной под-розеткой (проба 88-elec-groups:
     // одиночная розетка/выключатель редактор пишет группой из одного элемента;
@@ -513,6 +537,9 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   }
   if (params.center !== undefined || params.angleDeg !== undefined) {
     refreshCablesForItem(model, params.itemId);
+    // часть 2: вершины кабелей-проводки следуют за предметом (multi — pc,
+    // electrospot — точка на 7 см от грани стены)
+    refreshElecCablesForItem(model, params.itemId);
   }
   // этап 113: транзитивный пересчёт затронутых привязок размеров (формула
   // Ruler.update редактора) и комментариев, привязанных к предмету
@@ -532,6 +559,16 @@ export function deleteItem(model: Model, itemId: string): { detached_rulers: str
       "INVALID_ARGUMENT",
       `предмет ${itemId} подключён к трубе (${linked.map((p) => p.id).join(", ")}) — сначала удалите трубу pipe_delete, затем предмет`,
       { details: { kind: "pipe_referenced", pipes: linked.map((p) => p.id) } },
+    );
+  }
+  // часть 2: кабели-проводка держат обратные ссылки предмета/под-розеток —
+  // удаление оставило бы висячие ссылки
+  const elecCables = elecCablesReferencingItem(model, itemId);
+  if (elecCables.length > 0) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `предмет ${itemId} подключён к кабелю-проводке (${elecCables.map((c) => c.id).join(", ")}) — сначала удалите кабель wiring_delete, затем предмет`,
+      { details: { kind: "wiring_referenced", wirings: elecCables.map((c) => c.id) } },
     );
   }
   // этап 88: связь «выключатель → светильник» держит обратные ссылки предмета —

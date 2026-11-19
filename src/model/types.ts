@@ -388,6 +388,44 @@ export type Cable = {
 };
 
 /**
+ * Кабель-проводка листа «Электропроводка» (часть 2, 2026-11-19): model.cables_socket
+ * (кабели 2–5 жил, заземление, слаботочные — 30 типов wire_*), model.cables_warm_floor
+ * (warm_floor_wire) и model.cables_conditioner (conditioner_wire). Классы
+ * CableSocket/CableWarnFloor/CableConditioner extends GraphLines — формат графа тот же,
+ * что pipes/pipes_gas: vertexes/matrix/items, type — ключ инструмента UI ("wire_3_25" и
+ * т.п.), length — метры (с опусками до точек, формула редактора не воспроизведена —
+ * производная). Вершины-предметы (пробы 239-elec2-*):
+ * - multi (щитки/коробки: electric_shield*, lowcurrent_shield*, electric_box*) —
+ *   {id: itemId, type: "multi", pp: {другаяВершина: {i:0, d:0.5}}}, point = pc;
+ * - electrospot (розетки и выводы проводов) — {id: "<gid>|s|<subId>" (под-розетка)
+ *   или itemId (вывод), type: "electrospot"}, point = center под-розетки / точка на
+ *   7 см от грани стены у вывода; у тёплого пола type = имя под-элемента
+ *   ("socket_thermo"); обратная ссылка props.cables_socket.cable_<тип>_id
+ *   (cables_warm_floor.cable_warm_floor_id, cables_conditioner.cable_conditioner_id) —
+ *   СКАЛЯР у electrospot, МАССИВ у multi.
+ */
+export type ElecCableVertex = {
+  id: string;
+  point: Point;
+  type: "node" | "multi" | "electrospot" | (string & {});
+  /** Перекрёстные ссылки multi-вершины на другие вершины-предметы (проба 239-elec2). */
+  pp?: Record<string, { i: number; d: number }>;
+  id_room?: string;
+  [key: string]: unknown;
+};
+
+export type ElecCable = {
+  id: string;
+  matrix: ({ length: number } | null)[][];
+  vertexes: ElecCableVertex[];
+  items: Record<string, string>;
+  type: string;
+  /** Длина, м (редактор считает с опусками — в сверке производная). */
+  length: number;
+  [key: string]: unknown;
+};
+
+/**
  * Контур тёплого пола (лист «Тёплые полы», инструмент warm_floor/warm_floor_ir/
  * warm_floor_water, model.warm_floors, этап 122, 2026-11-17). Класс GraphLines —
  * тот же формат графа, что pipes/pipes_gas: vertexes — узлы type "node" (point в см,
@@ -530,6 +568,12 @@ export type Model = {
   line_strips?: Record<string, LineStrip>;
   /** Соединительные провода «выключатель → светильник» (лист «Выключатели» → cable); у старых моделей может отсутствовать. */
   cables?: Record<string, Cable>;
+  /** Кабели-проводка (лист «Электропроводка» → wire_*); у старых моделей может отсутствовать. */
+  cables_socket?: Record<string, ElecCable>;
+  /** Соединительный провод тёплого пола (лист «Тёплые полы» → warm_floor_wire); может отсутствовать. */
+  cables_warm_floor?: Record<string, ElecCable>;
+  /** Трасса кондиционера (лист «Кондиционеры» → conditioner_wire); может отсутствовать. */
+  cables_conditioner?: Record<string, ElecCable>;
   /** Контуры тёплого пола (лист «Тёплые полы» → warm_floor/warm_floor_ir/warm_floor_water); у старых моделей может отсутствовать. */
   warm_floors?: Record<string, WarmFloor>;
   /** Магистрали тёплого пола (лист «Тёплые полы» → warm_floor_pipe); у старых моделей может отсутствовать. */

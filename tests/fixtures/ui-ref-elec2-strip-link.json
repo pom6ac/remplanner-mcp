@@ -1,0 +1,49 @@
+{
+ "_source": "UI-проба scripts/probes/239-elec2-link6.ts (dev-проект из env, без сохранения): связь «выключатель → светодиодная лента» (лист «Выключатели», инструмент cable, drag к концу ленты). Вершина линии — «<lineId>|t|<vertexId>» type led_strip со sc-перекрёстной ссылкой на вершину выключателя; обратная ссылка линии props.cables.cable_id — скаляр. id обезличены, координаты синтетические.",
+ "model_cable": {
+  "id": "id1",
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "id3",
+    "point": {
+     "x": 207.2,
+     "y": 535.799
+    },
+    "type": "switch"
+   },
+   {
+    "id": "id4",
+    "point": {
+     "x": 267.2,
+     "y": 237.8
+    },
+    "type": "led_strip",
+    "sc": {
+     "id3": "_agv29"
+    }
+   }
+  ],
+  "items": {
+   "id1": "switch",
+   "id2": "led_strip"
+  },
+  "type": "cable",
+  "color_custom": "",
+  "length": 3.04,
+  "on_arc": 1
+ }
+}

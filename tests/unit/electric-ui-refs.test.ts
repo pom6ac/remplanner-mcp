@@ -225,12 +225,16 @@ test("88: item_add socket_power/socket_380 — самостоятельные п
   }
 });
 
-test("88: item_add отклоняет cable и wires с подсказкой инструмента", () => {
+test("88: item_add отклоняет cable; часть 2: wire ставится как самостоятельный предмет", () => {
   const m = baseModel();
   assert.throws(() => addItemByName(m, "cable", { againstWall: { wallId: topWall(m), offsetMm: 100 } }),
     (e: unknown) => e instanceof McpError && (e as McpError).code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("cable_add"));
-  assert.throws(() => addItemByName(m, "wire", { againstWall: { wallId: topWall(m), offsetMm: 100 } }),
-    (e: unknown) => e instanceof McpError);
+  // часть 2: вывод провода — обычный предмет (группа wires поддержана)
+  const wire = addItemByName(m, "wire", { againstWall: { wallId: topWall(m), offsetMm: 100 } });
+  assert.equal(wire.name, "wire");
+  assert.equal((wire.over_floor as { display: boolean }).display, true);
+  // кабели-коллекции листа «Электропроводка» — wiring_add, не item_add
+  // (отказ с подсказкой проверяется в tests/unit/electric2-ui-refs.test.ts)
 });
 
 // ---------- связь «выключатель → светильник» ----------
