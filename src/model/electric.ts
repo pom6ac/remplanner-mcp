@@ -288,6 +288,7 @@ export function addCable(
   let lamp: ItemProps | undefined = model.items[params.lampItemId] as ItemProps | undefined;
   let lineColl: "led_strips" | "stripes_light" | "line_strips" | undefined;
   let lineVertexId: string | undefined;
+  let lineType: string | undefined;
   if (!lamp) {
     for (const coll of ["led_strips", "stripes_light", "line_strips"] as const) {
       const line = (model[coll] as Record<string, { id: string; type: string; vertexes: { id: string; point: Point }[]; props?: { cables?: { cable_id?: unknown } } }> | undefined)?.[params.lampItemId];
@@ -298,6 +299,7 @@ export function addCable(
           });
         }
         lineColl = coll;
+        lineType = line.type;
         lineVertexId = line.vertexes[0]?.id;
         break;
       }
@@ -378,7 +380,7 @@ export function addCable(
     : {
         id: `${params.lampItemId}|t|${lineVertexId}`,
         point: { ...((model[lineColl!] as Record<string, { vertexes: { id: string; point: Point }[] }>)[params.lampItemId]!.vertexes.find((v) => v.id === lineVertexId))!.point },
-        type: cableLampVertexType(lineColl === "led_strips" ? "led_strip" : lineColl === "line_strips" ? "line_light" : "recessed_strip"),
+        type: lineType!,
         sc: { [switchVertex.id]: lineVertexId },
       };
   const nodeVertexes: CableVertex[] = (params.path ?? []).map((p) => ({ id: `_${newId(5)}`, point: cmPoint(p), type: "node" }));

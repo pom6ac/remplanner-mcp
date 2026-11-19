@@ -269,15 +269,18 @@ test("239: реестр — cables_socket/warm_floor/conditioner в clear/import
 });
 
 test("239: компакт — метки CS/CW/CC, connected, длина в мм; will_delete-ключи реестра", () => {
-  const { m, box, wire } = scenario();
-  addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: box.id }, { itemId: wire.id }] });
+  const { m, box } = scenario();
+  const thermo = addItem(m, { name: "socket", position: { againstWall: { wallId: topWall(m), offsetMm: 1500 } }, catalogEntry: entry("socket") } as never);
+  (thermo.socket_group as Array<{ name: string }>)[0]!.name = "socket_thermo";
+  addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: box.id }, { itemId: thermo.id }] });
   const c = compactModel(m);
   assert.equal(c.cables_warm_floor.length, 1);
   const cw = c.cables_warm_floor[0]!;
   assert.equal(cw.id, "CW1");
   assert.equal(cw.type, "warm_floor_wire");
-  assert.deepEqual(cw.connected, [box.id, wire.id].sort().join(",") === [box.id, wire.id].join(",") ? cw.connected : cw.connected);
   assert.equal(cw.vertexes, 2);
+  assert.ok(cw.connected.includes(box.id));
+  assert.ok(cw.connected.some((id) => id.startsWith(`${thermo.id}|s|`)), "вершина под-розетки-термостата");
   assert.equal(cw.length_mm, Math.round(cw.length_mm));
 });
 
@@ -292,7 +295,7 @@ function cableSigs(m: Model): Record<string, Record<string, ElecCable>> {
 }
 
 test("239: сверка подключений — валидная модель проходит, потеря ссылки и лишняя ссылка — расхождения", () => {
-  const { m, box, wire } = scenario();
+  const { m, box, wire, socket } = scenario();
   const cable = addElecCable(m, { tool: "wire_3_25", path: [{ itemId: box.id }, { itemId: wire.id }] });
   const items = m.items as Record<string, never>;
   assert.deepEqual(elecCableConnectionMismatches(cableSigs(m), items, cableSigs(m), items), []);
@@ -301,12 +304,12 @@ test("239: сверка подключений — валидная модель
   delete ((broken.items[wire.id] as unknown as Record<string, Record<string, unknown>>).cables_socket!["cable_wire_3_25_id"]);
   const mm = elecCableConnectionMismatches(cableSigs(m), m.items as never, cableSigs(broken), broken.items as never);
   assert.ok(mm.some((x) => x.includes(cable.id)), mm.join("; "));
-  // лишняя ссылка на сервере
+  // лишняя ссылка на сервере: под-розетка сокета ссылается на кабель, к которому не подключена
   const extra = structuredClone(m);
-  ((extra.items[socketOf(extra) as string] as unknown as { cables_socket: Record<string, unknown> }).cables_socket!)["cable_wire_3_25_id"] = cable.id;
+  const extraSocket = extra.items[socket.id] as unknown as { socket_group: Array<Record<string, unknown>> };
+  ((extraSocket.socket_group[0]!.cables_socket ??= {}) as Record<string, unknown>)["cable_wire_3_25_id"] = cable.id;
   const mm2 = elecCableConnectionMismatches(cableSigs(m), m.items as never, cableSigs(extra), extra.items as never);
   assert.ok(mm2.some((x) => x.includes("лишняя") || x.includes("не содержит") || x.includes("другого вида")), mm2.join("; "));
-  function socketOf(model: Model): string { return Object.keys(model.items)[0]!; }
 });
 
 // ---------- связь «выключатель → лента» (часть 2) ----------
@@ -393,7 +396,7 @@ test("239: mock save — кабель box→shield и обратные ссыл�
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
   const ws = saveMock(server, () => {});
   await ws.open("0", "1");
-  const res = await ws.save().catch((e: unknown) => { console.error("DBG:", JSON.stringify(((e as McpError).details ?? {}), (k, v) => Array.isArray(v) && v.length > 0 ? v : undefined)?.slice(0, 800)); throw e; });
+  const res = await ws.save();
   assert.equal(res.verified, true, JSON.stringify(res).slice(0, 400));
   const sm = server.model as { cables_socket?: Record<string, ElecCable> };
   assert.equal(Object.keys(sm.cables_socket ?? {}).length, 1);
