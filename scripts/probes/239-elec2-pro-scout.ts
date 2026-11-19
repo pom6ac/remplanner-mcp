@@ -20,7 +20,7 @@ const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
 if (!OBJECT_ID || !PLAN_ID) { console.error("нужны REMPLANNER_PROBE_OBJECT_ID и REMPLANNER_PROBE_PLAN_ID"); process.exit(1); }
 const OUT = ".orca-reports/phase2-ui-refs";
 
-const session = loadSession("/Users/rvinogradov/.remplanner-mcp/state.json".replace("STATE_PATH", "state.json"));
+const session = loadSession(STATE_PATH);
 const shell = process.env.HOME + "/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell";
 const browser = await chromium.launch({ executablePath: existsSync(shell) ? shell : undefined, headless: true });
 const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, locale: "ru-RU" });
