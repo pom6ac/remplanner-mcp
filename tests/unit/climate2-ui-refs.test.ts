@@ -310,7 +310,7 @@ test("ревью 251 №3: toModel мигрирует legacy cable_conditioner_i
   }
   const sh = canon.items!["sh1"] as unknown as Record<string, Record<string, unknown>>;
   assert.deepEqual(sh.cables_conditioner!.conditioner_cable_id, ["c1"], "массив мигрировал с сохранением формы");
-  const sub = (sh.socket_group as Record<string, Record<string, unknown>>[])[0]!;
+  const sub = (sh.socket_group as unknown as Record<string, Record<string, unknown>>[])[0]!;
   assert.equal(sub.cables_conditioner!.conditioner_cable_id, "c1", "под-розетка мигрировала");
 });
 
