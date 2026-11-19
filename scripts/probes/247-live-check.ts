@@ -204,10 +204,25 @@ const inPoly = (p: Pt, poly: Pt[]): boolean => {
   return inside;
 };
 
+// Захваченное до записи состояние (для восстановления в finally, ревью 248 D):
+// цель и её объекты определяются один раз, восстановление снимает только их.
+let roomId = "", roomSiteId = "", wallSiteId = "", wallId = "", edgeIndex = -1;
+let written = false; // сервер мог получить изменения (сохранение вызвано или могло начаться)
+let restored = false;
+const restoreWrites = async (): Promise<void> => {
+  if (restored) return;
+  restored = true;
+  await call("finish_ceiling_niche_remove", { room_id: roomId, wall_id: wallId });
+  await call("finish_ceiling_molding_remove", { room_id: roomId, wall_id: wallId });
+  await call("finish_floor_molding_remove", { room_id: roomId, wall_id: wallId });
+  await call("finish_ceiling_remove", { room_id: roomId });
+  const s = await call("project_save", {});
+  if (!s["verified"]) throw new Error("restore save не verified");
+};
+
 try {
   // 0. контрольный проект до (только GET)
   const snapBefore = READONLY_ID ? await snap(READONLY_ID, "before") : null;
-
   // 1. бэкап dev-проекта
   const before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   writeFileSync(`${OUT}/247-live-before.json`, JSON.stringify(before, null, 1));
@@ -233,7 +248,6 @@ try {
     ceilingMoldings?: Array<{ exist?: unknown }>;
     ceilings?: Array<{ exist?: unknown }>;
   }>;
-  let roomId = "", roomSiteId = "", wallSiteId = "", wallId = "", edgeIndex = -1;
   let edgeP1: Pt | undefined, edgeP2: Pt | undefined;
   const wallIds = Object.keys((before.model["walls"] ?? {}) as Record<string, unknown>);
   for (const [rid, room] of Object.entries(rooms2)) {
@@ -321,6 +335,7 @@ try {
   // 5. validate → save (без NORMALIZATION_DROPPED) → reopen → сверка
   const v = await call("model_validate", {});
   console.log("validate: проблем", (v["problems"] ?? []).length);
+  written = true; // с этого места сервер может получить изменения — в finally восстановление
   const saveRes = await call("project_save", {});
   console.log("save:", JSON.stringify({ verified: saveRes["verified"], rounds: saveRes["rounds"] }));
   if (!saveRes["verified"]) throw new Error("save не verified");
@@ -341,19 +356,20 @@ try {
   if (!inPoly(mid2, roomAfter.polygon!)) throw new Error(`после reopen линия плинтуса вне комнаты: ${JSON.stringify(mid2)}`);
   console.log("после reopen: плинтус внутри комнаты, ниша и потолочный плинтус на месте — OK");
 
-  // 6. восстановление: снять только свои объекты по захваченным ID
-  await call("finish_ceiling_niche_remove", { room_id: roomId, wall_id: wallId });
-  await call("finish_ceiling_molding_remove", { room_id: roomId, wall_id: wallId });
-  await call("finish_floor_molding_remove", { room_id: roomId, wall_id: wallId });
-  await call("finish_ceiling_remove", { room_id: roomId });
-  const saveRes2 = await call("project_save", {});
-  console.log("restore save:", JSON.stringify({ verified: saveRes2["verified"], rounds: saveRes2["rounds"] }));
-  if (!saveRes2["verified"]) throw new Error("restore save не verified");
+  // 6. восстановление: снять только свои объекты по захваченным ID (restoreWrites
+  //    включает save и проверку verified)
+  await restoreWrites();
+  console.log("restore: выполнено (verified)");
 
-  // 7. полная семантическая сверка data с бэкапом
+  // 7. полная семантическая сверка data с бэкапом (честно, ревью 248 D: сверка
+  //    семантическая — пустые контейнеры плинтусов/ниш и потолок без exist
+  //    приравнены к отсутствию, числа до 0.1 мм, id канонизируются)
   const after = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const same = sig(after.model) === sig(before.model);
-  console.log("полная семантическая сверка data с бэкапом:", same ? "OK — модель совпала" : "РАСХОЖДЕНИЕ");
+  console.log(
+    "семантическая сверка data с бэкапом (пустые контейнеры приравнены к отсутствию, числа до 0.1 мм):",
+    same ? "OK — модель совпала" : "РАСХОЖДЕНИЕ",
+  );
   if (!same) writeFileSync(`${OUT}/get-own-after-247.json`, JSON.stringify(after, null, 1));
 
   // 8. контрольный проект после
@@ -367,6 +383,19 @@ try {
   console.error("FAIL:", String((e as Error).message ?? e).slice(0, 800));
   process.exitCode = 1;
 } finally {
+  // ревью 248 D: после записи восстановление выполняется даже при падении
+  // (reopen/проверки/сверка) — по захваченному до записи состоянию (roomId/wallId)
+  if (written && !restored) {
+    try {
+      console.log("аварийное восстановление в finally…");
+      await restoreWrites();
+      console.log("восстановление в finally выполнено (verified)");
+    } catch (re) {
+      console.error("ВОССТАНОВЛЕНИЕ В finally НЕ УДАЛОСЬ — модель dev-проекта требует ручной сверки с бэкапом:",
+        String((re as Error).message ?? re).slice(0, 400));
+      process.exitCode = 1;
+    }
+  }
   await closeBrowser();
 }
 process.exit(process.exitCode ?? 0);
