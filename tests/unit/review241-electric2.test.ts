@@ -82,6 +82,7 @@ const ELEC_CATALOG: Record<string, Record<string, unknown>> = {
   electric_box: { id: 512, group: "furniture", width: 15, height: 15, self_height: 0, plan: { cables: 31 }, anchor: "free", over_floor: false, title: "Распред. короб" },
   wire: { id: 609, group: "wires", width: 14, height: 20, self_height: 0, plan: { sockets: 9 }, anchor: "wall", over_floor: { value: 30, display: false }, title: "Вывод провода 220В" },
   light_switch: { id: 577, group: "switches", width: 14, height: 18, self_height: 0, plan: { light_connections: 29 }, anchor: "wall", over_floor: { value: 90, display: false }, title: "1-клавишный выключатель" },
+  socket: { id: 20, group: "sockets", width: 14, height: 14, self_height: 0, plan: { sockets: 9 }, anchor: "wall", over_floor: { value: 30, display: false }, title: "Стандартная розетка" },
 };
 
 function elecEntry(name: string): ToolEntry {
@@ -247,6 +248,24 @@ test("ревью 241 №9: compact — vertex_list с индексами, item_i
   updateItem(m, { itemId: shield.id, angleDeg: shield.angle });
   const cs2 = compactModel(m).cables_socket[0]!;
   assert.deepEqual(cs2.vertex_list[0], { index: 0, kind: "item", item_id: shield.id, x_mm: Math.round(shield.pc.x * 10), y_mm: Math.round(shield.pc.y * 10) });
+  // ревью 243 N2: кабель к под-розетке группы — вершина "<gid>|s|<subId>" в
+  // vertex_list разобрана на item_id (gid) и sub_id
+  const socket = addItem(m, { name: "socket", position: { againstWall: { wallId: elecTopWall(m), offsetMm: 1500 } }, catalogEntry: elecEntry("socket") } as never);
+  assert.equal(socket.name, "socket_group", "розетка пишется группой socket_group");
+  const subId = (socket.socket_group as Array<{ id: string }>)[0]!.id;
+  addElecCable(m, { tool: "wire_2_25", path: [{ itemId: socket.id }, { x: 1500, y: 2000 }] });
+  const csSub = compactModel(m).cables_socket[1]!;
+  const subVertex = csSub.vertex_list[0]!;
+  assert.deepEqual(
+    { kind: subVertex.kind, item_id: subVertex.item_id, sub_id: subVertex.sub_id },
+    { kind: "item", item_id: socket.id, sub_id: subId },
+    `вершина под-розетки: item_id = gid ${socket.id}, sub_id = ${subId}, получено ${JSON.stringify(subVertex)}`,
+  );
+  const subPoint = csSub.vertex_list[0]!;
+  const raw = (m.cables_socket ?? {})[csSub.site_id]!.vertexes[0]!.point;
+  assert.equal(subPoint.x_mm, Math.round(raw.x * 10));
+  assert.equal(subPoint.y_mm, Math.round(raw.y * 10));
+  assert.equal(csSub.vertex_list[1]!.kind, "node");
 });
 
 test("ревью 241 №4a: ws-мутация — нормализатор потерял кабель-проводку → INVALID_GEOMETRY", async () => {  const m = elecBaseModel();
@@ -308,6 +327,33 @@ test("ревью 241 №4b: mock save — сервер вернул скаляр
     const list = d["cables_socket_connection_mismatches"] as string[] | undefined;
     return err instanceof McpError && err.code === "SITE_ERROR"
       && Array.isArray(list) && list.some((s) => s.includes("массивом") || s.includes(cable.id));
+  });
+});
+
+test("ревью 243 N1: mock save — сервер оторвал ссылку cables_socket: расхождения только под своим ключом", async () => {
+  const m = elecBaseModel();
+  const shield = addItem(m, { name: "electric_shield", position: { againstWall: { wallId: elecTopWall(m), offsetMm: 3000 } }, catalogEntry: elecEntry("electric_shield") } as never);
+  const box = addItem(m, { name: "electric_box", position: { center: { x: 2000, y: 1500 } }, catalogEntry: elecEntry("electric_box") } as never);
+  const cable = addElecCable(m, { tool: "wire_3_25", path: [{ itemId: box.id }, { itemId: shield.id }] });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    // сервер потерял обратную ссылку щитка (multi) на кабель cables_socket
+    const it = (s.model.items as Record<string, { cables_socket?: Record<string, unknown> }>)[shield.id]!;
+    delete it.cables_socket!["cable_wire_3_25_id"];
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const err = e as McpError;
+    const d = (err.details ?? {}) as Record<string, unknown>;
+    // ревью 241 №6: без фильтра only расхождение дублировалось бы под ключами
+    // остальных коллекций — тут они обязаны остаться пустыми
+    const sock = d["cables_socket_connection_mismatches"] as string[] | undefined;
+    const warm = d["cables_warm_floor_connection_mismatches"] as string[] | undefined;
+    const cond = d["cables_conditioner_connection_mismatches"] as string[] | undefined;
+    return err instanceof McpError && err.code === "SITE_ERROR"
+      && Array.isArray(sock) && sock.length > 0 && sock.some((s) => s.includes(cable.id))
+      && Array.isArray(warm) && warm.length === 0
+      && Array.isArray(cond) && cond.length === 0;
   });
 });
 

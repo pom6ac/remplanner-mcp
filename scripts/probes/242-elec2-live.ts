@@ -1,5 +1,6 @@
 // 242: живая проверка ревью 241 №2 в dev-проекте (env: REMPLANNER_PROBE_OBJECT_ID,
-// REMPLANNER_PROBE_PLAN_ID; рабочий проект только на чтение — REMPLANNER_PROBE_READONLY_ID).
+// REMPLANNER_PROBE_PLAN_ID; рабочий проект только на чтение — REMPLANNER_PROBE_READONLY_ID
+// с планом REMPLANNER_PROBE_READONLY_PLAN_ID; совпадение OBJECT_ID и READONLY_ID — отказ).
 // Сценарий: пробная комната → щиток у стены + коробка → wiring_add box→shield →
 // item_update щитка (перенос вдоль стены, against_wall) → save без
 // NORMALIZATION_DROPPED/INVALID_GEOMETRY → reopen → вершина кабеля = pc щитка →
@@ -16,15 +17,22 @@ import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 
 if (process.argv[2] !== "run") {
-  console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
+  console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID, REMPLANNER_PROBE_READONLY_PLAN_ID из env)");
   process.exit(0);
 }
 
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
 const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"];
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
-if (!OBJECT_ID || !PLAN_ID || !READONLY_ID) {
-  console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID и REMPLANNER_PROBE_READONLY_ID");
+const READONLY_PLAN_ID = process.env["REMPLANNER_PROBE_READONLY_PLAN_ID"];
+if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
+  console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID и REMPLANNER_PROBE_READONLY_PLAN_ID");
+  process.exit(1);
+}
+// ревью 243 N3: запись идёт в OBJECT_ID, READONLY_ID только читается — ошибка в
+// env не должна направить save в рабочий проект (отказ до запуска браузера)
+if (OBJECT_ID === READONLY_ID) {
+  console.error("REMPLANNER_PROBE_OBJECT_ID совпадает с REMPLANNER_PROBE_READONLY_ID — запись ушла бы в читаемый проект; проверьте env");
   process.exit(1);
 }
 const OUT = ".orca-reports/tmp";
@@ -86,7 +94,7 @@ try {
   console.log("backup written:", `backup-${OBJECT_ID}-242.json`, "walls:", Object.keys(ownBefore.model.walls ?? {}).length);
 
   // GET readonly-проекта до прогона (только чтение)
-  readonlyBefore = await loadModel(ctx.session(), READONLY_ID, "1");
+  readonlyBefore = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
   writeFileSync(`${OUT}/get-readonly-242-before.json`, JSON.stringify(readonlyBefore, null, 1));
 
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
@@ -182,7 +190,7 @@ try {
   allOk = allOk && cleanupWalls && wallsClean;
 
   // 6. GET readonly после прогона — не изменился; свой план после очистки — как бэкап
-  const readonlyAfter = await loadModel(ctx.session(), READONLY_ID, "1");
+  const readonlyAfter = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
   writeFileSync(`${OUT}/get-readonly-242-after.json`, JSON.stringify(readonlyAfter, null, 1));
   const sameReadonly = JSON.stringify(readonlyBefore.model) === JSON.stringify(readonlyAfter.model);
   console.log(sameReadonly ? "READONLY OK" : "READONLY CHANGED — СТОП");
