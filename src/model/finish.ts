@@ -638,9 +638,10 @@ export type FinishSig = {
   floorMoldings?: Array<{ pid?: string; type: string; layer: number; line: [Point, Point]; lineWall?: [Point, Point] }>;
   /** Потолочный плинтус (245): части по рёбрам комнаты (полная проекция — ревью 246 №10). */
   ceilingMoldings?: Array<{ pid?: string; type: string; layer: number; line: [Point, Point]; lineWall?: [Point, Point] }>;
-  /** Закарнизные ниши (245): части по рёбрам потолка ceilings[0]; idCeiling — ссылка части,
-   *  selfCeiling — id ceilings[0] этой же комнаты (проверка привязки, ревью 246 №10). */
-  niches?: Array<{ line: [Point, Point]; depth?: number; plan?: string; idCeiling?: string; selfCeiling?: string }>;
+  /** Закарнизные ниши (245): части по рёбрам потолка ceilings[0]; pid — стена ребра
+   *  (перенос стены), idCeiling — ссылка части, selfCeiling — id ceilings[0] этой же
+   *  комнаты (проверка привязки, ревью 246 №10). */
+  niches?: Array<{ pid?: string; line: [Point, Point]; depth?: number; plan?: string; idCeiling?: string; selfCeiling?: string }>;
 };
 
 /** Проём: то, что сверке нужно от wall.holes (край на оси или центр+ширина). */
@@ -755,6 +756,16 @@ function overlapShare(inner: Point[], outer: Point[]): number {
     }
   }
   return total === 0 ? 0 : hit / total;
+}
+
+/** Периметр полигона, см. */
+function perimeterCm(poly: Point[]): number {
+  let per = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]!, b = poly[(i + 1) % poly.length]!;
+    per += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  return per;
 }
 
 // ---------- интервалы на прямой ----------
@@ -883,14 +894,16 @@ function nichesSig(room: RoomRec): NonNullable<FinishSig["niches"]> {
   const out: NonNullable<FinishSig["niches"]> = [];
   const c0 = (room.ceilings ?? [])[0] as Record<string, unknown> | undefined;
   const selfCeiling = typeof c0?.["id"] === "string" ? c0["id"] as string : undefined;
+  const edges = Array.isArray(room.edges) ? room.edges : [];
   const arr = c0 && Array.isArray(c0["niches"]) ? c0["niches"] as Array<Record<string, unknown>> : [];
-  for (const e of arr) {
-    const rec = e as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined;
+  for (let i = 0; i < arr.length; i++) {
+    const rec = arr[i] as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined;
     if (!rec || rec.exist !== true) continue;
     for (const part of Object.values(rec.parts ?? {})) {
       const line = part.line as { p1?: Point; p2?: Point } | undefined;
       if (!line?.p1 || !line?.p2) continue;
       out.push({
+        pid: edges[i]?.pid as string | undefined,
         line: [line.p1, line.p2],
         depth: num(part.depth),
         plan: typeof part.plan === "string" ? part.plan : undefined,
@@ -1244,27 +1257,26 @@ export function finishCompare(
       else if (!sameFloor(expFloor, gotFloor)) {
         problems.push(`room ${rid}: покрытие пола не совпало (${JSON.stringify(expFloor)} → ${JSON.stringify(gotFloor)})`);
       }
-      // площадь покрытия пола (хвост ревью 95, ревью 246 №4): сравнение полигона
-      // пола exp ↔ got — блокируется только уменьшение покрытия относительно
-      // ожидания (потеря полигона при операции/на сервере); унаследованный малый
-      // пол (зонирование пола в UI) не блокирует. Без процентных порогов:
-      // абсолютный допуск на численный шум вершин — периметр × COORD_TOL.
+      // площадь покрытия пола (хвост ревью 95, ревью 246 №4): сравнение до/после —
+      // блокируется только прирост незакрытой площади внутри комнаты (потеря
+      // полигона при операции/на сервере). Унаследованный малый пол (зонирование
+      // пола в UI) не блокирует — дефицит не вырос; пол, следующий за сузившейся
+      // комнатой при переносе стены, тоже. Без процентных порогов: абсолютный
+      // допуск на численный шум вершин — периметр комнаты × COORD_TOL.
       const expFloorPoly = ((room.floors as Array<Record<string, unknown>> | undefined) ?? [])[0]?.["polygon"] as Point[] | undefined;
       if (expFloorPoly && expFloorPoly.length >= 3) {
         const gotFloorPoly = ((match.floors as Array<Record<string, unknown>> | undefined) ?? [])[0]?.["polygon"] as Point[] | undefined;
         if (gotFloorPoly && gotFloorPoly.length >= 3) {
-          const expArea = polygonArea(expFloorPoly);
-          if (expArea > 1) {
-            const covered = overlapShare(expFloorPoly, gotFloorPoly);
-            const lostCm2 = (1 - covered) * expArea;
-            let per = 0;
-            for (let i = 0; i < expFloorPoly.length; i++) {
-              const a = expFloorPoly[i]!, b = expFloorPoly[(i + 1) % expFloorPoly.length]!;
-              per += Math.hypot(b.x - a.x, b.y - a.y);
-            }
-            if (lostCm2 > Math.max(per * COORD_TOL, 1)) {
-              problems.push(`room ${rid}: полигон пола уступает ожиданию на ${lostCm2.toFixed(1)} см² — потеря покрытия пола`);
-            }
+          const expRoomPoly = roomPolygon(room) ?? [];
+          const gotRoomPoly = roomPolygon(match) ?? [];
+          /** Незакрытая площадь внутри комнаты: комната минус (пол ∩ комната). */
+          const uncovered = (floorPoly: Point[], roomPoly: Point[]): number => {
+            if (roomPoly.length < 3 || polygonArea(roomPoly) <= 1) return 0;
+            return polygonArea(roomPoly) - overlapShare(floorPoly, roomPoly) * polygonArea(floorPoly);
+          };
+          const grewCm2 = uncovered(gotFloorPoly, gotRoomPoly) - uncovered(expFloorPoly, expRoomPoly);
+          if (grewCm2 > Math.max(perimeterCm(gotRoomPoly) * COORD_TOL, 1)) {
+            problems.push(`room ${rid}: незакрытая полом площадь комнаты выросла на ${grewCm2.toFixed(1)} см² — потеря покрытия пола`);
           }
         }
       }
@@ -1294,6 +1306,20 @@ export function finishCompare(
     const lo = Math.max(Math.min(t1, t2), 0);
     const hi = Math.min(Math.max(t1, t2), 1);
     return hi - lo > 1e-9;
+  };
+  /** Часть лежит у СВОЕЙ комнаты (ревью 98 N2, уточнение 246 №5): внутри полигона
+   *  или на его границе в пределах допуска UI. Плинтус/отделка, оставшаяся на
+   *  старом месте после переноса стены (вне комнаты got), — потеря. */
+  const nearRoom = (g: { line: [Point, Point] }, roomKey: string): boolean => {
+    const poly = roomPolygon(got[roomKey]!) ?? [];
+    if (poly.length < 3) return true;
+    const mid = { x: (g.line[0].x + g.line[1].x) / 2, y: (g.line[0].y + g.line[1].y) / 2 };
+    if (pointInPolygon(mid, poly)) return true;
+    let best = Infinity;
+    for (let i = 0; i < poly.length; i++) {
+      best = Math.min(best, projD(mid, poly[i]!, poly[(i + 1) % poly.length]!));
+    }
+    return best <= PERP_TOL;
   };
   for (const [rid, room] of Object.entries(exp)) {
     const expWallsList = wallSigs(room, Array.isArray(room.edges) ? room.edges : undefined);
@@ -1325,7 +1351,7 @@ export function finishCompare(
       // отделки — потеря); укорачивание линии — штатно, площадь не сверяется
       for (const w of expWallsList) {
         const survived = heir.partKeys.some((k) =>
-          (gotPartsByRoom.get(k) ?? []).some((g) => sameParams(w)(g) && gotPartNear(w, g, gotW) !== null && overlapsExpLine(w, g)),
+          (gotPartsByRoom.get(k) ?? []).some((g) => sameParams(w)(g) && nearRoom(g, k) && gotPartNear(w, g, gotW) !== null && overlapsExpLine(w, g)),
         );
         if (!survived) {
           problems.push(`room ${rid}: потеряна отделка стены ${w.pid ?? "?"} (${w.type}, слой ${w.layer}) при split`);
@@ -1341,7 +1367,7 @@ export function finishCompare(
       const onWall: Array<[Point, Point]> = [];
       for (const g of candidates) {
         const how = gotPartNear(w, g, gotW);
-        if (!how) continue;
+        if (!how || !nearRoom(g, gid)) continue;
         near.push(how);
         (how === "wall" ? onWall : onLine).push(g.line);
       }
@@ -1396,7 +1422,7 @@ export function finishCompare(
   };
   const containerSigsOf = (room: RoomRec, key: "floorMoldings" | "ceilingMoldings" | "__niches"): EdgePartSig[] => {
     if (key === "__niches") {
-      return nichesSig(room).map((n) => ({ pid: undefined, type: "ceiling_niche", layer: 1, height: 0, fromFloor: 0, line: n.line, depth: n.depth, plan: n.plan, idCeiling: n.idCeiling, selfCeiling: n.selfCeiling }));
+      return nichesSig(room).map((n) => ({ pid: n.pid, type: "ceiling_niche", layer: 1, height: 0, fromFloor: 0, line: n.line, depth: n.depth, plan: n.plan, idCeiling: n.idCeiling, selfCeiling: n.selfCeiling }));
     }
     return moldingSigs(room, key, Array.isArray(room.edges) ? room.edges : undefined)
       .map((m) => ({ pid: m.pid, type: m.type, layer: m.layer, height: 0, fromFloor: 0, line: m.line, lineWall: m.lineWall }));
@@ -1454,7 +1480,7 @@ export function finishCompare(
         }
         for (const w of expList) {
           const survived = heir.partKeys.some((k) =>
-            (gotSigsByRoom.get(k) ?? []).some((g) => sameParams(w)(g) && gotPartNear(w, g, gotW) !== null && overlapsExpLine(w, g)),
+            (gotSigsByRoom.get(k) ?? []).some((g) => sameParams(w)(g) && nearRoom(g, k) && gotPartNear(w, g, gotW) !== null && overlapsExpLine(w, g)),
           );
           if (!survived) {
             problems.push(`room ${rid}: потерян ${label} ${w.pid ?? ""} (${w.type}) при split`);
@@ -1466,7 +1492,7 @@ export function finishCompare(
         const candidates = (gotSigsByRoom.get(gid) ?? []).filter(sameParams(w));
         const onLine: Array<[Point, Point]> = [];
         for (const g of candidates) {
-          if (gotPartNear(w, g, gotW) !== null && lineWallOk(w, g)) onLine.push(g.line);
+          if (gotPartNear(w, g, gotW) !== null && nearRoom(g, gid) && lineWallOk(w, g)) onLine.push(g.line);
         }
         const expWall = w.pid ? expW[w.pid] : undefined;
         const gotWallForAxis = w.pid ? gotW[w.pid] : undefined;
