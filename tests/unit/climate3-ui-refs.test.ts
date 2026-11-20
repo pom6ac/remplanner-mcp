@@ -14,7 +14,9 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Model, ItemProps, WarmFloor, ElecCable } from "../../src/model/types.ts";
 import { addRoomRect } from "../../src/model/walls.ts";
-import { addItem } from "../../src/model/items.ts";
+import { addItem, updateItem, faceOffsetCm } from "../../src/model/items.ts";
+import type { RoomPolygon } from "../../src/model/rooms.ts";
+import { againstWallCenter } from "../../src/dto/items.ts";
 import { addWarmFloor, updateWarmFloor, deleteWarmFloor } from "../../src/model/climate.ts";
 import { addElecCable, deleteElecCable, elecLinkKey, elecContourVertex, elecLinkHolders } from "../../src/model/electric2.ts";
 import { addPipe } from "../../src/model/pipes.ts";
@@ -205,34 +207,117 @@ test("268: warm_floor_update пересчитывает вершины-конт�
 
 // ---------- коллекторные узлы как предметы ----------
 
-test("268: коллекторные узлы — item_add against_wall с умолчаниями каталога (эталоны ui-ref-climate3-manifold-*)", () => {
-  const fxNames: Record<string, string> = {
-    radiator_collector: "ui-ref-climate3-manifold-radiator-collector.json",
-    ext_manifold_box: "ui-ref-climate3-manifold-ext-box.json",
-    int_manifold_box: "ui-ref-climate3-manifold-int-box.json",
-  };
-  for (const [name, file] of Object.entries(fxNames)) {
-    const fx = JSON.parse(readFileSync(join(here, "../fixtures/", file), "utf8"));
+/**
+ * Точка привязки коллекторных узлов по виду (ревью 269 М1): живые дампы
+ * .orca-reports/tmp/268-manifold-*.json (клики UI, projection = внутренняя
+ * грань стены): pc относительно грани, см (в комнату — плюс).
+ * ext_manifold_box вплотную (+7.5 = height/2, wall_line редактор пишет),
+ * int_manifold_box утоплен в стену (−5.5, wall_line редактор НЕ пишет),
+ * radiator_collector +4.55 (не height/2 = 5; icon_center у него на 5).
+ */
+const MANIFOLD_TESTS: { name: string; file: string; faceOffset: number }[] = [
+  { name: "radiator_collector", file: "ui-ref-climate3-manifold-radiator-collector.json", faceOffset: 4.55 },
+  { name: "ext_manifold_box", file: "ui-ref-climate3-manifold-ext-box.json", faceOffset: 7.5 },
+  { name: "int_manifold_box", file: "ui-ref-climate3-manifold-int-box.json", faceOffset: -5.5 },
+];
+
+/**
+ * Ревью 269 m1: маскированная форма ЦЕЛИКОМ (не выборочные поля). Маскируются:
+ * id-поля и поля UI-копии (item_id/plan_parent/article — их пишет редактор при
+ * постановке кликом), производные геометрии (pc/angle — сверяются отдельно:
+ * грань и ось стены пробы другие; wall_line, projection, icon_center, center3d,
+ * id_room*, id_wall*, wall_direction, f0offset, dls* появляются после
+ * normalize/GET) и служебные поля item_add (layer, demount, rotated).
+ * Остальное сравнивается deepEqual — лишние/недостающие ключи краснят тест.
+ */
+const ITEM_MASK = new Set([
+  "id", "item_id", "plan_parent", "article", "pc", "angle",
+  "wall_line", "projection", "icon_center", "center3d",
+  "id_room", "id_room_zone", "id_wall", "id_wall_old", "wall_direction",
+  "f0offset", "dls", "dls_prs", "layer", "demount", "rotated",
+]);
+
+function maskedItem(v: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(v).filter(([k]) => !ITEM_MASK.has(k)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+}
+
+/** Внутренняя грань горизонтальной стены пробы и знак направления «в комнату». */
+function faceOf(m: Model, wallId: string): { faceY: number; intoRoom: 1 | -1 } {
+  const wall = m.walls[wallId]!;
+  const poly = (m.rooms2!.r1 as { polygon: { x: number; y: number }[] }).polygon;
+  const roomY = poly.reduce((s, p) => s + p.y, 0) / poly.length;
+  const intoRoom = roomY > wall.p1.y ? 1 : -1;
+  return { faceY: wall.p1.y + intoRoom * wall.depth / 2, intoRoom: intoRoom as 1 | -1 };
+}
+
+test("ревью 269 М1/m1: коллекторные узлы — pc относительно грани и angle по эталону, форма целиком (item_add)", () => {
+  const m = baseModel();
+  const wall = Object.values(m.walls).find((w) => w.p1.y === w.p2.y)!;
+  const { faceY, intoRoom } = faceOf(m, wall.id);
+  const len = Math.hypot(wall.p2.x - wall.p1.x, wall.p2.y - wall.p1.y);
+  const ux = (wall.p2.x - wall.p1.x) / len;
+  const uy = (wall.p2.y - wall.p1.y) / len;
+  const made: Record<string, ItemProps> = {};
+  for (const t of MANIFOLD_TESTS) {
+    const fx = JSON.parse(readFileSync(join(here, "../fixtures/", t.file), "utf8"));
     const ref = fx.model_object as Record<string, unknown>;
-    assert.equal(ref["name"], name);
-    // обратная сторона: item_add у стены даёт те же поля
-    const m = baseModel();
-    const item = addItem(m, { name, position: { againstWall: { wallId: topWall(m), offsetMm: 1000 } }, catalogEntry: entry(name) } as never);
-    assert.equal(item.name, ref["name"]);
-    assert.deepEqual(item.plan, ref["plan"]);
-    assert.deepEqual(item.over_floor, ref["over_floor"]);
-    assert.equal(item.width, ref["width"]);
-    assert.equal(item.height, ref["height"]);
-    assert.equal(item.self_height, ref["self_height"]);
-    assert.deepEqual(item.dimensions, ref["dimensions"]);
+    const item = addItem(m, { name: t.name, position: { againstWall: { wallId: wall.id, offsetMm: 1000 } }, catalogEntry: entry(t.name) } as never);
+    made[t.name] = item;
+    // pc относительно внутренней грани — правило вида (эталоны 268-manifold-*),
+    // у утопленного int_manifold_box pc в стене — не OUTSIDE_ROOM
+    assert.equal(item.pc.y, faceY + intoRoom * t.faceOffset, `${t.name}: pc относительно внутренней грани`);
+    // вдоль стены — offset_mm от начала + половина ширины
+    const along = (item.pc.x - wall.p1.x) * ux + (item.pc.y - wall.p1.y) * uy;
+    assert.equal(Math.round(along * 100) / 100, 100 + item.width / 2, `${t.name}: вдоль стены offset + половина ширины`);
+    // angle — ось стены, нормирован в (−90; 90] (в эталоне стена вертикальная: −90)
+    assert.equal(item.angle, 0, `${t.name}: угол = оси стены пробы`);
+    // wall_line — производная редактора: MCP её не пишет (в живом дампе wall_line
+    // есть у ext_manifold_box/radiator_collector и отсутствует у утопленного int)
+    assert.equal("wall_line" in item, false, `${t.name}: wall_line (производная) не пишется`);
+    // форма ≅ эталону — маскированная форма ЦЕЛИКОМ (m1), не выборочные поля
+    assert.deepEqual(maskedItem(item as unknown as Record<string, unknown>), maskedItem(ref), `${t.name}: маскированная форма ≅ эталон`);
     // anchor wall: свободная постановка отклоняется (как в редакторе)
     assert.throws(
       () => {
         const mm = baseModel();
-        addItem(mm, { name, position: { center: { x: 2000, y: 1500 } }, catalogEntry: entry(name) } as never);
+        addItem(mm, { name: t.name, position: { center: { x: 2000, y: 1500 } }, catalogEntry: entry(t.name) } as never);
       },
       (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
     );
+  }
+  // разницы эталона — независимая проверка по фикстурам (координаты синтетические,
+  // но разницы сохраняют живой дамп): int утоплен глубже ext на 13 см в стену,
+  // collector ближе к грани на 2.95 см
+  const refX = (file: string): number => {
+    const fx = JSON.parse(readFileSync(join(here, "../fixtures/", file), "utf8")) as { model_object: { pc: { x: number } } };
+    return fx.model_object.pc.x;
+  };
+  const r2x = (v: number): number => Math.round(v * 100) / 100;
+  assert.equal(r2x(refX("ui-ref-climate3-manifold-int-box.json") - refX("ui-ref-climate3-manifold-ext-box.json")), 13, "эталон: int глубже ext на 13 см в стену");
+  assert.equal(r2x(refX("ui-ref-climate3-manifold-radiator-collector.json") - refX("ui-ref-climate3-manifold-ext-box.json")), 2.95, "эталон: collector ближе к грани на 2.95 см");
+  // те же разницы в выводе MCP
+  assert.equal(r2x(made.int_manifold_box!.pc.y - made.ext_manifold_box!.pc.y), -13 * intoRoom, "вывод: int глубже ext на 13 см в стену");
+  assert.equal(r2x(made.radiator_collector!.pc.y - made.ext_manifold_box!.pc.y), -2.95 * intoRoom, "вывод: collector ближе к грани на 2.95 см");
+});
+
+test("ревью 269 М1: item_update against_wall — то же правило точки привязки по виду (int_manifold_box остаётся утопленным)", () => {
+  const m = baseModel();
+  const wall = Object.values(m.walls).find((w) => w.p1.y === w.p2.y)!;
+  const { faceY, intoRoom } = faceOf(m, wall.id);
+  const rooms: RoomPolygon[] = Object.entries(m.rooms2 as Record<string, { polygon: { x: number; y: number }[]; area: number }>)
+    .map(([roomId, r]) => ({ roomId, polygon: r.polygon, areaCm2: r.area * 10_000, axisAreaCm2: null }));
+  for (const t of MANIFOLD_TESTS) {
+    const item = addItem(m, { name: t.name, position: { againstWall: { wallId: wall.id, offsetMm: 1000 } }, catalogEntry: entry(t.name) } as never);
+    const at = againstWallCenter(wall, { offset_mm: 2500 }, item.width, item.height, rooms, t.name);
+    const upd = updateItem(m, {
+      itemId: item.id, centerCm: at.pcCm, angleDeg: at.angleDeg, idWall: wall.id,
+      resnapToWall: true, rooms, againstWallProbe: at.probePointCm,
+    });
+    assert.equal(upd.pc.y, faceY + intoRoom * t.faceOffset, `${t.name}: item_update — pc относительно грани (одно правило с item_add)`);
+    assert.equal(upd.id_room, "r1", `${t.name}: комната по пробной точке на грани (pc в стене — не OUTSIDE_ROOM)`);
+    assert.equal(upd.id_wall, wall.id);
   }
 });
 

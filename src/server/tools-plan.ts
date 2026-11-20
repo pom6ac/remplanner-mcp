@@ -575,6 +575,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     item_add: tool(
       "Поставить предмет из каталога (name — точное имя из catalog_search). Позиция: center (координаты в мм, точка внутри комнаты) " +
         "ИЛИ against_wall (у стены, вплотную к внутренней грани при gap_mm=0) ИЛИ in_room (угол комнаты R<n>). " +
+        "У коллекторных узлов (radiator_collector, ext_manifold_box, int_manifold_box) точка привязки по виду, как в редакторе: " +
+        "int_manifold_box утоплен в стену (pc на 5.5 см в стену от внутренней грани), radiator_collector на 4.55 см от грани, " +
+        "ext_manifold_box вплотную; gap_mm для них не применяется. " +
         "Точка вне помещений → OUTSIDE_ROOM. Размеры берутся из каталога; width_mm/depth_mm/height_mm переопределяют (если resizable). " +
         "Лестницы (меню «Лестницы»: ladder_march, ladder_console, ladder_2march, ladder_2march-fan, ladder_2march_console-fan, " +
         "ladder_2march_console, ladder_trapeze, rounded_staircase, ladder_march_double, ladder_fan_2march, ladder_3march, ladder_3march_fan, " +
@@ -666,6 +669,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       "Изменить предмет: переместить (center или against_wall), повернуть (angle_deg), изменить размеры. " +
         "При against_wall угол задаёт стена (у пристенной электрики socket_group — «ось + 180», как в item_add), " +
         "переданный angle_deg игнорируется — то же правило, что в item_add. " +
+        "У коллекторных узлов (radiator_collector, ext/int_manifold_box) точка привязки по виду — как в item_add. " +
         "При переносе/повороте привязанные размеры (dim_add attach) и комментарии предмета следуют за ним.",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
@@ -694,7 +698,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             const wall = resolveWall(m, aw.wall_id);
             const widthCm = a["width_mm"] !== undefined ? mmToCm(a["width_mm"] as number) : target.width;
             const depthCm = a["depth_mm"] !== undefined ? mmToCm(a["depth_mm"] as number) : target.height;
-            const at = againstWallCenter(wall, aw, widthCm, depthCm, ws.rooms());
+            // ревью 269 М1: точка привязки по виду предмета — одно правило с item_add
+            const at = againstWallCenter(wall, aw, widthCm, depthCm, ws.rooms(), target.name);
             // ревью 198 №1/№2/№6/№7: как в item_add against_wall — у socket_group
             // угол «ось + 180», id_wall = новая стена, angle_deg с against_wall
             // игнорируется, OUTSIDE_ROOM проверяется по тем же комнатам (кеш
@@ -702,13 +707,18 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             const socketGroup = Array.isArray(target.socket_group);
             return updateItem(m, {
               itemId: target.id,
-              center: at.center,
+              // точный центр в см модели — правило привязки по виду (ревью 269 М1)
+              // не искажается округлением до целых мм публичного API
+              centerCm: at.pcCm,
               angleDeg: socketGroup ? socketGroupAngleDeg(at.angleDeg) : at.angleDeg,
               idWall: wall.id,
               // ревью 203 №10: режим пересчёта под-розеток — явный флаг, а не
               // скрытая связь «пришёл idWall»
               resnapToWall: true,
               rooms: ws.rooms(),
+              // ревью 269 М1: у видов с pc в стене (int_manifold_box) комната по
+              // пробной точке на внутренней грани
+              againstWallProbe: at.probePointCm,
               widthMm: a["width_mm"] as number | undefined, depthMm: a["depth_mm"] as number | undefined,
               heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined,
             });
