@@ -205,7 +205,8 @@ item_add electric_shield/electric_box/wire     # электрика ч.2: щит
 wiring_add / wiring_update / wiring_delete     # кабели-проводка (лист «Электропроводка», PRO): path — узлы и
                           #  предметы (щиток, коробки, розетки, выводы; кондиционер и внешний блок —
                           #  трасса conditioner_wire); kind: wire_2_05…wire_5_100,
-                          #  wire_earth_*, wire_tv/utp/… (cables_socket), warm_floor_wire, conditioner_wire
+                          #  wire_earth_*, wire_tv/utp/… (cables_socket), warm_floor_wire (терморегулятор
+                          #  ↔ кабельный/ИК контур тёплого пола, ссылка в props контура), conditioner_wire
 shield_rail_add / shield_module_add (+ update/delete)  # конструктор электрощитка (лист «Электрощиток»,
                           #  старшие тарифы PRO): DIN-рейки и модули (автоматы, УЗО, дифавтоматы и др.,
                           #  35 типов; номинал subtype, номер группы, подпись); item_delete щитка
@@ -213,6 +214,8 @@ shield_rail_add / shield_module_add (+ update/delete)  # конструктор 
 warm_floor_add            # тёплый пол (лист «Тёплые полы»): контур kind: cable|infrared|water (водяной — PRO)
 item_add conditioner/socket_thermo/fan/radiator_bimetal  # климат: кондиционеры (у стены), терморегулятор,
                           #  вентиляторы, радиаторы (листы «Кондиционеры»/«Вентиляция»/«Радиаторы»)
+item_add radiator_collector/ext_manifold_box/int_manifold_box  # коллекторные узлы (PRO-группа меню,
+                          #  у стены; подключаются к магистралям отопления и тёплого пола — multi)
 pipe_add kind=warm_floor|conditioner_drainage|heat_hot|heat_cold|vent_out|vent_in  # трубы климата (PRO): path — узлы и предметы
                           #  (радиаторы/конвекторы и коллекторные узлы → магистрали отопления,
                           #  блоки кондиционера → дренаж, водяной контур → магистрали тёплого пола,
