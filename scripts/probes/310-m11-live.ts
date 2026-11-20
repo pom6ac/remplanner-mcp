@@ -473,18 +473,27 @@ try {
     writeFileSync(`${OUT}/310-state-rigel-delimiter.json`, JSON.stringify(mZ.model, null, 1));
   }
 
-  // 5в. update ширины при делителе с концом на грани закладной — консервативный
-  // отказ MCP (этап 310): save-пайплайн редактора теряет отделку зон в этом
-  // сочетании; в редакторе делитель проводится заново под новую ширину
-  let refused = "";
+  // 5в. update ширины при делителе с концом на грани закладной — с 312 порт
+  // restoreDelimiters редактора: узел делителя проецируется на новую грань,
+  // отказ убран (ревью 311 №3); save обязан пройти без NORMALIZATION_DROPPED
+  let updAtDelimiter = "";
   try {
-    await call("ceiling_rigel_update", { rigel_id: rgSite, width_mm: 300 });
-    console.log("ceiling_rigel_update при делителе: ПРОШЁЛ (ожидался отказ) — зафиксировано");
+    const updRes = await call("ceiling_rigel_update", { rigel_id: rgSite, width_mm: 300 });
+    updAtDelimiter = JSON.stringify({ width_mm: updRes["width_mm"] });
+    console.log("ceiling_rigel_update при делителе: прошёл (порт restoreDelimiters):", updAtDelimiter);
   } catch (e) {
-    refused = String((e as Error).message);
-    console.log("ceiling_rigel_update при делителе — отказ (ожидаемо):", refused.slice(0, 300).replace(/\n/g, " "));
+    updAtDelimiter = `ОТКАЗ: ${String((e as Error).message)}`;
+    console.log("ceiling_rigel_update при делителе — отказ:", updAtDelimiter.slice(0, 300).replace(/\n/g, " "));
   }
-  if (!refused) throw new Error("ожидался отказ update при делителе с концом на грани закладной");
+  if (updAtDelimiter.startsWith("ОТКАЗ")) throw new Error(`ожидался успех update при делителе (порт restoreDelimiters), получен отказ: ${updAtDelimiter}`);
+  {
+    // вернём ширину 100, чтобы эталонные шаги 6–9 продолжали сравнение с UI
+    await call("ceiling_rigel_update", { rigel_id: rgSite, width_mm: 100 });
+    const saveBack = await call("project_save", {});
+    console.log("save возврата ширины 100:", JSON.stringify({ verified: saveBack["verified"], rounds: saveBack["rounds"] }));
+    if (!saveBack["verified"]) throw new Error("save возврата ширины не verified");
+    await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
+  }
 
   // 5г. делитель снимается (подсказка отказа), ширина меняется уже без него
   const zdDel = await call("zone_ceiling_remove", { delimiter_id: String(zdAdd["site_id"]) });
