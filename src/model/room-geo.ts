@@ -145,13 +145,40 @@ export function overlapShare(inner: Point[], outer: Point[]): number {
   return total > 0 ? hit / total : 0;
 }
 
-function pointInside(p: Point, poly: Point[]): boolean {
+/** Расстояние от точки до отрезка (перпендикуляр вне отрезка — до ближайшего конца), см. */
+export function distToSeg(p: Point, a: Point, b: Point): number {
+  const vx = b.x - a.x, vy = b.y - a.y;
+  const l2 = vx * vx + vy * vy;
+  let q: Point;
+  if (l2 < 1e-12) {
+    q = a;
+  } else {
+    const t = ((p.x - a.x) * vx + (p.y - a.y) * vy) / l2;
+    q = t <= 0 ? a : t >= 1 ? b : { x: a.x + t * vx, y: a.y + t * vy };
+  }
+  return Math.hypot(p.x - q.x, p.y - q.y);
+}
+
+/**
+ * Точка внутри полигона или на его границе в допуске tolCm см (общий помощник
+ * сверов — отделка ч.2 rev 246 №5 nearRoom, зоны потолка 260, overlapShare):
+ * ray-casting, промах проверяется расстоянием до рёбер.
+ */
+export function pointInPolygon(p: Point, poly: Point[], tolCm = 0): boolean {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
     const a = poly[i]!, b = poly[j]!;
     if ((a.y > p.y) !== (b.y > p.y) && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
   }
-  return inside;
+  if (inside || tolCm <= 0) return inside;
+  for (let i = 0; i < poly.length; i++) {
+    if (distToSeg(p, poly[i]!, poly[(i + 1) % poly.length]!) <= tolCm) return true;
+  }
+  return false;
+}
+
+function pointInside(p: Point, poly: Point[]): boolean {
+  return pointInPolygon(p, poly);
 }
 
 export type RoomHeir = { key: string; kind: "split" | "merge" | "same"; partKeys: string[] } | null;

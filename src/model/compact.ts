@@ -5,6 +5,7 @@ import { holeOffsetFromStart } from "./openings.ts";
 import { wallFaces } from "./wall-geometry.ts";
 import { projectionLength, type Segment } from "./geometry.ts";
 import { parseSwitchVertexId } from "./electric.ts";
+import { zoneDelimiterList } from "./zone.ts";
 
 // Компактное представление модели для агента (< 5 КБ): метки W/R/O/I, мм.
 
@@ -582,31 +583,23 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     };
   });
 
-  // разделители зон (этап 260): верхнеуровневое zone_delimiters + legacy per-room
-  const zoneDelimiters: CompactZoneDelimiter[] = Object.values({
-    ...Object.fromEntries(
-      Object.entries((model.rooms2 ?? {}) as Record<string, Record<string, unknown>>).flatMap(([rid, room]) =>
-        Object.entries((room["delimiters"] ?? {}) as Record<string, Record<string, unknown>>).map(([k, v]) => [k, { ...v, id_room: v["id_room"] ?? rid }]),
-      ),
-    ),
-    ...(model.zone_delimiters ?? {}),
-  } as Record<string, { id: string; type?: string; plan?: string; id_room?: string; length?: number; vertexes?: Array<{ point?: { x: number; y: number } }> }>)
-    .map((d, i) => {
-      const v = d.vertexes ?? [];
-      const p1 = v[0]?.point, p2 = v[v.length - 1]?.point;
-      if (!p1 || !p2) return null;
-      return {
-        id: `ZD${i + 1}`,
-        site_id: d.id,
-        type: d.type ?? "",
-        plan: d.plan ?? "",
-        room_id: d.id_room ?? null,
-        from: [round0(cmToMm(p1.x)), round0(cmToMm(p1.y))] as [number, number],
-        to: [round0(cmToMm(p2.x)), round0(cmToMm(p2.y))] as [number, number],
-        length_mm: round0(cmToMm((d.length ?? 0) * 100)),
-      };
-    })
-    .filter((d): d is CompactZoneDelimiter => d !== null);
+  // разделители зон (этап 260): один источник меток ZD<n> — zoneDelimiterList
+  // (верхнеуровневое zone_delimiters + legacy per-room с миграцией; ревью 261 №7:
+  // compact нумерует так же, как finish_get/list и zone_ceiling_remove)
+  const zoneDelimiters: CompactZoneDelimiter[] = zoneDelimiterList(model).map((d) => {
+    const from = d["from_mm"] as [number, number];
+    const to = d["to_mm"] as [number, number];
+    return {
+      id: String(d["id"] ?? ""),
+      site_id: String(d["site_id"] ?? ""),
+      type: String(d["type"] ?? ""),
+      plan: String(d["plan"] ?? ""),
+      room_id: (d["room_id"] as string | null) || null,
+      from: [round0(from[0]), round0(from[1])] as [number, number],
+      to: [round0(to[0]), round0(to[1])] as [number, number],
+      length_mm: round0(Number(d["length_mm"] ?? 0)),
+    };
+  });
 
   // световые линии листа «Освещение» (этап 84): метки LS/SL/LL
   const compactLightStrips = (

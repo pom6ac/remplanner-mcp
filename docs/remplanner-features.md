@@ -934,10 +934,13 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
   finish_floor_molding_set/remove (7 видов), finish_ceiling_molding_set/remove,
   finish_ceiling_niche_add/remove, finish_wall_set — двухслойные painting_tile/
   wallpaper_tiles/wall_apron. Зонирование потолка [этап 260]: zone_ceiling_add/
-  zone_ceiling_remove (линии-разделители, магниты UI, пересечения запрещены),
-  список — finish_get/compact zone_delimiters; сверка zoneDelimiterCompare
-  (сопоставление комнат по контуру + наследники топологии; split/merge —
-  предупреждение zone_topology_changed, потеря — отказ). Живая проверка:
+  zone_ceiling_remove (линии-разделители, магниты UI, пересечения запрещены,
+  линия внутри полигона комнаты), список — finish_get/compact zone_delimiters;
+  сверка zoneDelimiterCompare (сопоставление комнат по контуру + наследники
+  топологии; потеря/подмена разделителя — отказ, в том числе при split/merge;
+  комната, изменённая стенами и исчезнувшая при нормализации, — предупреждение
+  zone_topology_changed с подсказкой «сначала удалите разделители» —
+  ревью 261 №5/№8). Живая проверка:
   save verified, reopen, split/merge, перенос стены (делители переживают;
   покрытие потолка при перестройке комнаты теряется редактором — отказ по
   правилам отделки). Сверка при нормализации и после save —

@@ -120,17 +120,18 @@ test("260: finish_get содержит zone_delimiters с метками ZD<n> �
 test("260: атомарность — отказы add не меняют delimiters; update-цепочка remove→add", () => {
   const { m, room } = modelWithRefRoom();
   addZoneCeiling(m, room, { fromMm: FROM_MM, toMm: TO_MM });
-  const before = structuredClone(roomsOf(m)[room]!["delimiters"]);
+  // ревью 261 №9: запись идёт в верхнеуровневое zone_delimiters — сверять его
+  const before = structuredClone(m.zone_delimiters);
   // короче 100 мм (проверка длины — до магнита)
   assert.throws(() => addZoneCeiling(m, room, { fromMm: { x: 2000, y: 1600 }, toMm: { x: 2005, y: 1600 } }), /короче минимальной/);
   // центр комнаты — нет магнита
   assert.throws(() => addZoneCeiling(m, room, { fromMm: { x: 2000, y: 1600 }, toMm: { x: 2600, y: 1600 } }), /не магнитится/);
-  assert.deepEqual(roomsOf(m)[room]!["delimiters"], before, "delimiters не изменились при отказе");
+  assert.deepEqual(m.zone_delimiters, before, "delimiters не изменились при отказе");
   // оба конца на одном ребре
   assert.throws(() => addZoneCeiling(m, room, { fromMm: { x: 1200, y: 100 }, toMm: { x: 2400, y: 100 } }), /одном ребре/);
   // неизвестная комната
   assert.throws(() => addZoneCeiling(m, "R99", { fromMm: FROM_MM, toMm: TO_MM }), /не найдена/);
-  assert.deepEqual(roomsOf(m)[room]!["delimiters"], before, "после всех отказов delimiters без изменений");
+  assert.deepEqual(m.zone_delimiters, before, "после всех отказов delimiters без изменений");
   // update-цепочка: снять и поставить снова
   removeZoneCeiling(m, "ZD1");
   assert.equal(zoneDelimiterList(m).length, 0);

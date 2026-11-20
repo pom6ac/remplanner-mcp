@@ -23,6 +23,11 @@ const strip = (m: unknown) => { const c = structuredClone(m as Record<string, un
 const editor = await openEditor(session, OBJECT_ID, PLAN_ID, 60_000, { anonymous: false });
 const page = editor.page;
 try {
+  // гард: план в редакторе == серверу (ревью 261 №13, как в 260-zone-ui)
+  const planInEditor = await page.evaluate(() => String((window as any).project?.copy("server")?.plan_id ?? ""));
+  if (planInEditor !== String(beforeModel.plan_id)) {
+    console.log("FAIL: план в редакторе", planInEditor, "!= серверу", beforeModel.plan_id); process.exit(1);
+  }
   const log = (...a: unknown[]) => console.log(...a);
   await page.evaluate(() => {
     const w: any = window as any;

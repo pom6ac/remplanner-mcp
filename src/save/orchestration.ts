@@ -429,11 +429,13 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     "normalize",
   );
   // этап 260: разделители зон потолка до записи сверяются с нормализованной моделью
-  // (режим normalize: split/merge — предупреждение, стандарт редактора эталоном не снят)
+  // (режим normalize: ревью 261 №5 — комната, затронутая изменёнными стенами
+  // и исчезнувшая, — предупреждение, не отказ)
   const zoneNorm = zoneDelimiterCompare(
     host.model() as unknown as Record<string, unknown>,
     norm.model as unknown as Record<string, unknown>,
     "normalize",
+    { affectedRooms: host.roomChangePolicy().affectedRoomIds },
   );
   // этап 113: размеры и комментарии до записи сверяются с нормализованной моделью
   const dimsNorm = dimsMismatches(host.model(), norm.model as Record<string, unknown>);

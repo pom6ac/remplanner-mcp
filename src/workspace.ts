@@ -606,13 +606,14 @@ export class Workspace {
       // комнат (norm.rooms), контурную сверку откладываем до верификации после записи.
       const normRoomsMap = ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined;
       const roomsPendingInCopy = (normRoomsMap === undefined || Object.keys(normRoomsMap).length === 0) && (norm.rooms?.length ?? 0) > 0;
+      const wallPolicy = this.roomChangePolicy(clone.walls as unknown as Record<string, unknown>);
       const roomsNormCheck = roomsPendingInCopy
         ? { problems: [], warnings: [] }
         : roomsSaveCompare(
             (this.roomSaveBase?.rooms ?? ((this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined)) as Record<string, unknown> | undefined,
             normRoomsMap,
             "normalize",
-            this.roomChangePolicy(clone.walls as unknown as Record<string, unknown>),
+            wallPolicy,
           );
       warnings.push(...roomsNormCheck.warnings);
       if (roomsNormCheck.problems.length > 0) {
@@ -621,11 +622,13 @@ export class Workspace {
         });
       }
       // этап 260: разделители зон потолка после нормализации не теряются
-      // (сопоставление комнат по контуру; split/merge — предупреждение, как у отделки)
+      // (сопоставление комнат по контуру; ревью 261 №5: комната, затронутая
+      // изменёнными стенами и исчезнувшая, — штатный случай, предупреждение)
       const zoneNorm = zoneDelimiterCompare(
         this.modelInternal! as unknown as Record<string, unknown>,
         norm.model as unknown as Record<string, unknown>,
         "normalize",
+        { affectedRooms: wallPolicy.affectedRoomIds },
       );
       warnings.push(...zoneNorm.warnings);
       if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0 || zoneNorm.problems.length > 0) {
