@@ -701,6 +701,33 @@ test("312 №4: ниша, не ложащаяся на рёбра новых з�
   );
 });
 
+// ---------- ревью 315 nit 1: несколько старых ниш на одном ребре наследника ----------
+
+test("315 nit1: ниши одной стены в обеих зонах сливаются в наследнике при delete закладной (K1)", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  withEdgePids(model, "room1");
+  const rg = addCeilingRigel(model, "room1", { start: { x: 2500, y: 1005 }, end: { x: 2500, y: 2995 } });
+  setCeilingFinish(model, "room1", "stretch_ceiling", {});
+  addCeilingNiche(model, "room1", "wallT");
+  const before = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  assert.equal(before.filter((c) => c["exist"] === true).length, 2, "ниша стоит в обеих зонах (сценарий K1)");
+  deleteCeilingRigel(model, (rg as { id: string }).id);
+  // без отказа: части обеих старых ниш — в одном контейнере записи-наследника
+  // (как parts + union_part_lines редактора)
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  const holders = ceilings.filter((c) => ((c["niches"] ?? []) as Array<Record<string, unknown>>).some((n) => n?.exist === true));
+  assert.equal(holders.length, 1, `ниша в одной записи: ${JSON.stringify(holders.map((c) => c["niches"]))}`);
+  const container = ((holders[0]!["niches"] ?? []) as Array<Record<string, unknown>>).find((n) => n?.exist === true)!;
+  const parts = Object.values((container["parts"] ?? {}) as Record<string, Record<string, unknown>>);
+  assert.ok(parts.length >= 1, `части ниш в контейнере: ${JSON.stringify(container)}`);
+  const xs = parts.flatMap((p) => [(p["line"] as { p1: Pt; p2: Pt }).p1.x, (p["line"] as { p1: Pt; p2: Pt }).p2.x]);
+  assert.equal(Math.min(...xs), 102.5, `обе линии ниш в контейнере (левая 102.5..242.5): ${JSON.stringify(xs)}`);
+  assert.equal(Math.max(...xs), 397.5, `обе линии ниш в контейнере (правая 257.5..397.5): ${JSON.stringify(xs)}`);
+  for (const p of parts) {
+    assert.equal(p["id_ceiling"], holders[0]!["id"], `id_ceiling частей — своей записи: ${JSON.stringify(p)}`);
+  }
+});
+
 // ---------- ревью 311 №6: legacy-делители и записи без plan видны пересчёту ----------
 
 function twoZoneRoom(): Model {

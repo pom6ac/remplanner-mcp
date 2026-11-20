@@ -594,7 +594,6 @@ function restoreNichesByGeometry(oldRecords: Rec[], newRecords: Rec[], heirZoneO
       if (!host) continue; // у записи-наследника нет ребра на линии ниши
       if (!Array.isArray(rec["niches"])) rec["niches"] = edges.map(() => ({ exist: false }) as Rec);
       const niches = rec["niches"] as Rec[];
-      if (niches[idx]!["exist"] === true) continue; // ребро уже занято другой нишей
       const setLine = (part: Rec, span: { p1: Point; p2: Point }): void => {
         part["line"] = {
           p1: { x: Math.round(span.p1.x * 100) / 100, y: Math.round(span.p1.y * 100) / 100 },
@@ -602,8 +601,22 @@ function restoreNichesByGeometry(oldRecords: Rec[], newRecords: Rec[], heirZoneO
         };
         if (typeof rec["id"] === "string") part["id_ceiling"] = rec["id"];
       };
-      for (const { part, span } of mappedParts) setLine(part, span);
-      niches[idx] = item.container;
+      if (niches[idx]!["exist"] === true) {
+        // ревью 315 nit 1: на одном новом ребре части нескольких старых ниш
+        // сливаются в один контейнер (как parts + union_part_lines редактора),
+        // а не отказ «не ложится на рёбра зоны-наследника» — раскладка «ниша на
+        // одной стене в обеих зонах» штатна для finish_ceiling_niche_add
+        const target = niches[idx]!;
+        const tParts = (target["parts"] ??= {}) as Record<string, Rec>;
+        for (const { part, span } of mappedParts) {
+          setLine(part, span);
+          const key = typeof part["id"] === "string" ? part["id"] : `_ni${newId(8)}`;
+          tParts[key] = part;
+        }
+      } else {
+        for (const { part, span } of mappedParts) setLine(part, span);
+        niches[idx] = item.container;
+      }
       placed.add(item);
       break;
     }
