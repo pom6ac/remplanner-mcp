@@ -77,6 +77,40 @@ function scenario(): { m: Model; thermo: ItemProps; thermoSubId: string; wfc: Wa
 
 const thermoVertexId = (thermo: ItemProps, subId: string): string => `${thermo.id}|s|${subId}`;
 
+/**
+ * Ревью 271 N2: маска кабеля для сверки с эталоном ЦЕЛИКОМ (не выборочные
+ * поля). id → позиционные метки (v0, v1 — порядок вершин), point и pp
+ * маскируются (координаты синтетические; pp — производное протяжки, проекция
+ * точки захвата мышью), length — производное протяжки от pp. Сравниваются
+ * type, matrix, items (ключи тоже перемечаются) и набор ключей кабеля/вершин:
+ * лишний ключ у кабеля, вершины или в items краснит тест.
+ */
+function maskedCable(raw: unknown, labels: Record<string, string>): Record<string, unknown> {
+  const w = raw as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(w)) {
+    if (k === "id" || k === "length") continue;
+    if (k === "items") {
+      out[k] = Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([ik, iv]) => [labels[ik] ?? ik, iv]));
+    } else if (k === "vertexes") {
+      out[k] = (v as Array<Record<string, unknown>>).map((vert) =>
+        Object.fromEntries(
+          Object.entries(vert)
+            .filter(([vk]) => vk !== "point" && vk !== "pp")
+            .map(([vk, vv]) => [vk, vk === "id" ? labels[String(vv)] ?? vv : vv]),
+        ),
+      );
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/** Позиционные метки вершин кабеля по порядку (id → v0, v1, …). */
+const vertexLabels = (c: ElecCable): Record<string, string> =>
+  Object.fromEntries(c.vertexes.map((v, i) => [v.id, `v${i}`]));
+
 // ---------- эталон ui-ref-climate3-wire-wf-contour (обе стороны) ----------
 
 test("268: эталон ui-ref-climate3-wire-wf-contour — wiring_add warm_floor_wire воспроизводит формат редактора (обе стороны)", () => {
@@ -113,6 +147,9 @@ test("268: эталон ui-ref-climate3-wire-wf-contour — wiring_add warm_floo
   // подключения pp; pp — производное протяжки, MCP его не пишет)
   const d = Math.hypot(wire.vertexes[0]!.point.x - wire.vertexes[1]!.point.x, wire.vertexes[0]!.point.y - wire.vertexes[1]!.point.y);
   assert.equal(wire.length, Math.round((d / 100) * 100) / 100);
+  // ревью 271 N2: маскированный deepEqual кабеля целиком — type, matrix, items
+  // и набор ключей кабеля и вершин; id → позиционные метки, point/length/pp маскированы
+  assert.deepEqual(maskedCable(wire, vertexLabels(wire)), maskedCable(cable, vertexLabels(cable)));
 });
 
 test("268: elecContourVertex — водяной контур не подключается к проводу, IR подключается", () => {
