@@ -235,9 +235,10 @@ function roomRigels(model: Model, roomId: string, room: RoomRec): Array<{ id: st
 
 type Snap = { point: Point; kind: "room" | "rigel"; edgeIndex: number; pid?: string; side?: string; rigelId?: string };
 
-/** Магнит конца линии: ближайшее ребро комнаты (≤15 см), для zone_ceiling —
- *  ещё и грань ригеля/закладной (≤10 см; в редакторе магнит к ригелям
- *  включается только при tool zone_ceiling и plan ceiling, проба 296). */
+/** Магнит конца линии: ближайшее ребро комнаты (≤15 см); ригель/закладная
+ *  (≤10 см) — только у zone_ceiling и только когда ребро рядом НЕ нашлось:
+ *  в редакторе магнит к ригелям включается при !r (ребро не сработало),
+ *  tool zone_ceiling и plan ceiling (268-app.js mousedown, ревью 298 №7). */
 function snapEndpoint(model: Model, roomId: string, room: RoomRec, p: Point, plan: string): Snap | null {
   let best: { snap: Snap; d: number } | null = null;
   const edges = Array.isArray(room.edges) ? room.edges : [];
@@ -254,6 +255,7 @@ function snapEndpoint(model: Model, roomId: string, room: RoomRec, p: Point, pla
       best = { snap: { point: q, kind: "room", edgeIndex: i, pid: e.pid, side: e.side }, d };
     }
   }
+  if (best) return best.snap;
   if (plan === "ceiling") {
     for (const rg of roomRigels(model, roomId, room)) {
       for (const e of rg.edges) {
@@ -352,15 +354,15 @@ export function addZoneDelimiter(
   if (lenCm * 10 < ZONE_LIMITS.minLineMm) {
     throw new McpError("INVALID_ARGUMENT", `длина линии ${Math.round(lenCm * 10)} мм короче минимальной ${ZONE_LIMITS.minLineMm} мм`);
   }
-  // магнит концов (грани ригелей/закладных — только зона потолка)
+  // магнит концов (грани ригелей/закладных — только зона потолка); текст единый
+  // для обеих сторон (ревью 298 №3): магнит к ребру 150 мм, к ригелю 100 мм
+  const noSnap = (side: "from_mm" | "to_mm"): string => plan === "ceiling"
+    ? `${side}: нет ребра комнаты в 150 мм (или грани потолочного ригеля в 100 мм) — конец не магнитится`
+    : `${side}: нет ребра комнаты в 150 мм — конец не магнитится`;
   const s1 = snapEndpoint(model, roomId, room, from, plan);
   const s2 = snapEndpoint(model, roomId, room, to, plan);
-  if (!s1) throw new McpError("INVALID_ARGUMENT", plan === "ceiling"
-    ? "from_mm: нет ребра комнаты или грани потолочного ригеля в 150 мм — конец не магнитится"
-    : "from_mm: нет ребра комнаты в 150 мм — конец не магнитится");
-  if (!s2) throw new McpError("INVALID_ARGUMENT", plan === "ceiling"
-    ? "to_mm: нет ребра комнаты или грани потолочного ригеля в 100 мм — конец не магнитится"
-    : "to_mm: нет ребра комнаты в 100 мм — конец не магнитится");
+  if (!s1) throw new McpError("INVALID_ARGUMENT", noSnap("from_mm"));
+  if (!s2) throw new McpError("INVALID_ARGUMENT", noSnap("to_mm"));
   // концы на одном ребре комнаты — редактор отвергает (r && A && areLinesEqual)
   if (s1.kind === "room" && s2.kind === "room" && s1.edgeIndex === s2.edgeIndex) {
     throw new McpError("INVALID_ARGUMENT", "оба конца на одном ребре комнаты — проведите линию от одной внешней стены до другой");

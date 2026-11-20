@@ -69,6 +69,23 @@ const firstDelim = (fix: ZoneRefFixture): Record<string, unknown> => Object.valu
 const vertexesMm = (rec: Record<string, unknown>): Array<{ x: number; y: number }> =>
   ((rec["vertexes"] ?? []) as Array<{ point: { x: number; y: number } }>).map((v) => ({ x: Math.round(v.point.x * 10), y: Math.round(v.point.y * 10) }));
 
+/** ревью 298 №6: маска записи — id записи/узлов, ключи items, id_room (свой
+ *  в модели, эталонный в фикстуре) и производное zone (привязка узлов,
+ *  пересчитывается редактором) — дальше deepEqual всей записи целиком. */
+function maskRecord(rec: Record<string, unknown>): Record<string, unknown> {
+  const c = structuredClone(rec);
+  c["id"] = "ID";
+  c["id_room"] = "ROOM";
+  const v = (c["vertexes"] ?? []) as Array<Record<string, unknown>>;
+  v.forEach((vert, i) => {
+    vert["id"] = `V${i}`;
+    delete vert["zone"];
+  });
+  const items = (c["items"] ?? {}) as Record<string, string>;
+  c["items"] = Object.fromEntries(Object.keys(items).sort().map((k, i) => [`K${i}`, items[k]!]));
+  return c;
+}
+
 // ---------- эталоны в обе стороны ----------
 
 for (const [fix, typeName, label] of [
@@ -84,16 +101,9 @@ for (const [fix, typeName, label] of [
     const res = addZoneDelimiter(m, room, { type: typeName, fromMm: V[0]!, toMm: V[1]! });
     assert.equal(res.length_mm, Number(rec["length"]) * 1000, "длина в мм по эталону");
     const written = Object.values((m.zone_delimiters ?? {}) as Record<string, Record<string, unknown>>)[0]!;
-    assert.equal(written["type"], typeName);
-    assert.equal(written["plan"], rec["plan"]);
-    assert.equal(written["on_size"], 1);
-    assert.equal(written["length"], rec["length"]);
-    assert.equal(written["id_room"], room);
-    const v = written["vertexes"] as Array<{ point: Pt }>;
-    assert.deepEqual(v[0]!.point, (rec["vertexes"] as Array<{ point: Pt }>)[0]!.point, "конец на ребре (магнит)");
-    assert.deepEqual(v[1]!.point, (rec["vertexes"] as Array<{ point: Pt }>)[1]!.point);
-    assert.deepEqual(written["matrix"], rec["matrix"]);
-    assert.deepEqual(Object.values(written["items"] as Record<string, string>), ["node", "node"]);
+    // ревью 298 №6: вывод == эталон целиком (маскированная форма, deepEqual) —
+    // лишний ключ в записи MCP или потерянный ключ эталона ломает проверку
+    assert.deepEqual(maskRecord(written), maskRecord(rec), "запись MCP == эталон (маскированная форма)");
     // сверка в обе стороны
     const expModel = refModelFixture(fix, Object.keys(fix.zone_delimiters)[0]!);
     const gotModel = modelLike({ [room]: ((m.rooms2 ?? {}) as Record<string, Record<string, unknown>>)[room]! }, structuredClone(m.zone_delimiters as Record<string, unknown>));
@@ -128,18 +138,13 @@ test("296: эталон — конец zone_ceiling на грани потоло
   // закладная — закладная комнаты из эталона (rooms2[rid].rigels)
   const rooms = (m.rooms2 ?? {}) as Record<string, Record<string, unknown>>;
   rooms[room]!["rigels"] = structuredClone(RIGEL_REF.rigels);
-  const res = addZoneCeiling(m, room, { fromMm: V[0]!, toMm: V[1]! });
+  // ревью 298 №7: вход в 4 см от грани закладной (точка НЕ на грани) — магнит
+  // должен довести конец до грани x=204.6; старт тоже в 4 см от ребра
+  const res = addZoneCeiling(m, room, { fromMm: { x: 3860, y: 1594 }, toMm: { x: 2086, y: 1594 } });
   assert.equal(res.length_mm, Number(rec["length"]) * 1000);
   const written = Object.values((m.zone_delimiters ?? {}) as Record<string, Record<string, unknown>>)[0]!;
-  assert.equal(written["type"], "zone_ceiling");
-  assert.equal(written["plan"], "ceiling");
-  assert.equal(written["on_size"], 1);
-  assert.equal(written["length"], rec["length"]);
-  const v = written["vertexes"] as Array<{ point: Pt }>;
-  const refV = rec["vertexes"] as Array<{ point: Pt; zone?: Record<string, unknown> }>;
-  assert.deepEqual(v[0]!.point, refV[0]!.point, "конец на ребре комнаты");
-  assert.deepEqual(v[1]!.point, refV[1]!.point, "конец на грани закладной (магнит)");
-  assert.deepEqual(written["matrix"], rec["matrix"]);
+  // ревью 298 №6: запись == эталон целиком (маскированная форма)
+  assert.deepEqual(maskRecord(written), maskRecord(rec), "запись MCP == эталон (маскированная форма)");
   // производная привязка zone (type rigel_ceiling) — сверка её не читает
   const expModel = refModelFixture(RIGEL_REF, Object.keys(RIGEL_REF.zone_delimiters)[0]!);
   const gotModel = modelLike({ [room]: rooms[room]! }, structuredClone(m.zone_delimiters as Record<string, unknown>));
@@ -175,15 +180,36 @@ test("296: зона пола пересекает ригель свободно,
   // горизонтальная линия через закладную (полоса x 192.7..204.6)
   assert.doesNotThrow(() => addZoneDelimiter(m, room, { type: "zone_floor", ...CROSS_MM }), "зона пола не проверяет ригели");
   assert.throws(() => addZoneCeiling(m, room, CROSS_MM), /не пересекайте ригели/);
-  // конец на грани закладной (x=204.6, грань rg1): зона потолка магнитится,
-  // зона пола — нет (магнит к ригелям в редакторе только у zone_ceiling)
+  // конец НЕ на грани закладной, а в 5 см от неё (ревью 298 №7): магнит доводит
+  // до грани x=204.6; зона потолка магнитится, зона пола — нет (магнит к ригелям
+  // в редакторе только у zone_ceiling)
   const { m: m2, room: room2 } = modelWithRefRoom();
   const rooms2 = (m2.rooms2 ?? {}) as Record<string, Record<string, unknown>>;
   rooms2[room2]!["rigels"] = structuredClone(RIGEL_REF.rigels);
   const from = { x: 3900, y: 800 };
-  const faceEnd = { x: 2046, y: 800 };
-  assert.doesNotThrow(() => addZoneCeiling(m2, room2, { fromMm: from, toMm: faceEnd }));
-  assert.throws(() => addZoneDelimiter(m2, room2, { type: "zone_floor", fromMm: from, toMm: faceEnd }), /не магнитится/);
+  const nearFace = { x: 2096, y: 800 };
+  assert.doesNotThrow(() => addZoneCeiling(m2, room2, { fromMm: from, toMm: nearFace }));
+  const written2 = Object.values((m2.zone_delimiters ?? {}) as Record<string, Record<string, unknown>>)[0]!;
+  const v2 = (written2["vertexes"] as Array<{ point: Pt }>)[1]!.point;
+  assert.deepEqual(v2, { x: 204.6, y: 80 }, "магнит довёл конец до грани закладной");
+  assert.throws(() => addZoneDelimiter(m2, room2, { type: "zone_floor", fromMm: from, toMm: nearFace }), /не магнитится/);
+});
+
+// ревью 298 №7: приоритет магнитов как в редакторе (if(!r&&"zone_ceiling"===tool)):
+// точка в 7 см от ребра комнаты и в 3 см от грани закладной — магнитится ребро
+test("296: ребро комнаты в 7 см важнее грани закладной в 3 см (приоритет редактора)", () => {
+  const { m, room } = modelWithRefRoom();
+  const rooms = (m.rooms2 ?? {}) as Record<string, Record<string, unknown>>;
+  // небольшая «плавающая» закладная у правого ребра: x 370..380, y 140..160
+  rooms[room]!["rigels"] = {
+    rg1: { id: "rg1", polygon: [{ x: 370, y: 140 }, { x: 380, y: 140 }, { x: 380, y: 160 }, { x: 370, y: 160 }], id_room: "room1" },
+  };
+  // точка (383,165): до правого ребра x=390 — 7 см, до грани закладной x=380 — 3 см
+  const res = addZoneCeiling(m, room, { fromMm: { x: 100, y: 1600 }, toMm: { x: 3830, y: 1650 } });
+  assert.ok(res.id);
+  const written = Object.values((m.zone_delimiters ?? {}) as Record<string, Record<string, unknown>>)[0]!;
+  const v = (written["vertexes"] as Array<{ point: Pt }>)[1]!.point;
+  assert.deepEqual(v, { x: 390, y: 165 }, "конец лёг на ребро комнаты, а не на грань закладной");
 });
 
 // ---------- атомарность, удаление, нумерация ----------
