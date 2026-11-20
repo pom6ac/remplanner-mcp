@@ -465,6 +465,12 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
     const vp = page.viewportSize();
     if (vp && vp.width !== width) {
       await page.setViewportSize({ width, height: Math.round((width * vp.height) / vp.width) });
+      // ждать переразложения SVG: по устаревшему bbox скриншот берёт пустой оверлей
+      await page.waitForFunction((w) => {
+        const m = document.querySelector("#main_svg");
+        if (!m) return true;
+        return Math.abs(m.getBoundingClientRect().width - w) <= 2;
+      }, width, { timeout: 3000, polling: 100 }).catch(() => {});
       await page.waitForTimeout(400);
     }
   }
@@ -483,13 +489,20 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
       return { w: r.width, h: r.height };
     };
     const wrapper = document.querySelector("#canvas_v2_wrapper");
+    // 1) главный слой плана — #main_svg. Приоритет над эвристикой «самый большой svg»:
+    // оверлеи-«обложки» (svgCover/cover, 1 ребёнок) на весь холст после ресайза viewport
+    // дают пустой белый PNG.
+    const main = document.querySelector("#main_svg");
+    const mb = box(main);
+    if (mb.w > 100 && mb.h > 100) return { selector: "#main_svg", index: 0 };
     if (box(wrapper).h > 50) return { selector: "#canvas_v2_wrapper", index: 0 };
     const svgs = [...(wrapper?.querySelectorAll("svg") ?? [])];
     let best = -1;
     let bestArea = 0;
     svgs.forEach((svg, i) => {
       const b = box(svg);
-      if (b.w > 100 && b.h > 100 && b.w * b.h > bestArea) {
+      // пустые слои-обложки планом не являются
+      if (svg.childElementCount > 1 && b.w > 100 && b.h > 100 && b.w * b.h > bestArea) {
         best = i;
         bestArea = b.w * b.h;
       }
