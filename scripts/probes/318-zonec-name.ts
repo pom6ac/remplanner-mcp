@@ -99,7 +99,7 @@ async function checkReadonly(): Promise<void> {
 
 try {
   // ревью 319 №4: эталон контрольного проекта фиксированный
-  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
   // ревью 319 №3: пара объект/план из env и PLAN_ID в планах объекта
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
   before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);

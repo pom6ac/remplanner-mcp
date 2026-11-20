@@ -89,7 +89,7 @@ const writeCreated = (): void => {
 // ревью 319 №4: эталон контрольного проекта фиксированный (файл не перезаписывается),
 // сверка перед записями и в конце; пара объект/план из env — ревью 319 №3
 await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
 await roGuard.assertUnchanged("перед записями");
 
 /**

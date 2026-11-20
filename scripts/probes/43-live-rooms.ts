@@ -53,7 +53,7 @@ const roomState = async (label: string): Promise<void> => {
 // ревью 319 №3: пара объект/план из env до первой записи; 322 N3в: гард
 // контрольного проекта (эталон общий на пару READONLY) перед каждой записью
 await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
 await roGuard.assertUnchanged("перед save #1");
 console.log("== open ==", JSON.stringify(await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID })).slice(0, 200));
 

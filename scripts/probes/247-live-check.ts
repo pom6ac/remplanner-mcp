@@ -224,7 +224,7 @@ const roRef = newGuardRef();
 try {
   // 0. ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
   roRef.current = roGuard;
   await roGuard.assertUnchanged("перед записями");
   const snapBefore = await snap(READONLY_ID, "before");

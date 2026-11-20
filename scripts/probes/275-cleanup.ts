@@ -45,7 +45,7 @@ console.log("created:", JSON.stringify(created));
 // ревью 319 №3: пара объект/план из env до первой записи; 322 N3в: гард
 // контрольного проекта (эталон общий на пару READONLY) перед записью
 await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
 await roGuard.assertUnchanged("перед зачисткой");
 await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
 const mg = (await call("model_get", {})) as unknown as Record<string, Array<{ id?: string; site_id?: string }>>;

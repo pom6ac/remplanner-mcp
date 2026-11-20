@@ -193,11 +193,13 @@ export type ReadonlyGuard = {
   reference: LoadedModel;
 };
 
-/** Общий файл-эталон контрольного проекта на пару READONLY (322 N4): один
- *  файл на пару object/plan, не на пробу — изменение между прогонами разных
- *  проб не маскируется новым базисом. Эталон создаётся, только если файла нет. */
-export function readonlyRefPath(objectId: string, readonlyId: string, readonlyPlanId: string): string {
-  const h = createHash("sha256").update(`${objectId}|${readonlyId}|${readonlyPlanId}`).digest("hex").slice(0, 12);
+/** Общий файл-эталон контрольного проекта на пару READONLY (322 N4; 323 N6 —
+ *  ключ без dev-объекта): один файл на пару object/plan, не на пробу —
+ *  изменение между прогонами разных проб не маскируется новым базисом,
+ *  смена dev-объекта между прогонами не снимает новый эталон.
+ *  Эталон создаётся, только если файла нет. */
+export function readonlyRefPath(readonlyId: string, readonlyPlanId: string): string {
+  const h = createHash("sha256").update(`${readonlyId}|${readonlyPlanId}`).digest("hex").slice(0, 12);
   return `.orca-reports/tmp/readonly-ref-${h}.json`;
 }
 

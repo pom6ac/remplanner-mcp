@@ -208,7 +208,7 @@ try {
   // 0. контрольный проект до (только GET, реальный plan_id, непустой)
   // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
   roRef.current = roGuard;
   await roGuard.assertUnchanged("перед записями");
   const snapBefore = await roSnap("before");

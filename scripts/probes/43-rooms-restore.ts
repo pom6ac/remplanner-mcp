@@ -39,7 +39,7 @@ await Promise.all([server.connect(b), client.connect(a)]);
 // ревью 319 №3: пара объект/план из env до первой записи; 322 N3в: гард
 // контрольного проекта (эталон общий на пару READONLY) перед записью
 await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
 await roGuard.assertUnchanged("перед restore save");
 await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
 const targetId = ROOM_ID || Object.keys(json(await call("model_get", { detail: "full" })).rooms2 ?? {})[0]!;

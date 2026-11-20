@@ -141,7 +141,7 @@ try {
   cleanupSession = s1;
   // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(s1.ctx.session(), OBJECT_ID, PLAN_ID);
-  const roGuard = await readonlyGuard(s1.ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+  const roGuard = await readonlyGuard(s1.ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
   roRef.current = roGuard;
   await roGuard.assertUnchanged("перед записями");
   const roBefore = await loadModel(s1.ctx.session(), READONLY_ID, READONLY_PLAN_ID);

@@ -79,7 +79,7 @@ const writeCreated = (): void => {
 
 // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
 await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
 await roGuard.assertUnchanged("перед записями");
 
 const captureNewWalls = async (known: Set<string>): Promise<void> => {
