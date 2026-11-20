@@ -1,5 +1,8 @@
 import type { Model, Point } from "./types.ts";
+import { newId } from "./types.ts";
 import { roomPolygonOf } from "./room-geo.ts";
+import { collinearOverlapCm } from "./geometry.ts";
+import { McpError } from "../errors.ts";
 
 // Пересчёт зон потолка комнаты (этап 310, m11 ревью 304): ставит модель в то
 // состояние, которое редактор получает вызовом Room2.updateZones("ceiling") +
@@ -349,11 +352,12 @@ function pointInPolyInclusive(poly: Point[], p: Point): boolean {
   return false;
 }
 
-/** Поля записи потолка, которые переносит restoreCeiling редактора. */
+/** Поля записи потолка, которые переносит restoreCeiling редактора (niches —
+ *  НЕ здесь: ниши переносятся по геометрии, restoreNichesByGeometry — ревью 311 №4). */
 const CEILING_USER_FIELDS = [
   "material", "level", "level2", "material2", "type", "profile", "complex", "radius",
   "offset", "anchor", "type_laying", "angle", "custom_angle", "interval", "width",
-  "height", "height_rail", "on_interval", "niches",
+  "height", "height_rail", "on_interval",
 ] as const;
 
 /**
@@ -361,6 +365,13 @@ const CEILING_USER_FIELDS = [
  * (Room2.updateZones("ceiling") + restoreCeiling). Вызывается после
  * ceiling_rigel_add/update/delete и zone_ceiling_add/remove. Комната без контура
  * или без полей ceilings не меняется.
+ *
+ * Закарнизные ниши (ревью 311 №4): как в редакторе (updateZones сбрасывает
+ * niches[] и зовёт restoreCeilingNiches), ниши не копируются по индексу рёбер —
+ * они переносятся ПО ГЕОМЕТРИИ: контейнер ниши ставится в запись, чьё ребро
+ * коллинеарно линии ниши и перекрывает её. Ниша, не ложащаяся ни на одно ребро
+ * новых зон, — консервативный отказ с подсказкой finish_ceiling_niche_remove
+ * (молчаливо стирать вложенное нельзя).
  */
 export function rebuildCeilingZones(model: Model, roomId: string): void {
   const rooms = (model.rooms2 ?? model.rooms1 ?? {}) as Record<string, Rec>;
@@ -476,5 +487,71 @@ export function rebuildCeilingZones(model: Model, roomId: string): void {
     if (rec) { out.push(rec); continue; }
     out.push({ polygon: faces[zi]!.map((p) => ({ x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 })), edges: polygonEdgesOf(faces[zi]!), exist: false });
   }
+  restoreNichesByGeometry(oldRecords, out);
   room.ceilings = out;
+}
+
+/**
+ * Порт restoreCeilingNiches (ревью 311 №4): ниши старых записей переносятся
+ * по геометрии — контейнер ниши ставится в новую запись на ребре, коллинеарном
+ * линии ниши (старое ребро записи или линия части), с перекрытием. id_ceiling
+ * частей обновляется на id записи-хозяина. Ниша без ребра-хозяина — отказ
+ * с подсказкой finish_ceiling_niche_remove (не молча и не на чужое ребро).
+ */
+function restoreNichesByGeometry(oldRecords: Rec[], newRecords: Rec[]): void {
+  type NicheItem = { container: Rec; line: { p1: Point; p2: Point } };
+  const items: NicheItem[] = [];
+  for (const old of oldRecords) {
+    const niches = old["niches"];
+    if (!Array.isArray(niches)) continue;
+    const oldEdges = Array.isArray(old["edges"]) ? old["edges"] as Array<{ p1?: Point; p2?: Point }> : [];
+    niches.forEach((n, idx) => {
+      const cont = n as Rec | undefined;
+      if (!cont || cont["exist"] !== true) return;
+      const parts = (cont["parts"] ?? {}) as Record<string, Rec>;
+      const part = Object.values(parts)[0];
+      const partLine = part?.["line"] as { p1?: Point; p2?: Point } | undefined;
+      const edge = oldEdges[idx];
+      const line = edge?.p1 && edge?.p2
+        ? { p1: edge.p1, p2: edge.p2 }
+        : partLine?.p1 && partLine?.p2 ? { p1: partLine.p1, p2: partLine.p2 } : null;
+      if (line) items.push({ container: structuredClone(cont) as Rec, line });
+    });
+  }
+  if (items.length === 0) return;
+  // ниши не копируются из старых записей (даже совпавших) — только перенос по геометрии
+  for (const rec of newRecords) delete rec["niches"];
+  const placed = new Set<NicheItem>();
+  for (const rec of newRecords) {
+    const edges = Array.isArray(rec["edges"]) ? rec["edges"] as Array<{ p1?: Point; p2?: Point }> : [];
+    if (edges.length === 0) continue;
+    const niches: Rec[] = [];
+    edges.forEach((e, idx) => {
+      if (!e.p1 || !e.p2) return;
+      for (const item of items) {
+        if (placed.has(item)) continue;
+        if (collinearOverlapCm(item.line, { p1: e.p1, p2: e.p2 }, TOL) > TOL) {
+          if (niches.length === 0) {
+            for (let k = 0; k < edges.length; k++) niches.push({ exist: false });
+          }
+          if (niches[idx]!["exist"] === true) continue; // ребро уже занято другой нишей
+          const container = item.container;
+          const parts = (container["parts"] ?? {}) as Record<string, Rec>;
+          if (typeof rec["id"] === "string") {
+            for (const part of Object.values(parts)) part["id_ceiling"] = rec["id"];
+          }
+          niches[idx] = container;
+          placed.add(item);
+        }
+      }
+    });
+    if (niches.length > 0) rec["niches"] = niches;
+  }
+  const lost = items.filter((i) => !placed.has(i));
+  if (lost.length > 0) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "закарнизная ниша комнаты не ложится на рёбра новых зон потолка (пересчёт зон при операции с закладной/делителем) — сначала finish_ceiling_niche_remove, затем повторите операцию",
+    );
+  }
 }

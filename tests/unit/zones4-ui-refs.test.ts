@@ -137,28 +137,50 @@ test("310: zone_ceiling_add режет зоны потолка; remove схло�
   assert.deepEqual(materialsOf(model, "room1"), ["stretch_ceiling"], "удаление закладной схлопывает зоны с отделкой");
 });
 
-test("310: update ширины при zone_ceiling-делителе с концом на грани закладной — отказ с подсказкой", () => {
+test("312 №3: update ширины при zone_ceiling-делителе из zone_ceiling_add — конец проецируется на новую грань (порт restoreDelimiters)", () => {
   const model = rectRoom("room1", 100, 100, 400, 300);
   setCeilingFinish(model, "room1", "gypsum_ceiling", {});
   const rec = addCeilingRigel(model, "room1", { start: { x: 2500, y: 1005 }, end: { x: 2500, y: 2995 } });
-  // делитель от левой стены к грани закладной (узлы без zone-привязок — их пишет редактор)
+  // делитель от левой стены к грани закладной — БЕЗ ручной установки vertex.zone:
+  // её пишет zone_ceiling_add, как mouseup редактора
   const zd = addZoneCeiling(model, "room1", { fromMm: { x: 1005, y: 2000 }, toMm: { x: 2545, y: 2000 } });
-  // zone-привязка узла к закладной — хранимое поле вершины (редактор ставит её в mouseup)
-  const delims = (model.zone_delimiters ?? {}) as Record<string, Record<string, unknown>>;
-  const delim = delims[zd.id] as { vertexes: Array<{ zone?: Record<string, unknown> }> };
-  delim.vertexes[1]!.zone = { room_id: "room1", rigel_id: rec.id, type: "rigel_ceiling" };
-  assert.throws(
-    () => updateCeilingRigel(model, rec.id, { widthMm: 300 }),
-    (e: unknown) => {
-      const err = e as { code?: string; message?: string };
-      return err.code === "INVALID_ARGUMENT" && /zone_ceiling_remove/.test(err.message ?? "");
+  const delim = ((model.zone_delimiters ?? {}) as Record<string, { vertexes: Array<{ point: Pt; zone?: Record<string, unknown> }> }>)[zd.id]!;
+  assert.deepEqual(
+    delim.vertexes[1]!.zone,
+    {
+      room_id: "room1",
+      rigel_id: rec.id,
+      edge: { p1: { x: 255, y: 100 }, p2: { x: 255, y: 300 } },
+      edge_index: 0,
+      edge_side: "l",
+      type: "rigel_ceiling",
     },
-    "ширина меняется только после удаления делителя",
+    `zone-привязка конца на грани закладной: ${JSON.stringify(delim.vertexes[1]!.zone)}`,
   );
-  // после снятия делителя ширина меняется
-  removeZoneCeiling(model, zd.id);
+  assert.equal(delim.vertexes[0]!.zone, undefined, "конец на ребре комнаты — без zone-привязки");
+  // прежний консервативный отказ убран (ревью 311 №3): редактор (restoreDelimiters)
+  // перепривязывает узел делителя к новой грани
   const upd = updateCeilingRigel(model, rec.id, { widthMm: 300 });
   assert.equal(upd.width, 30);
+  assert.deepEqual(delim.vertexes[1]!.point, { x: 265, y: 200 }, "конец делителя на новой грани (265)");
+  assert.deepEqual(materialsOf(model, "room1"), ["gypsum_ceiling"], "отделка переживает пересчёт зон");
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  assert.equal(ceilings.length, 3, "закладная + делитель → 3 зоны");
+  // mock save: нормализация не теряет отделку — save проходит
+  assert.deepEqual(finishCompare(structuredClone(model.rooms2) as never, model.rooms2 as never, undefined, undefined, "save").problems, []);
+});
+
+test("312 №3: update ширины — узел делителя на старой грани без zone-привязки проецируется геометрически", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  setCeilingFinish(model, "room1", "gypsum_ceiling", {});
+  const rec = addCeilingRigel(model, "room1", { start: { x: 2500, y: 1005 }, end: { x: 2500, y: 2995 } });
+  const zd = addZoneCeiling(model, "room1", { fromMm: { x: 1005, y: 2000 }, toMm: { x: 2545, y: 2000 } });
+  // старая модель: запись делителя без zone-привязок (создана до 312)
+  const delim = ((model.zone_delimiters ?? {}) as Record<string, { vertexes: Array<{ point: Pt; zone?: Record<string, unknown> }> }>)[zd.id]!;
+  delete delim.vertexes[1]!.zone;
+  const upd = updateCeilingRigel(model, rec.id, { widthMm: 300 });
+  assert.equal(upd.width, 30);
+  assert.deepEqual(delim.vertexes[1]!.point, { x: 265, y: 200 }, "геометрический запасной путь: узел на старой грани закладной");
   assert.deepEqual(materialsOf(model, "room1"), ["gypsum_ceiling"]);
 });
 
@@ -362,6 +384,64 @@ test("312 №2: merge — объединённая комната потерял
   assert.deepEqual(ok.problems, [], "отделка источника сохранена — не потеря");
   const lost = finishCompare(expRooms, { _m: { ...merged["_m"]!, ceilings: [{ exist: false }] } }, undefined, undefined, "normalize");
   assert.ok(lost.problems.some((p) => p.includes("объединённая комната потеряла покрытие потолка")), JSON.stringify(lost.problems));
+});
+
+// ---------- ревью 311 №4: ниши не переносятся на чужие рёбра ----------
+
+test("312 №4: ниша на левой стене остаётся на ребре левой зоны, не переезжает на грань закладной", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  // ниша на левой стене (ребро 2) у записи-«вся комната» (как 311-exp4)
+  ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!["ceilings"] as Array<Record<string, unknown>>)[0] = {
+    exist: true, id: "_cA", material: "stretch_ceiling", level: 0, profile: "standard",
+    polygon: [{ x: 400, y: 100 }, { x: 400, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }],
+    niches: [
+      { exist: false },
+      { exist: false },
+      { exist: true, parts: { p1: { line: { p1: { x: 100, y: 300 }, p2: { x: 100, y: 100 } }, depth: 15, plan: "ceiling" } } },
+      { exist: false },
+    ],
+  };
+  // закладная ближе к левой стене: отделка уйдёт в правую (большую) зону,
+  // чьё ребро 2 — грань закладной, а не стена с нишей
+  addCeilingRigel(model, "room1", { start: { x: 1300, y: 1005 }, end: { x: 1300, y: 2995 } });
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  assert.deepEqual(materialsOf(model, "room1"), ["stretch_ceiling"]);
+  // ниша выжила и стоит на ребре вдоль левой стены (x=100), а не на грани закладной
+  const holders = ceilings.filter((c) => ((c["niches"] ?? []) as Array<Record<string, unknown>>).some((n) => n?.exist === true));
+  assert.equal(holders.length, 1, `ниша в одной записи: ${JSON.stringify(holders.map((c) => c["niches"]))}`);
+  const holderEdges = holders[0]!["edges"] as Array<{ p1: Pt; p2: Pt }>;
+  const holderNiches = holders[0]!["niches"] as Array<Record<string, unknown>>;
+  const idx = holderNiches.findIndex((n) => n?.exist === true);
+  const hostEdge = holderEdges[idx]!;
+  assert.ok(
+    Math.abs(hostEdge.p1.x - 100) < 0.05 && Math.abs(hostEdge.p2.x - 100) < 0.05,
+    `ниша на ребре левой стены, не на грани закладной: ${JSON.stringify(hostEdge)}`,
+  );
+  // id_ceiling части перепривязан к записи-хозяину
+  const part = Object.values((holderNiches[idx]!["parts"] ?? {}) as Record<string, Record<string, unknown>>)[0]!;
+  assert.equal(part["id_ceiling"], holders[0]!["id"]);
+});
+
+test("312 №4: ниша, не ложащаяся на рёбра новых зон, — отказ с подсказкой finish_ceiling_niche_remove", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  // запись без edges — линия ниши берётся из части (200,150)-(300,150): не лежит
+  // ни на одном ребре новых зон
+  ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!["ceilings"] as Array<Record<string, unknown>>)[0] = {
+    exist: true, id: "_cA", material: "stretch_ceiling", level: 0, profile: "standard",
+    polygon: [{ x: 400, y: 100 }, { x: 400, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }],
+    niches: [
+      { exist: false }, { exist: false }, { exist: false },
+      { exist: true, parts: { p1: { line: { p1: { x: 200, y: 150 }, p2: { x: 300, y: 150 } }, depth: 15, plan: "ceiling" } } },
+    ],
+  };
+  assert.throws(
+    () => addCeilingRigel(model, "room1", { start: { x: 2500, y: 1005 }, end: { x: 2500, y: 2995 } }),
+    (e: unknown) => {
+      const err = e as { code?: string; message?: string };
+      return err.code === "INVALID_ARGUMENT" && /finish_ceiling_niche_remove/.test(err.message ?? "");
+    },
+    "ниша не переносится молча и не стирается",
+  );
 });
 
 // ---------- mock save: потеря отделки зоны потолка при нормализации — отказ ----------
