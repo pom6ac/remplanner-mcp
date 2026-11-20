@@ -1,0 +1,105 @@
+{
+  "_source": "клик по UI dev-проекта (headless Chromium, проба 273-recon2, КЛИК БЕЗ СОХРАНЕНИЯ): кабель warm_floor_wire протяжкой от терморегулятора (socket_thermo у колонны) к линии тёплой стены; project.copy(\"server\"). Вершина тёплой стены: {id: id части, point: центр линии (LIB.lineCenter), type: \"warm_wall\"}; pp {i, d} — производное протяжки (доля точки захвата вдоль линии), в сверке не участвует. Обратная ссылка — props части: cables_warm_floor.cable_warm_floor_id (СКАЛЯР — у тёплой стены одно подключение, l10n cabling_warm_floor_not_connect_same_wall). length кабеля — по прямой между вершинами, м (2 знака). id обезличены (id1…), координаты синтетические (сдвиг, форма сохранена).",
+  "thermo": {
+    "pc": {
+      "x": 100.07,
+      "y": 99.95
+    },
+    "width": 14,
+    "height": 14,
+    "sub": {
+      "name": "socket_thermo",
+      "id": "id1",
+      "center": {
+        "x": 100,
+        "y": 100
+      },
+      "cables_warm_floor": {
+        "cable_warm_floor_id": "id2"
+      }
+    },
+    "id": "id3"
+  },
+  "warm_wall_part": {
+    "id": "id4",
+    "type": "warm_wall_cable",
+    "layer": 1,
+    "line": {
+      "p1": {
+        "x": 107.02,
+        "y": 111.95
+      },
+      "p2": {
+        "x": 137.02,
+        "y": 111.95
+      }
+    },
+    "line_wall": {
+      "p1": {
+        "x": 137.02,
+        "y": 111.95
+      },
+      "p2": {
+        "x": 107.02,
+        "y": 111.95
+      }
+    },
+    "distance": 30,
+    "height": 135,
+    "height_from_floor": 15,
+    "props": {
+      "id": "id4",
+      "name": "warm_wall_cable",
+      "cables_warm_floor": {
+        "cable_warm_floor_id": "id2"
+      }
+    }
+  },
+  "cable": {
+    "id": "id2",
+    "matrix": [
+      [
+        null,
+        {
+          "length": 1
+        }
+      ],
+      [
+        {
+          "length": 1
+        },
+        null
+      ]
+    ],
+    "vertexes": [
+      {
+        "id": "id3|s|id1",
+        "point": {
+          "x": 100,
+          "y": 100
+        },
+        "type": "socket_thermo"
+      },
+      {
+        "id": "id4",
+        "point": {
+          "x": 122.02,
+          "y": 111.95
+        },
+        "type": "warm_wall",
+        "pp": {
+          "id3|s|id1": {
+            "i": 0,
+            "d": 0.499
+          }
+        }
+      }
+    ],
+    "items": {
+      "id3|s|id1": "socket_thermo",
+      "id4": "warm_wall"
+    },
+    "type": "warm_floor_wire",
+    "length": 0.25
+  }
+}

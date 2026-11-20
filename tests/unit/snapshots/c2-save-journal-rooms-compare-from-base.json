@@ -95,6 +95,7 @@
       "stripes_light_mismatches",
       "wall_property_mismatches",
       "wall_role_mismatches",
+      "warmwall_mismatches",
       "zone_mismatches"
     ]
   },
