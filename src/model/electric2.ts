@@ -137,9 +137,15 @@ function itemVertex(model: Model, coll: ElecCableColl, itemId: string): ElecVert
   const item = model.items?.[itemId] as ItemProps | undefined;
   if (!item) throw new McpError("NOT_FOUND", `предмет ${itemId} не найден`);
   if (!elecConnectable(coll, item)) {
+    // ревью 253 Н2: текст зависит от коллекции — у conditioner_wire один набор
+    // выводов (блоки кондиционера, клапан, бризер, рекуператор, щиток),
+    // у остальных кабелей — щиток, коробки, розетки, выводы проводов
+    const outputs = coll === "cables_conditioner"
+      ? "блоки кондиционера, клапан, бризер, рекуператор, щиток"
+      : "щиток, коробки, розетки, выводы проводов";
     throw new McpError(
       "INVALID_ARGUMENT",
-      `предмет «${item.name}» не подключается к кабелю этой проводки (в редакторе у кабеля другие выводы: щиток, коробки, розетки, выводы проводов)`,
+      `предмет «${item.name}» не подключается к кабелю этой проводки (в редакторе у кабеля другие выводы: ${outputs})`,
       { details: { kind: "not_connectable", item: item.name } },
     );
   }

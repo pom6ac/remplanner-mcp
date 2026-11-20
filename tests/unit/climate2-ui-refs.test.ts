@@ -680,6 +680,24 @@ test("ревью 251 №2: сервер потерял сечение ребра
   assert.ok(mism.some((s) => s.includes("ребро") || s.includes("payload")), JSON.stringify(mism));
 });
 
+test("ревью 253 Н3: сервер добавил поле в ребро, в ожидании его нет → расхождение (обратное направление сверки payload)", () => {
+  const { m, fan } = scenario();
+  const pipe = addPipe(m, { kind: "vent_out", path: [{ itemId: fan.id }, { x: 2088.6, y: 1100 }] });
+  const mcpPipes = structuredClone((m as { pipes_ventilation?: Record<string, Pipe> }).pipes_ventilation ?? {}) as Record<string, Pipe>;
+  // ожидание — ребро-заглушка {length:1} без сечения; сервер отдал полное сечение
+  const expPipes = structuredClone(mcpPipes);
+  expPipes[pipe.id]!.matrix = expPipes[pipe.id]!.matrix.map((row) =>
+    row.map((e) => (e === null ? null : { length: 1 })),
+  );
+  const mism = climateGraphMismatches(
+    { pipes_ventilation: expPipes } as never,
+    { pipes_ventilation: mcpPipes } as never,
+    { mode: "save", itemsExpected: structuredClone(m.items) as never, itemsGot: structuredClone(m.items) as never },
+  );
+  assert.notEqual(mism.length, 0, "лишнее поле ребра на сервере — расхождение");
+  assert.ok(mism.some((s) => s.includes("payload") || s.includes("ребро")), JSON.stringify(mism));
+});
+
 test("250: эталоны климата ч.2 без внутренних ID сайта и без секретов", () => {
   for (const name of ["heat-pipe", "conditioner-drainage", "warm-floor-pipe-contour", "vent-pipe-fan"]) {
     const raw = readFileSync(join(here, `../fixtures/ui-ref-climate2-${name}.json`), "utf8");
