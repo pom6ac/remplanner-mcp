@@ -16,7 +16,7 @@ import {
 } from "../model/walls.ts";
 import { levelHoleMismatches } from "../model/floorhole.ts";
 import { finishCompare } from "../model/finish.ts";
-import { zoneDelimiterCompare, roomsWithNewZoneCDividers } from "../model/zone.ts";
+import { zoneDelimiterCompare, roomsWithChangedZoneCDividers, resurrectedZoneCDividers } from "../model/zone.ts";
 import { ceilingRigelCompare } from "../model/ceiling-rigels.ts";
 import { warmWallsCompare } from "../verify/warmwall.ts";
 import { demolitionMismatches } from "../model/demolition.ts";
@@ -75,10 +75,13 @@ export type SaveOutcome = {
   warnings: string[];
 };
 
-/** База сверки комнат: модель с сервера / после последнего успешного save (этап 128). */
+/** База сверки комнат: модель с сервера / после последнего успешного save (этап 128).
+ *  С ревью 319 №1 — и снимок zone_c-делителей (комнаты с изменённым набором
+ *  делителей считаются от той же базы). */
 export type RoomSaveBase = {
   rooms: Record<string, unknown>;
   walls: Record<string, { p1: Point; p2: Point; depth?: number }>;
+  zoneDelimiters: Record<string, unknown>;
 };
 
 /**
@@ -445,6 +448,11 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     "normalize",
     { affectedRooms: zoneAffected },
   );
+  // ревью 319 №8: нормализация не воскрешает zone_c-делители, удалённые через MCP
+  const zoneResurrected = resurrectedZoneCDividers(
+    host.model() as unknown as Record<string, unknown>,
+    norm.model as unknown as Record<string, unknown>,
+  );
   // этап 273: тёплые стены до записи сверяются с нормализованной моделью
   // (затронутость комнат — по грани стены, zoneAffectedRoomIds; части редактор
   // мигрирует при пересчёте комнат — сверка по геометрии, не по id)
@@ -515,9 +523,18 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         saveNormRoomsMap,
         "normalize",
         host.roomChangePolicy(),
-        // этап 318: комнаты с новым zone_c-делителем — деление зон редактором
-        // штатно сбрасывает имена/состав зон (безымянные наследники)
-        { zoneDivisionRooms: roomsWithNewZoneCDividers(host.model() as unknown as Record<string, unknown>, norm.model as unknown as Record<string, unknown>) },
+        // этап 318, ревью 319 №1: комнаты с изменённым набором zone_c-делителей —
+        // от той же базы, что и комнаты (roomSaveBase), а не от рабочей копии:
+        // добавленные И удалённые делители (деление/слияние зон редактором
+        // штатно сбрасывает имена/состав зон)
+        {
+          zoneDivisionRooms: roomsWithChangedZoneCDividers(
+            (host.roomSaveBase()
+              ? ({ rooms2: host.roomSaveBase()!.rooms, zone_delimiters: host.roomSaveBase()!.zoneDelimiters } as unknown as Record<string, unknown>)
+              : (host.model() as unknown as Record<string, unknown>)),
+            norm.model as unknown as Record<string, unknown>,
+          ),
+        },
       );
   const roomsNormProblems = roomsNormCheck.problems;
   if (roomsBefore > 0 && normRooms === 0) {
@@ -534,6 +551,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     dimsNorm.length > 0 || climateNorm.length > 0 || roomsNormProblems.length > 0 ||
     shieldsNorm.length > 0 ||
     zoneNorm.problems.length > 0 ||
+    zoneResurrected.length > 0 ||
     warmNorm.problems.length > 0 ||
     ceilingRigelNorm.problems.length > 0 ||
     elecNorm.some((e) => e.lost.length > 0 || e.graph.length > 0 || e.conn.length > 0)
@@ -575,7 +593,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         climate_mismatches: climateNorm,
         room_mismatches: roomsNormProblems,
         shield_mismatches: shieldsNorm,
-        zone_mismatches: zoneNorm.problems,
+        zone_mismatches: [...zoneNorm.problems, ...zoneResurrected],
         warmwall_mismatches: warmNorm.problems,
         ceiling_rigel_mismatches: ceilingRigelNorm.problems,
         ...Object.fromEntries(elecNorm.flatMap((e) => [
@@ -816,7 +834,16 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
       "save",
       {},
-      { zoneDivisionRooms: roomsWithNewZoneCDividers(norm.model as unknown as Record<string, unknown>, after.model as unknown as Record<string, unknown>) },
+      // ревью 319 №1: база — roomSaveBase (сервер до записи), не norm.model:
+      // и добавленные, и удалённые делители объясняют сброс зон комнат на сервере
+      {
+        zoneDivisionRooms: roomsWithChangedZoneCDividers(
+          (host.roomSaveBase()
+            ? ({ rooms2: host.roomSaveBase()!.rooms, zone_delimiters: host.roomSaveBase()!.zoneDelimiters } as unknown as Record<string, unknown>)
+            : (norm.model as unknown as Record<string, unknown>)),
+          after.model as unknown as Record<string, unknown>,
+        ),
+      },
     ).problems;
     if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && ceilingRigelAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
       verified = true;

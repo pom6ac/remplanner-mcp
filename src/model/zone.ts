@@ -943,36 +943,82 @@ export function zoneDelimiterCompare(
 }
 
 /**
- * Комнаты, в которых модель got получила НОВЫЙ делитель зон листа «Перегородки»
- * (zone_c): у got есть zone_c-делитель этой комнаты, id которого отсутствует
- * среди zone_c-делителей ожидания. Для сверки комнат: деление зон таким
- * делителем — штатная операция редактора (Room2.updateZones("c")), наследники
- * безымянные (эталон 318), поэтому потеря имени/состава зон объяснима только
- * в такой комнате. Модель без zone_delimiters (rooms-only) тоже допустима.
+ * Комнаты с ИЗМЕНЁННЫМ набором zone_c-делителей (ревью 319 №1): база — та же,
+ * что у сверки комнат (roomSaveBase: модель с сервера / после последнего
+ * успешного save), а не рабочая копия — иначе делитель, добавленный через MCP
+ * (он уже в обеих моделях), или удалённый (он ни в одной) не считается
+ * изменением. В набор входят добавленные И удалённые делители (симметричная
+ * разность id по комнате), а также делители с изменившейся геометрией (концы
+ * p1/p2 — при изменении стен). Для сверки комнат: деление/слияние зон — штатная
+ * операция редактора (Room2.updateZones("c")), наследники безымянные (эталон
+ * 318), поэтому потеря/смена имени/состава зон объяснима только в такой
+ * комнате. Модель без zone_delimiters (rooms-only) тоже допустима.
  */
-export function roomsWithNewZoneCDividers(
-  expectedModel: Record<string, unknown> | undefined,
+export function roomsWithChangedZoneCDividers(
+  baseModel: Record<string, unknown> | undefined,
   gotModel: Record<string, unknown> | undefined,
 ): Set<string> {
-  const idsOf = (model: Record<string, unknown> | undefined): Map<string, Set<string>> => {
-    const out = new Map<string, Set<string>>();
+  const divsOf = (model: Record<string, unknown> | undefined): Map<string, Map<string, string>> => {
+    const out = new Map<string, Map<string, string>>();
     if (!model) return out;
     for (const entry of Object.values(delimiterMapOf((model ?? {}) as Model))) {
       const migrated = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
       if (String(migrated["type"] ?? "") !== "zone_c") continue;
       const rid = entry.roomKey ?? String(migrated["id_room"] ?? "");
       if (!rid) continue;
-      const set = out.get(rid) ?? new Set<string>();
-      set.add(String(migrated["id"] ?? ""));
+      const v = (migrated["vertexes"] ?? []) as Array<{ point?: { x: number; y: number } }>;
+      const p1 = v[0]?.point, p2 = v[v.length - 1]?.point;
+      const geom = p1 && p2 ? `${Math.round(p1.x * 10)},${Math.round(p1.y * 10)};${Math.round(p2.x * 10)},${Math.round(p2.y * 10)}` : "?";
+      const set = out.get(rid) ?? new Map<string, string>();
+      set.set(String(migrated["id"] ?? ""), geom);
       out.set(rid, set);
     }
     return out;
   };
-  const exp = idsOf(expectedModel);
+  const base = divsOf(baseModel);
+  const got = divsOf(gotModel);
   const out = new Set<string>();
-  for (const [rid, gotIds] of idsOf(gotModel)) {
-    const expIds = exp.get(rid);
-    if (!expIds || [...gotIds].some((id) => !expIds.has(id))) out.add(rid);
+  for (const [rid, gotIds] of got) {
+    const baseIds = base.get(rid);
+    if (!baseIds) {
+      if (gotIds.size > 0) out.add(rid);
+      continue;
+    }
+    let changed = gotIds.size !== baseIds.size;
+    for (const [id, geom] of gotIds) {
+      if (baseIds.get(id) !== geom) {
+        changed = true;
+        break;
+      }
+    }
+    if (changed) out.add(rid);
+  }
+  for (const [rid, baseIds] of base) {
+    if (!got.has(rid) && baseIds.size > 0) out.add(rid);
+  }
+  return out;
+}
+
+/**
+ * ревью 319 №8: zone_c-делители, которых НЕ БЫЛО в ожидании (рабочей копии):
+ * id новый, а полная проекция (sameSig) не совпадает ни с одним zone_c-делителем
+ * ожидания — нормализация «воскресила» делитель, удалённый через MCP, или
+ * придумала новый. Легитимная смена id (та же проекция) не считается — её
+ * ловит zoneDelimiterCompare (предупреждение «сменил id»).
+ */
+export function resurrectedZoneCDividers(
+  expectedModel: Record<string, unknown> | undefined,
+  gotModel: Record<string, unknown> | undefined,
+): string[] {
+  const zoneCOf = (model: Record<string, unknown> | undefined): ZoneDelimiterSig[] =>
+    delimiterSigsOf(model).filter((s) => s.type === "zone_c");
+  const exp = zoneCOf(expectedModel);
+  const expIds = new Set(exp.map((s) => s.id));
+  const out: string[] = [];
+  for (const g of zoneCOf(gotModel)) {
+    if (expIds.has(g.id)) continue;
+    if (exp.some((e) => e.idRoom === g.idRoom && sameSig(e, g))) continue;
+    out.push(`room ${g.idRoom}: нормализация вернула zone_c-делитель, которого не было в рабочей копии (id ${g.id}, ${Math.round(g.length * 100)} см) — удалённые через MCP делители не воскрешаются`);
   }
   return out;
 }

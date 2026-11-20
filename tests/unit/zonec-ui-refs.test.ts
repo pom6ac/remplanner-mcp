@@ -8,7 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { Model } from "../../src/model/types.ts";
-import { addZoneDelimiter, removeZoneDelimiter, removeZoneFloor, zoneDelimiterList, zoneDelimiterCompare, roomsWithNewZoneCDividers, ZONE_DELIMITER_PLANS } from "../../src/model/zone.ts";
+import { addZoneDelimiter, removeZoneDelimiter, removeZoneFloor, zoneDelimiterList, zoneDelimiterCompare, roomsWithChangedZoneCDividers, ZONE_DELIMITER_PLANS } from "../../src/model/zone.ts";
 import { roomsSaveCompare } from "../../src/model/rooms-save.ts";
 import { finishList } from "../../src/model/finish.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
@@ -276,7 +276,7 @@ test("318: комната с именованной зоной + новый zone
       ],
     },
   };
-  const div = roomsWithNewZoneCDividers(
+  const div = roomsWithChangedZoneCDividers(
     { rooms2: structuredClone(rooms), zone_delimiters: {} },
     { rooms2: structuredClone(got), zone_delimiters: { zd1: { ...structuredClone(rec), id_room: "r1" } } },
   );
@@ -286,6 +286,30 @@ test("318: комната с именованной зоной + новый zone
   // в save-режиме то же сочетание (нормализованная модель уже поделена) — тоже без ошибки
   const resSave = roomsSaveCompare(got, structuredClone(got), "save");
   assert.deepEqual(resSave.problems, []);
+});
+
+// ревью 319 №1: симметричная разность — добавленные И удалённые делители,
+// а также делители с изменившейся геометрией (при изменении стен)
+test("318/319 №1: изменённый набор zone_c-делителей от базы — удаление и геометрия тоже в наборе", () => {
+  const rooms: Record<string, Record<string, unknown>> = {
+    r1: { polygon: structuredClone(ZC_REF.room.polygon), name: "Гостиная", zones: [{ polygon: ZC_REF.room.polygon, exist: true, name: "Гостиная" }] },
+    r2: { polygon: structuredClone(ZC_REF.room.polygon), name: "Кухня", zones: [{ polygon: ZC_REF.room.polygon, exist: true, name: "Кухня" }] },
+    r3: { polygon: structuredClone(ZC_REF.room.polygon), name: "Спальня", zones: [{ polygon: ZC_REF.room.polygon, exist: true, name: "Спальня" }] },
+  };
+  const delim = (id: string, idRoom: string, x1: number, x2: number): Record<string, unknown> => ({
+    ...structuredClone(rec), id, id_room: idRoom,
+    vertexes: [
+      { id: `${id}v1`, point: { x: x1, y: 158.2 }, type: "node" },
+      { id: `${id}v2`, point: { x: x2, y: 158.2 }, type: "node" },
+    ],
+  });
+  const base = { rooms2: structuredClone(rooms), zone_delimiters: { zdA: delim("zdA", "r1", 10, 390), zdGeom: delim("zdGeom", "r3", 10, 390) } };
+  // r1: делитель удалён (слияние зон); r2: делитель добавлен; r3: id тот же, геометрия изменилась
+  const got = { rooms2: structuredClone(rooms), zone_delimiters: { zdB: delim("zdB", "r2", 10, 390), zdGeom: delim("zdGeom", "r3", 20, 390) } };
+  const div = roomsWithChangedZoneCDividers(base, got);
+  assert.deepEqual([...div].sort(), ["r1", "r2", "r3"], JSON.stringify([...div].sort()));
+  // без изменений — пусто
+  assert.deepEqual([...roomsWithChangedZoneCDividers(base, structuredClone(base))], []);
 });
 
 test("318: потеря именованной зоны БЕЗ нового делителя — ошибка; микрозона тоже", () => {
@@ -303,7 +327,7 @@ test("318: потеря именованной зоны БЕЗ нового де
       zones: [{ polygon: ZC_REF.room.polygon, exist: true, name: "Спальня", is_micro_zone: true }],
     },
   };
-  const res = roomsSaveCompare(rooms, got, "normalize", {}, { zoneDivisionRooms: roomsWithNewZoneCDividers({ rooms2: rooms, zone_delimiters: {} }, { rooms2: got, zone_delimiters: {} }) });
+  const res = roomsSaveCompare(rooms, got, "normalize", {}, { zoneDivisionRooms: roomsWithChangedZoneCDividers({ rooms2: rooms, zone_delimiters: {} }, { rooms2: got, zone_delimiters: {} }) });
   assert.ok(res.problems.some((p) => p.includes("зоны")), JSON.stringify(res.problems));
   // микрозона: деление с новым делителем объясняет потерю имени, но появление
   // НОВОЙ именованной/микро зоны в got — подмена
@@ -385,4 +409,90 @@ test("318: zoneDelimiterList/compact — zone_c виден как ZD<n> (скв�
   assert.equal(list[1]!["type"], "zone_c");
   assert.equal(list[1]!["plan"], "c");
   void userSigs;
+});
+
+// ---------- ревью 319 №1/№6: полный пайплайн ws.apply → ws.save на названной комнате ----------
+
+/** Комната эталона с именем и зонами (как в офлайн-репро 319-repro A/B). */
+function namedRoomServer(names: string[]): { m: Model; room: string } {
+  const { m, room } = modelWithRefRoom();
+  const rooms = (m.rooms2 ?? {}) as Record<string, Record<string, unknown>>;
+  rooms[room]!["name"] = names[0] ?? "Гостиная";
+  (rooms[room]! as { zones?: unknown[] })["zones"] = names.map((n) => ({
+    polygon: structuredClone(ZC_REF.room.polygon), exist: true, name: n,
+  }));
+  return { m, room };
+}
+
+const divideZones = (norm: Record<string, unknown>, room: string, count: number): void => {
+  (norm["rooms2"] as Record<string, Record<string, unknown>>)[room]!["zones"] = Array.from({ length: count }, () => ({
+    polygon: structuredClone(ZC_REF.room.polygon), exist: false, name: "none",
+  }));
+};
+
+test("319 №1 A: zone_c_add в комнате с именованной зоной → ws.apply → ws.save verified", async () => {
+  const { m, room } = namedRoomServer(["Гостиная"]);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  // нормализация редактора делит зоны на безымянных наследников (эталон 318)
+  const ws = saveMock(server, () => {}, (norm) => divideZones(norm, room, 2));
+  await ws.open("0", "1");
+  ws.apply("zone_c_add", (mm) => addZoneDelimiter(mm, room, { type: "zone_c", fromMm: vertexesMm(rec)[0]!, toMm: vertexesMm(rec)[1]! }));
+  const res = await ws.save();
+  assert.equal(res.verified, true, JSON.stringify(res.warnings));
+  assert.deepEqual(res.warnings, []);
+});
+
+test("319 №1 B: zone_c_remove именованных половинок → ws.apply → ws.save verified", async () => {
+  const { m, room } = namedRoomServer(["Кухня", "Столовая"]);
+  addZoneDelimiter(m, room, { type: "zone_c", fromMm: vertexesMm(rec)[0]!, toMm: vertexesMm(rec)[1]! });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  // слияние зон редактором: одна безымянная (эталон 318)
+  const ws = saveMock(server, () => {}, (norm) => divideZones(norm, room, 1));
+  await ws.open("0", "1");
+  const id = Object.keys((ws.model.zone_delimiters ?? {}) as Record<string, unknown>)[0]!;
+  ws.apply("zone_c_remove", (mm) => removeZoneDelimiter(mm, id, { expectedType: "zone_c" }));
+  const res = await ws.save();
+  assert.equal(res.verified, true, JSON.stringify(res.warnings));
+  // штатное предупреждение об удалении делителя с сервера (он удалён через MCP намеренно)
+  assert.ok(res.warnings.some((w) => w.includes("разделители зон")), JSON.stringify(res.warnings));
+});
+
+test("319 №1: потеря именованной зоны БЕЗ изменения делителей — по-прежнему не verified", async () => {
+  const { m, room } = namedRoomServer(["Гостиная"]);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  let wrote = false;
+  const ws = saveMock(server, () => { wrote = true; }, (norm) => {
+    divideZones(norm, room, 1); // редактор потерял имя зоны, делителей не было
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const err = e as { code?: string; message?: string; details?: { room_mismatches?: string[] } };
+    assert.equal(err.code, "NORMALIZATION_DROPPED", err.message ?? String(e));
+    assert.ok((err.details?.room_mismatches ?? []).some((p) => p.includes("зоны")), JSON.stringify(err.details));
+    return true;
+  });
+  assert.equal(wrote, false, "модель с потерянной именованной зоной не записывается");
+});
+
+// ---------- ревью 319 №8: save не воскрешает делитель, удалённый через MCP ----------
+
+test("319 №8: mock save — нормализация вернула удалённый через MCP делитель → не verified", async () => {
+  const { m, room } = namedRoomServer(["Кухня", "Столовая"]);
+  addZoneDelimiter(m, room, { type: "zone_c", fromMm: vertexesMm(rec)[0]!, toMm: vertexesMm(rec)[1]! });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  let wrote = false;
+  const ws = saveMock(server, () => { wrote = true; }, (norm) => {
+    // редактор «воскресил» делитель, удалённый через MCP zone_c_remove
+    norm["zone_delimiters"] = structuredClone(m.zone_delimiters);
+  });
+  await ws.open("0", "1");
+  const id = Object.keys((ws.model.zone_delimiters ?? {}) as Record<string, unknown>)[0]!;
+  ws.apply("zone_c_remove", (mm) => removeZoneDelimiter(mm, id, { expectedType: "zone_c" }));
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const err = e as { code?: string; message?: string; details?: { zone_mismatches?: string[] } };
+    assert.equal(err.code, "NORMALIZATION_DROPPED", err.message ?? String(e));
+    assert.ok((err.details?.zone_mismatches ?? []).some((p) => p.includes("не было в рабочей копии")), JSON.stringify(err.details));
+    return true;
+  });
+  assert.equal(wrote, false, "модель с воскрешённым делителем не записывается");
 });
