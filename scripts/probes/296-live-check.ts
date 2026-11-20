@@ -300,18 +300,27 @@ try {
 
   // 4. reopen → все 4 разделителя на месте: сопоставление по захваченному
   // site_id, при смене id — по захваченной геометрии конкретной записи
-  // (type + концы), не по bbox
+  // (type + концы), не по bbox. В сырой модели zone_delimiters — словарь
+  // записей {id, type, plan, vertexes[{point (см)}]}.
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID }, { quiet: true });
   const m2 = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const zoneList = (m2.model["zone_delimiters"] ?? []) as Array<{ id?: string; site_id?: string; type?: string; from?: number[]; to?: number[] }>;
+  const zones = (m2.model["zone_delimiters"] ?? {}) as Record<string, { id?: string; type?: string; vertexes?: Array<{ point?: { x: number; y: number } }> }>;
+  const cmToMmPt = (p?: { x: number; y: number }): number[] | undefined => (p ? [Math.round(p.x * 10), Math.round(p.y * 10)] : undefined);
+  const pendingCheck = [...capturedDelims];
   const gotTypes: string[] = [];
-  for (const c of capturedDelims) {
-    const hit = zoneList.find((d) => {
-      if (d.site_id === c.siteId) return true;
-      if ((d.type ?? "") !== c.type) return false;
-      return (nearMm(d.from, c.from_mm) && nearMm(d.to, c.to_mm)) || (nearMm(d.from, c.to_mm) && nearMm(d.to, c.from_mm));
+  for (const [key, z] of Object.entries(zones)) {
+    const hit = pendingCheck.findIndex((c) => {
+      if (key === c.siteId || (z.id ?? "") === c.siteId) return true;
+      if ((z.type ?? "") !== c.type) return false;
+      const v = z.vertexes ?? [];
+      if (v.length < 2) return false;
+      const q1 = cmToMmPt(v[0]?.point), q2 = cmToMmPt(v[v.length - 1]?.point);
+      return (nearMm(q1, c.from_mm) && nearMm(q2, c.to_mm)) || (nearMm(q1, c.to_mm) && nearMm(q2, c.from_mm));
     });
-    if (hit) gotTypes.push(String(hit.type ?? ""));
+    if (hit !== -1) {
+      pendingCheck.splice(hit, 1);
+      gotTypes.push(String(z.type ?? ""));
+    }
   }
   console.log("reopen, типы разделителей (по захваченным записям):", JSON.stringify(gotTypes));
   for (const t of ["zone_ceiling", "zone_floor", "zone_hydroisolation", "zone_floor_cap"]) {
