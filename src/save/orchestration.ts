@@ -834,13 +834,15 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
       "save",
       {},
-      // ревью 319 №1: база — roomSaveBase (сервер до записи), не norm.model:
-      // и добавленные, и удалённые делители объясняют сброс зон комнат на сервере
+      // ревью 321 N1: база post-save сверки — ОЖИДАНИЕ (norm.model), не
+      // roomSaveBase: сверка после записи отвечает «сервер сохранил то, что мы
+      // отправили?» — если сервер потерял именованную зону из отправленной
+      // нормализованной модели в комнате с изменённым набором делителей, это
+      // расхождение, а не штатное деление зон (roomSaveBase объясняет сброс зон
+      // только в сверке ДО записи)
       {
         zoneDivisionRooms: roomsWithChangedZoneCDividers(
-          (host.roomSaveBase()
-            ? ({ rooms2: host.roomSaveBase()!.rooms, zone_delimiters: host.roomSaveBase()!.zoneDelimiters } as unknown as Record<string, unknown>)
-            : (norm.model as unknown as Record<string, unknown>)),
+          norm.model as unknown as Record<string, unknown>,
           after.model as unknown as Record<string, unknown>,
         ),
       },
