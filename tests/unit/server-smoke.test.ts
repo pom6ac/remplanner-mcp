@@ -148,11 +148,24 @@ test("smoke: офлайн — wall_add меняет рабочую копию, v
 });
 
 test("smoke: офлайн — сетевые операции дают AUTH_REQUIRED", async () => {
-  const client = await start();
-  assert.equal(errCode(await client.callTool({ name: "project_save", arguments: {} })), "AUTH_REQUIRED");
-  assert.equal(errCode(await client.callTool({ name: "render_plan", arguments: {} })), "AUTH_REQUIRED");
-  assert.equal(errCode(await client.callTool({ name: "project_create", arguments: {} })), "AUTH_REQUIRED");
-  await client.close();
+  // ревью 269 m3: тест не должен зависеть от сети песочницы. Подменяем fetch:
+  // если какой-то путь всё же полез в сеть — падаем быстро и одинаково на любой
+  // машине, вместо реального POST на сайт (раньше project_create в сети создавал
+  // осиротевший анонимный проект, а в песочнице давал SITE_ERROR «сетевая
+  // ошибка»; AUTH_REQUIRED теперь даёт офлайн-guard в ServerContext.createAnon).
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error("smoke: сеть запрещена — сетевая операция дошла до HTTP");
+  }) as typeof fetch;
+  try {
+    const client = await start();
+    assert.equal(errCode(await client.callTool({ name: "project_save", arguments: {} })), "AUTH_REQUIRED");
+    assert.equal(errCode(await client.callTool({ name: "render_plan", arguments: {} })), "AUTH_REQUIRED");
+    assert.equal(errCode(await client.callTool({ name: "project_create", arguments: {} })), "AUTH_REQUIRED");
+    await client.close();
+  } finally {
+    globalThis.fetch = original;
+  }
 });
 
 test("smoke: каталог на фикстуре — «диван» находит позиции, catalog_get по имени", async () => {

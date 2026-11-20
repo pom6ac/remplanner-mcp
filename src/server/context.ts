@@ -202,6 +202,14 @@ export class ServerContext {
    * запросе привязали бы проект к аккаунту (инцидент 2026-11-15).
    */
   async createAnon(): Promise<{ object_id: string; plan_id: string }> {
+    // ревью 269 m3: в офлайне сетевые операции недоступны — раньше project_create
+    // делал реальный POST на сайт (в сети создавал осиротевший анонимный проект,
+    // без сети падал SITE_ERROR «сетевая ошибка»), отказ должен быть детерминированным
+    if (this.mode === "offline") {
+      throw new McpError("AUTH_REQUIRED", "офлайн-режим: сетевые операции недоступны", {
+        hint: "уберите REMPLANNER_OFFLINE_FIXTURE для работы с сайтом",
+      });
+    }
     const session = this.anonSession();
     const created = await createAnonProject(session);
     // cookies проекта уже в session (captureCookiesInto) — сохранить в state.anon
