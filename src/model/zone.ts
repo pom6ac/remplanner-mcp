@@ -4,6 +4,7 @@ import { mmToCm, cmToMm } from "./units.ts";
 import { McpError } from "../errors.ts";
 import { roomPolygonOf, matchRoomsByContour, overlapShare, roomHeirs, pointInPolygon, roomsMapOf } from "./room-geo.ts";
 import { collinearOverlapCm } from "./geometry.ts";
+import { rebuildCeilingZones } from "./ceiling-zones.ts";
 
 // Зонирование потолка (лист «Потолки», инструмент «Зонировать потолок», zone_ceiling;
 // PRO; этап 260, 2026-11-20). Разделители зон — линии-графы ZoneDelimiter extends
@@ -463,6 +464,9 @@ export function addZoneDelimiter(
   };
   model.zone_delimiters ??= {};
   model.zone_delimiters[id] = rec;
+  // этап 310 (m11): делитель зон потолка тоже режет контейнер ceilings —
+  // пересчёт зон, как updateZones("ceiling") редактора
+  if (plan === "ceiling") rebuildCeilingZones(model, roomId);
   return { id, length_mm: cmToMm(rec.length * 100) };
 }
 
@@ -496,8 +500,9 @@ export function removeZoneDelimiter(
   const hit = Object.entries(map).find(([k, e]) => k === delimiterRef || String(e.rec["id"] ?? "") === delimiterRef);
   if (hit) {
     const [key, entry] = hit;
+    const migrated = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
     if (opts.expectedType) {
-      const actual = String(migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy })["type"] ?? "");
+      const actual = String(migrated["type"] ?? "");
       if (actual !== opts.expectedType) {
         // подсказка инструмента — только для типов, у которых инструмент есть
         // (мелочь 299: у legacy zone_c инструмента zone_c_remove нет)
@@ -518,6 +523,8 @@ export function removeZoneDelimiter(
         if (Object.keys(room.delimiters).length === 0) delete room.delimiters;
       }
     }
+    // этап 310 (m11): удаление делителя зон потолка схлопывает зоны ceilings
+    if (String(migrated["plan"] ?? "") === "ceiling" && roomKey) rebuildCeilingZones(model, roomKey);
     return { room_id: roomKey, removed: true };
   }
   // метка ZD<n>: единый источник меток — zoneDelimiterList (ревью 261 №7:

@@ -775,6 +775,27 @@ function ceilingSig(room: RoomRec): FinishSig["ceiling"] | undefined {
   return { material, level: num(c.level) ?? 0, profile: typeof c.profile === "string" ? c.profile : undefined };
 }
 
+/**
+ * Отделка ВСЕХ потолочных зон комнаты (этап 310, m11 ревью 304): закладная и
+ * zone_ceiling-делитель режут контейнер ceilings на зоны — сверка только по [0]
+ * пропускала потерю отделки второй зоны и блокировала штатный перенос отделки
+ * между зонами при нормализации. Мультимножество записей {material, level, profile}.
+ */
+function ceilingSigsOf(room: RoomRec): string[] {
+  const arr = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
+  const out: string[] = [];
+  for (const c of arr) {
+    if (!c || c.exist !== true) continue;
+    const material = typeof c.material === "string" ? c.material : undefined;
+    if (!material) continue;
+    // level 0 / profile standard — умолчания: отсутствие эквивалентно значению (96 R4)
+    const level = num(c.level);
+    const profile = typeof c.profile === "string" ? c.profile : "standard";
+    out.push(JSON.stringify({ material, level: level ?? 0, profile: profile === "" ? "standard" : profile }));
+  }
+  return out.sort();
+}
+
 function wallSigs(room: RoomRec, edges: RoomRec["edges"]): NonNullable<FinishSig["walls"]> {
   const out: NonNullable<FinishSig["walls"]> = [];
   const decors = Array.isArray(room.decors) ? room.decors : [];
@@ -1140,11 +1161,14 @@ export function finishCompare(
         }
       }
     }
-    if (expCeil) {
-      const gotCeil = ceilingSig(match);
-      if (!gotCeil) problems.push(`room ${rid}: потеряно покрытие потолка (${expCeil.material})`);
-      else if (!sameCeiling(expCeil, gotCeil)) {
-        problems.push(`room ${rid}: покрытие потолка не совпало (${JSON.stringify(expCeil)} → ${JSON.stringify(gotCeil)})`);
+    // этап 310 (m11 ревью 304): отделка ВСЕХ потолочных зон комнаты —
+    // мультимножество записей, не только ceilings[0]; штатный перенос отделки
+    // между зонами при нормализации не блокируется, потеря записи — расхождение
+    const expCeils = ceilingSigsOf(room);
+    if (expCeils.length > 0) {
+      const gotCeils = ceilingSigsOf(match);
+      if (expCeils.length !== gotCeils.length || expCeils.some((c, i) => c !== gotCeils[i])) {
+        problems.push(`room ${rid}: покрытие потолка не совпало (${expCeils.join(" | ") || "нет"} → ${gotCeils.join(" | ") || "нет"})`);
       }
     }
   }

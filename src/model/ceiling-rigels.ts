@@ -6,8 +6,9 @@ import { wallFaces } from "./wall-geometry.ts";
 import { McpError } from "../errors.ts";
 import { dist, lineIntersection, offsetSegment, pointOnSegment, type Segment } from "./geometry.ts";
 import { RIGEL_CEILING_TYPES } from "./rigels.ts";
-import { zoneCeilingDelimiterLines, segmentInsidePolygon } from "./zone.ts";
+import { zoneCeilingDelimiterLines, segmentInsidePolygon, zoneDelimiterList } from "./zone.ts";
 import { roomPolygonOf, roomsMapOf, matchRoomsByContour, roomHeirs, overlapShare, pointInPolygon, distToSeg } from "./room-geo.ts";
+import { rebuildCeilingZones } from "./ceiling-zones.ts";
 
 /**
  * Потолочные закладные (ceiling_rigel, лист «Потолки», инструмент «Потолочная
@@ -418,7 +419,26 @@ export function addCeilingRigel(
   const room = roomByRef(model, roomRef).room as { rigels?: Record<string, CeilingRigelRec> };
   room.rigels ??= {};
   room.rigels[id] = rec;
+  // этап 310 (m11 ревью 304): пересчёт зон потолка комнаты, как updateZones("ceiling")
+  // редактора после действия с закладной — иначе контейнер ceilings устаревает и
+  // отделка зон теряется при первом визите на лист «Потолки»
+  rebuildCeilingZones(model, roomId);
   return rec;
+}
+
+/** Метки ZD<n> делителей зоны потолка комнаты с концом (узлом zone.rigel_id),
+ *  привязанным к этой закладной (для подсказки отказа update ширины).
+ *  Нумерация ZD — сквозная по zoneDelimiterList (один источник меток). */
+function staleDelimiterLabels(model: Model, roomId: string, rigelId: string): string[] {
+  const out: string[] = [];
+  for (const d of zoneDelimiterList(model)) {
+    if (d["room_id"] !== roomId || d["type"] !== "zone_ceiling") continue;
+    const site = String(d["site_id"] ?? "");
+    const rec = (model.zone_delimiters ?? {}) as Record<string, Record<string, unknown>>;
+    const v = ((rec[site]?.["vertexes"] ?? []) as Array<{ zone?: { rigel_id?: unknown } }>);
+    if (v.some((x) => x.zone && String(x.zone["rigel_id"] ?? "") === rigelId)) out.push(String(d["id"]));
+  }
+  return out;
 }
 
 /**
@@ -433,10 +453,25 @@ export function updateCeilingRigel(
   params: { widthMm?: number; ceilingType?: string },
 ): CeilingRigelRec {
   validateParams(params);
-  for (const room of Object.values((model.rooms2 ?? model.rooms1 ?? {}) as Record<string, Record<string, unknown>>)) {
+  for (const [rid, room] of Object.entries((model.rooms2 ?? model.rooms1 ?? {}) as Record<string, Record<string, unknown>>)) {
     const rigels = room.rigels as Record<string, CeilingRigelRec> | undefined;
     const rec = rigels?.[rigelId];
     if (!rec) continue;
+    // этап 310: делитель зон потолка с концом на грани этой закладной после
+    // изменения ширины теряет конец (грань уходит из-под него), а save-пайплайн
+    // редактора (updateZones при перестройке комнат) теряет отделку зон потолка —
+    // UI-обработчик #cm-ceiling-rigel--width отделку восстанавливает, пайплайн
+    // записи нет. Консервативный отказ с подсказкой (как в редакторе: делитель
+    // проводится заново под новую ширину).
+    if (params.widthMm !== undefined) {
+      const stale = staleDelimiterLabels(model, rid, rigelId);
+      if (stale.length > 0) {
+        throw new McpError(
+          "INVALID_ARGUMENT",
+          `изменение ширины закладной ${rigelId} сделает недействительным делитель зон потолка ${stale.join(", ")} (конец на грани закладной) — сначала zone_ceiling_remove ${stale[0]}, затем измените ширину и проведите делитель заново`,
+        );
+      }
+    }
     const backup = structuredClone(rigels!);
     try {
       if (params.widthMm !== undefined) {
@@ -451,6 +486,9 @@ export function updateCeilingRigel(
       room.rigels = backup;
       throw e;
     }
+    // этап 310: зоны потолка пересчитываются под новую ширину (как в редакторе
+    // после #cm-ceiling-rigel--width)
+    rebuildCeilingZones(model, rid);
     return rec;
   }
   throw new McpError("NOT_FOUND", `закладная ${rigelId} не найдена`);
@@ -469,6 +507,9 @@ export function deleteCeilingRigel(model: Model, rigelId: string): { room_id: st
       // m10 ревью 304: редактор оставляет пустой rigels: {} (живой дамп
       // 303-after-delete.json) — форма записи как в редакторе
       room.rigels = rigels;
+      // этап 310: зоны потолка схлопываются обратно в одну (updateZones +
+      // restoreCeiling обработчика #cm-ceiling-rigel--remove)
+      rebuildCeilingZones(model, rid);
       return { room_id: rid };
     }
   }

@@ -1,0 +1,246 @@
+{
+ "_source": "Эталон зон потолка с закладной и zone_ceiling-делителем (этап 310, 2026-11-20; m11 ревью 304): комната создана MCP (4 стены plan a, толщина 100 мм), имя — как в UI (ROOMS2[rid].name + zones[0].name, проба 43), покрытие gypsum_ceiling/standard — finish_ceiling_set; закладная ceiling_rigel_add (ось по центру, ширина 100 мм), затем zone_ceiling_add с концом на грани закладной; состояние — сервер после save verified/reopen (проба scripts/probes/310-m11-live.ts, шаг 5б, дамп 310-state-rigel-delimiter.json). Контейнер ceilings — ПЕРЕСЧИТАННЫЕ зоны потолка (updateZones(\"ceiling\") + restoreCeiling обработчика создания закладной): 3 записи, отделка в первой, exist:false у остальных; рёбра зон с parent/side/pid и zone-привязки узлов делителя — производные редактора. Координаты перенесены на синтетическую комнату 10..390 × 10..310 НЕРАВНОМЕРНО (по каждой оси свой масштаб, пропорции НЕ сохранены, вершины синтетической комнаты 10/390 × 10/310); ID — id1..idN (анонимизация по правилу scripts/anonymize.ts), имя комнаты синтетическое.",
+ "data": {
+  "room_id": "id11",
+  "room_name": "Проб 310",
+  "polygon": [
+   {
+    "x": 390,
+    "y": 10
+   },
+   {
+    "x": 390,
+    "y": 310
+   },
+   {
+    "x": 10,
+    "y": 310
+   },
+   {
+    "x": 10,
+    "y": 10
+   }
+  ],
+  "zone_names": [
+   "Проб 310"
+  ],
+  "rigel": {
+   "id": "id1",
+   "p1": {
+    "x": 200,
+    "y": 10,
+    "link": {
+     "ot": "wall",
+     "id": "id2",
+     "z1": "r"
+    }
+   },
+   "p2": {
+    "x": 200,
+    "y": 310,
+    "link": {
+     "ot": "wall",
+     "id": "id3",
+     "z1": "r"
+    }
+   },
+   "width": 10,
+   "ceiling_type": "",
+   "polygon": [
+    {
+     "x": 209.05,
+     "y": 10
+    },
+    {
+     "x": 209.05,
+     "y": 310
+    },
+    {
+     "x": 190.95,
+     "y": 310
+    },
+    {
+     "x": 190.95,
+     "y": 10
+    }
+   ]
+  },
+  "rigel_id": "id1",
+  "link_walls": [
+   {
+    "id": "id2",
+    "p1": {
+     "x": 0.95,
+     "y": 0
+    },
+    "p2": {
+     "x": 399.05,
+     "y": 0
+    },
+    "depth": 10
+   },
+   {
+    "id": "id3",
+    "p1": {
+     "x": 399.05,
+     "y": 320
+    },
+    "p2": {
+     "x": 0.95,
+     "y": 320
+    },
+    "depth": 10
+   }
+  ],
+  "delimiter": {
+   "id": "id12",
+   "matrix": [
+    [
+     null,
+     {
+      "length": 1
+     }
+    ],
+    [
+     {
+      "length": 1
+     },
+     null
+    ]
+   ],
+   "vertexes": [
+    {
+     "id": "id13",
+     "point": {
+      "x": 390,
+      "y": 160
+     },
+     "type": "node",
+     "zone": {
+      "room_id": "id11",
+      "edge": {
+       "p1": {
+        "x": 390,
+        "y": 10
+       },
+       "p2": {
+        "x": 390,
+        "y": 310
+       }
+      },
+      "edge_index": 0,
+      "edge_side": "r",
+      "edge_pid": "id5",
+      "edge_pids": {
+       "id5": "r"
+      },
+      "type": "room"
+     }
+    },
+    {
+     "id": "id14",
+     "point": {
+      "x": 209.05,
+      "y": 160
+     },
+     "type": "node",
+     "zone": {
+      "room_id": "id11",
+      "rigel_id": "id1",
+      "edge": {
+       "p1": {
+        "x": 209.05,
+        "y": 10
+       },
+       "p2": {
+        "x": 209.05,
+        "y": 310
+       }
+      },
+      "edge_index": 0,
+      "edge_side": "l",
+      "type": "rigel_ceiling"
+     }
+    }
+   ],
+   "items": {
+    "id13": "node",
+    "id14": "node"
+   },
+   "type": "zone_ceiling",
+   "length": 1,
+   "id_room": "id11",
+   "plan": "ceiling",
+   "on_size": 1
+  },
+  "delimiter_id": "id12",
+  "ceilings": [
+   {
+    "exist": true,
+    "material": "gypsum_ceiling",
+    "level": 0,
+    "profile": "standard",
+    "polygon": [
+     {
+      "x": 390,
+      "y": 10
+     },
+     {
+      "x": 390,
+      "y": 160
+     },
+     {
+      "x": 209.05,
+      "y": 160
+     },
+     {
+      "x": 209.05,
+      "y": 10
+     }
+    ]
+   },
+   {
+    "exist": false,
+    "polygon": [
+     {
+      "x": 390,
+      "y": 160
+     },
+     {
+      "x": 390,
+      "y": 310
+     },
+     {
+      "x": 209.05,
+      "y": 310
+     },
+     {
+      "x": 209.05,
+      "y": 160
+     }
+    ]
+   },
+   {
+    "exist": false,
+    "polygon": [
+     {
+      "x": 190.95,
+      "y": 310
+     },
+     {
+      "x": 10,
+      "y": 310
+     },
+     {
+      "x": 10,
+      "y": 10
+     },
+     {
+      "x": 190.95,
+      "y": 10
+     }
+    ]
+   }
+  ]
+ }
+}
