@@ -6,6 +6,8 @@ import { loadSession } from "../../src/session.ts";
 import { STATE_PATH } from "../../src/config.ts";
 import { loadModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;

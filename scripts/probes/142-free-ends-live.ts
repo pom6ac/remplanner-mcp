@@ -14,6 +14,8 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { loadModel } from "../../src/api.ts";
 import { loadSession, type SessionState } from "../../src/session.ts";
 import { STATE_PATH } from "../../src/config.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
@@ -109,7 +111,7 @@ function deepDiff(a: unknown, b: unknown, path: string, out: string[]): void {
 
 async function main() {
   // 0. control GET до
-  const snapBefore = await withTimeout(loadModel(session, SNAP_ID, SNAP_PLAN), 60_000, "control GET before");
+  const snapBefore = await withTimeout(loadModel(session, SNAP_ID!, SNAP_PLAN!), 60_000, "control GET before");
 
   // 1. бэкап dev-объекта
   const ctxMod = await import("../../src/server/context.ts");
@@ -214,7 +216,7 @@ async function main() {
   await client.close().catch(() => {});
 
   // 9. control GET после — не изменился
-  const snapAfter = await withTimeout(loadModel(session, SNAP_ID, SNAP_PLAN), 60_000, "control GET after");
+  const snapAfter = await withTimeout(loadModel(session, SNAP_ID!, SNAP_PLAN!), 60_000, "control GET after");
   const strip = (m: AnyRec) => { const c = structuredClone(m); for (const k of ["session", "log_plan", "logs"]) delete c[k]; return c; };
   const same = JSON.stringify(strip(snapBefore.model)) === JSON.stringify(strip(snapAfter.model));
   console.log("контрольный проект:", same ? "НЕ ИЗМЕНИЛСЯ" : "ИЗМЕНИЛСЯ (расхождение!)");

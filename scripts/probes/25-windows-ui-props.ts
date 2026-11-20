@@ -6,6 +6,8 @@ import { closeBrowser } from "../../src/browser.ts";
 import { STATE_PATH } from "../../src/config.ts";
 import { loadSession } from "../../src/session.ts";
 import { clearFog, clickAt, escape, pickTool, switchSheet, toScreen } from "./phase2-lib.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 async function visibleFields(page: Page): Promise<unknown> {
   return page.evaluate(() => {

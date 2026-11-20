@@ -8,6 +8,8 @@ import { loadSession } from "../../src/session.ts";
 import { cookieHeader } from "../../src/session.ts";
 import { STATE_PATH, BASE_URL, HTTP_TIMEOUT_MS, USER_AGENT } from "../../src/config.ts";
 import { loadModel, saveModel } from "../../src/api.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_* из env)");

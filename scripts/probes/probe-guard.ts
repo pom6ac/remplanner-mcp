@@ -243,6 +243,6 @@ export function guardedSave(guard: ReadonlyGuard, save: () => Promise<unknown>):
 /** Решение координатора (ревью 321 N3г, задача 322 п.1г): старые записывающие
  *  пробы без probe-guard НЕ переписываются — их запуск запрещён. Вызывается
  *  первой исполняемой строкой такой пробы. */
-export function refuseLegacyProbe(): never {
+export function refuseLegacyProbe(): void {
   throw new Error("устаревшая пишущая проба без гардов — запуск запрещён (ревью 321 N3г, решение координатора в задаче 322)");
 }

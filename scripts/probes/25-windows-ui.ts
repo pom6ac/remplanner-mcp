@@ -9,6 +9,8 @@ import { closeBrowser } from "../../src/browser.ts";
 import { STATE_PATH } from "../../src/config.ts";
 import { loadSession } from "../../src/session.ts";
 import { clearFog, clickAt, escape, pickTool, switchSheet, toScreen, arg, type P } from "./phase2-lib.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 const OUT = ".orca-reports/25-windows-ui";
 const SHOTS = "screenshots";
@@ -57,7 +59,7 @@ function dumpMenus(page: Page): Promise<Record<string, unknown>[]> {
   return page.evaluate(() => {
     const out: Record<string, unknown>[] = [];
     for (const el of Array.from(document.querySelectorAll("[id^='cm-']")) as HTMLElement[]) {
-      if (!el.offsetParent && el.type !== "hidden") continue;
+      if (!el.offsetParent && (el as unknown as { type?: string }).type !== "hidden") continue;
       const tag = el.tagName.toLowerCase();
       const rec: Record<string, unknown> = { id: el.id, tag, value: (el as HTMLInputElement).value ?? el.textContent?.trim() };
       if (tag === "select") rec.options = Array.from((el as HTMLSelectElement).options).map((o) => ({ v: o.value, t: o.textContent?.trim() }));
@@ -116,7 +118,7 @@ try {
       await shot(page, `25-win-${key}-plan`);
       // панель свойств: правый клик по центру проёма
       if (added) {
-        const hp = { x: added.pc.x as number, y: added.pc.y as number };
+        const hp = { x: (added.pc as number), y: (added.pc as number) };
         await clickAt(page, hp, "right");
         await page.waitForTimeout(500);
         res.menu = await dumpMenus(page);

@@ -11,6 +11,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { copyFileSync } from "node:fs";
 import { ServerContext } from "../../src/server/context.ts";
 import { buildServer } from "../../src/server.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
@@ -119,7 +121,7 @@ console.log("+ free:", r1.entity.site_id, JSON.stringify(r1.entity.from), "→",
 const spot = wallFace();
 if (!spot) fail("нет стены для прилипания");
 const r2 = json(await client.callTool({ name: "rigel_add", arguments: {
-  start: mm(spot.face), end: mm(spot.away), depth_mm: 300, height_mm: 300,
+  start: mm(spot!.face), end: mm(spot!.away), depth_mm: 300, height_mm: 300,
 } }));
 if (r2.code) fail(`rigel_add 2: ${r2.code} ${r2.message}`);
 const wallLink = r2.entity.links.find((l: any) => l.end === "p1");
@@ -183,12 +185,12 @@ const pillarSpot = ((): { face: { x: number; y: number }; away: { x: number; y: 
 })();
 if (!pillarSpot) fail("нет свободной грани колонны для ригеля");
 const rP = json(await client.callTool({ name: "rigel_add", arguments: {
-  start: mm(pillarSpot.face), end: mm(pillarSpot.away), depth_mm: 250, height_mm: 400,
+  start: mm(pillarSpot!.face), end: mm(pillarSpot!.away), depth_mm: 250, height_mm: 400,
 } }));
 if (rP.code) fail(`rigel_add pillar: ${rP.code} ${rP.message}`);
 console.log("+ pillar-attached:", rP.entity.site_id, "links:", JSON.stringify(rP.entity.links));
 const pLink = rP.entity.links.find((l: any) => l.end === "p1");
-if (!pLink || pLink.ot !== "pillar" || pLink.id !== pillarSpot.pillarId) {
+if (!pLink || pLink.ot !== "pillar" || pLink.id !== pillarSpot!.pillarId) {
   fail(`конец p1 не прилип к колонне: ${JSON.stringify(rP.entity.links)}`);
 }
 added.push({ id: rP.entity.site_id, label: "pillar-attached", expect: { depth_mm: 250, height_mm: 400 } });
@@ -267,7 +269,7 @@ if (chainBAfter && !hasLink(chainBAfter, "p1", "rigel", chainA.entity.site_id)) 
   failed++;
 }
 const rPAfter = byId.get(rP.entity.site_id);
-if (rPAfter && !hasLink(rPAfter, "p1", "pillar", pillarSpot.pillarId)) {
+if (rPAfter && !hasLink(rPAfter, "p1", "pillar", pillarSpot!.pillarId)) {
   console.error(`✖ pillar-attached: связь с колонной потеряна: ${JSON.stringify(rPAfter.links)}`);
   failed++;
 }
