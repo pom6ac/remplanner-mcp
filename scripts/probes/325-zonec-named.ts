@@ -21,6 +21,15 @@
 // диагностика viewBox/экранных координат/px-длины drag и скриншоты листа
 // до/после drag (.orca-reports/tmp/326-drag-*.png); (A) validate печатает
 // полный ответ (ok:false в дев-объекте — не по zone_c, см. отчёт 326).
+// Правка 327 (разбор FAIL 326 по (C)): GET-формат zone_delimiters —
+// Record<ключ, запись> с полем id записи; поля site_id в сыром GET НЕТ
+// (site_id — имя поля компакта model_get, там site_id = rec.id ?? ключ,
+// zoneDelimiterList) — сверка 325/326 по d["site_id"] не могла пройти ни при
+// каком id, вывод 326 «регенерация id при save» кодом не подтверждён. Сверка
+// (C) переделана: серверный id делителя = разность наборов GET до/после
+// page save по полю id записей + геометрия (концы ±0,5 см, id_room, plan c),
+// равенство локального id редактора не требуется; restore — zone_c_remove по
+// захваченному серверному id.
 // node scripts/probes/325-zonec-named.ts run
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -60,6 +69,8 @@ const call = async (name: string, args: Record<string, unknown> = {}): Promise<R
 };
 
 let createdWalls: Array<{ siteId: string }> = [];
+/** Серверный id drag-делителя (разность GET + геометрия) — для restore. */
+let dragServerId: string | null = null;
 let roGuard: ReadonlyGuard | null = null;
 const page = (): import("playwright-core").Page => {
   const ed = (ctx.workspaceOrNull?.editorOrNull() ?? null) as unknown as { page?: import("playwright-core").Page } | null;
@@ -160,16 +171,30 @@ async function serverRoomName(roomId: string): Promise<unknown> {
   return room?.name;
 }
 
-/** zone_c-делители на сервере (GET). */
-async function serverZoneC(): Promise<Array<Record<string, unknown>>> {
+/** zone_c-делители на сервере (GET): id записей (поле id; ключ = id) + записи.
+ *  Поле site_id в сыром GET отсутствует — это имя поля компакта model_get. */
+async function serverZoneCEntries(): Promise<Array<{ id: string; rec: Record<string, unknown> }>> {
   const m = await loadModel(ctx.session(), OBJECT_ID!, PLAN_ID!);
-  return Object.values((m.model["zone_delimiters"] ?? {}) as Record<string, Record<string, unknown>>)
-    .filter((d) => String(d["type"]) === "zone_c");
+  const zd = (m.model["zone_delimiters"] ?? {}) as Record<string, Record<string, unknown>>;
+  return Object.entries(zd)
+    .filter(([, d]) => String(d["type"]) === "zone_c")
+    .map(([key, d]) => ({ id: String(d["id"] ?? key), rec: d }));
 }
 
-/** zone_c-делитель с данным site_id на сервере (GET). */
-function dragDelimOnServer(list: Array<Record<string, unknown>>, id: string): boolean {
-  return list.some((d) => String(d["site_id"] ?? "") === id);
+/** Концы записи делителя (см, первая/последняя вершина). */
+function endsOf(rec: Record<string, unknown>): Array<{ x: number; y: number }> {
+  const v = (rec["vertexes"] ?? []) as Array<{ point?: { x: number; y: number } }>;
+  const p1 = v[0]?.point, p2 = v[v.length - 1]?.point;
+  if (!p1 || !p2) throw new Error("запись делителя без двух концов");
+  return [p1, p2];
+}
+
+const distCm = (a: { x: number; y: number }, b: { x: number; y: number }): number => Math.hypot(a.x - b.x, a.y - b.y);
+
+/** Та же геометрия: концы совпадают с точностью ±0,5 см (порядок концов не важен). */
+function sameEnds(a: Array<{ x: number; y: number }>, b: Array<{ x: number; y: number }>): boolean {
+  return (distCm(a[0]!, b[0]!) <= 0.5 && distCm(a[1]!, b[1]!) <= 0.5) ||
+    (distCm(a[0]!, b[1]!) <= 0.5 && distCm(a[1]!, b[0]!) <= 0.5);
 }
 
 /** Правка не по зонам: wall_add + wall_delete далеко от пробной комнаты (net-zero). */
@@ -186,8 +211,13 @@ async function nonZoneEdit(): Promise<void> {
   console.log("правка не по зонам (wall_add+wall_delete):", JSON.stringify({ removed: del["removed"] ?? del["ok"] ?? true }));
 }
 
-/** Restore: убрать свои стены (комната с именем исчезает вместе со стенами). */
+/** Restore: убрать drag-делитель по захваченному серверному id, затем свои
+ *  стены (комната с именем исчезает вместе со стенами). */
 async function restoreWalls(): Promise<void> {
+  if (dragServerId) {
+    try { await call("zone_c_remove", { delimiter_id: dragServerId }); } catch (e) { console.log(`restore: zone_c_remove ${dragServerId}:`, String((e as Error).message).slice(0, 200)); }
+    dragServerId = null;
+  }
   const want = new Set(createdWalls.map((w) => w.siteId));
   for (let guard = 0; guard < 40 && want.size > 0; guard++) {
     const mg = await call("model_get", {});
@@ -249,10 +279,10 @@ try {
   console.log("(A) save:", JSON.stringify({ verified: saveA["verified"], warnings: saveA["warnings"] }));
   if (!saveA["verified"]) throw new Error("(A) save не verified");
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
-  const zdsA = await serverZoneC();
+  const zdsA = await serverZoneCEntries();
   const nameA = await serverRoomName(trial.roomId);
-  console.log("(A) reopen:", JSON.stringify({ zoneC: zdsA.length, plan: zdsA[0]?.["plan"], name: nameA }));
-  if (zdsA.length !== 1 || zdsA[0]!["plan"] !== "c") throw new Error("(A) делитель zone_c не дошёл до сервера");
+  console.log("(A) reopen:", JSON.stringify({ zoneC: zdsA.length, plan: zdsA[0]?.rec["plan"], id: zdsA[0]?.id, name: nameA }));
+  if (zdsA.length !== 1 || zdsA[0]!.rec["plan"] !== "c") throw new Error("(A) делитель zone_c не дошёл до сервера");
   if (nameA !== NAME) throw new Error("(A) room.name потерян после save MCP");
 
   // ---- (B) zone_c_remove → save verified → reopen → делителя нет, имя цело ----
@@ -264,7 +294,7 @@ try {
   console.log("(B) save:", JSON.stringify({ verified: saveB["verified"], warnings: saveB["warnings"] }));
   if (!saveB["verified"]) throw new Error("(B) save не verified");
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
-  const zdsB = await serverZoneC();
+  const zdsB = await serverZoneCEntries();
   const nameB = await serverRoomName(trial.roomId);
   console.log("(B) reopen:", JSON.stringify({ zoneC: zdsB.length, name: nameB }));
   if (zdsB.length !== 0) throw new Error("(B) делитель zone_c не удалён с сервера");
@@ -288,6 +318,9 @@ try {
     await edN.normalize(prepared);
   }
   const p = page();
+  // серверный набор zone_c ДО drag (правка 327): серверный id делителя ищем
+  // разностью наборов GET до/после page save, не равенством локального id
+  const serverBeforeC = await serverZoneCEntries();
   // лист «Перегородки»: клик с проверкой активации (один повтор)
   const sheetClick = await p.evaluate(() => {
     const el: any = document.querySelector(".groups_navi_item.plan_create_walls") ??
@@ -330,7 +363,7 @@ try {
   console.log("(C) drag-координаты:", JSON.stringify({ sa, sb, distPx: Math.round(distPx), viewBox, vp }));
   if (!onScreen) throw new Error("(C) концы drag вне вьюпорта — пробная комната не в видимой области");
   if (distPx < 30) throw new Error(`(C) drag на экране ${Math.round(distPx)} px (<30) — комната слишком мелкая/не видна`);
-  await p.screenshot({ path: ".orca-reports/tmp/326-drag-before.png" });
+  await p.screenshot({ path: ".orca-reports/tmp/327-drag-before.png" });
   await p.mouse.move(sa.x, sa.y, { steps: 5 });
   await p.waitForTimeout(300);
   await p.mouse.down();
@@ -339,13 +372,27 @@ try {
   await p.waitForTimeout(300);
   await p.mouse.up();
   await p.waitForTimeout(1200);
-  await p.screenshot({ path: ".orca-reports/tmp/326-drag-after.png" });
-  const dragDelims = (await p.evaluate(() => {
+  await p.screenshot({ path: ".orca-reports/tmp/327-drag-after.png" });
+  // новые записи делителей после drag (локальные id + запись для геометрии —
+  // локальный id используется только для захвата своих, не для сверки с сервером)
+  const localDelimsAfter = await p.evaluate(() => {
     const w: any = window as any;
-    return Object.keys(w.project.copy("server").zone_delimiters ?? {}) as string[];
-  })).filter((id) => !delimIdsBefore.has(id));
+    const zd = (w.project.copy("server").zone_delimiters ?? {}) as Record<string, Record<string, unknown>>;
+    return Object.fromEntries(Object.entries(zd).map(([k, v]) => [k, {
+      id: String(v["id"] ?? k),
+      type: String(v["type"] ?? ""),
+      plan: String(v["plan"] ?? ""),
+      id_room: String(v["id_room"] ?? ""),
+      vertexes: v["vertexes"],
+    }]));
+  }) as Record<string, { id: string; type: string; plan: string; id_room: string; vertexes: unknown }>;
+  const dragDelims = Object.keys(localDelimsAfter).filter((id) => !delimIdsBefore.has(id));
   console.log("(C) drag: новых делителей:", JSON.stringify(dragDelims));
   if (dragDelims.length !== 1) throw new Error(`(C) после drag новых делителей не ровно один (${dragDelims.length}) — стоп`);
+  const localRec = localDelimsAfter[dragDelims[0]!]!;
+  if (localRec.type !== "zone_c" || localRec.plan !== "c") throw new Error(`(C) drag-делитель не zone_c/plan c: ${localRec.type}/${localRec.plan}`);
+  if (localRec.id_room !== trial.roomId) throw new Error(`(C) drag-делитель в другой комнате: ${localRec.id_room}`);
+  const localEnds = endsOf(localRec as unknown as Record<string, unknown>);
   await assertUnchanged("перед (C) page save");
   const pageSaveC = await p.evaluate(async () => {
     const w: any = window as any;
@@ -354,11 +401,29 @@ try {
   console.log("(C) page save:", JSON.stringify(pageSaveC));
   await wait(2500);
   if (String(pageSaveC).startsWith("ERR")) throw new Error(`(C) page save не прошёл: ${String(pageSaveC)}`);
+  // серверный id drag-делителя (правка 327): разность наборов GET до/после
+  // page save по полю id записей + геометрия (концы ±0,5 см, id_room, plan c)
+  const serverAfterPageSave = await serverZoneCEntries();
+  const newServer = serverAfterPageSave.filter((e) => !serverBeforeC.some((b) => b.id === e.id));
+  console.log("(C) сервер после page save:", JSON.stringify({
+    zoneC: serverAfterPageSave.length,
+    новых: newServer.map((e) => e.id),
+  }));
+  if (newServer.length !== 1) throw new Error(`(C) на сервере новых zone_c-делителей не ровно один (${newServer.length}) — стоп`);
+  const cand = newServer[0]!;
+  const candEnds = endsOf(cand.rec);
+  if (!sameEnds(localEnds, candEnds)) throw new Error(`(C) новый серверный делитель ${cand.id} не совпал по геометрии с drag-делителем`);
+  if (String(cand.rec["id_room"] ?? "") !== localRec.id_room) throw new Error(`(C) id_room не совпал: ${cand.rec["id_room"]} != ${localRec.id_room}`);
+  if (String(cand.rec["plan"] ?? "") !== "c") throw new Error(`(C) plan не c: ${cand.rec["plan"]}`);
+  dragServerId = cand.id;
+  console.log("(C) захвачен серверный id drag-делителя:", dragServerId);
   // ингест делителя UI
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
-  const zdsC0 = await serverZoneC();
-  console.log("(C) после ингеста:", JSON.stringify({ zoneC: zdsC0.length, захваченный: zdsC0.some((d) => String(d["site_id"] ?? "") === dragDelims[0]) }));
-  if (!dragDelimOnServer(zdsC0, dragDelims[0]!)) throw new Error("(C) делитель UI не подхвачен при project_open");
+  const zdsC0 = await serverZoneCEntries();
+  const afterIngest = zdsC0.find((e) => e.id === dragServerId);
+  console.log("(C) после ингеста:", JSON.stringify({ zoneC: zdsC0.length, захваченный: Boolean(afterIngest), id: dragServerId }));
+  if (!afterIngest) throw new Error("(C) делитель UI не подхвачен при project_open");
+  if (!sameEnds(localEnds, endsOf(afterIngest.rec))) throw new Error("(C) после ингеста геометрия делителя изменилась");
   // правка не по зонам → save MCP → делитель НЕ удалён
   await assertUnchanged("перед (C) правка не по зонам");
   await nonZoneEdit();
@@ -366,10 +431,12 @@ try {
   const saveC = await call("project_save", {});
   console.log("(C) save:", JSON.stringify({ verified: saveC["verified"], warnings: saveC["warnings"] }));
   if (!saveC["verified"]) throw new Error("(C) save не verified");
-  const zdsC = await serverZoneC();
+  const zdsC = await serverZoneCEntries();
+  const survived = zdsC.find((e) => e.id === dragServerId);
   const nameC = await serverRoomName(trial.roomId);
-  console.log("(C) после save MCP:", JSON.stringify({ zoneC: zdsC.length, dragDelimSurvived: zdsC.some((d) => String(d["site_id"] ?? "") === dragDelims[0]), name: nameC }));
-  if (!dragDelimOnServer(zdsC, dragDelims[0]!)) throw new Error("(C) делитель UI УДАЛЁН save MCP");
+  console.log("(C) после save MCP:", JSON.stringify({ zoneC: zdsC.length, dragDelimSurvived: Boolean(survived), id: dragServerId, name: nameC }));
+  if (!survived) throw new Error("(C) делитель UI УДАЛЁН save MCP");
+  if (!sameEnds(localEnds, endsOf(survived.rec))) throw new Error("(C) после save MCP геометрия делителя изменилась");
   if (nameC !== NAME) throw new Error("(C) room.name потерян");
 
   await restoreWalls();
