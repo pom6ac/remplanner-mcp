@@ -493,19 +493,28 @@ export function rebuildCeilingZones(model: Model, roomId: string): void {
     if (rec) { out.push(rec); continue; }
     out.push({ polygon: roundPoly(faces[zi]!), edges: polygonEdgesOf(faces[zi]!), exist: false });
   }
-  restoreNichesByGeometry(oldRecords, out);
+  // карта «старая запись → индекс зоны-наследника отделки» (kept/redistributed):
+  // ниши старой записи переносятся только в запись, которой она досталась
+  // (как restoreCeiling → restoreCeilingNiches(old, room.ceilings[e]) редактора)
+  const heirZoneOf = new Map<Rec, number>();
+  for (const k of kept) heirZoneOf.set(k.rec, k.zone);
+  for (const r of redistributed) if (!heirZoneOf.has(r.rec)) heirZoneOf.set(r.rec, r.zone);
+  restoreNichesByGeometry(oldRecords, out, heirZoneOf);
   room.ceilings = out;
 }
 
 /**
- * Порт restoreCeilingNiches (ревью 311 №4): ниши старых записей переносятся
- * по геометрии — контейнер ниши ставится в новую запись на ребре, коллинеарном
- * линии ниши (старое ребро записи или линия части), с перекрытием. id_ceiling
- * частей обновляется на id записи-хозяина. Ниша без ребра-хозяина — отказ
- * с подсказкой finish_ceiling_niche_remove (не молча и не на чужое ребро).
+ * Порт restoreCeilingNiches + restoreCeilingNiche (режим 4) редактора
+ * (ревью 311 №4, уточнение 313 №4): ниши старой записи переносятся ТОЛЬКО в
+ * запись-наследника её отделки (heirZoneOf — kept/redistributed цель), на рёбра
+ * этой записи. Режим 4: конец части, совпавший с концом старого ребра,
+ * перепривязывается к концу нового ребра, иной конец проецируется на прямую
+ * нового ребра, затем LIB.crossLine обрезает линию части по новому ребру
+ * (сверено с бандлом 268). Ниша без наследника или без подходящего ребра —
+ * отказ с подсказкой finish_ceiling_niche_remove (не молча и не на чужое ребро).
  */
-function restoreNichesByGeometry(oldRecords: Rec[], newRecords: Rec[]): void {
-  type NicheItem = { container: Rec; line: { p1: Point; p2: Point } };
+function restoreNichesByGeometry(oldRecords: Rec[], newRecords: Rec[], heirZoneOf: Map<Rec, number>): void {
+  type NicheItem = { from: Rec; container: Rec; line: { p1: Point; p2: Point }; edgeLine: { p1: Point; p2: Point } | null };
   const items: NicheItem[] = [];
   for (const old of oldRecords) {
     const niches = old["niches"];
@@ -518,46 +527,89 @@ function restoreNichesByGeometry(oldRecords: Rec[], newRecords: Rec[]): void {
       const part = Object.values(parts)[0];
       const partLine = part?.["line"] as { p1?: Point; p2?: Point } | undefined;
       const edge = oldEdges[idx];
-      const line = edge?.p1 && edge?.p2
-        ? { p1: edge.p1, p2: edge.p2 }
-        : partLine?.p1 && partLine?.p2 ? { p1: partLine.p1, p2: partLine.p2 } : null;
-      if (line) items.push({ container: structuredClone(cont) as Rec, line });
+      const edgeLine = edge?.p1 && edge?.p2 ? { p1: edge.p1, p2: edge.p2 } : null;
+      const line = edgeLine ??
+        (partLine?.p1 && partLine?.p2 ? { p1: partLine.p1, p2: partLine.p2 } : null);
+      if (line) items.push({ from: old, container: structuredClone(cont) as Rec, line, edgeLine });
     });
   }
   if (items.length === 0) return;
   // ниши не копируются из старых записей (даже совпавших) — только перенос по геометрии
   for (const rec of newRecords) delete rec["niches"];
+  const eq = (p: Point, q: Point | undefined): boolean =>
+    q !== undefined && Math.abs(p.x - q.x) <= 0.5 && Math.abs(p.y - q.y) <= 0.5;
+  /** Проекция точки на бесконечную прямую отрезка (LIB.projection на bigLine). */
+  const projectOnLine = (p: Point, l: { p1: Point; p2: Point }): Point => {
+    const vx = l.p2.x - l.p1.x, vy = l.p2.y - l.p1.y;
+    const len2 = vx * vx + vy * vy;
+    if (len2 < 1e-12) return { ...l.p1 };
+    const t = ((p.x - l.p1.x) * vx + (p.y - l.p1.y) * vy) / len2;
+    return { x: l.p1.x + vx * t, y: l.p1.y + vy * t };
+  };
+  /** Общая часть двух коллинеарных отрезков (LIB.crossLine) или null. */
+  const crossLineSpan = (a: { p1: Point; p2: Point }, b: { p1: Point; p2: Point }): { p1: Point; p2: Point } | null => {
+    const vx = a.p2.x - a.p1.x, vy = a.p2.y - a.p1.y;
+    const len = Math.hypot(vx, vy);
+    if (len < 1e-9) return null;
+    const d = (p: Point): number => Math.abs((p.x - a.p1.x) * vy - (p.y - a.p1.y) * vx) / len;
+    if (d(b.p1) > TOL || d(b.p2) > TOL) return null; // не на прямой a
+    const t = (p: Point): number => ((p.x - a.p1.x) * vx + (p.y - a.p1.y) * vy) / (len * len);
+    const lo = Math.max(0, Math.min(t(b.p1), t(b.p2)));
+    const hi = Math.min(1, Math.max(t(b.p1), t(b.p2)));
+    if (hi - lo <= TOL / len) return null;
+    return {
+      p1: { x: a.p1.x + vx * lo, y: a.p1.y + vy * lo },
+      p2: { x: a.p1.x + vx * hi, y: a.p1.y + vy * hi },
+    };
+  };
   const placed = new Set<NicheItem>();
-  for (const rec of newRecords) {
+  for (const item of items) {
+    const zi = heirZoneOf.get(item.from);
+    if (zi === undefined) continue; // наследника нет — перенос невозможен (отказ ниже)
+    const rec = newRecords[zi]!;
     const edges = Array.isArray(rec["edges"]) ? rec["edges"] as Array<{ p1?: Point; p2?: Point }> : [];
     if (edges.length === 0) continue;
-    const niches: Rec[] = [];
-    edges.forEach((e, idx) => {
-      if (!e.p1 || !e.p2) return;
-      for (const item of items) {
-        if (placed.has(item)) continue;
-        if (collinearOverlapCm(item.line, { p1: e.p1, p2: e.p2 }, TOL) > TOL) {
-          if (niches.length === 0) {
-            for (let k = 0; k < edges.length; k++) niches.push({ exist: false });
+    for (let idx = 0; idx < edges.length; idx++) {
+      const e = edges[idx]!;
+      if (!e.p1 || !e.p2) continue;
+      const clip = crossLineSpan(item.line, { p1: e.p1, p2: e.p2 });
+      if (!clip) continue; // у записи-наследника нет ребра на линии ниши
+      if (!Array.isArray(rec["niches"])) rec["niches"] = edges.map(() => ({ exist: false }) as Rec);
+      const niches = rec["niches"] as Rec[];
+      if (niches[idx]!["exist"] === true) continue; // ребро уже занято другой нишей
+      const container = item.container;
+      const parts = (container["parts"] ?? {}) as Record<string, Rec>;
+      for (const part of Object.values(parts)) {
+        const pl = part["line"] as { p1?: Point; p2?: Point } | undefined;
+        if (pl?.p1 && pl?.p2) {
+          // режим 4: концы, совпавшие с концами СТАРОГО ребра, → концы нового ребра,
+          // иные — проекция на прямую нового ребра; затем обрезка по новому ребру
+          const ref = item.edgeLine;
+          const remap = (p: Point): Point =>
+            ref && eq(p, ref.p1) ? { ...e.p1! }
+            : ref && eq(p, ref.p2) ? { ...e.p2! }
+            : projectOnLine(p, { p1: e.p1!, p2: e.p2! });
+          const mapped = { p1: remap(pl.p1), p2: remap(pl.p2) };
+          const span = crossLineSpan(mapped, { p1: e.p1!, p2: e.p2! });
+          if (span) {
+            part["line"] = {
+              p1: { x: Math.round(span.p1.x * 100) / 100, y: Math.round(span.p1.y * 100) / 100 },
+              p2: { x: Math.round(span.p2.x * 100) / 100, y: Math.round(span.p2.y * 100) / 100 },
+            };
           }
-          if (niches[idx]!["exist"] === true) continue; // ребро уже занято другой нишей
-          const container = item.container;
-          const parts = (container["parts"] ?? {}) as Record<string, Rec>;
-          if (typeof rec["id"] === "string") {
-            for (const part of Object.values(parts)) part["id_ceiling"] = rec["id"];
-          }
-          niches[idx] = container;
-          placed.add(item);
         }
+        if (typeof rec["id"] === "string") part["id_ceiling"] = rec["id"];
       }
-    });
-    if (niches.length > 0) rec["niches"] = niches;
+      niches[idx] = container;
+      placed.add(item);
+      break;
+    }
   }
   const lost = items.filter((i) => !placed.has(i));
   if (lost.length > 0) {
     throw new McpError(
       "INVALID_ARGUMENT",
-      "закарнизная ниша комнаты не ложится на рёбра новых зон потолка (пересчёт зон при операции с закладной/делителем) — сначала finish_ceiling_niche_remove, затем повторите операцию",
+      "закарнизная ниша комнаты не ложится на рёбра зоны-наследника отделки (пересчёт зон при операции с закладной/делителем) — сначала finish_ceiling_niche_remove, затем повторите операцию",
     );
   }
 }

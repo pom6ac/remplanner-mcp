@@ -386,40 +386,67 @@ test("312 №2: merge — объединённая комната потерял
   assert.ok(lost.problems.some((p) => p.includes("объединённая комната потеряла покрытие потолка")), JSON.stringify(lost.problems));
 });
 
-// ---------- ревью 311 №4: ниши не переносятся на чужие рёбра ----------
+// ---------- ревью 313 №4: ниши переносятся только в зону-наследника отделки ----------
 
-test("312 №4: ниша на левой стене остаётся на ребре левой зоны, не переезжает на грань закладной", () => {
+test("314 №4: ниша уходит в зону-наследника отделки, линия обрезается по ребру зоны (N1)", () => {
   const model = rectRoom("room1", 100, 100, 400, 300);
-  // ниша на левой стене (ребро 2) у записи-«вся комната» (как 311-exp4)
-  ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!["ceilings"] as Array<Record<string, unknown>>)[0] = {
-    exist: true, id: "_cA", material: "stretch_ceiling", level: 0, profile: "standard",
-    polygon: [{ x: 400, y: 100 }, { x: 400, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }],
-    niches: [
-      { exist: false },
-      { exist: false },
-      { exist: true, parts: { p1: { line: { p1: { x: 100, y: 300 }, p2: { x: 100, y: 100 } }, depth: 15, plan: "ceiling" } } },
-      { exist: false },
-    ],
-  };
-  // закладная ближе к левой стене: отделка уйдёт в правую (большую) зону,
-  // чьё ребро 2 — грань закладной, а не стена с нишей
-  addCeilingRigel(model, "room1", { start: { x: 1300, y: 1005 }, end: { x: 1300, y: 2995 } });
+  withEdgePids(model, "room1");
+  setCeilingFinish(model, "room1", "stretch_ceiling", {});
+  const res = addCeilingNiche(model, "room1", "wallT");
+  assert.ok(res.id, "ниша на верхней стене (вся длина ребра)");
+  addCeilingRigel(model, "room1", { start: { x: 2500, y: 1005 }, end: { x: 2500, y: 2995 } });
   const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
   assert.deepEqual(materialsOf(model, "room1"), ["stretch_ceiling"]);
-  // ниша выжила и стоит на ребре вдоль левой стены (x=100), а не на грани закладной
   const holders = ceilings.filter((c) => ((c["niches"] ?? []) as Array<Record<string, unknown>>).some((n) => n?.exist === true));
   assert.equal(holders.length, 1, `ниша в одной записи: ${JSON.stringify(holders.map((c) => c["niches"]))}`);
-  const holderEdges = holders[0]!["edges"] as Array<{ p1: Pt; p2: Pt }>;
-  const holderNiches = holders[0]!["niches"] as Array<Record<string, unknown>>;
-  const idx = holderNiches.findIndex((n) => n?.exist === true);
-  const hostEdge = holderEdges[idx]!;
+  assert.equal(holders[0]!["exist"], true, "ниша — в записи с отделкой (зона-наследник), а не в exist:false");
+  assert.equal(holders[0]!["material"], "stretch_ceiling");
+  const niches = holders[0]!["niches"] as Array<Record<string, unknown>>;
+  const idx = niches.findIndex((n) => n?.exist === true);
+  const part = Object.values((niches[idx]!["parts"] ?? {}) as Record<string, Record<string, unknown>>)[0]!;
+  const line = part["line"] as { p1: Pt; p2: Pt };
+  // линия на верхней стене (y=100)
+  assert.ok(Math.abs(line.p1.y - 100) < 0.05 && Math.abs(line.p2.y - 100) < 0.05, `линия ниши на верхней стене: ${JSON.stringify(line)}`);
+  // обрезка по ребру зоны-наследника: линия в пределах полигона зоны, полосу закладной не пересекает
+  const poly = holders[0]!["polygon"] as Pt[];
+  const xs = poly.map((p) => p.x);
+  const [zx0, zx1] = [Math.min(...xs), Math.max(...xs)];
   assert.ok(
-    Math.abs(hostEdge.p1.x - 100) < 0.05 && Math.abs(hostEdge.p2.x - 100) < 0.05,
-    `ниша на ребре левой стены, не на грани закладной: ${JSON.stringify(hostEdge)}`,
+    line.p1.x >= zx0 - 0.05 && line.p1.x <= zx1 + 0.05 && line.p2.x >= zx0 - 0.05 && line.p2.x <= zx1 + 0.05,
+    `линия ниши (${line.p1.x}..${line.p2.x}) в пределах зоны-наследника (${zx0}..${zx1})`,
   );
-  // id_ceiling части перепривязан к записи-хозяину
-  const part = Object.values((holderNiches[idx]!["parts"] ?? {}) as Record<string, Record<string, unknown>>)[0]!;
+  const inBand = [line.p1.x, line.p2.x].some((x) => x > 245.01 && x < 254.99);
+  assert.ok(!inBand, `линия ниши не проходит через закладную (полоса 245..255): ${JSON.stringify(line)}`);
+  // штатная подрезка UI у конца на ребре комнаты сохранена (2.5 см) — линия короче исходной
+  const ends = [line.p1.x, line.p2.x].sort((a, b) => a - b);
+  const keptEnd = Math.abs(ends[0]! - 102.5) < 0.05 || Math.abs(ends[1]! - 397.5) < 0.05;
+  assert.ok(keptEnd, `подрезка конца у ребра комнаты сохранена: ${JSON.stringify(ends)}`);
+  assert.ok(ends[1]! - ends[0]! < 295, `линия обрезана по ребру зоны: ${ends[1]! - ends[0]!} см`);
+  // id_ceiling — своей записи
   assert.equal(part["id_ceiling"], holders[0]!["id"]);
+});
+
+test("314 №4: у зоны-наследника отделки нет ребра на стене ниши — отказ до мутации (N2)", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  withEdgePids(model, "room1");
+  setCeilingFinish(model, "room1", "stretch_ceiling", {});
+  addCeilingNiche(model, "room1", "wallL");
+  const before = structuredClone(((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as unknown[]);
+  // закладная ближе к левой стене: отделка уйдёт в правую (большую) зону, у которой
+  // на левой стене (x=100) ребра нет — ниша не переносится ни на чужое ребро, ни молча
+  assert.throws(
+    () => addCeilingRigel(model, "room1", { start: { x: 1300, y: 1005 }, end: { x: 1300, y: 2995 } }),
+    (e: unknown) => {
+      const err = e as { code?: string; message?: string };
+      return err.code === "INVALID_ARGUMENT" && /finish_ceiling_niche_remove/.test(err.message ?? "");
+    },
+    "ниша в зону без ребра на её стене — консервативный отказ",
+  );
+  assert.deepEqual(
+    ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as unknown[],
+    before,
+    "отказ до мутации: ceilings не изменены",
+  );
 });
 
 test("312 №4: ниша, не ложащаяся на рёбра новых зон, — отказ с подсказкой finish_ceiling_niche_remove", () => {
