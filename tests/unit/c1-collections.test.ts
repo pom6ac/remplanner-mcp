@@ -160,6 +160,7 @@ const FULL_COLLECTIONS: Pick<Model, ModelEntityCollection> = {
   pipes_conditioner: { pc1: pipe("pc1", "conditioner_drainage") },
   pipes_heat: { ph1: pipe("ph1", "heat_pipe_hot") },
   pipes_ventilation: { pv1: pipe("pv1", "ventpipe_out") },
+  zone_delimiters: { zd1: { id: "zd1", type: "zone_ceiling", plan: "ceiling", length: 0.5, id_room: "room1", matrix: [[null, EDGE], [EDGE, null]], vertexes: [{ id: "zd1_n1", point: POINT, type: "node" }, { id: "zd1_n2", point: { x: 150, y: 100 }, type: "node" }], items: { zd1_n1: "node", zd1_n2: "node" }, on_size: 1 } },
 };
 
 /** Полная модель импорта: эталон + корневые поля Model. */

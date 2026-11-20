@@ -242,6 +242,12 @@ tests/              # node --test
 `dimension_add(start,end,offset_mm)`, `comment_add(point,text)`, `floor_finish_set(room_id, material, raise_mm)`,
 `ceiling_set(room_id, drop_mm, type)`, `wall_finish_set(wall_id, side, material, from_mm, to_mm)`.
 Формат этих сущностей в модели ещё не снят — их включаем только после живого дампа.
+Зонирование потолка (этап 260): `zone_ceiling_add(room_id, from_mm, to_mm)` /
+`zone_ceiling_remove(delimiter_id)` — линии-разделители зон в верхнеуровневой
+коллекции модели `zone_delimiters` (граф GraphLines; per-room
+`rooms2[rid].delimiters` — legacy, читается, но не пишется — ревью 261 №14),
+концы магнитятся к рёбрам комнаты (150 мм) или граням потолочных
+ригелей (100 мм); список — в `finish_get` (zone_delimiters, метки ZD<n>).
 
 ### 7.6 Чтение и проверка результата
 

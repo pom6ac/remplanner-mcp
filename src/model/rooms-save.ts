@@ -1,6 +1,7 @@
 import type { Point } from "./types.ts";
-import { closestPoint, dist, pointInPolygon, polygonArea, segmentsCross, type Segment } from "./geometry.ts";
+import { closestPoint, dist, parallelOverlapCm, pointInPolygon, polygonArea, segmentCrossesInterior, segmentsCross, type Segment } from "./geometry.ts";
 import { matchRoomsByContour, roomHeirs, roomPolygonOf, type FinishMode } from "./finish.ts";
+import { roomsMapOf } from "./room-geo.ts";
 
 // Надёжность save по комнатам (этап 126, урок ревью 46): прежняя сверка ловила только
 // полное исчезновение комнат (N→0). Частичная потеря N→M>0 и потеря пользовательских
@@ -276,6 +277,46 @@ export function roomsChangePolicy(
   const changed = changedWallSegments(baseWalls, nowWalls);
   if (changed.length === 0) return {};
   return { changedWalls: changed, affectedRoomIds: affectedRoomIds(baseRooms, changed) };
+}
+
+/** Комнаты модели (rooms2 ?? rooms1) — общий слой сверов; сама функция в room-geo
+ *  (листовом модуле, чтобы zone→rooms-save→finish→zone не замыкалась). */
+/**
+ * Затронутость комнат для сверки разделителей зон (ревью 263 N1, 265 R1) —
+ * строже, чем affectedRoomIds (та рассчитана на исчезновение комнат при
+ * нормализации и с допуском захвата соседа через общую стену). Изменённая
+ * стена задана осью, контур комнаты редактора идёт по грани стены
+ * (ось ± depth/2). Комната затронута, если:
+ *  - её ребро параллельно изменённой стене, перекрывается с ней на ненулевой
+ *    длине и лежит не дальше depth/2+1 см от оси (грань комнаты на грани
+ *    стены: удаление/перенос стены контура, в т. ч. общей и наружной), или
+ *  - отрезок оси проходит через внутренность контура (честное пересечение
+ *    отрезка с полигоном, без выборки точек).
+ * Т-примыкание конца новой стены к оси общей стены соседнюю комнату не
+ * затрагивает: ребро соседа перпендикулярно новой стене (обычный wall_add при
+ * split). undefined — стены не менялись.
+ */
+export function zoneAffectedRoomIds(
+  model: Record<string, unknown> | undefined,
+  policy: RoomsChangePolicy,
+): Set<string> | undefined {
+  const changed = policy.changedWalls;
+  if (!changed || changed.length === 0) return undefined;
+  const rooms = roomsMapOf(model) ?? {};
+  const out = new Set<string>();
+  for (const [rid, room] of Object.entries(rooms)) {
+    const poly = roomPolygonCm(room);
+    if (!poly) continue;
+    const touches = changed.some((w) => {
+      const maxDist = w.depthCm / 2 + 1;
+      for (let i = 0; i < poly.length; i++) {
+        if (parallelOverlapCm({ p1: poly[i]!, p2: poly[(i + 1) % poly.length]! }, w, maxDist) > 0.5) return true;
+      }
+      return segmentCrossesInterior(w, poly, 0.5);
+    });
+    if (touches) out.add(rid);
+  }
+  return out;
 }
 
 /**

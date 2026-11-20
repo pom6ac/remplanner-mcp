@@ -5,6 +5,7 @@ import { holeOffsetFromStart } from "./openings.ts";
 import { wallFaces } from "./wall-geometry.ts";
 import { projectionLength, type Segment } from "./geometry.ts";
 import { parseSwitchVertexId } from "./electric.ts";
+import { zoneDelimiterList } from "./zone.ts";
 
 // Компактное представление модели для агента (< 5 КБ): метки W/R/O/I, мм.
 
@@ -261,6 +262,22 @@ export type CompactFloorHole = {
   area_m2: number;
 };
 
+/** Разделитель зон (зонирование пола/потолка, этап 260). */
+export type CompactZoneDelimiter = {
+  id: string;
+  site_id: string;
+  /** Вид: zone_ceiling | zone_floor | zone_c | zone_hydroisolation | zone_floor_cap. */
+  type: string;
+  /** Лист: "ceiling" — потолок, "c" — зоны помещений, ... */
+  plan: string;
+  /** id комнаты, мм-координаты концов линии. */
+  room_id: string | null;
+  from: [number, number];
+  to: [number, number];
+  /** Длина линии, мм (все длины API — в мм). */
+  length_mm: number;
+};
+
 export type CompactBorder = {
   id: string;
   site_id: string;
@@ -310,6 +327,7 @@ export type CompactModel = {
   terrace_borders: CompactBorder[];
   territory_borders: CompactBorder[];
   level_holes: CompactFloorHole[];
+  zone_delimiters: CompactZoneDelimiter[];
   led_strips: CompactLightStrip[];
   stripes_light: CompactLightStrip[];
   line_strips: CompactLightStrip[];
@@ -565,6 +583,24 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     };
   });
 
+  // разделители зон (этап 260): один источник меток ZD<n> — zoneDelimiterList
+  // (верхнеуровневое zone_delimiters + legacy per-room с миграцией; ревью 261 №7:
+  // compact нумерует так же, как finish_get/list и zone_ceiling_remove)
+  const zoneDelimiters: CompactZoneDelimiter[] = zoneDelimiterList(model).map((d) => {
+    const from = d["from_mm"] as [number, number];
+    const to = d["to_mm"] as [number, number];
+    return {
+      id: String(d["id"] ?? ""),
+      site_id: String(d["site_id"] ?? ""),
+      type: String(d["type"] ?? ""),
+      plan: String(d["plan"] ?? ""),
+      room_id: (d["room_id"] as string | null) || null,
+      from: [round0(from[0]), round0(from[1])] as [number, number],
+      to: [round0(to[0]), round0(to[1])] as [number, number],
+      length_mm: round0(Number(d["length_mm"] ?? 0)),
+    };
+  });
+
   // световые линии листа «Освещение» (этап 84): метки LS/SL/LL
   const compactLightStrips = (
     src: Record<string, LedStrip | StripLight | LineStrip> | undefined,
@@ -711,6 +747,7 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     terrace_borders: terraceBorders,
     territory_borders: territoryBorders,
     level_holes: levelHoles,
+    zone_delimiters: zoneDelimiters,
     led_strips: compactLightStrips(model.led_strips, "LS"),
     stripes_light: compactLightStrips(model.stripes_light, "SL"),
     line_strips: compactLightStrips(model.line_strips, "LL"),

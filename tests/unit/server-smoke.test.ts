@@ -54,6 +54,8 @@ const EXPECTED_TOOLS = [
   "finish_floor_molding_set", "finish_floor_molding_remove",
   "finish_ceiling_molding_set", "finish_ceiling_molding_remove",
   "finish_ceiling_niche_add", "finish_ceiling_niche_remove",
+  // §7.4g — зонирование потолка (этап 260)
+  "zone_ceiling_add", "zone_ceiling_remove",
   // §7.4h — размеры и комментарии (нижняя панель, этап 113)
   "dim_add", "dim_update", "dim_delete", "dims_list",
   "comment_add", "comment_update", "comment_delete", "comments_list",

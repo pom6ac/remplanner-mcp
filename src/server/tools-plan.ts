@@ -43,6 +43,7 @@ import {
   FLOOR_MOLDING_TYPES, setFloorMolding, removeFloorMolding, setCeilingMolding, removeCeilingMolding,
   addCeilingNiche, removeCeilingNiche,
 } from "../model/finish.ts";
+import { addZoneCeiling, removeZoneCeiling, zoneDelimiterList } from "../model/zone.ts";
 import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
 } from "../model/terraces.ts";
@@ -1811,6 +1812,42 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           a["wall_id"] ? resolveWall(m, a["wall_id"] as string).id : undefined,
         ));
         return ok({ room_id: a["room_id"], wall_id: a["wall_id"] ?? null, sides: res.parts, hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Зонирование потолка (лист «Потолки», этап 260, PRO) ----------
+    zone_ceiling_add: tool(
+      "Провести линию-разделитель зон потолка в комнате (лист «Потолки», инструмент " +
+        "«Зонировать потолок»; PRO). Линия делит потолок комнаты на зоны с разной отделкой. " +
+        "from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм) " +
+        "или к грани потолочного ригеля/закладной (в 100 мм), как в редакторе: линия строится " +
+        "внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны, " +
+        "ригели и другие разделители. id — метка ZD<n> для zone_ceiling_remove и finish_get. " +
+        "После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        from_mm: mmPoint.describe("начало линии, мм"),
+        to_mm: mmPoint.describe("конец линии, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("zone_ceiling_add", (m) => addZoneCeiling(m, a["room_id"] as string, {
+          fromMm: a["from_mm"] as MmPoint,
+          toMm: a["to_mm"] as MmPoint,
+        }));
+        const n = zoneDelimiterList(ws.model).findIndex((d) => d["site_id"] === res.id);
+        return ok({ room_id: a["room_id"], id: `ZD${n + 1}`, site_id: res.id, length_mm: res.length_mm, hint: SCENARIO_HINT });
+      },
+    ),
+
+    zone_ceiling_remove: tool(
+      "Удалить линию-разделитель зон потолка (инструмент «ластик» на линии). " +
+        "delimiter_id — метка ZD<n> из finish_get или id сайта из zone_ceiling_add.",
+      { delimiter_id: z.string().min(1).describe("метка ZD<n> из finish_get или id разделителя") },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("zone_ceiling_remove", (m) => removeZoneCeiling(m, a["delimiter_id"] as string));
+        return ok({ delimiter_id: a["delimiter_id"], room_id: res.room_id, removed: res.removed, hint: SCENARIO_HINT });
       },
     ),
 

@@ -22,8 +22,9 @@ import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmat
 import { dist } from "./model/geometry.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { finishCompare } from "./model/finish.ts";
+import { zoneDelimiterCompare } from "./model/zone.ts";
 import { demolitionMismatches } from "./model/demolition.ts";
-import { roomsSaveCompare, roomsChangePolicy, type RoomsChangePolicy } from "./model/rooms-save.ts";
+import { roomsSaveCompare, roomsChangePolicy, zoneAffectedRoomIds, type RoomsChangePolicy } from "./model/rooms-save.ts";
 import { dimsMismatches } from "./model/dims.ts";
 import {
   cableConnectionMismatches,
@@ -605,13 +606,14 @@ export class Workspace {
       // комнат (norm.rooms), контурную сверку откладываем до верификации после записи.
       const normRoomsMap = ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined;
       const roomsPendingInCopy = (normRoomsMap === undefined || Object.keys(normRoomsMap).length === 0) && (norm.rooms?.length ?? 0) > 0;
+      const wallPolicy = this.roomChangePolicy(clone.walls as unknown as Record<string, unknown>);
       const roomsNormCheck = roomsPendingInCopy
         ? { problems: [], warnings: [] }
         : roomsSaveCompare(
             (this.roomSaveBase?.rooms ?? ((this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined)) as Record<string, unknown> | undefined,
             normRoomsMap,
             "normalize",
-            this.roomChangePolicy(clone.walls as unknown as Record<string, unknown>),
+            wallPolicy,
           );
       warnings.push(...roomsNormCheck.warnings);
       if (roomsNormCheck.problems.length > 0) {
@@ -619,9 +621,24 @@ export class Workspace {
           details: { room_mismatches: roomsNormCheck.problems },
         });
       }
-      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, пометки демонтажа, размеры/комментарии, сущности климата или щитки — мутация отменена`, {
-          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm, shield_mismatches: shieldsNorm },
+      // этап 260: разделители зон потолка после нормализации не теряются
+      // (сопоставление комнат по контуру; ревью 261 №5: комната, затронутая
+      // изменёнными стенами и исчезнувшая, — штатный случай, предупреждение;
+      // живой эталон 262: id комнат редактор пересоздаёт при перестройке —
+      // затронутость считается по геометрии комнат ожидания; ревью 263 N1:
+      // затронутость строже affectedRoomIds — сосед через общую стену при
+      // Т-примыкании не затронут)
+      const zoneAffected = zoneAffectedRoomIds(this.modelInternal as unknown as Record<string, unknown>, wallPolicy);
+      const zoneNorm = zoneDelimiterCompare(
+        this.modelInternal! as unknown as Record<string, unknown>,
+        norm.model as unknown as Record<string, unknown>,
+        "normalize",
+        { affectedRooms: zoneAffected },
+      );
+      warnings.push(...zoneNorm.warnings);
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0 || zoneNorm.problems.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, пометки демонтажа, размеры/комментарии, сущности климата, щитки или разделители зон потолка — мутация отменена`, {
+          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm, shield_mismatches: shieldsNorm, zone_mismatches: zoneNorm.problems },
         });
       }
       // нормализованная копия становится канонической

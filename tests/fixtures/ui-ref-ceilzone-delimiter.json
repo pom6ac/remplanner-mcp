@@ -1,0 +1,228 @@
+{
+ "_source": "Эталон зонирования потолка (этап 260, 2026-11-20): линия-delimiter снята КЛИКАМИ UI (инструмент zone_ceiling листа «Потолки») в dev-проекте пробами scripts/probes/260-zone-ui6.ts (drag от внешнего ребра к внешнему ребру одной комнаты) и 260-zone-serialize.ts (сериализация комнаты); запись на сервер не выполнялась. Координаты пересчитаны на синтетическую комнату-прямоугольник 10..390 × 10..310 (пропорции отрезка сохранены), внутренние ID (delimiter, вершин, комнаты, pids рёбер) заменены на zd1/v1/v2/room1/wall1..4. Привязка узлов zone (ребро комнаты) — производное редактора: calc() при restore пересчитывает её по геометрии; в записи MCP не пишется. После создания делителя ceilings комнаты делятся на зоны (длины массивов = числу зон).",
+ "room": {
+  "polygon": [
+   {
+    "x": 390,
+    "y": 10
+   },
+   {
+    "x": 390,
+    "y": 310
+   },
+   {
+    "x": 10,
+    "y": 310
+   },
+   {
+    "x": 10,
+    "y": 10
+   }
+  ],
+  "edges": [
+   {
+    "p1": {
+     "x": 390,
+     "y": 10
+    },
+    "p2": {
+     "x": 390,
+     "y": 310
+    },
+    "c": {
+     "x": 390,
+     "y": 160
+    },
+    "length": 300,
+    "side": "r",
+    "pid": "wall1",
+    "pids": {
+     "wall1": "r"
+    },
+    "parent": "wall",
+    "room_side": "l",
+    "inRoom": 0
+   },
+   {
+    "p1": {
+     "x": 390,
+     "y": 310
+    },
+    "p2": {
+     "x": 10,
+     "y": 310
+    },
+    "c": {
+     "x": 200,
+     "y": 310
+    },
+    "length": 380,
+    "side": "t",
+    "pid": "wall2",
+    "pids": {
+     "wall2": "t"
+    },
+    "parent": "wall",
+    "room_side": "b",
+    "inRoom": 0
+   },
+   {
+    "p1": {
+     "x": 10,
+     "y": 310
+    },
+    "p2": {
+     "x": 10,
+     "y": 10
+    },
+    "c": {
+     "x": 10,
+     "y": 160
+    },
+    "length": 300,
+    "side": "l",
+    "pid": "wall3",
+    "pids": {
+     "wall3": "l"
+    },
+    "parent": "wall",
+    "room_side": "r",
+    "inRoom": 0
+   },
+   {
+    "p1": {
+     "x": 10,
+     "y": 10
+    },
+    "p2": {
+     "x": 390,
+     "y": 10
+    },
+    "c": {
+     "x": 200,
+     "y": 10
+    },
+    "length": 380,
+    "side": "b",
+    "pid": "wall4",
+    "pids": {
+     "wall4": "b"
+    },
+    "parent": "wall",
+    "room_side": "t",
+    "inRoom": 0
+   }
+  ],
+  "id": "room1",
+  "ceilings": [
+   {
+    "exist": true,
+    "material": "gypsum_ceiling",
+    "polygon": [
+     {
+      "x": 390,
+      "y": 10
+     },
+     {
+      "x": 390,
+      "y": 310
+     },
+     {
+      "x": 10,
+      "y": 310
+     },
+     {
+      "x": 10,
+      "y": 10
+     }
+    ]
+   }
+  ]
+ },
+ "zone_delimiters": {
+  "zd1": {
+   "id": "zd1",
+   "matrix": [
+    [
+     null,
+     {
+      "length": 1
+     }
+    ],
+    [
+     {
+      "length": 1
+     },
+     null
+    ]
+   ],
+   "vertexes": [
+    {
+     "id": "v1",
+     "point": {
+      "x": 170.5,
+      "y": 10
+     },
+     "type": "node",
+     "zone": {
+      "room_id": "room1",
+      "edge": {
+       "p1": {
+        "x": 390,
+        "y": 10
+       },
+       "p2": {
+        "x": 10,
+        "y": 10
+       }
+      },
+      "edge_index": 3,
+      "edge_side": "b",
+      "edge_pid": "wall4",
+      "edge_pids": {
+       "wall4": "b"
+      },
+      "type": "room"
+     }
+    },
+    {
+     "id": "v2",
+     "point": {
+      "x": 150.1,
+      "y": 310
+     },
+     "type": "node",
+     "zone": {
+      "room_id": "room1",
+      "edge": {
+       "p1": {
+        "x": 390,
+        "y": 310
+       },
+       "p2": {
+        "x": 10,
+        "y": 310
+       }
+      },
+      "edge_index": 1,
+      "edge_side": "t",
+      "edge_pid": "wall2",
+      "edge_pids": {
+       "wall2": "t"
+      },
+      "type": "room"
+     }
+    }
+   ],
+   "items": {
+    "v1": "node",
+    "v2": "node"
+   },
+   "type": "zone_ceiling",
+   "length": 3.01,
+   "id_room": "room1",
+   "plan": "ceiling",
+   "on_size": 1
+  }
+ }
+}

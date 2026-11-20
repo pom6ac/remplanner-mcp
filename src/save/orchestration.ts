@@ -16,8 +16,9 @@ import {
 } from "../model/walls.ts";
 import { levelHoleMismatches } from "../model/floorhole.ts";
 import { finishCompare } from "../model/finish.ts";
+import { zoneDelimiterCompare } from "../model/zone.ts";
 import { demolitionMismatches } from "../model/demolition.ts";
-import { roomsSaveCompare, type RoomsChangePolicy } from "../model/rooms-save.ts";
+import { roomsSaveCompare, zoneAffectedRoomIds, type RoomsChangePolicy } from "../model/rooms-save.ts";
 import { dimsMismatches } from "../model/dims.ts";
 import {
   balconyWallPropertyMismatches,
@@ -134,6 +135,7 @@ const ENTITY_DELETE_LABELS: Record<Exclude<ModelEntityCollection, "walls">, stri
   pipes_conditioner: "дренажи кондиционеров",
   pipes_heat: "магистрали отопления",
   pipes_ventilation: "воздуховоды",
+  zone_delimiters: "разделители зон",
 };
 
 /**
@@ -426,6 +428,20 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     (norm.model as Record<string, unknown>)["walls"] as Record<string, unknown> | undefined,
     "normalize",
   );
+  // этап 260: разделители зон потолка до записи сверяются с нормализованной моделью
+  // (режим normalize: ревью 261 №5 — комната, затронутая изменёнными стенами
+  // и исчезнувшая, — предупреждение, не отказ; живой эталон 262: id комнат
+  // редактор пересоздаёт, затронутость — по геометрии комнат ожидания;
+  // ревью 263 N1: затронутость строже affectedRoomIds — Т-примыкание новой
+  // стены к оси общей стены не делает соседа затронутым)
+  const zoneWallPolicy = host.roomChangePolicy();
+  const zoneAffected = zoneAffectedRoomIds(host.model() as unknown as Record<string, unknown>, zoneWallPolicy);
+  const zoneNorm = zoneDelimiterCompare(
+    host.model() as unknown as Record<string, unknown>,
+    norm.model as unknown as Record<string, unknown>,
+    "normalize",
+    { affectedRooms: zoneAffected },
+  );
   // этап 113: размеры и комментарии до записи сверяются с нормализованной моделью
   const dimsNorm = dimsMismatches(host.model(), norm.model as Record<string, unknown>);
   // этап 122: сущности климата до записи сверяются с нормализованной моделью
@@ -489,6 +505,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 ||
     dimsNorm.length > 0 || climateNorm.length > 0 || roomsNormProblems.length > 0 ||
     shieldsNorm.length > 0 ||
+    zoneNorm.problems.length > 0 ||
     elecNorm.some((e) => e.lost.length > 0 || e.graph.length > 0 || e.conn.length > 0)
   ) {
     throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
@@ -528,6 +545,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         climate_mismatches: climateNorm,
         room_mismatches: roomsNormProblems,
         shield_mismatches: shieldsNorm,
+        zone_mismatches: zoneNorm.problems,
         ...Object.fromEntries(elecNorm.flatMap((e) => [
           [`lost_${e.coll}`, e.lost],
           [`${e.coll}_mismatches`, e.graph],
@@ -537,6 +555,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     });
   }
   warnings.push(...finishNorm.warnings);
+  warnings.push(...zoneNorm.warnings);
   warnings.push(...roomsNormCheck.warnings);
   let rounds = 0;
   let verified = false;
@@ -718,6 +737,19 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       structuredClone(((norm.model as Record<string, unknown>)["shields"] ?? {}) as Record<string, never>),
       ((after.model["shields"] as Record<string, unknown> | undefined) ?? {}) as Record<string, never>,
     );
+    // этап 260: разделители зон потолка после save — нормализованное ожидание против
+    // сервера, строго (привязка узлов zone — производное редактора, не сверяется;
+    // ревью 263 N2: затронутые комнаты в save сверяются строго, допустим только
+    // сдвиг концов до магнита — предупреждение)
+    const zoneAffectedAfter = zoneAffectedRoomIds(norm.model as unknown as Record<string, unknown>, zoneWallPolicy);
+    const zoneAfterCheck = zoneDelimiterCompare(
+      norm.model as unknown as Record<string, unknown>,
+      after.model as unknown as Record<string, unknown>,
+      "save",
+      { affectedRooms: zoneAffectedAfter },
+    );
+    warnings.push(...zoneAfterCheck.warnings);
+    const zoneAfter = zoneAfterCheck.problems;
     const roomsLost = normRooms > 0 && roomsAfter === 0;
     // этап 126: комнаты после save — строго (по каноническому контуру и
     // пользовательским полям): частичная потеря N→M>0 и потеря имени/зон — не verified
@@ -726,7 +758,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
       "save",
     ).problems;
-    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
+    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
       verified = true;
       finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
       host.onVerified(toModel(structuredClone(after.model)));
@@ -778,6 +810,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
           dims_mismatches: dimsAfter,
           climate_mismatches: climateAfter,
           shield_mismatches: shieldsAfter,
+          zone_mismatches: zoneAfter,
           ...Object.fromEntries(elecAfter.flatMap((e) => [
             [`${e.coll}_mismatches`, e.graph],
             [`${e.coll}_connection_mismatches`, e.conn],
