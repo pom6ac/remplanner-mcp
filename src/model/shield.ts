@@ -36,9 +36,6 @@ export const SHIELD_MODULE_SLOT_DIN = 0.5;
  */
 export const SHIELD_WIRE_TYPES = ["shield_wire_phase", "shield_wire_phase2", "shield_wire_phase3", "shield_wire_null", "shield_wire_earth"] as const;
 
-/** Лимит проводов щитка (limits.ts; в редакторе лимита нет — защита модели MCP). */
-export const SHIELD_MAX_WIRES = 200;
-
 /**
  * Типы модулей (ShieldDimensions.module_types, проба 255-shield-classes):
  * width — ширина в DIN, ports — число портов, group — у типа есть «номер группы»,
