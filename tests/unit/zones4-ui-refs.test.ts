@@ -444,6 +444,78 @@ test("312 №4: ниша, не ложащаяся на рёбра новых з�
   );
 });
 
+// ---------- ревью 311 №6: legacy-делители и записи без plan видны пересчёту ----------
+
+function twoZoneRoom(): Model {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!["ceilings"]) = [
+    { exist: true, id: "_cA", material: "gypsum_ceiling", level: 0, profile: "standard", polygon: [{ x: 400, y: 100 }, { x: 400, y: 200 }, { x: 100, y: 200 }, { x: 100, y: 100 }] },
+    { exist: true, id: "_cB", material: "stretch_ceiling", level: 0, profile: "standard", polygon: [{ x: 400, y: 200 }, { x: 400, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 200 }] },
+  ];
+  return model;
+}
+
+test("312 №6: legacy per-room d_ceiling-делитель (points-форма) режет зоны потолка при rigel_add", () => {
+  const model = twoZoneRoom();
+  ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!)["delimiters"] = {
+    _dl1: { id: "_dl1", type: "d_ceiling", points: [{ x: 100, y: 200 }, { x: 400, y: 200 }] },
+  };
+  // горизонтальная закладная y=150 (полоса 145..155): с делителем y=200 — 3 зоны
+  addCeilingRigel(model, "room1", { start: { x: 1005, y: 1500 }, end: { x: 3995, y: 1500 } });
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  assert.equal(ceilings.length, 3, `legacy-делитель виден: ${ceilings.length} зон`);
+  assert.deepEqual(materialsOf(model, "room1"), ["gypsum_ceiling", "stretch_ceiling"]);
+});
+
+test("312 №6: верхнеуровневый zone_ceiling без поля plan виден пересчётом (plan выводится по типу)", () => {
+  const model = twoZoneRoom();
+  (model.zone_delimiters ??= {}) as never;
+  (model.zone_delimiters as Record<string, Record<string, unknown>>)["_dz1"] = {
+    id: "_dz1", type: "zone_ceiling", id_room: "room1",
+    vertexes: [
+      { id: "v0", point: { x: 100, y: 200 }, type: "node" },
+      { id: "v1", point: { x: 400, y: 200 }, type: "node" },
+    ],
+    items: { v0: "node", v1: "node" },
+    matrix: [[null, { length: 3 }], [{ length: 3 }, null]],
+    length: 3, on_size: 1,
+  };
+  addCeilingRigel(model, "room1", { start: { x: 1005, y: 1500 }, end: { x: 3995, y: 1500 } });
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  assert.equal(ceilings.length, 3);
+  assert.deepEqual(materialsOf(model, "room1"), ["gypsum_ceiling", "stretch_ceiling"]);
+});
+
+// ---------- ревью 311 №7: висячее ребро делителя не обрывает пересчёт ----------
+
+test("312 №7: delete закладной с привязанным делителем — зоны схлопываются в одну с отделкой", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  setCeilingFinish(model, "room1", "stretch_ceiling", {});
+  const rec = addCeilingRigel(model, "room1", { start: { x: 2500, y: 1005 }, end: { x: 2500, y: 2995 } });
+  addZoneCeiling(model, "room1", { fromMm: { x: 1005, y: 2000 }, toMm: { x: 2545, y: 2000 } });
+  // делитель остаётся (стандарт редактора — без каскадов), конец висит на грани
+  // удалённой закладной; пересчёт не должен молча ничего не делать
+  deleteCeilingRigel(model, rec.id);
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  assert.equal(ceilings.length, 1, `висячее ребро отброшено, одна зона: ${ceilings.length}`);
+  assert.deepEqual(materialsOf(model, "room1"), ["stretch_ceiling"]);
+});
+
+// ---------- ревью 311 №8: запасной путь restoreCeiling и порог «good» ----------
+
+test("312 №8: fallback restoreCeiling — одна запись, полигон которого не «good», но пересекает единственную зону", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  // запись с «плохим» полигоном (треугольник внутри комнаты) — getZone не даёт
+  // кандидата (вершины зоны не внутри сохранённого полигона)
+  ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!["ceilings"]) = [
+    { exist: true, id: "_cA", material: "stretch_ceiling", level: 0, profile: "standard", polygon: [{ x: 200, y: 150 }, { x: 300, y: 150 }, { x: 250, y: 250 }] },
+  ];
+  rebuildCeilingZones(model, "room1");
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  assert.equal(ceilings.length, 1);
+  assert.deepEqual(materialsOf(model, "room1"), ["stretch_ceiling"], "отделка восстановлена запасным путём restoreCeiling");
+});
+
 // ---------- mock save: потеря отделки зоны потолка при нормализации — отказ ----------
 
 const COMPAT = { global_version: "test", planner_version: "test", bundles: [] as string[], object_id: "0", plan_id: "1", present: { WALLS: true, ROOMS2: true, restore: true, draw: true, copy: true, save: true, canvas: true, wall_link1: true, wall_link2: true, wall_calc: true } };

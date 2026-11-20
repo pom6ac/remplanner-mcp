@@ -1,7 +1,8 @@
 import type { Model, Point } from "./types.ts";
 import { newId } from "./types.ts";
-import { roomPolygonOf } from "./room-geo.ts";
+import { roomPolygonOf, pointInPolygon, distToSeg, overlapShare } from "./room-geo.ts";
 import { collinearOverlapCm } from "./geometry.ts";
+import { zoneCeilingDelimiterLines } from "./zone-delimiters.ts";
 import { McpError } from "../errors.ts";
 
 // Пересчёт зон потолка комнаты (этап 310, m11 ревью 304): ставит модель в то
@@ -39,14 +40,6 @@ function samePoint(a: Point, b: Point): boolean {
 
 function segLength(s: Seg): number {
   return Math.hypot(s.p2.x - s.p1.x, s.p2.y - s.p1.y);
-}
-
-function pointSegDistance(p: Point, s: Seg): number {
-  const vx = s.p2.x - s.p1.x, vy = s.p2.y - s.p1.y;
-  const l2 = vx * vx + vy * vy;
-  if (l2 === 0) return Math.hypot(p.x - s.p1.x, p.y - s.p1.y);
-  const t = Math.max(0, Math.min(1, ((p.x - s.p1.x) * vx + (p.y - s.p1.y) * vy) / l2));
-  return Math.hypot(p.x - (s.p1.x + t * vx), p.y - (s.p1.y + t * vy));
 }
 
 /** Точка пересечения отрезков (концы включены), null если её нет. */
@@ -110,8 +103,8 @@ function arrangementFaces(roomPoly: Point[], segments: Seg[], exclusion: Point[]
       if (o === s) continue;
       const x = segIntersection(s, o);
       if (x) push(x);
-      if (pointSegDistance(o.p1, s) <= TOL) push(o.p1);
-      if (pointSegDistance(o.p2, s) <= TOL) push(o.p2);
+      if (distToSeg(o.p1, s.p1, s.p2) <= TOL) push(o.p1);
+      if (distToSeg(o.p2, s.p1, s.p2) <= TOL) push(o.p2);
     }
     ts.sort((p, q) => p - q);
     let prev = s.p1;
@@ -141,7 +134,25 @@ function arrangementFaces(roomPoly: Point[], segments: Seg[], exclusion: Point[]
     adj.get(ka)!.push({ to: kb, dir });
     adj.get(kb)!.push({ to: ka, dir: { x: -dir.x, y: -dir.y } });
   }
-  // 3. обход граней: из каждого направленного ребра — следующий поворот
+  // 3. висячие рёбра (узел степени 1 — конец делителя на грани удалённой закладной,
+  // редактор делитель оставляет): граней не образуют и обрывают обход всех граней —
+  // отбрасываются итеративно, как в getPolygonsByLines (ревью 311 №7)
+  for (;;) {
+    const dangling = [...adj.entries()].filter(([, list]) => list.length === 1).map(([u]) => u);
+    if (dangling.length === 0) break;
+    for (const u of dangling) {
+      const list = adj.get(u)!;
+      if (list.length !== 1) continue;
+      const e = list[0]!;
+      adj.set(u, []);
+      const other = adj.get(e.to);
+      if (other) {
+        const i = other.findIndex((o) => o.to === u);
+        if (i >= 0) other.splice(i, 1);
+      }
+    }
+  }
+  // 4. обход граней: из каждого направленного ребра — следующий поворот
   // по часовой (минимальный угол от обратного направления)
   const used = new Set<string>();
   const faces: Point[][] = [];
@@ -192,10 +203,10 @@ function arrangementFaces(roomPoly: Point[], segments: Seg[], exclusion: Point[]
       // центр грани
       const c = interiorPoint(poly);
       if (!c) continue;
-      let inside = pointInPoly(roomPoly, c);
+      let inside = pointInPolygon(c, roomPoly);
       if (inside) {
         for (const ex of exclusion) {
-          if (pointInPoly(ex, c)) { inside = false; break; }
+          if (pointInPolygon(c, ex)) { inside = false; break; }
         }
       }
       if (!inside) continue;
@@ -214,23 +225,14 @@ function arrangementFaces(roomPoly: Point[], segments: Seg[], exclusion: Point[]
   return out;
 }
 
-function pointInPoly(poly: Point[], p: Point): boolean {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const xi = poly[i]!.x, yi = poly[i]!.y, xj = poly[j]!.x, yj = poly[j]!.y;
-    if (((yi > p.y) !== (yj > p.y)) && (p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi)) inside = !inside;
-  }
-  return inside;
-}
-
 /** Точка строго внутри полигона (get_point_in_polygon_2 редактора): центр вершин
  *  не подходит для вогнутых зон — сетка по bbox с запасом от границы. */
 function interiorPoint(poly: Point[]): Point | null {
   const avg = poly.reduce((acc, p) => ({ x: acc.x + p.x / poly.length, y: acc.y + p.y / poly.length }), { x: 0, y: 0 });
-  if (pointInPoly(poly, avg)) {
+  if (pointInPolygon(avg, poly)) {
     let minEdge = Infinity;
     for (let i = 0; i < poly.length; i++) {
-      minEdge = Math.min(minEdge, pointSegDistance(avg, { p1: poly[i]!, p2: poly[(i + 1) % poly.length]! }));
+      minEdge = Math.min(minEdge, distToSeg(avg, poly[i]!, poly[(i + 1) % poly.length]!));
     }
     if (minEdge > TOL) return avg;
   }
@@ -240,10 +242,10 @@ function interiorPoint(poly: Point[]): Point | null {
   for (let i = 1; i < n; i++) {
     for (let j = 1; j < n; j++) {
       const p = { x: x0 + ((x1 - x0) * i) / n, y: y0 + ((y1 - y0) * j) / n };
-      if (!pointInPoly(poly, p)) continue;
+      if (!pointInPolygon(p, poly)) continue;
       let minEdge = Infinity;
       for (let k = 0; k < poly.length; k++) {
-        minEdge = Math.min(minEdge, pointSegDistance(p, { p1: poly[k]!, p2: poly[(k + 1) % poly.length]! }));
+        minEdge = Math.min(minEdge, distToSeg(p, poly[k]!, poly[(k + 1) % poly.length]!));
       }
       if (minEdge > TOL) return p;
     }
@@ -266,7 +268,9 @@ function polygonEdgesOf(poly: Point[]): Array<Rec> {
 }
 
 /** Правило «good» updateZones: запись совпадает с новой зоной целиком (упрощённые
- *  полигоны равны) или по площади с ≥75 % общих вершин. */
+ *  полигоны равны) или по площади с ≥75 % общих вершин — порог от НОВОЙ зоны
+ *  (бандл 268: countCommonPointsOfPolygons(C,y) >= .75*C.length, C — новая зона;
+ *  ревью 311 №8). */
 function zoneMatchesNew(oldPoly: Point[], newPoly: Point[]): boolean {
   const o = removeCollinearPts(oldPoly);
   const n = removeCollinearPts(newPoly);
@@ -287,12 +291,12 @@ function zoneMatchesNew(oldPoly: Point[], newPoly: Point[]): boolean {
   const areaOld = Math.abs(signedArea(o)), areaNew = Math.abs(signedArea(n));
   if (Math.abs(areaOld - areaNew) >= AREA_EPS) return false;
   let common = 0;
-  for (const p of o) {
-    for (const q of n) {
+  for (const p of n) {
+    for (const q of o) {
       if (samePoint(p, q)) { common += 1; break; }
     }
   }
-  return common >= Math.floor(0.75 * o.length);
+  return common >= Math.floor(0.75 * n.length);
 }
 
 /** Правило getZone (restoreCeiling): номер зоны-кандидата для сохранённой записи
@@ -324,7 +328,9 @@ function getZoneIndex(savedPoly: Point[], zones: Point[][]): number | null {
       else if (matched) score += 1;
     }
     if (score < 2 || score * 2 < zoneEdges.length) continue;
-    if (!best || score > best.score) best = { score, index: zi };
+    // среди равных очков редактор берёт ПОСЛЕДНИЙ индекс (sort по возрастанию
+    // distance, [length-1]; ревью 311 №8)
+    if (!best || score >= best.score) best = { score, index: zi };
   }
   return best ? best.index : null;
 }
@@ -342,12 +348,12 @@ function shareEndpoint(a: EdgeRec, b: EdgeRec): boolean {
   return samePoint(a.p1, b.p1) || samePoint(a.p1, b.p2) || samePoint(a.p2, b.p1) || samePoint(a.p2, b.p2);
 }
 function pointOnSegInclusive(s: EdgeRec, p: Point): boolean {
-  return pointSegDistance(p, { p1: s.p1, p2: s.p2 }) <= 0.05;
+  return distToSeg(p, s.p1, s.p2) <= 0.05;
 }
 function pointInPolyInclusive(poly: Point[], p: Point): boolean {
-  if (pointInPoly(poly, p)) return true;
+  if (pointInPolygon(p, poly)) return true;
   for (let i = 0; i < poly.length; i++) {
-    if (pointSegDistance(p, { p1: poly[i]!, p2: poly[(i + 1) % poly.length]! }) <= TOL) return true;
+    if (distToSeg(p, poly[i]!, poly[(i + 1) % poly.length]!) <= TOL) return true;
   }
   return false;
 }
@@ -359,6 +365,11 @@ const CEILING_USER_FIELDS = [
   "offset", "anchor", "type_laying", "angle", "custom_angle", "interval", "width",
   "height", "height_rail", "on_interval",
 ] as const;
+
+/** Округление полигона записи до 0.01 см (единый помощник — упрощение ревью 311). */
+function roundPoly(poly: Point[]): Point[] {
+  return poly.map((p) => ({ x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 }));
+}
 
 /**
  * Пересчитать ceilings комнаты по рёбрам закладных и zone_ceiling-делителей
@@ -410,26 +421,15 @@ export function rebuildCeilingZones(model: Model, roomId: string): void {
     for (let i = 0; i < poly.length; i++) {
       const p1 = poly[i]!, p2 = poly[(i + 1) % poly.length]!;
       const c = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
-      if (pointInPoly(roomPoly, c)) segments.push({ p1, p2 });
+      if (pointInPolygon(c, roomPoly)) segments.push({ p1, p2 });
     }
     rigelPolys.push(poly);
   }
-  const delims = (model.zone_delimiters ?? {}) as Record<string, Rec>;
-  for (const d of Object.values(delims)) {
-    if (String(d["id_room"] ?? "") !== roomId) continue;
-    if (String(d["plan"] ?? "") !== "ceiling") continue;
-    const v = (d["vertexes"] ?? []) as Array<{ point?: Point }>;
-    const matrix = (d["matrix"] ?? []) as Array<Array<{ length?: number } | null>>;
-    const n = v.length;
-    if (n < 2) continue;
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const cell = matrix[i]?.[j] ?? matrix[j]?.[i];
-        if (cell && Number(cell.length) > 0 && v[i]?.point && v[j]?.point) {
-          segments.push({ p1: v[i]!.point!, p2: v[j]!.point! });
-        }
-      }
-    }
+  // zone_ceiling-делители комнаты — общий слой delimiterMapOf + миграция legacy
+  // (per-room delimiters, points-форма, записи без plan; ревью 311 №6): редактор
+  // (restoreTotal: updateZones("ceiling","zone_ceiling")) видит их все
+  for (const line of zoneCeilingDelimiterLines(model, roomId)) {
+    segments.push({ p1: line.p1, p2: line.p2 });
   }
 
   const faces = arrangementFaces(roomPoly, segments, rigelPolys);
@@ -458,24 +458,30 @@ export function rebuildCeilingZones(model: Model, roomId: string): void {
     if (rec["exist"] !== true) continue;
     const poly = rec["polygon"] as Point[] | undefined;
     if (!poly || poly.length < 3) continue;
-    const zi = getZoneIndex(poly, faces);
+    let zi = getZoneIndex(poly, faces);
+    if (zi === null && faces.length === 1) {
+      // запасной путь restoreCeiling редактора (ревью 311 №8): одна сохранённая
+      // запись → одна зона при пересечении полигонов (isPolygonsIntersections)
+      const face = faces[0]!;
+      if (overlapShare(poly, face) > 0 || overlapShare(face, poly) > 0) zi = 0;
+    }
     if (zi === null) continue;
     redistributed.push({ rec, zone: zi });
   }
 
   const byZone = new Map<number, Rec>();
   for (const k of kept) {
-    const rec: Rec = { ...structuredClone(k.rec), polygon: faces[k.zone]!.map((p) => ({ x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 })), edges: polygonEdgesOf(faces[k.zone]!) };
+    const rec: Rec = { ...structuredClone(k.rec), polygon: roundPoly(faces[k.zone]!), edges: polygonEdgesOf(faces[k.zone]!) };
     byZone.set(k.zone, rec);
   }
   for (const r of redistributed) {
     const existing = byZone.get(r.zone);
     const base: Rec = existing ?? {
-      polygon: faces[r.zone]!.map((p) => ({ x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 })),
+      polygon: roundPoly(faces[r.zone]!),
       edges: polygonEdgesOf(faces[r.zone]!),
       exist: false,
     };
-    const rec: Rec = { ...base, exist: true, id: typeof r.rec["id"] === "string" ? r.rec["id"] : `_c${Math.random().toString(36).slice(2, 10)}` };
+    const rec: Rec = { ...base, exist: true, id: typeof r.rec["id"] === "string" ? r.rec["id"] : `_c${newId(8)}` };
     for (const f of CEILING_USER_FIELDS) {
       if (r.rec[f] !== undefined) rec[f] = structuredClone(r.rec[f]);
     }
@@ -485,7 +491,7 @@ export function rebuildCeilingZones(model: Model, roomId: string): void {
   for (let zi = 0; zi < faces.length; zi++) {
     const rec = byZone.get(zi);
     if (rec) { out.push(rec); continue; }
-    out.push({ polygon: faces[zi]!.map((p) => ({ x: Math.round(p.x * 100) / 100, y: Math.round(p.y * 100) / 100 })), edges: polygonEdgesOf(faces[zi]!), exist: false });
+    out.push({ polygon: roundPoly(faces[zi]!), edges: polygonEdgesOf(faces[zi]!), exist: false });
   }
   restoreNichesByGeometry(oldRecords, out);
   room.ceilings = out;
