@@ -285,8 +285,29 @@ const warmWallGroup = z.looseObject({
   parts: collection(warmWallPart, MAX_IMPORT_ENTITIES).optional(),
 });
 
+/**
+ * Потолочная закладная (этап 303, M1 ревью 304): запись rooms2[rid].rigels —
+ * класс CeilingRigel редактора, формат — эталон ui-ref-zones3-ceiling-rigel.json:
+ * {id, id_room?, p1/p2 (link или 0), width (см, панель редактора 10..100),
+ * ceiling_type, polygon}. Части итерируют list/резолв/сверку, поэтому число
+ * ограничено MAX_IMPORT_ENTITIES (лимит — src/limits.ts). Неизвестные поля
+ * passthrough.
+ */
+const ceilingRigel = z.looseObject({
+  id: idStr,
+  id_room: idStr.optional(),
+  p1: rigelNode,
+  p2: rigelNode,
+  width: z.number().finite().min(10).max(100),
+  ceiling_type: shortStr.optional(),
+  polygon: z.array(point).max(MAX_IMPORT_GRAPH_NODES).optional(),
+});
+
 const room2 = z.looseObject({
   warms_walls: z.array(warmWallGroup).max(MAX_IMPORT_ENTITIES).optional(),
+  // M1 ревью 304: потолочные закладные комнаты — со схемой и лимитом,
+  // раньше проходили импорт без проверки (looseObject = passthrough)
+  rigels: collection(ceilingRigel, MAX_IMPORT_ENTITIES).optional(),
 });
 
 /**
@@ -348,6 +369,22 @@ export const importModelSchema: z.ZodType = z
         inclusive: true,
         path: ["rooms2"],
         message: `суммарное число частей warms_walls по всем комнатам (${total}) превышает ${MAX_IMPORT_ENTITIES}`,
+      });
+    }
+    // M1 ревью 304: суммарное число потолочных закладных по всем комнатам
+    let rigelsTotal = 0;
+    for (const room of Object.values(rooms2 as Record<string, { rigels?: Record<string, unknown> }>)) {
+      if (room?.rigels && typeof room.rigels === "object") rigelsTotal += Object.keys(room.rigels).length;
+    }
+    if (rigelsTotal > MAX_IMPORT_ENTITIES) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.too_big,
+        maximum: MAX_IMPORT_ENTITIES,
+        type: "number",
+        origin: "number",
+        inclusive: true,
+        path: ["rooms2"],
+        message: `суммарное число потолочных закладных по всем комнатам (${rigelsTotal}) превышает ${MAX_IMPORT_ENTITIES}`,
       });
     }
   });

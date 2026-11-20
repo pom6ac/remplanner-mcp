@@ -312,8 +312,9 @@ function strictlyInside(p: Point, poly: Point[]): boolean {
  *  отрезка внутри полигона (концы на рёбрах — на границе в допуске магнита),
  *  пересечений рёбер вне концов нет. Хорда, проходящая мимо комнаты через
  *  выемку, отвергается; касание линии в вершине вогнутого контура (общая точка
- *  рёбер) допустимо — поведение закреплено тестом (ревью 263 N6). */
-function segmentInsidePolygon(a: Point, b: Point, poly: Point[], tolCm = 0.5): boolean {
+ *  рёбер) допустимо — поведение закреплено тестом (ревью 263 N6). Экспортирован
+ *  с ревью 304 M4 как общий помощник вложенности (потолочные закладные). */
+export function segmentInsidePolygon(a: Point, b: Point, poly: Point[], tolCm = 0.5): boolean {
   const len = segLen(a, b);
   const steps = Math.max(2, Math.ceil(len / 25) + 1);
   for (let k = 0; k <= steps; k++) {
@@ -581,6 +582,41 @@ export function zoneDelimiterList(model: Model, roomRef?: string): Array<Record<
       length_mm: cmToMm((Number(rec["length"]) ?? 0) * 100),
       ...(rec["on_size"] !== undefined ? { on_size: rec["on_size"] } : {}),
     });
+  }
+  return out;
+}
+
+/** Все zone_ceiling разделители модели (верхнеуровневые + legacy per-room):
+ *  для проверки пересечения при создании потолочной закладной. Ревью 304 M2:
+ *  mouseup редактора перебирает ВСЕ отрезки M.lines каждого zone_ceiling,
+ *  поэтому возвращаются все рёбра графа по matrix (не хорда «первая → последняя
+ *  вершина», которая у Г-/П-образного разделителя лежит на стене и прячет
+ *  пересечения со средними отрезками). */
+export function zoneCeilingDelimiterLines(model: Model): Array<{ id: string; p1: Point; p2: Point }> {
+  const out: Array<{ id: string; p1: Point; p2: Point }> = [];
+  for (const [id, entry] of Object.entries(delimiterMapOf(model))) {
+    const rec = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
+    if (String(rec["type"] ?? "") !== "zone_ceiling") continue;
+    const v = (rec["vertexes"] ?? []) as Array<{ point?: Point }>;
+    const n = v.length;
+    if (n < 2) continue;
+    // рёбра графа по матрице (i<j, длина > 0) — как перебор M.lines в mouseup
+    const matrix = (rec["matrix"] ?? []) as Array<Array<{ length?: number } | null>>;
+    let edges = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const cell = matrix[i]?.[j] ?? matrix[j]?.[i];
+        if (cell && Number(cell.length) > 0 && v[i]?.point && v[j]?.point) {
+          out.push({ id, p1: v[i]!.point!, p2: v[j]!.point! });
+          edges += 1;
+        }
+      }
+    }
+    // legacy/деградировавшая запись без матрицы — хорда «первая → последняя»
+    if (edges === 0) {
+      const q1 = v[0]?.point, q2 = v[n - 1]?.point;
+      if (q1 && q2) out.push({ id, p1: q1, p2: q2 });
+    }
   }
   return out;
 }

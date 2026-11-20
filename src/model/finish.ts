@@ -3,6 +3,7 @@ import { newId } from "./types.ts";
 import { roundTenthMm as r2 } from "./units.ts";
 import { edgeInwardNormal } from "./rooms.ts";
 import { zoneDelimiterList } from "./zone.ts";
+import { ceilingRigelList } from "./ceiling-rigels.ts";
 import {
   canonicalPolygon, polygonsEqual, roomPolygonOf, matchRoomsByContour,
   signedArea, distToChord, removeCollinear, polygonArea,
@@ -1434,6 +1435,8 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
     }
     // метки ZD<n> сквозные по всем комнатам — фильтрация после нумерации
     const zoneDelims = zoneDelimiterList(model).filter((d) => d["room_id"] === rid);
+    // потолочные закладные комнаты (этап 303); метки CR<n> сквозные
+    const ceilingRigels = ceilingRigelList(model).filter((r) => r["room_id"] === rid);
     return {
       id: label,
       site_id: rid,
@@ -1451,6 +1454,7 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
       ...(ceilingMoldings.length > 0 ? { ceiling_moldings: ceilingMoldings } : {}),
       ...(niches.length > 0 ? { niches } : {}),
       ...(zoneDelims.length > 0 ? { zone_delimiters: zoneDelims } : {}),
+      ...(ceilingRigels.length > 0 ? { ceiling_rigels: ceilingRigels } : {}),
     };
   });
 }

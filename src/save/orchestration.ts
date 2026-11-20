@@ -17,6 +17,7 @@ import {
 import { levelHoleMismatches } from "../model/floorhole.ts";
 import { finishCompare } from "../model/finish.ts";
 import { zoneDelimiterCompare } from "../model/zone.ts";
+import { ceilingRigelCompare } from "../model/ceiling-rigels.ts";
 import { warmWallsCompare } from "../verify/warmwall.ts";
 import { demolitionMismatches } from "../model/demolition.ts";
 import { roomsSaveCompare, zoneAffectedRoomIds, type RoomsChangePolicy } from "../model/rooms-save.ts";
@@ -453,6 +454,19 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     "normalize",
     { affectedRooms: zoneAffected },
   );
+  // этап 303: потолочные закладные до записи сверяются с нормализованной моделью
+  // (затронутость комнат — по грани стены, zoneAffectedRoomIds; связи — по
+  // геометрии граней, ревью 304 M6)
+  const ceilingRigelNorm = ceilingRigelCompare(
+    (host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, unknown> | undefined,
+    ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+    "normalize",
+    {
+      affectedRooms: zoneAffected,
+      walls: { ...(host.model().walls ?? {}), ...((norm.model as Record<string, unknown>)["walls"] ?? {}) } as Record<string, unknown>,
+      pillars: { ...(host.model().pillars ?? {}), ...((norm.model as Record<string, unknown>)["pillars"] ?? {}) } as Record<string, unknown>,
+    },
+  );
   // этап 113: размеры и комментарии до записи сверяются с нормализованной моделью
   const dimsNorm = dimsMismatches(host.model(), norm.model as Record<string, unknown>);
   // этап 122: сущности климата до записи сверяются с нормализованной моделью
@@ -518,6 +532,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     shieldsNorm.length > 0 ||
     zoneNorm.problems.length > 0 ||
     warmNorm.problems.length > 0 ||
+    ceilingRigelNorm.problems.length > 0 ||
     elecNorm.some((e) => e.lost.length > 0 || e.graph.length > 0 || e.conn.length > 0)
   ) {
     throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
@@ -559,6 +574,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         shield_mismatches: shieldsNorm,
         zone_mismatches: zoneNorm.problems,
         warmwall_mismatches: warmNorm.problems,
+        ceiling_rigel_mismatches: ceilingRigelNorm.problems,
         ...Object.fromEntries(elecNorm.flatMap((e) => [
           [`lost_${e.coll}`, e.lost],
           [`${e.coll}_mismatches`, e.graph],
@@ -774,6 +790,21 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     );
     warnings.push(...warmAfterCheck.warnings);
     const warmAfter = warmAfterCheck.problems;
+    // этап 303: закладные после save — нормализованное ожидание против сервера,
+    // строго (затронутые изменёнными стенами комнаты — по грани; связи — по
+    // геометрии граней, ревью 304 M6)
+    const ceilingRigelAfterCheck = ceilingRigelCompare(
+      ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+      ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
+      "save",
+      {
+        affectedRooms: zoneAffectedAfter,
+        walls: { ...((norm.model as Record<string, unknown>)["walls"] ?? {}), ...(after.model["walls"] ?? {}) } as Record<string, unknown>,
+        pillars: { ...((norm.model as Record<string, unknown>)["pillars"] ?? {}), ...(after.model["pillars"] ?? {}) } as Record<string, unknown>,
+      },
+    );
+    warnings.push(...ceilingRigelAfterCheck.warnings);
+    const ceilingRigelAfter = ceilingRigelAfterCheck.problems;
     const roomsLost = normRooms > 0 && roomsAfter === 0;
     // этап 126: комнаты после save — строго (по каноническому контуру и
     // пользовательским полям): частичная потеря N→M>0 и потеря имени/зон — не verified
@@ -782,7 +813,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
       "save",
     ).problems;
-    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
+    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && ceilingRigelAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
       verified = true;
       finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
       host.onVerified(toModel(structuredClone(after.model)));
@@ -836,6 +867,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
           shield_mismatches: shieldsAfter,
           zone_mismatches: zoneAfter,
           warmwall_mismatches: warmAfter,
+          ceiling_rigel_mismatches: ceilingRigelAfter,
           ...Object.fromEntries(elecAfter.flatMap((e) => [
             [`${e.coll}_mismatches`, e.graph],
             [`${e.coll}_connection_mismatches`, e.conn],

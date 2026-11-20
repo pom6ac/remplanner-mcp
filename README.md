@@ -246,7 +246,12 @@ zone_ceiling_add / zone_ceiling_remove  # линии-разделители зо
 zone_floor_add / zone_hydroisolation_add / zone_floor_cap_add  # разделители зон
                           #  пола / гидроизоляции / стяжки (PRO, те же листы): рёбра комнаты,
                           #  без пересечений своего плана; перечень всех зон — finish_get
-finish_get               # отделка комнат: пол, потолок, стороны стен, плинтусы, ниши, зоны (все типы)
+ceiling_rigel_add / ceiling_rigel_update / ceiling_rigel_delete  # потолочные закладные
+                          #  (PRO, лист «Потолки»): полоса от стены до стены в комнате, концы
+                          #  магнитятся к граням стен/колонн; update — ширина и отделка
+                          #  (перенос редактором не поддержан); перечень — finish_get (CR<n>)
+finish_get               # отделка комнат: пол, потолок, стороны стен, плинтусы, ниши, зоны (все типы),
+                          #  закладные
 floor_hole_add            # проем в полу (прямоугольник в комнате, level_holes)
 terrace_add               # терраса (замкнутое кольцо границ terrace_borders) + terrace_fence_add / terrace_column_add
 territory_add             # участок (замкнутое кольцо границ territory_borders)

@@ -297,6 +297,160 @@
    }
   },
   {
+   "name": "ceiling_rigel_add",
+   "description": "Поставить потолочную закладную (лист «Потолки», инструмент «Потолочная закладная»; PRO). Полоса от стены до стены внутри комнаты: start/end — концы оси (мм); каждый конец магнитится к боковой грани стены, её торцу или грани колонны (в 30 мм; в редакторе радиус магнита равен ширине полосы — по умолчанию 10 см, до 100 см), угол оси к грани 45–135°, как в редакторе. Ось не пересекает разделители зон потолка, ригели и другие закладные комнаты. width_mm — толщина полосы (по умолчанию 100, панель 100..1000 мм). ceiling_type — отделка потолка на закладной. id — метка CR<n> для ceiling_rigel_update/delete. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "start": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "начало оси (на стене), мм"
+     },
+     "end": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "конец оси (на другой стене), мм"
+     },
+     "width_mm": {
+      "description": "толщина полосы, мм (по умолчанию 100)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "ceiling_type": {
+      "description": "тип отделки потолка: \"\" — без отделки или ключ инструмента листа потолка (stretch_ceiling, paint_ceiling, gypsum_ceiling и др. — группа ceiling_elements редактора); произвольные значения не принимаются",
+      "type": "string",
+      "enum": [
+       "stretch_ceiling",
+       "stretch_ceiling_tissue",
+       "paint_ceiling",
+       "gypsum_ceiling",
+       "rack_ceiling",
+       "wooden_ceiling",
+       "plastic_panels_ceiling",
+       "whitewash_ceiling",
+       "armstrong_ceiling",
+       "grillato_ceiling",
+       "plaster_visual_ceiling",
+       "plaster_full_ceiling",
+       "isolation_ceiling_cotton",
+       "ceiling_niche",
+       ""
+      ]
+     }
+    },
+    "required": [
+     "room_id",
+     "start",
+     "end"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "ceiling_rigel_delete",
+   "description": "Удалить потолочную закладную (контекстное меню закладной). Разделители зон потолка, чьи концы стояли на её грани, не удаляются — как в редакторе (привязка узлов зон пересчитывается редактором при открытии). rigel_id — метка CR<n> из finish_get/model_get или id сайта.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "rigel_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка CR<n> из finish_get/model_get или id закладной"
+     }
+    },
+    "required": [
+     "rigel_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "ceiling_rigel_update",
+   "description": "Изменить потолочную закладную: толщину полосы и/или отделку потолка (контекстное меню закладной в редакторе). Перенос закладной редактором не поддержан — чтобы передвинуть, удалите закладную и создайте новую (ceiling_rigel_delete + ceiling_rigel_add). rigel_id — метка CR<n> из finish_get/model_get или id сайта.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "rigel_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка CR<n> из finish_get/model_get или id закладной"
+     },
+     "width_mm": {
+      "description": "толщина полосы, мм (100..1000)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "ceiling_type": {
+      "description": "тип отделки потолка: \"\" — без отделки или ключ инструмента листа потолка (stretch_ceiling, paint_ceiling, gypsum_ceiling и др. — группа ceiling_elements редактора); произвольные значения не принимаются",
+      "type": "string",
+      "enum": [
+       "stretch_ceiling",
+       "stretch_ceiling_tissue",
+       "paint_ceiling",
+       "gypsum_ceiling",
+       "rack_ceiling",
+       "wooden_ceiling",
+       "plastic_panels_ceiling",
+       "whitewash_ceiling",
+       "armstrong_ceiling",
+       "grillato_ceiling",
+       "plaster_visual_ceiling",
+       "plaster_full_ceiling",
+       "isolation_ceiling_cotton",
+       "ceiling_niche",
+       ""
+      ]
+     }
+    },
+    "required": [
+     "rigel_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "comment_add",
    "description": "Добавить текстовый комментарий с указателем на план (кнопка «Текстовый комментарий» в нижней панели — **PRO в UI**: на бесплатном тарифе поведение не проверено). Текст 1..600 символов (символы «\"» и «`» канонизируются под формат редактора: \" → '', ` → ', в ответе — итоговый текст и warning), шрифт 8..30 (по умолчанию 10), рамка и указатель — по умолчанию включены, цвет из палитры UI (по умолчанию #000000), url — ссылка http(s)://. attach_item — привязать к предмету (label item, следует за ним; у предмета один такой комментарий). point — точка-указатель, pc — центр пузыря (по умолчанию в точке указателя). После добавления вызывайте model_validate и project_save.",
    "inputSchema": {
@@ -5591,6 +5745,7 @@
    "territory_borders": [],
    "level_holes": [],
    "zone_delimiters": [],
+   "ceiling_rigels": [],
    "led_strips": [],
    "stripes_light": [],
    "line_strips": [],
