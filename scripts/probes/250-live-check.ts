@@ -54,7 +54,9 @@ const entityId = (res: Record<string, unknown>): string => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const pause = () => sleep(6000); // сохранения не чаще раза в 5 с
 
-const backup = JSON.parse(readFileSync(".orca-reports/backup-dev-250.json", "utf8"));
+// ревью 252: путь бэкапа — из env (по умолчанию бэкап этапа 250), чтобы прогон
+// сверялся со свежим снимком (backup-<id>-252.json), а не с устаревшим
+const backup = JSON.parse(readFileSync(process.env["REMPLANNER_PROBE_BACKUP"] ?? ".orca-reports/backup-dev-250.json", "utf8"));
 const strip = (m: unknown) => {
   const c = structuredClone(m as Record<string, unknown>);
   delete c.save_id; delete c.log_plan; delete c.session; delete c.version;
@@ -97,6 +99,7 @@ const deleteCreated = async (ids: string[], key: string, tool: string, arg: stri
 /** Очистка пробы: только created.*, в обратном порядке зависимостей. */
 const cleanupCreated = async (): Promise<void> => {
   await deleteCreated(created.wiring, "cables_conditioner", "wiring_delete", "wiring_id");
+  await deleteCreated(created.pipes, "pipes_ventilation", "pipe_delete", "pipe_id");
   await deleteCreated(created.pipes, "pipes_warm_floor", "pipe_delete", "pipe_id");
   await deleteCreated(created.pipes, "pipes_conditioner", "pipe_delete", "pipe_id");
   await deleteCreated(created.pipes, "pipes_heat", "pipe_delete", "pipe_id");
@@ -144,7 +147,14 @@ try {
   created.pipes.push(entityId(await call("pipe_add", { kind: "warm_floor", path: [{ item_id: wf }, { x: ox + 200, y: oy + 200 }] })));
   created.wiring.push(entityId(await call("wiring_add", { kind: "conditioner_wire", path: [{ item_id: cond }, { item_id: eng }] })));
   console.log("pipes:", created.pipes.join(" "), "wiring:", created.wiring.join(" "));
+  // 3b. ревью 252: вентилятор + воздуховод (сечение рёбер) и warm_floor_update
+  // контура с подключённой магистралью (оба угла, polygon[0] меняется)
+  const fan = entityId(await call("item_add", { name: "fan", position: { center: { x: ox + 3500, y: oy + 2500 } } }));
+  created.items.push(fan);
+  created.pipes.push(entityId(await call("pipe_add", { kind: "vent_out", path: [{ item_id: fan }, { x: ox + 3200, y: oy + 2200 }] })));
+  await call("warm_floor_update", { warm_floor_id: wf, corner1: { x: ox + 700, y: 700 }, corner2: { x: ox + 1700, y: 1700 } });
   writeCreated(); // ревью 251 №4: список ID захвачен до любых рискованных шагов
+  console.log("fan + vent pipe + warm_floor_update: OK");
 
   // 4. validate → save
   const v1 = await call("model_validate", {});
@@ -176,12 +186,35 @@ try {
   if (!condIt.pipes_conditioner?.drainage_pipe_id) throw new Error("кондиционер потерял drainage_pipe_id");
   if (!condIt.cables_conditioner?.conditioner_cable_id) throw new Error("кондиционер потерял conditioner_cable_id");
   if (!engIt.cables_conditioner?.conditioner_cable_id) throw new Error("внешний блок потерял conditioner_cable_id");
-  const wfSite = (Object.values(model1.warm_floors ?? {})[0] ?? {}) as { id?: string; props?: { pipes_warm_floor?: Record<string, unknown> }; id_room?: string };
+  const wfSite = (Object.values(model1.warm_floors ?? {})[0] ?? {}) as { id?: string; props?: { pipes_warm_floor?: Record<string, unknown> }; id_room?: string; polygon?: { x: number; y: number }[] };
   if (!wfSite.props?.pipes_warm_floor?.pipe_warm_floor_id) throw new Error("контур потерял pipe_warm_floor_id");
-  console.log("ссылки после reopen: OK (id_room контура:", wfSite.id_room + ")");
+  // ревью 252: после warm_floor_update + save + reopen ссылка контура цела,
+  // вершина-контур магистрали = новый polygon[0]
+  const wfPipe = Object.values(model1.pipes_warm_floor ?? {})[0] as { vertexes?: { id: string; point: { x: number; y: number }; type: string }[] } | undefined;
+  const wfv = wfPipe?.vertexes?.find((v) => v.type === "warm_floor");
+  if (!wfv || !wfSite.polygon) throw new Error("после reopen нет вершины-контура у магистрали");
+  if (Math.abs(wfv.point.x - wfSite.polygon[0]!.x) > 0.11 || Math.abs(wfv.point.y - wfSite.polygon[0]!.y) > 0.11) {
+    throw new Error(`вершина-контур не равна polygon[0] после warm_floor_update: ${JSON.stringify(wfv.point)} vs ${JSON.stringify(wfSite.polygon[0])}`);
+  }
+  console.log("warm_floor_update: ссылка контура и вершина-контур на месте (polygon[0] =", JSON.stringify(wfSite.polygon[0]) + ")");
+  // ревью 252: сечение рёбер воздуховода как в эталоне ui-ref-climate2-vent-pipe-fan
+  const ventPipe = Object.values(model1.pipes_ventilation ?? {})[0] as { matrix?: Array<Array<{ length?: number; width?: number; type?: string; height?: number } | null>>; type?: string } | undefined;
+  const ventEdge = ventPipe?.matrix?.[0]?.[1];
+  if (!ventEdge || ventEdge.width !== 20.4 || ventEdge.type !== "flat" || ventEdge.height !== 6) {
+    throw new Error(`ребро воздуховода после save+reopen без сечения: ${JSON.stringify(ventEdge ?? null)}`);
+  }
+  console.log("воздуховод: сечение рёбер как в эталоне:", JSON.stringify(ventEdge), "тип:", ventPipe?.type);
+  // ревью 251 №6 вживую: точка вершины-предмета = pc предмета (вентилятор)
+  const fanIt = Object.values(model1.items ?? {}).find((it) => (it as { name?: string }).name === "fan") as { pc?: { x: number; y: number } } | undefined;
+  const ventV = ventPipe && (ventPipe as unknown as { vertexes: { id: string; point: { x: number; y: number }; type: string }[] }).vertexes.find((v) => v.type !== "node");
+  if (!fanIt?.pc || !ventV || Math.abs(ventV.point.x - fanIt.pc.x) > 0.11 || Math.abs(ventV.point.y - fanIt.pc.y) > 0.11) {
+    throw new Error(`точка вершины-предмета воздуховода != pc вентилятора: ${JSON.stringify(ventV?.point ?? null)} vs ${JSON.stringify(fanIt?.pc ?? null)}`);
+  }
+  console.log("точка вершины-предмета = pc (вентилятор): OK");
 
-  // 6. split: разрез верхней и нижней стен, перегородка между узлами (контур левее)
-  const sx = ox + 1700;
+  // 6. split: разрез верхней и нижней стен, перегородка правее контура
+  // (после warm_floor_update 3b правая грань контура ox+1700 — перегородка на ox+1900)
+  const sx = ox + 1900;
   // ревью 251 №4: split может породить НОВЫЕ id частей — они тоже захватываются
   const knownWalls = (): Set<string> => new Set([...wallsBefore, ...created.walls]);
   const captureNewWalls = async (): Promise<void> => {
@@ -250,6 +283,7 @@ try {
   const left = (await call("model_get", {})) as unknown as Record<string, { id?: string }[]>;
   const leftoverPairs: [string, string[]][] = [
     ["cables_conditioner", created.wiring],
+    ["pipes_ventilation", created.pipes],
     ["pipes_heat", created.pipes],
     ["pipes_conditioner", created.pipes],
     ["pipes_warm_floor", created.pipes],

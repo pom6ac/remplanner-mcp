@@ -51,6 +51,7 @@ await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
  */
 const PAIRS: [string, string[], string, string][] = [
   ["cables_conditioner", created.wiring ?? [], "wiring_delete", "wiring_id"],
+  ["pipes_ventilation", created.pipes ?? [], "pipe_delete", "pipe_id"],
   ["pipes_heat", created.pipes ?? [], "pipe_delete", "pipe_id"],
   ["pipes_conditioner", created.pipes ?? [], "pipe_delete", "pipe_id"],
   ["pipes_warm_floor", created.pipes ?? [], "pipe_delete", "pipe_id"],
