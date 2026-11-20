@@ -59,10 +59,16 @@ test("263 N1: zoneAffectedRoomIds строже affectedRoomIds — Т-примы
   const strict = zoneAffectedRoomIds({ rooms2: rooms }, { changedWalls: [SPLIT_WALL] });
   assert.ok(strict!.has("A"), "комната разреза затронута (стена через внутренность)");
   assert.equal(strict!.has("B"), false, "сосед через общую стену не затронут");
-  // стена вдоль ребра комнаты затрагивает её (коллинеарное перекрытие)
-  const alongWall = { p1: { x: 10, y: 10 }, p2: { x: 390, y: 10 }, depthCm: 10 } as ChangedWall;
-  const onEdge = zoneAffectedRoomIds({ rooms2: rooms }, { changedWalls: [alongWall] });
-  assert.ok(onEdge!.has("A"), "стена по ребру комнаты — комната затронута");
+  // стена, чья грань лежит на ребре комнаты (ось на depth/2 = 5 см снаружи
+  // от ребра y=0 — геометрия редактора «ось ≠ грань», ревью 265 R4), затрагивает её
+  const faceWall = { p1: { x: 0, y: -5 }, p2: { x: 195, y: -5 }, depthCm: 10 } as ChangedWall;
+  const onFace = zoneAffectedRoomIds({ rooms2: rooms }, { changedWalls: [faceWall] });
+  assert.ok(onFace!.has("A"), "грань стены на ребре комнаты — комната затронута");
+  assert.equal(onFace!.has("B"), false, "ребро B не под стеной — не затронута");
+  // стена через внутренность (y=10 при комнате 0..300) — тоже затрагивает
+  const throughWall = { p1: { x: 10, y: 10 }, p2: { x: 390, y: 10 }, depthCm: 10 } as ChangedWall;
+  const through = zoneAffectedRoomIds({ rooms2: rooms }, { changedWalls: [throughWall] });
+  assert.ok(through!.has("A") && through!.has("B"), "стена через внутренность комнат — обе затронуты");
   // стены не менялись — undefined
   assert.equal(zoneAffectedRoomIds({ rooms2: rooms }, {}), undefined);
 });

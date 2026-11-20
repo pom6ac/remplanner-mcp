@@ -567,8 +567,10 @@ export type ZoneCompareOpts = {
    *  там) их исчезновение при нормализации — штатный случай (ревью 127),
    *  сверка нестрогая: переопределение/пропажа делителя — предупреждение.
    *  В режиме save комната сверяется строго (пропажа и смена типа — проблема),
-   *  допустим только сдвиг концов до магнита — предупреждение (живой эталон
-   *  262: редактор перепривязывает конец к новой стене). */
+   *  допустим только ненулевой сдвиг концов до магнита при целой остальной
+   *  проекции (вершины, matrix, items, on_size, length прежний или по новой геометрии ±1 см —
+   *  ревью 265 R2) — предупреждение (живой эталон 262: редактор перепривязывает
+   *  конец к новой стене). */
   affectedRooms?: Set<string>;
 };
 
@@ -583,8 +585,8 @@ export type ZoneCompareOpts = {
  * разделителей к новой стене и пересоздаёт id комнат): в normalize — нестрогая
  * (совпадение по полной проекции или с точностью до магнита — предупреждение,
  * пропажа — предупреждение с подсказкой); в save — строго (ревью 263 N2):
- * пропажа и смена типа — проблема, допустим только сдвиг концов до магнита —
- * предупреждение. Сервер не имеет права терять делитель незатронутой комнаты.
+ * пропажа и смена типа — проблема, допустим только сдвиг концов до магнита при
+ * целой остальной проекции (ревью 265 R2) — предупреждение. Сервер не имеет права терять делитель незатронутой комнаты.
  */
 export function zoneDelimiterCompare(
   expectedModel: Record<string, unknown> | undefined,
@@ -641,6 +643,38 @@ export function zoneDelimiterCompare(
     g.type === e.type && g.plan === e.plan &&
     ((dist(e.p1, g.p1) <= ZONE_LIMITS.edgeSnapCm && dist(e.p2, g.p2) <= ZONE_LIMITS.edgeSnapCm) ||
       (dist(e.p1, g.p2) <= ZONE_LIMITS.edgeSnapCm && dist(e.p2, g.p1) <= ZONE_LIMITS.edgeSnapCm));
+  // ревью 265 R2: в save сдвиг до магнита принимается, только если остальная
+  // проекция цела — число и типы вершин, промежуточные вершины, рёбра матрицы,
+  // items, on_size; length прежний или по новой геометрии (±1 см); хотя бы один
+  // конец действительно сдвинут. Иначе — общий строгий путь (problem).
+  const magnetShiftStrict = (e: ZoneDelimiterSig, g: ZoneDelimiterSig): boolean => {
+    if (!magnetShift(e, g)) return false;
+    const fwd = dist(e.p1, g.p1) <= ZONE_LIMITS.edgeSnapCm && dist(e.p2, g.p2) <= ZONE_LIMITS.edgeSnapCm;
+    const ge1 = fwd ? g.p1 : g.p2;
+    const ge2 = fwd ? g.p2 : g.p1;
+    if (samePointTol(e.p1, ge1) && samePointTol(e.p2, ge2)) return false;
+    if (e.onSize !== g.onSize) return false;
+    const n = e.vertexes.length;
+    if (g.vertexes.length !== n) return false;
+    for (let i = 1; i < n - 1; i++) {
+      if (!samePointTol(e.vertexes[i]!, g.vertexes[fwd ? i : n - 1 - i]!)) return false;
+    }
+    if (JSON.stringify(e.vertexTypes) !== JSON.stringify(g.vertexTypes)) return false;
+    if (JSON.stringify(e.itemTypes) !== JSON.stringify(g.itemTypes)) return false;
+    const edgeKeys = (sig: ZoneDelimiterSig, flip: boolean): string[] =>
+      sig.matrixEdges.map((m) => {
+        const i = flip ? n - 1 - m.i : m.i;
+        const j = flip ? n - 1 - m.j : m.j;
+        return `${Math.min(i, j)}-${Math.max(i, j)}:${Math.round(m.length * 100) / 100}`;
+      }).sort();
+    if (JSON.stringify(edgeKeys(e, false)) !== JSON.stringify(edgeKeys(g, !fwd))) return false;
+    let geomCm = 0;
+    for (let i = 0; i + 1 < n; i++) geomCm += dist(g.vertexes[i]!, g.vertexes[i + 1]!);
+    // length: редактор при перепривязке конца length не пересчитывает (живой
+    // эталон 262: 1,34 м при геометрии 1,27 м) — допустим прежний length или
+    // согласованный с новой геометрией, оба ±1 см; прочее — порча проекции
+    return Math.abs(g.length - e.length) * 100 <= 1 || Math.abs(g.length * 100 - geomCm) <= 1;
+  };
   for (const e of exp) {
     const gid = exact.get(e.idRoom) ?? sameOf(e.idRoom);
     const strictList = (gid ? gotByRoom.get(gid) : undefined) ?? [];
@@ -674,11 +708,12 @@ export function zoneDelimiterCompare(
       continue;
     }
     // ревью 263 N2: в save затронутая комната сверяется строго (редактор уже
-    // отработал), допустим только сдвиг концов до магнита — предупреждение;
-    // пропажа и смена типа уходят в общий строгий путь ниже — проблема
+    // отработал), допустим только сдвиг концов до магнита при целой остальной
+    // проекции (ревью 265 R2) — предупреждение; пропажа, смена типа и порча
+    // проекции уходят в общий строгий путь ниже — проблема
     if (affected && mode === "save") {
       const pool = intersectingPool(e.idRoom).filter((g) => !used.has(g.key));
-      const shifted = pool.find((g) => magnetShift(e, g));
+      const shifted = pool.find((g) => magnetShiftStrict(e, g));
       if (shifted) {
         used.add(shifted.key);
         warnings.push(`zone_topology_changed: room ${e.idRoom}: редактор переопределил разделитель зон ${e.key} при изменении стен (${e.type}, ${Math.round(e.length * 100)} см → ${Math.round(shifted.length * 100)} см) — проверьте зоны потолка`);

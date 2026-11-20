@@ -1,5 +1,5 @@
 import type { Point } from "./types.ts";
-import { closestPoint, collinearOverlapCm, dist, pointInPolygon, polygonArea, segmentsCross, type Segment } from "./geometry.ts";
+import { closestPoint, dist, parallelOverlapCm, pointInPolygon, polygonArea, segmentCrossesInterior, segmentsCross, type Segment } from "./geometry.ts";
 import { matchRoomsByContour, roomHeirs, roomPolygonOf, type FinishMode } from "./finish.ts";
 import { roomsMapOf } from "./room-geo.ts";
 
@@ -281,26 +281,20 @@ export function roomsChangePolicy(
 
 /** Комнаты модели (rooms2 ?? rooms1) — общий слой сверов; сама функция в room-geo
  *  (листовом модуле, чтобы zone→rooms-save→finish→zone не замыкалась). */
-
-/** Расстояние от точки до контура (минимум по рёбрам). */
-function pointPolygonDistance(p: Point, poly: Point[]): number {
-  let best = Infinity;
-  for (let i = 0; i < poly.length; i++) {
-    const d = pointSegmentDistance(p, { p1: poly[i]!, p2: poly[(i + 1) % poly.length]! });
-    if (d < best) best = d;
-    if (best <= 0) break;
-  }
-  return best;
-}
-
 /**
- * Затронутость комнат для сверки разделителей зон (ревью 263 N1) — строже,
- * чем affectedRoomIds (та рассчитана на исчезновение комнат при нормализации
- * и с допуском захвата соседа через общую стену). Комната затронута, только
- * если изменённая стена проходит через её внутренность или её ребро лежит
- * коллинеарно на изменённой стене на ненулевой длине. Т-примыкание конца
- * новой стены к оси общей стены соседнюю комнату не затрагивает (обычный
- * wall_add при split). undefined — стены не менялись.
+ * Затронутость комнат для сверки разделителей зон (ревью 263 N1, 265 R1) —
+ * строже, чем affectedRoomIds (та рассчитана на исчезновение комнат при
+ * нормализации и с допуском захвата соседа через общую стену). Изменённая
+ * стена задана осью, контур комнаты редактора идёт по грани стены
+ * (ось ± depth/2). Комната затронута, если:
+ *  - её ребро параллельно изменённой стене, перекрывается с ней на ненулевой
+ *    длине и лежит не дальше depth/2+1 см от оси (грань комнаты на грани
+ *    стены: удаление/перенос стены контура, в т. ч. общей и наружной), или
+ *  - отрезок оси проходит через внутренность контура (честное пересечение
+ *    отрезка с полигоном, без выборки точек).
+ * Т-примыкание конца новой стены к оси общей стены соседнюю комнату не
+ * затрагивает: ребро соседа перпендикулярно новой стене (обычный wall_add при
+ * split). undefined — стены не менялись.
  */
 export function zoneAffectedRoomIds(
   model: Record<string, unknown> | undefined,
@@ -313,23 +307,14 @@ export function zoneAffectedRoomIds(
   for (const [rid, room] of Object.entries(rooms)) {
     const poly = roomPolygonCm(room);
     if (!poly) continue;
-    for (const w of changed) {
-      // стена проходит через внутренность комнаты (точки стены строго внутри,
-      // не на границе — касание ребром считает коллинеарная проверка ниже)
-      let through = false;
-      for (let k = 0; k <= 4 && !through; k++) {
-        const t = k / 4;
-        const p = { x: w.p1.x + (w.p2.x - w.p1.x) * t, y: w.p1.y + (w.p2.y - w.p1.y) * t };
-        if (pointInPolygon(poly, p, 1e-6) && pointPolygonDistance(p, poly) > 0.5) through = true;
+    const touches = changed.some((w) => {
+      const maxDist = w.depthCm / 2 + 1;
+      for (let i = 0; i < poly.length; i++) {
+        if (parallelOverlapCm({ p1: poly[i]!, p2: poly[(i + 1) % poly.length]! }, w, maxDist) > 0.5) return true;
       }
-      if (through) { out.add(rid); break; }
-      // ребро комнаты лежит на изменённой стене (коллинеарное перекрытие)
-      let onEdge = false;
-      for (let i = 0; i < poly.length && !onEdge; i++) {
-        if (collinearOverlapCm(w, { p1: poly[i]!, p2: poly[(i + 1) % poly.length]! }) > 0.5) onEdge = true;
-      }
-      if (onEdge) { out.add(rid); break; }
-    }
+      return segmentCrossesInterior(w, poly, 0.5);
+    });
+    if (touches) out.add(rid);
   }
   return out;
 }

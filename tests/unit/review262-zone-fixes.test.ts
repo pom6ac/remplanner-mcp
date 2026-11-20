@@ -251,11 +251,13 @@ function wsMock(server: { saveId: string; model: Record<string, unknown> }, tran
   return ws;
 }
 
-/** Модель: одна эталонная комната + стена по её нижнему ребру + разделитель. */
+/** Модель: одна эталонная комната + стена её верхнего ребра + разделитель.
+ *  Геометрия редактора «ось ≠ грань» (ревью 265 R4): контур комнаты идёт по
+ *  грани y=10, ось стены толщиной 20 — на y=0 (грань ± depth/2). */
 function wallDeleteModel(): { server: { saveId: string; model: Record<string, unknown> }; m: Model; room: string } {
   const { m, room } = modelWithRefRoom();
   (m as unknown as Record<string, unknown>)["walls"] = {
-    w1: { p1: { x: 10, y: 10 }, p2: { x: 390, y: 10 }, depth: 10, plan: "a" },
+    w1: { p1: { x: 0, y: 0 }, p2: { x: 400, y: 0 }, depth: 20, plan: "a" },
   };
   addZoneCeiling(m, room, { fromMm: FROM_MM, toMm: TO_MM });
   return { server: { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> }, m, room };

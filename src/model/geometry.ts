@@ -248,6 +248,73 @@ export function collinearOverlapCm(a: Segment, b: Segment, tolCm = 0.5): number 
 }
 
 /**
+ * Длина перекрытия параллельных отрезков, см (ревью 265 R1: грань комнаты на
+ * грани стены — ось стены b, ребро комнаты a): a параллелен b (|sin угла| ≤
+ * sinTol), оба конца a не дальше maxDistCm от прямой b, проекции перекрываются
+ * на ненулевой длине. Перпендикулярное касание (Т-примыкание) — 0.
+ */
+export function parallelOverlapCm(a: Segment, b: Segment, maxDistCm: number, sinTol = 0.02): number {
+  const avx = a.p2.x - a.p1.x;
+  const avy = a.p2.y - a.p1.y;
+  const alen = Math.hypot(avx, avy);
+  const bvx = b.p2.x - b.p1.x;
+  const bvy = b.p2.y - b.p1.y;
+  const blen = Math.hypot(bvx, bvy);
+  if (alen < 1e-9 || blen < 1e-9) return 0;
+  if (Math.abs(avx * bvy - avy * bvx) / (alen * blen) > sinTol) return 0;
+  const d1 = (bvx * (a.p1.y - b.p1.y) - bvy * (a.p1.x - b.p1.x)) / blen;
+  const d2 = (bvx * (a.p2.y - b.p1.y) - bvy * (a.p2.x - b.p1.x)) / blen;
+  if (Math.abs(d1) > maxDistCm || Math.abs(d2) > maxDistCm) return 0;
+  const t1 = ((a.p1.x - b.p1.x) * bvx + (a.p1.y - b.p1.y) * bvy) / (blen * blen);
+  const t2 = ((a.p2.x - b.p1.x) * bvx + (a.p2.y - b.p1.y) * bvy) / (blen * blen);
+  const lo = Math.max(0, Math.min(t1, t2));
+  const hi = Math.min(1, Math.max(t1, t2));
+  return hi > lo ? (hi - lo) * blen : 0;
+}
+
+/**
+ * Отрезок проходит через внутренность полигона (ревью 265 R1, без выборки точек):
+ * отрезок режется точками пересечения с рёбрами (включая коллинеарные наложения
+ * концов рёбер), середина каждого интервала проверяется — строго внутри и
+ * дальше marginCm от контура. Касание ребром/вершиной и проход по контуру — нет.
+ */
+export function segmentCrossesInterior(seg: Segment, poly: Polygon, marginCm = 0.5): boolean {
+  const dx = seg.p2.x - seg.p1.x;
+  const dy = seg.p2.y - seg.p1.y;
+  if (Math.hypot(dx, dy) < 1e-9 || poly.length < 3) return false;
+  const tOf = (p: Point): number => (Math.abs(dx) >= Math.abs(dy) ? (p.x - seg.p1.x) / dx : (p.y - seg.p1.y) / dy);
+  const ts: number[] = [0, 1];
+  for (let j = 0; j < poly.length; j++) {
+    const edge: Segment = { p1: poly[j]!, p2: poly[(j + 1) % poly.length]! };
+    const p = lineIntersection(seg, edge);
+    if (p) {
+      const t = tOf(p);
+      if (t > 0 && t < 1 && pointOnSegment(edge, p, 1e-6)) ts.push(t);
+    } else {
+      for (const q of [edge.p1, edge.p2]) {
+        if (!pointOnSegment(seg, q, 1e-6)) continue;
+        const t = tOf(q);
+        if (t > 0 && t < 1) ts.push(t);
+      }
+    }
+  }
+  ts.sort((x, y) => x - y);
+  for (let k = 0; k + 1 < ts.length; k++) {
+    if (ts[k + 1]! - ts[k]! < 1e-9) continue;
+    const t = (ts[k]! + ts[k + 1]!) / 2;
+    const mid = { x: seg.p1.x + dx * t, y: seg.p1.y + dy * t };
+    if (!pointInPolygon(poly, mid, 1e-6)) continue;
+    let near = Infinity;
+    for (let j = 0; j < poly.length && near > marginCm; j++) {
+      const { point } = closestPoint({ p1: poly[j]!, p2: poly[(j + 1) % poly.length]! }, mid);
+      near = Math.min(near, dist(point, mid));
+    }
+    if (near > marginCm) return true;
+  }
+  return false;
+}
+
+/**
  * Площадь пересечения двух полигонов, см² (Sutherland–Hodgman: subject режется
  * внутренностью clip; clip ожидается выпуклым — тело стены, прямоугольник колонны).
  * Касание даёт ~0.

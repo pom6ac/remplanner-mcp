@@ -6,7 +6,7 @@
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { loadModel } from "../../src/api.ts";
+import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
@@ -107,8 +107,79 @@ const observeZones = async (tag: string, minX: number): Promise<void> => {
   }));
 };
 
+// ревью 265 R3: та же сигнатура, что в 262-live-check (копия — проба check
+// исполняется на верхнем уровне, импортировать её нельзя)
+/** Семантическая сигнатура модели (сокр. версия 260): служебные поля исключены,
+ *  комнаты/стены/делители — в канонических формах. */
+function sig(m: unknown): string {
+  const c = structuredClone(m) as Record<string, unknown>;
+  for (const k of ["errors", "logs", "log_plan", "session", "version", "drawing", "params", "final", "signals", "save_id", "is_forced"]) delete c[k];
+  for (const k of ["borders", "drawings"]) {
+    if (Array.isArray(c[k])) c[k] = [...(c[k] as unknown[])].map((e) => JSON.stringify(e)).sort();
+  }
+  const rooms = {
+    ...((c["rooms1"] ?? {}) as Record<string, Record<string, unknown>>),
+    ...((c["rooms2"] ?? {}) as Record<string, Record<string, unknown>>),
+  } as Record<string, Record<string, unknown>>;
+  const canonPoly = (poly: unknown): string => {
+    if (!Array.isArray(poly)) return "";
+    return (poly as Array<{ x: number; y: number }>).map((p) => `${Math.round(p.x * 10) / 10},${Math.round(p.y * 10) / 10}`).join(";") + "#";
+  };
+  const polyList: string[] = [];
+  const polyIndex = new Map<string, number>();
+  for (const r of Object.values(rooms)) {
+    const k = canonPoly(r["polygon"]);
+    if (!polyIndex.has(k)) { polyIndex.set(k, polyList.length); polyList.push(k); }
+  }
+  const roomAlias = new Map<string, string>();
+  Object.entries(rooms).forEach(([rid, r]) => {
+    const idx = polyIndex.get(canonPoly(r["polygon"]));
+    roomAlias.set(rid, `RR${idx === undefined ? polyList.length : idx}`);
+  });
+  for (const rk of ["rooms1", "rooms2"]) {
+    const map = (c[rk] ?? null) as Record<string, Record<string, unknown>> | null;
+    if (map && typeof map === "object") {
+      for (const rec of Object.values(map)) {
+        if (Array.isArray(rec["edges"])) {
+          rec["edges"] = (rec["edges"] as Array<Record<string, unknown>>).map((e, i) => ({ ...e, id: `ed${i}` }));
+        }
+        if (Array.isArray(rec["id_of_edges"])) {
+          rec["id_of_edges"] = (rec["id_of_edges"] as unknown[]).map((_, i) => `ed${i}`);
+        }
+      }
+      const renamed: Record<string, Record<string, unknown>> = {};
+      for (const [rid, rec] of Object.entries(map)) renamed[roomAlias.get(rid) ?? rid] = rec;
+      c[rk] = renamed;
+    }
+  }
+  const walls = (c["walls"] ?? {}) as Record<string, Record<string, unknown>>;
+  for (const w of Object.values(walls)) {
+    const eds2 = w["eds2"] as Record<string, unknown> | undefined;
+    if (eds2) {
+      for (const side of Object.keys(eds2)) {
+        if (Array.isArray(eds2[side])) {
+          eds2[side] = (eds2[side] as Array<Record<string, unknown>>).map((e) => JSON.stringify({ ...e, id: null, pc: null })).sort();
+        }
+      }
+    }
+  }
+  const aliasAll = (v: unknown, parentKey?: string): unknown => {
+    if (Array.isArray(v)) return v.map((x) => aliasAll(x));
+    if (v !== null && typeof v === "object") {
+      const o: Record<string, unknown> = {};
+      for (const kk of Object.keys(v as Record<string, unknown>).sort()) o[kk] = aliasAll((v as Record<string, unknown>)[kk], kk);
+      return o;
+    }
+    if (typeof v === "string" && (parentKey === "id_room" || parentKey === "id")) {
+      return roomAlias.get(v) ?? (parentKey === "id_room" ? "DANGLING" : v);
+    }
+    return v;
+  };
+  return JSON.stringify(aliasAll(c));
+}
+
 // ревью 263 N7: гард контрольного проекта (только GET) до и после прогона
-const snapReadonly = async (tag: string): Promise<unknown> => {
+const snapReadonly = async (tag: string): Promise<LoadedModel> => {
   const m = await loadModel(ctx.session(), READONLY_ID, "1");
   writeFileSync(`${OUT}/get-${READONLY_ID}-split-${tag}.json`, JSON.stringify(m, null, 1));
   return m;
@@ -228,6 +299,22 @@ try {
   if (!saveR["verified"]) throw new Error("restore save не verified");
   created.length = 0;
   opened = false;
+
+  // ревью 265 R3: после restore разделители проекта сверяются с бэкапом —
+  // части, созданные редактором при разрезе (новые id), и чужие записи
+  // в захваченные site_id не попадают; печатаются оставшиеся/пропавшие id
+  const restored = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+  const zdOf = (m: Record<string, unknown> | undefined): Record<string, unknown> =>
+    ((m ?? {})["zone_delimiters"] ?? {}) as Record<string, unknown>;
+  const zdBackup = zdOf(stored.model);
+  const zdNow = zdOf(restored.model);
+  const extraIds = Object.keys(zdNow).filter((k) => !(k in zdBackup));
+  const missingIds = Object.keys(zdBackup).filter((k) => !(k in zdNow));
+  const changedIds = Object.keys(zdBackup).filter((k) => k in zdNow && JSON.stringify(zdBackup[k]) !== JSON.stringify(zdNow[k]));
+  console.log("разделители после restore vs бэкап:", JSON.stringify({ extra: extraIds, missing: missingIds, changed: changedIds }));
+  if (extraIds.length > 0 || missingIds.length > 0 || changedIds.length > 0) {
+    throw new Error("разделители проекта после restore не совпали с бэкапом — СТОП, ручная зачистка по списку выше");
+  }
 
   // контрольный проект после (ревью 263 N7)
   const snapAfter = await loadModel(ctx.session(), READONLY_ID, "1");
