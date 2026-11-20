@@ -257,6 +257,25 @@ test("274 №11: импорт — слишком много частей warms_w
   assert.doesNotThrow(() => parseModelImport(ok2));
 });
 
+test("ревью 276 N7: суммарный лимит частей warms_walls по всем комнатам ≤ MAX_IMPORT_ENTITIES", () => {
+  const model = JSON.parse(readFileSync(join(here, "../fixtures/anon-rect-4000x3000.json"), "utf8")).model as Record<string, unknown>;
+  // 2 комнаты × 1001 часть: каждая группа и массив в своих лимитах, сумма 2002 — сверх
+  const rooms: Record<string, Record<string, unknown>> = {
+    r1: { polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }] },
+    r2: { polygon: [{ x: 500, y: 0 }, { x: 900, y: 0 }, { x: 900, y: 300 }, { x: 500, y: 300 }] },
+  };
+  for (const k of ["r1", "r2"]) {
+    const parts: Record<string, unknown> = {};
+    for (let i = 0; i < 1001; i++) parts[`p${i}`] = { id: `p${i}`, type: "warm_wall_cable", line: { p1: { x: 0, y: 5 }, p2: { x: 1, y: 5 } }, props: { id: `p${i}`, name: "warm_wall_cable" } };
+    rooms[k]!.warms_walls = [{ exist: true, parts }];
+  }
+  const bad = { ...structuredClone(model), rooms2: rooms };
+  assert.throws(
+    () => parseModelImport(bad),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("warms_walls"),
+  );
+});
+
 // ---------- ревью 276 N6: метки R<n> с тем же фильтром, что у rooms_list ----------
 
 test("ревью 276 N6: комнаты без полигона не сдвигают метки R<n> (единый фильтр с rooms_list)", () => {
@@ -294,10 +313,9 @@ async function startOffline(): Promise<{ client: import("@modelcontextprotocol/s
   return { client, close: () => client.close() };
 }
 
-type ToolRes = { isError?: boolean; content?: Array<{ type: string; text?: string }> };
-
-const toolJson = (res: ToolRes): Record<string, unknown> =>
-  JSON.parse((res.content ?? []).find((c) => typeof c.text === "string")?.text ?? "{}") as Record<string, unknown>;
+const toolJson = (res: unknown): Record<string, unknown> =>
+  JSON.parse(((res as { content?: Array<{ type: string; text?: string }> }).content ?? [])
+    .find((c) => typeof c.text === "string")?.text ?? "{}") as Record<string, unknown>;
 
 test("ревью 276 N4: warm_wall_delete (инструмент) — deleted = id части, room = R<n>, edge (мутация на a.warm_wall_id красная)", async () => {
   const { client, close } = await startOffline();

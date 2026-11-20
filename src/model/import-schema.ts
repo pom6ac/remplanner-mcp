@@ -274,17 +274,41 @@ function collectionsSchema(): Record<string, z.ZodType> {
   return out;
 }
 
-export const importModelSchema: z.ZodType = z.looseObject({
-  v: z.number().finite().optional(),
-  id: idStr.optional(),
-  plan_id: idStr.optional(),
-  total_height: cmSize.optional(),
-  final: z.boolean().optional(),
-  // комнаты редактора (этап 273 rev 274 №11): warms_walls с лимитами; прочие
-  // поля комнаты — passthrough (унаследованный долг rooms2 сохранён)
-  rooms2: z.record(z.string(), room2).optional(),
-  ...collectionsSchema(),
-});
+export const importModelSchema: z.ZodType = z
+  .looseObject({
+    v: z.number().finite().optional(),
+    id: idStr.optional(),
+    plan_id: idStr.optional(),
+    total_height: cmSize.optional(),
+    final: z.boolean().optional(),
+    // комнаты редактора (этап 273 rev 274 №11): warms_walls с лимитами; прочие
+    // поля комнаты — passthrough (унаследованный долг rooms2 сохранён)
+    rooms2: z.record(z.string(), room2).optional(),
+    ...collectionsSchema(),
+  })
+  // ревью 276 N7: лимит частей задан на каждом уровне (группа, массив комнаты) —
+  // общий объём держим суммой по всем комнатам ≤ MAX_IMPORT_ENTITIES
+  .superRefine((data, ctx) => {
+    const rooms2 = (data as Record<string, unknown>)["rooms2"];
+    if (!rooms2 || typeof rooms2 !== "object") return;
+    let total = 0;
+    for (const room of Object.values(rooms2 as Record<string, { warms_walls?: Array<{ parts?: Record<string, unknown> }> }>)) {
+      for (const g of room?.warms_walls ?? []) {
+        if (g?.parts && typeof g.parts === "object") total += Object.keys(g.parts).length;
+      }
+    }
+    if (total > MAX_IMPORT_ENTITIES) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.too_big,
+        maximum: MAX_IMPORT_ENTITIES,
+        type: "number",
+        origin: "number",
+        inclusive: true,
+        path: ["rooms2"],
+        message: `суммарное число частей warms_walls по всем комнатам (${total}) превышает ${MAX_IMPORT_ENTITIES}`,
+      });
+    }
+  });
 
 function formatPath(path: (string | number | symbol)[]): string {
   return path
