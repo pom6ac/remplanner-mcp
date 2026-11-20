@@ -9,6 +9,7 @@ import {
   MAX_IMPORT_JSON_DEPTH,
   MAX_SERVICE_COMMENT_CHARS,
   SHIELD_MAX_WIRES,
+  SHIELD_MAX_COLLECTORS,
   MODEL_COORD_LIMIT_CM,
   MODEL_SIZE_LIMIT_CM,
 } from "../limits.ts";
@@ -229,7 +230,17 @@ const shield = z.looseObject({
     }),
     MAX_IMPORT_GRAPH_NODES,
   ).optional(),
-  collectors: collection(z.looseObject({ id: idStr }), MAX_IMPORT_GRAPH_NODES).optional(),
+  // этап 291: коллектор — {id, rail_id, module_width, modules {moduleId: 1}, position}
+  collectors: collection(
+    z.looseObject({
+      id: idStr,
+      rail_id: idStr.optional(),
+      module_width: cmSize.optional(),
+      modules: z.record(z.string(), z.number().finite().min(0).max(9999)).optional(),
+      position: shortStr.optional(),
+    }),
+    SHIELD_MAX_COLLECTORS,
+  ).optional(),
   inputs: collection(
     z.looseObject({
       id: idStr,

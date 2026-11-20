@@ -3278,8 +3278,206 @@
    }
   },
   {
+   "name": "shield_bus_add",
+   "description": "Добавить шину (нулевую шину-бар, инструмент shield_busbar в редакторе) над или под щитком (PRO). position — T (над) | B (под); align — привязка по горизонтали: L (левый край, distance 0), C (центр, по умолчанию), R (правый край). Гнёзд по умолчанию 6 (ShieldDimensions.bus.default_sockets), sockets — 4..25. connection шины пуст, тип запомнится первым проводом (shield_wire_add на {bus, port}); к шине с connection можно ставить только провод того же типа — как в редакторе. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "position": {
+      "type": "string",
+      "enum": [
+       "T",
+       "B"
+      ],
+      "description": "ряд: T (над щитком) | B (под)"
+     },
+     "align": {
+      "description": "привязка: L (лево), C (центр, по умолчанию), R (право)",
+      "type": "string",
+      "enum": [
+       "L",
+       "C",
+       "R"
+      ]
+     },
+     "sockets": {
+      "description": "число гнёзд 4..25 (по умолчанию 6)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "item_id",
+     "position"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "shield_bus_delete",
+   "description": "Удалить шину щитка (bus_id из model_get bus_list). Провода к её гнёздам удаляются каскадом (как в редакторе, delete_bus) — в ответе deleted_wires.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "bus_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id шины из model_get bus_list"
+     }
+    },
+    "required": [
+     "item_id",
+     "bus_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "shield_bus_update",
+   "description": "Изменить шину щитка (bus_id из model_get bus_list): привязка (align/position, distance пересчитывается как в редакторе) и число гнёзд (sockets 4..25; добавление в конец, удаление с конца — bus_enter_ports редактора; провода удалённых гнёзд удаляются каскадом, в ответе deleted_wires).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "bus_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id шины из model_get bus_list"
+     },
+     "position": {
+      "type": "string",
+      "enum": [
+       "T",
+       "B"
+      ]
+     },
+     "align": {
+      "type": "string",
+      "enum": [
+       "L",
+       "C",
+       "R"
+      ]
+     },
+     "sockets": {
+      "description": "число гнёзд 4..25",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "item_id",
+     "bus_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "shield_collector_add",
+   "description": "Добавить коллектор (гребёнку, инструмент shield_collector в редакторе) на модули одной DIN-рейки (PRO). modules — список id модулей (из model_get shields[].modules[].module_id) в порядке следования: минимум два модуля (коллектор на одном модуле редактор удаляет — validate_collectors), все на одной рейке, одной ширины, без чужих модулей внутри диапазона; type модуля — из списка коллекторных (автоматы, УЗО, выключатели нагрузки). После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "modules": {
+      "minItems": 2,
+      "maxItems": 48,
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1
+      },
+      "description": "id модулей коллектора в порядке следования"
+     }
+    },
+    "required": [
+     "item_id",
+     "modules"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "shield_collector_delete",
+   "description": "Удалить коллектор щитка (collector_id из model_get collector_list): модули и провода не трогаются (как в редакторе, delete_collector).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "collector_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id коллектора из model_get collector_list"
+     }
+    },
+    "required": [
+     "item_id",
+     "collector_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "shield_collector_update",
+   "description": "Изменить коллектор щитка (collector_id из model_get collector_list): заменить набор модулей (modules — подряд, одна рейка, одна ширина, ≥2 — тот же путь, что переснятие drag).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "collector_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id коллектора из model_get collector_list"
+     },
+     "modules": {
+      "description": "новый набор модулей",
+      "minItems": 2,
+      "maxItems": 48,
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1
+      }
+     }
+    },
+    "required": [
+     "item_id",
+     "collector_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "shield_module_add",
-   "description": "Добавить модуль на DIN-рейку электрощитка (лист «Электрощиток», PRO). type — ключ модуля каталога UI: shield_module (автомат), shield_module_x2_simple/x3/x4_simple (2–4-полюсные автоматы), shield_module_x2/x4 (дифавтоматы), shield_module_input* (вводные), shield_module_uzo/uzo_x4/uzo_fire/uzo_fire_x4 (УЗО), shield_module_off_switch* (выключатели нагрузки), shield_module_uzip* (УЗИП), shield_module_voltage* (реле напряжения), shield_module_impulse (импульсное реле), shield_module_contactor* (контакторы), shield_module_counter (счётчик), shield_module_socket (щитовая розетка), shield_module_terminal* (клеммы), shield_module_din_bus (шина на рейку), shield_module_cross* (кросс-модули), shield_module_splitter (разделитель), shield_module_uvr (ввод резерва), shield_custom_module (произвольный, умолчания микроконструктора). subtype — номинал из списка типа («16A», «16A/30mA», …); group_number — номер группы (только у автоматов/УЗО/дифавтоматов); rail — индекс рейки (по умолчанию 0). Модуль ставится в конец рейки; лимит рейки — 48 DIN. Провода между портами ставятся shield_wire_add; совместимость типа провода и типа порта не проверяется — как в редакторе (add_wire_end); петля (провод на тот же порт) — MCP строже редактора. Шины и коллекторы не редактируются MCP (следующий этап).",
+   "description": "Добавить модуль на DIN-рейку электрощитка (лист «Электрощиток», PRO). type — ключ модуля каталога UI: shield_module (автомат), shield_module_x2_simple/x3/x4_simple (2–4-полюсные автоматы), shield_module_x2/x4 (дифавтоматы), shield_module_input* (вводные), shield_module_uzo/uzo_x4/uzo_fire/uzo_fire_x4 (УЗО), shield_module_off_switch* (выключатели нагрузки), shield_module_uzip* (УЗИП), shield_module_voltage* (реле напряжения), shield_module_impulse (импульсное реле), shield_module_contactor* (контакторы), shield_module_counter (счётчик), shield_module_socket (щитовая розетка), shield_module_terminal* (клеммы), shield_module_din_bus (шина на рейку), shield_module_cross* (кросс-модули), shield_module_splitter (разделитель), shield_module_uvr (ввод резерва), shield_custom_module (произвольный, умолчания микроконструктора). subtype — номинал из списка типа («16A», «16A/30mA», …); group_number — номер группы (только у автоматов/УЗО/дифавтоматов); rail — индекс рейки (по умолчанию 0). Модуль ставится в конец рейки; лимит рейки — 48 DIN. Провода между портами ставятся shield_wire_add; совместимость типа провода и типа порта не проверяется — как в редакторе (add_wire_end); петля (провод на тот же порт) — MCP строже редактора. Шины (shield_bus_add) и коллекторы (shield_collector_add) — отдельные инструменты.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -3478,7 +3676,7 @@
   },
   {
    "name": "shield_wire_add",
-   "description": "Соединить порты щитка проводом (лист «Электрощиток», PRO; в редакторе — инструмент shield_wire_* и клик по двум портам). type — shield_wire_phase|shield_wire_phase2|shield_wire_phase3 (фаза/фаза 2/фаза 3), shield_wire_null (ноль), shield_wire_earth (земля). source/target — порт: {module_id, port} (port обязателен; номер порта модуля 0-based из full-модели shields[].rails[].modules[].ports) или {input: \"phase\"|\"null\"|\"earth\"} (порт ввода). Несколько разных проводов на один порт разрешено (как в редакторе); повторный идентичный провод (те же порты и тип) — INVALID_ARGUMENT, разорванный провод (is_broken) тоже считается дублем — сначала shield_wire_delete; тип провода и тип порта не проверяются (как в редакторе). Шины (buses) не редактируются MCP — порт шины указать нельзя (следующий этап). После добавления пересчитываются connected портов и connection шин (validate_ports/validate_buses редактора); висячие провода/коллекторы чистятся только при операциях с модулями и рейками.",
+   "description": "Соединить порты щитка проводом (лист «Электрощиток», PRO; в редакторе — инструмент shield_wire_* и клик по двум портам). type — shield_wire_phase|shield_wire_phase2|shield_wire_phase3 (фаза/фаза 2/фаза 3), shield_wire_null (ноль), shield_wire_earth (земля). source/target — порт: {module_id, port} (port обязателен; номер порта модуля 0-based из full-модели shields[].rails[].modules[].ports), {input: \"phase\"|\"null\"|\"earth\"} (порт ввода) или {bus, port} (гнездо шины 0-based из bus_list; bus.connection = тип провода — как в редакторе, к шине с другим connection провод не ставится). Несколько разных проводов на один порт разрешено (как в редакторе); повторный идентичный провод (те же порты и тип) — INVALID_ARGUMENT, разорванный провод (is_broken) тоже считается дублем — сначала shield_wire_delete; тип провода и тип порта не проверяются (как в редакторе). После добавления пересчитываются connected портов и connection шин (validate_ports/validate_buses редактора); висячие провода/коллекторы чистятся только при операциях с модулями и рейками.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -3519,9 +3717,14 @@
          "null",
          "earth"
         ]
+       },
+       "bus": {
+        "description": "id шины из model_get bus_list",
+        "type": "string",
+        "minLength": 1
        }
       },
-      "description": "исходный порт: {module_id, port} или {input}"
+      "description": "исходный порт: {module_id, port}, {input} или {bus, port}"
      },
      "target": {
       "type": "object",
@@ -3545,9 +3748,14 @@
          "null",
          "earth"
         ]
+       },
+       "bus": {
+        "description": "id шины из model_get bus_list",
+        "type": "string",
+        "minLength": 1
        }
       },
-      "description": "целевой порт: {module_id, port} или {input}"
+      "description": "целевой порт: {module_id, port}, {input} или {bus, port}"
      }
     },
     "required": [
