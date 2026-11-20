@@ -790,7 +790,7 @@ export function addShieldWire(model: Model, itemId: string, params: ShieldWireAd
   if (source.parentType === "bus" && target.parentType === "bus") {
     throw new McpError(
       "INVALID_ARGUMENT",
-      "провод между гнёздами шин не ставится (шина→шина, в том числе два гнезда одной шины) — в редакторе провод с порта шины начать нельзя (ShieldBus.port_mousedown)",
+      "провод между гнёздами шин не ставится (шина→шина, в том числе два гнезда одной шины) — в редакторе нельзя завершить на гнезде шины провод, начатый с шины (ShieldBus.port_mousedown)",
       { details: { kind: "bus_to_bus" } },
     );
   }

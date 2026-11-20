@@ -6,7 +6,8 @@
 
 - **shield_wire_add**: провод между двумя гнёздами шин (шина→шина, в том числе
   два гнезда одной шины) — `INVALID_ARGUMENT bus_to_bus`, как в редакторе
-  (`ShieldBus.port_mousedown` не даёт начать провод с порта шины).
+  (`ShieldBus.port_mousedown` не даёт завершить на гнезде шины провод,
+  начатый с шины).
 - **shield_collector_add / shield_collector_update**: «модули подряд» —
   диапазон по min/max всех модулей (неупорядоченный список с разрывом —
   `collector_gap`); правило одно для add и update.

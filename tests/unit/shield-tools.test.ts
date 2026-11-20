@@ -302,6 +302,10 @@ test("293 №1: shield_wire_add шина→шина и гнездо той же 
     const sh = ((await call(client, "model_get", {})) as unknown as { shields: { wires?: unknown[]; bus_list: { connection: string }[] }[] }).shields[0]!;
     assert.equal(sh.wires?.length ?? 0, 0, "проводов нет");
     assert.ok(sh.bus_list!.every((b) => b.connection === ""));
+    // ревью 294 N2: шина→модуль разрешена (нельзя только шина→шина)
+    const [modId] = await threeModules(client);
+    const okBusToModule = await call(client, "shield_wire_add", { item_id: "sh1", type: "shield_wire_phase", source: { bus: b1, port: 1 }, target: { module_id: modId, port: 0 } });
+    assert.ok(okBusToModule["entity"], "шина→модуль");
   } finally {
     await client.close();
   }
