@@ -276,6 +276,30 @@ test("ревью 276 N7: суммарный лимит частей warms_walls 
   );
 });
 
+test("ревью 279 P3: граница суммарного лимита — ровно MAX_IMPORT_ENTITIES проходит, +1 — отказ (мутация > → >= красная)", () => {
+  const model = JSON.parse(readFileSync(join(here, "../fixtures/anon-rect-4000x3000.json"), "utf8")).model as Record<string, unknown>;
+  const mk = (total: number): Record<string, Record<string, unknown>> => {
+    const rooms: Record<string, Record<string, unknown>> = {
+      r1: { polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }] },
+      r2: { polygon: [{ x: 500, y: 0 }, { x: 900, y: 0 }, { x: 900, y: 300 }, { x: 500, y: 300 }] },
+    };
+    // сумма по ДВУМ комнатам — граница проверяется именно суперрефайном, а не лимитом группы
+    for (const [k, n] of [["r1", Math.floor(total / 2)], ["r2", Math.ceil(total / 2)]] as const) {
+      const parts: Record<string, unknown> = {};
+      for (let i = 0; i < n; i++) parts[`p${i}`] = { id: `p${i}`, type: "warm_wall_cable", line: { p1: { x: 0, y: 5 }, p2: { x: 1, y: 5 } }, props: { id: `p${i}`, name: "warm_wall_cable" } };
+      rooms[k]!.warms_walls = [{ exist: true, parts }];
+    }
+    return rooms;
+  };
+  // ровно предел — ok
+  assert.doesNotThrow(() => parseModelImport({ ...structuredClone(model), rooms2: mk(2000) }));
+  // +1 — отказ с сообщением про сумму
+  assert.throws(
+    () => parseModelImport({ ...structuredClone(model), rooms2: mk(2001) }),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("2000"),
+  );
+});
+
 // ---------- ревью 276 N6: метки R<n> с тем же фильтром, что у rooms_list ----------
 
 test("ревью 276 N6: комнаты без полигона не сдвигают метки R<n> (единый фильтр с rooms_list)", () => {
@@ -296,6 +320,25 @@ test("ревью 276 N6: комнаты без полигона не сдвиг�
   assert.equal(warmWallList(m)[0]!.room_id, "R2");
   const del = warmWallDelete(m, "WW1");
   assert.equal(del.room, "R2");
+});
+
+test("ревью 279 P1: входная метка R<n> в roomByRef — тот же фильтр (мутация Object.entries()[n-1] красная)", () => {
+  const m = baseModel();
+  m.rooms2 = {
+    r1: { polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }], area: 12 } as never,
+    rEmpty: { polygon: [] } as never,
+    r2: { polygon: [{ x: 500, y: 0 }, { x: 900, y: 0 }, { x: 900, y: 300 }, { x: 500, y: 300 }], area: 12 } as never,
+  };
+  // резолв ВХОДНОЙ метки R2 (мутант взял бы rEmpty — вторую запись по порядку —
+  // и ответил «у комнаты R2 нет контура»); часть обязана лечь в r2
+  const a = warmWallAdd(m, { roomRef: "R2", edge: 0, startMm: 500, endMm: 1500 });
+  assert.equal(a.room_id, "R2");
+  assert.ok(warmWallEntries(m).some((e) => e.roomId === "r2" && e.part.id === a.id), `часть в r2: ${JSON.stringify(warmWallEntries(m).map((e) => e.roomId))}`);
+  // и через NOT_FOUND-ветку: R3 (несуществующая) — отказ
+  assert.throws(
+    () => warmWallAdd(m, { roomRef: "R3", edge: 0, startMm: 500, endMm: 1500 }),
+    (e: unknown) => e instanceof McpError && e.code === "NOT_FOUND",
+  );
 });
 
 // ---------- ревью 276 N4: ответ warm_wall_delete на уровне инструмента ----------

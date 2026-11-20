@@ -224,7 +224,7 @@ export function socketGroupAngleDeg(wallAxisAngleDeg: number): number {
  * wall_line редактор НЕ пишет); radiator_collector — 4.55 от грани (не
  * depth/2 = 5; icon_center у него на 5). Одно правило для item_add и
  * item_update (одно вычисление в againstWallPlacement); gap_mm для этих
- * видов не применяется (зазор редактором для них не поддержан), gap_mm > 0 —
+ * видов не применяется (зазор редактором для них не поддержан), gap_mm ≠ 0 —
  * INVALID_ARGUMENT (ревью 271 N4). Смещение снято с одного дампа при
  * каталожной глубине — depth_mm на точку привязки не влияет.
  */
@@ -267,8 +267,9 @@ export function againstWallPlacement(
   if (len < 1e-6) throw new McpError("INVALID_ARGUMENT", "стена нулевой длины");
   // ревью 271 N4: у видов с собственным правилом привязки (MANIFOLD_FACE_OFFSET_CM)
   // зазор молча не применяется — смещение снято с живого дампа для каталожной
-  // глубины; вместо молчаливого игнорирования — отказ
-  if (faceOffsetCm !== undefined && (aw.gapMm ?? 0) > 0) {
+  // глубины; вместо молчаливого игнорирования — отказ. Ревью 278 P1: и
+  // отрицательный gap_mm — молча сдвигал бы pc в стену
+  if (faceOffsetCm !== undefined && (aw.gapMm ?? 0) !== 0) {
     throw new McpError(
       "INVALID_ARGUMENT",
       "gap_mm не применяется к коллекторным узлам: точка привязки по виду (смещение снято для каталожной глубины), уберите gap_mm",
