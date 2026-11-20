@@ -98,10 +98,18 @@ function migrateLegacyShields(model: Model): void {
     }
     if (shield["inputs"] !== undefined) {
       let inputs = shield["inputs"];
+      // ревью 256 №4: редактор (ShieldInput при restore) дописывает вводу
+      // index:0 и phase:1 — миграция дописывает то же во всех ветках, иначе
+      // каждая сверка save видит ложное «содержимое изменилось»
+      const completeInput = (inp: Record<string, unknown>): Record<string, unknown> => {
+        if (inp["index"] === undefined) inp["index"] = 0;
+        if (inp["phase"] === undefined) inp["phase"] = 1;
+        return inp;
+      };
       if (Array.isArray(inputs)) {
         const id = `_${Math.random().toString(36).slice(2, 7)}`;
         for (const p of inputs as Array<Record<string, unknown>>) p["parent_id"] = id;
-        inputs = { [id]: { id, ports: inputs } };
+        inputs = { [id]: completeInput({ id, ports: inputs }) };
       } else if (inputs && typeof inputs === "object") {
         const rec = inputs as Record<string, unknown>;
         if (Array.isArray(rec["ports"])) {
@@ -110,7 +118,7 @@ function migrateLegacyShields(model: Model): void {
           const ports = rec["ports"] as Array<Record<string, unknown>>;
           const types = ["shield_wire_earth", "shield_wire_null", "shield_wire_phase"];
           inputs = {
-            [id]: {
+            [id]: completeInput({
               id,
               ports: types.map((type, i) => ({
                 id: typeof ports[i]?.["id"] === "string" && ports[i]!["id"] ? ports[i]!["id"] : `_${Math.random().toString(36).slice(2, 7)}`,
@@ -119,7 +127,7 @@ function migrateLegacyShields(model: Model): void {
                 type,
                 connected: ports[i]?.["connected"] ? 1 : 0,
               })),
-            },
+            }),
           };
         } else {
           // ключи ≠ id: перегруппировать по id (SHIELDS.restore, ветка «id»===r)
@@ -129,7 +137,7 @@ function migrateLegacyShields(model: Model): void {
               const e = v as Record<string, unknown>;
               const id = typeof e["id"] === "string" && e["id"] ? e["id"] : k;
               e["id"] = id;
-              regrouped[id] = e;
+              regrouped[id] = completeInput(e);
             }
           }
           inputs = regrouped;

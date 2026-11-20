@@ -384,8 +384,7 @@ test("255: импорт — щиток с модулями проходит; м�
   );
 });
 
-test("255: toModel мигрирует legacy-формы — rails/buses массивом, inputs-массив, ports без обёртки", () => {
-  const raw = {
+test("255: toModel мигрирует legacy-формы — rails/buses массивом, inputs-массив, ports без обёртки", () => {  const raw = {
     v: 3, walls: {}, items: {}, pillars: {},
     shields: {
       s1: {
@@ -425,6 +424,54 @@ test("255: toModel мигрирует legacy-формы — rails/buses масс
   assert.equal(input2.ports[1]!.id, "q2");
   assert.equal(input2.ports[1]!.connected, 1);
   for (const p of input2.ports) assert.equal(p.parent_id, input2.id);
+});
+
+// Ревью 256 №4: редактор (ShieldInput при restore) дописывает вводу index:0 и
+// phase:1 (сериализация эталона ui-ref-shield-empty их содержит) — миграция
+// legacy-inputs обязана дописывать то же, иначе каждая сверка save видит
+// «содержимое изменилось» и любой save блокируется NORMALIZATION_DROPPED.
+test("256 №4: миграция legacy-inputs дописывает index и phase во всех ветках", () => {
+  const raw = {
+    v: 3, walls: {}, items: {}, pillars: {},
+    shields: {
+      // inputs массивом (портам ставится parent_id)
+      s1: { id: "s1", shield_id: "i1", rails: [{ id: "r1", index: 0, modules: [] }],
+        inputs: [
+          { id: "p1", type: "shield_wire_earth", connected: 0 },
+          { id: "p2", type: "shield_wire_null", connected: 0 },
+          { id: "p3", type: "shield_wire_phase", connected: 0 },
+        ] },
+      // ports без обёртки-ввода
+      s2: { id: "s2", shield_id: "i2", inputs: { ports: [{ id: "q1", connected: 0 }, { id: "q2", connected: 1 }] } },
+      // словарь с ключом ≠ id (ветка перегруппировки)
+      s3: { id: "s3", shield_id: "i3", inputs: { old_key: { id: "in3", ports: [] } } },
+    },
+  };
+  const m = toModel(structuredClone(raw) as unknown as Record<string, unknown>);
+  for (const key of ["s1", "s2", "s3"] as const) {
+    const s = m.shields![key]!;
+    const input = Object.values(s.inputs as Record<string, { id: string; index?: number; phase?: number }>)[0]!;
+    assert.equal(input.index, 0, `index ввода ${key}`);
+    assert.equal(input.phase, 1, `phase ввода ${key}`);
+  }
+});
+
+test("256 №4: mock save — модель с legacy-щитком (массивы rails/buses, inputs-массив) проходит save", async () => {
+  const { m, shield } = scenario();
+  m.shields = { s1: legacyShieldFor(shield.id) as never };
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    // restore редактора: ShieldInput дописывает index/phase вводам
+    for (const s of Object.values(norm.shields as Record<string, Shield>)) {
+      for (const input of Object.values(s.inputs)) {
+        input.index ??= 0;
+        input.phase ??= 1;
+      }
+    }
+  });
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true, JSON.stringify(res).slice(0, 500));
 });
 
 // ---------- сверка shieldMismatches ----------
@@ -483,6 +530,22 @@ test("255: длина length_rails при on_auto_length_rails=1 — произ�
 // ---------- mock save ----------
 
 const COMPAT = { global_version: null, planner_version: null, bundles: [], object_id: null, plan_id: null, present: { WALLS: true, ROOMS2: true, restore: true, draw: true, copy: true, save: true, canvas: true, wall_link1: true, wall_link2: true, wall_calc: true } };
+
+/** Ревью 256 №4: legacy-щиток (rails/buses/wires массивы, inputs-массив) — та же
+ *  модель, что в тесте миграции toModel, но на живых стенах/предметах. */
+function legacyShieldFor(itemId: string): Record<string, unknown> {
+  return {
+    id: "s1", shield_id: itemId, on_auto_length_rails: 1, length_rails: 12,
+    rails: [{ id: "r1", index: 0, modules: [] }],
+    buses: [],
+    inputs: [
+      { id: "p1", type: "shield_wire_earth", connected: 0 },
+      { id: "p2", type: "shield_wire_null", connected: 0 },
+      { id: "p3", type: "shield_wire_phase", connected: 0 },
+    ],
+    wires: [],
+  };
+}
 
 type SaveServer = { saveId: string; model: Record<string, unknown> };
 
