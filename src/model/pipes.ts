@@ -425,15 +425,13 @@ function linkHolderOf(model: Model, vertex: GasLineVertex, coll: string): PipeLi
     const wf = model.warm_floors?.[vertex.id];
     if (!wf) return null;
     const props = (wf.props ??= { id: wf.id, name: wf.type });
-    const cur = props[box] as Record<string, unknown> | undefined;
     props[box] ??= {};
     return { box: props[box] as Record<string, unknown>, multi: false };
   }
   const item = model.items[vertex.id] as (ItemProps & Record<string, unknown>) | undefined;
   if (!item) return null;
   item[box] ??= {};
-  return { box: item[box] as Record<string, unknown>, multi: isMultiPipeItem(item.name) };
-}
+  return { box: item[box] as Record<string, unknown>, multi: isMultiPipeItem(item.name) };}
 
 /** Записать обратные ссылки вершины-предметов трубы (props.<box>[ключ]). */
 function linkItems(model: Model, pipe: Pipe, kind: PipeKind | ClimatePipeKind, coll: string): void {
