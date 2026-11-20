@@ -10,7 +10,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск: … run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
@@ -19,12 +19,13 @@ if (process.argv[2] !== "run") {
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
 const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"];
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
-if (!OBJECT_ID || !PLAN_ID || !READONLY_ID) {
-  console.error("нужны корректные REMPLANNER_PROBE_* (OBJECT_ID != READONLY_ID)");
+const READONLY_PLAN_ID = process.env["REMPLANNER_PROBE_READONLY_PLAN_ID"];
+if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
+  console.error("нужны корректные REMPLANNER_PROBE_* (OBJECT_ID != READONLY_ID, READONLY_PLAN_ID обязателен — 322 N3б)");
   process.exit(1);
 }
-// ревью 319 №3: коллизии env с контрольным проектом (контрольный читается с планом "1")
-assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, "1");
+// ревью 319 №3, 322 N3б: коллизии env с контрольным проектом (READONLY_PLAN_ID обязателен)
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -183,7 +184,7 @@ function sig(m: unknown): string {
 
 // ревью 263 N7: гард контрольного проекта (только GET) до и после прогона
 const snapReadonly = async (tag: string): Promise<LoadedModel> => {
-  const m = await loadModel(ctx.session(), READONLY_ID, "1");
+  const m = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
   writeFileSync(`${OUT}/get-${READONLY_ID}-split-${tag}.json`, JSON.stringify(m, null, 1));
   return m;
 };
@@ -191,7 +192,7 @@ const snapReadonly = async (tag: string): Promise<LoadedModel> => {
 try {
   // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, "1", `${OUT}/262-readonly-ref.json`);
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
   await roGuard.assertUnchanged("перед записями");
   const snapBefore = await snapReadonly("before");
   const before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
