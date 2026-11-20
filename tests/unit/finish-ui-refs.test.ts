@@ -14,8 +14,9 @@ import { Workspace, type WorkspaceDeps } from "../../src/workspace.ts";
 import type { EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
 import { clearEntityCollections } from "../../src/model/collections.ts";
+import { fileURLToPath } from "node:url";
 
-const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url));
 const FIXTURE_ENVELOPE = true;
 const FLOOR_REF = JSON.parse(readFileSync("tests/fixtures/ui-ref-finish-floor.json", "utf8")) as {
   room: { polygon: { x: number; y: number }[] };

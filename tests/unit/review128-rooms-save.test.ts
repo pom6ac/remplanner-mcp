@@ -20,8 +20,8 @@ import { addRoomRect, addWall, deleteWall, moveWall } from "../../src/model/wall
 import { affectedRoomIds, changedWallSegments, roomPolygonCm } from "../../src/model/rooms-save.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const CORRIDOR = new URL("../fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
-const ANON_RECT = new URL("../fixtures/anon-rect-4000x3000.json", import.meta.url).pathname;
+const CORRIDOR = fileURLToPath(new URL("../fixtures/editor-corridor-3rooms.json", import.meta.url));
+const ANON_RECT = fileURLToPath(new URL("../fixtures/anon-rect-4000x3000.json", import.meta.url));
 
 function corridorModel(): Model {
   return (JSON.parse(readFileSync(CORRIDOR, "utf8")) as { model: Model }).model;

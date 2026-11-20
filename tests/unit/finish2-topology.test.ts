@@ -5,6 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { Model, Point } from "../../src/model/types.ts";
 import {
   setFloorMolding, setCeilingMolding, setCeilingFinish, addCeilingNiche,
@@ -12,7 +13,7 @@ import {
   setFloorFinish, setWallFinish, finishCompare, finishMismatches,
 } from "../../src/model/finish.ts";
 
-const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url));
 
 function baseModel(): Model {
   return (JSON.parse(readFileSync(FIXTURE, "utf8")) as { model: Model }).model;

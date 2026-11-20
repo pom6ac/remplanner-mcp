@@ -17,8 +17,9 @@ import { clearEntityCollections } from "../../src/model/collections.ts";
 import { Workspace, type WorkspaceDeps } from "../../src/workspace.ts";
 import type { EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
+import { fileURLToPath } from "node:url";
 
-const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url));
 const RULER_REF = JSON.parse(readFileSync("tests/fixtures/ui-ref-dims-ruler.json", "utf8")) as Record<string, unknown>;
 const RULER_ATTACHED_REF = JSON.parse(readFileSync("tests/fixtures/ui-ref-dims-ruler-attached.json", "utf8")) as Record<string, unknown>;
 const COMMENT_REF = JSON.parse(readFileSync("tests/fixtures/ui-ref-dims-comment.json", "utf8")) as Record<string, unknown>;

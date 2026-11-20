@@ -20,8 +20,9 @@ import { addWall, updateWall } from "../../src/model/walls.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { NormalizeResult } from "../../src/editor/adapter.ts";
 import type { LoadedModel } from "../../src/api.ts";
+import { fileURLToPath } from "node:url";
 
-const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url));
 const base = (): Model => (JSON.parse(readFileSync(FIXTURE, "utf8")) as { model: Model }).model;
 
 const topOf = (m: Model): Wall => Object.values(m.walls).find((w) => w.p1.y === -300 && w.p2.x === 600)!;

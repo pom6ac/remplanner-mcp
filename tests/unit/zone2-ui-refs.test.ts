@@ -10,8 +10,9 @@ import { addZoneDelimiter, addZoneCeiling, removeZoneDelimiter, zoneDelimiterLis
 import { finishList } from "../../src/model/finish.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
+import { fileURLToPath } from "node:url";
 
-const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url));
 
 type Pt = { x: number; y: number };
 type ZoneRefFixture = {

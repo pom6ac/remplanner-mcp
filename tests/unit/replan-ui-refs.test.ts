@@ -17,8 +17,9 @@ import type { EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { planTools } from "../../src/server/tools-plan.ts";
+import { fileURLToPath } from "node:url";
 
-const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url));
 const DEMO_REF = JSON.parse(readFileSync("tests/fixtures/ui-ref-replan-demolition.json", "utf8")) as {
   break_whole: { demount: number; p1: { demount: number }; p2: { demount: number } };
   break_part: { sectors: Record<string, { id: string; pc: { x: number; y: number }; width: number }> };

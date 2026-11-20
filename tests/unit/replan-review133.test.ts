@@ -22,11 +22,12 @@ import { addWall, splitWall } from "../../src/model/walls.ts";
 import { addWarmFloor, warmFloorMismatches } from "../../src/model/climate.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { NormalizeResult } from "../../src/editor/adapter.ts";
+import { fileURLToPath } from "node:url";
 
-const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url));
 const base = (): Model => (JSON.parse(readFileSync(FIXTURE, "utf8")) as { model: Model }).model;
 const REF = JSON.parse(
-  readFileSync(new URL("../../tests/fixtures/ui-ref-replan-partition-warmfloor.json", import.meta.url).pathname, "utf8"),
+  readFileSync(fileURLToPath(new URL("../../tests/fixtures/ui-ref-replan-partition-warmfloor.json", import.meta.url)), "utf8"),
 ) as { after_partition: { rooms2: Record<string, unknown>; warm_floors: Record<string, unknown> } };
 
 const topOf = (m: Model): Wall => Object.values(m.walls).find((w) => w.p1.y === -300 && w.p2.x === 600)!;

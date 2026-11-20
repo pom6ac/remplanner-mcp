@@ -15,12 +15,13 @@ import { addWall, addPolyline, findUnattachedEnds } from "../../src/model/walls.
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { NormalizeResult } from "../../src/editor/adapter.ts";
 import type { LoadedModel } from "../../src/api.ts";
+import { fileURLToPath } from "node:url";
 
 const PART_REF = JSON.parse(
-  readFileSync(new URL("../fixtures/ui-ref-free-wall-partition.json", import.meta.url).pathname, "utf8"),
+  readFileSync(fileURLToPath(new URL("../fixtures/ui-ref-free-wall-partition.json", import.meta.url)), "utf8"),
 ) as { _source: string; walls: Record<string, Wall> };
 const A_REF = JSON.parse(
-  readFileSync(new URL("../fixtures/ui-ref-free-wall-a.json", import.meta.url).pathname, "utf8"),
+  readFileSync(fileURLToPath(new URL("../fixtures/ui-ref-free-wall-a.json", import.meta.url)), "utf8"),
 ) as { _source: string; walls: Record<string, Wall> };
 
 const partitionRef = Object.values(PART_REF.walls)[0]!;

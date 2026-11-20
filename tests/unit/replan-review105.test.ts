@@ -18,8 +18,9 @@ import type { NormalizeResult } from "../../src/editor/adapter.ts";
 import type { LoadedModel } from "../../src/api.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { planTools } from "../../src/server/tools-plan.ts";
+import { fileURLToPath } from "node:url";
 
-const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url));
 
 function baseModel(): Model {
   return (JSON.parse(readFileSync(FIXTURE, "utf8")) as { model: Model }).model;

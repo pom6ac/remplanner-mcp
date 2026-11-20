@@ -13,8 +13,9 @@ import {
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import { McpError } from "../../src/errors.ts";
 import type { LoadedModel } from "../../src/api.ts";
+import { fileURLToPath } from "node:url";
 
-const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url));
 
 function baseModel(): Model {
   return (JSON.parse(readFileSync(FIXTURE, "utf8")) as { model: Model }).model;
@@ -516,7 +517,7 @@ test("96 R5: через inputSchema+handler MCP — недопустимые п�
   const { ServerContext } = await import("../../src/server/context.ts");
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
-  const FIXTURE_RECT = new URL("../../tests/fixtures/anon-rect-4000x3000.json", import.meta.url).pathname;
+  const FIXTURE_RECT = fileURLToPath(new URL("../../tests/fixtures/anon-rect-4000x3000.json", import.meta.url));
   const ctx = new ServerContext({ offlineFixture: FIXTURE_RECT });
   const server = buildServer(ctx);
   const client = new Client({ name: "finish-review95", version: "0.0.0" });

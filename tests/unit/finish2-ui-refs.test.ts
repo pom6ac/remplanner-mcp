@@ -14,8 +14,9 @@ import {
 } from "../../src/model/finish.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
+import { fileURLToPath } from "node:url";
 
-const FIXTURE = new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL("../../tests/fixtures/editor-corridor-3rooms.json", import.meta.url));
 
 const FLOOR_MOLD_REF = JSON.parse(readFileSync("tests/fixtures/ui-ref-finish2-floor-molding.json", "utf8")) as {
   room: { polygon: { x: number; y: number }[] };

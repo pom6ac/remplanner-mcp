@@ -18,7 +18,7 @@ import { addWall, deleteWall, moveWall } from "../../src/model/walls.ts";
 import type { LoadedModel } from "../../src/api.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const CORRIDOR = new URL("../fixtures/editor-corridor-3rooms.json", import.meta.url).pathname;
+const CORRIDOR = fileURLToPath(new URL("../fixtures/editor-corridor-3rooms.json", import.meta.url));
 
 function corridorModel(): Model {
   return (JSON.parse(readFileSync(CORRIDOR, "utf8")) as { model: Model }).model;
