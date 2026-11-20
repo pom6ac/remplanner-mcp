@@ -1,0 +1,28 @@
+{
+ "_source": "Эталон зонирования на листе «Перегородки» (этап 318, 2026-11-20): линия-делитель zone_c снята drag'ом UI (кнопка plannertool_zone листа plan_create_walls) в dev-проекте пробой scripts/probes/318-zonec-name.ts; сохранена страницей (project.save), GET сверён, восстановлено по захваченным id. Формат записи общий с ZoneDelimitering (этапы 260/296): type zone_c, plan c (лист «Перегородки»), длина в м (2 знака), on_size 1; ОБЕ вершины несут привязку zone к ребру комнаты (type room, room_id, edge, edge_index, edge_side, edge_pid, edge_pids) — её ставит mouseup редактора и MCP при zone_c_add. Координаты перенесены на синтетическую комнату 10..390 × 10..310 НЕРАВНОМЕРНО (по каждой оси свой масштаб — пропорции отрезка НЕ сохранены, концы только притянуты к рёбрам синтетической комнаты), внутренние ID заменены на zd1/v1/v2/room1/wall1..4; длина пересчитана по синтетическим координатам. После drag зоны комнаты делятся на безымянных наследников (обе zones name 'none', exist false), имя помещения (room.name) сохраняется.",
+ "room": {
+  "polygon": [{ "x": 390, "y": 10 }, { "x": 390, "y": 310 }, { "x": 10, "y": 310 }, { "x": 10, "y": 10 }],
+  "edges": [
+   { "p1": { "x": 390, "y": 10 }, "p2": { "x": 390, "y": 310 }, "c": { "x": 390, "y": 160 }, "length": 300, "side": "r", "pid": "wall1", "pids": { "wall1": "r" }, "parent": "wall", "room_side": "l", "inRoom": 0 },
+   { "p1": { "x": 390, "y": 310 }, "p2": { "x": 10, "y": 310 }, "c": { "x": 200, "y": 310 }, "length": 380, "side": "b", "pid": "wall2", "pids": { "wall2": "b" }, "parent": "wall", "room_side": "t", "inRoom": 0 },
+   { "p1": { "x": 10, "y": 310 }, "p2": { "x": 10, "y": 10 }, "c": { "x": 10, "y": 160 }, "length": 300, "side": "l", "pid": "wall3", "pids": { "wall3": "l" }, "parent": "wall", "room_side": "r", "inRoom": 0 },
+   { "p1": { "x": 10, "y": 10 }, "p2": { "x": 390, "y": 10 }, "c": { "x": 200, "y": 10 }, "length": 380, "side": "t", "pid": "wall4", "pids": { "wall4": "t" }, "parent": "wall", "room_side": "b", "inRoom": 0 }
+  ]
+ },
+ "zone_delimiters": {
+  "zd1": {
+   "id": "zd1",
+   "matrix": [[null, { "length": 1 }], [{ "length": 1 }, null]],
+   "vertexes": [
+    { "id": "v1", "point": { "x": 10, "y": 158.2 }, "type": "node", "zone": { "room_id": "room1", "edge": { "p1": { "x": 10, "y": 310 }, "p2": { "x": 10, "y": 10 } }, "edge_index": 2, "edge_side": "l", "edge_pid": "wall3", "edge_pids": { "wall3": "l" }, "type": "room" } },
+    { "id": "v2", "point": { "x": 390, "y": 158.2 }, "type": "node", "zone": { "room_id": "room1", "edge": { "p1": { "x": 390, "y": 10 }, "p2": { "x": 390, "y": 310 } }, "edge_index": 0, "edge_side": "r", "edge_pid": "wall1", "edge_pids": { "wall1": "r" }, "type": "room" } }
+   ],
+   "items": { "v1": "node", "v2": "node" },
+   "type": "zone_c",
+   "length": 3.8,
+   "id_room": "room1",
+   "plan": "c",
+   "on_size": 1
+  }
+ }
+}

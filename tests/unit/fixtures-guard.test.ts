@@ -66,13 +66,17 @@ const EDITOR_IDS_FORBIDDEN = new Set<string>([
   // и делителем сняты в dev-проекте (проба 310-m11-live, шаг 5б), ID — id1…idN
   // (анонимизация по правилу scripts/anonymize.ts, включая 10-символьные id).
   "ui-ref-zones4-ceiling-zones.json",
-  // Эталоны зонирования ч.2 (этап 296): сняты в dev-проекте (проба 296-zone-ui),
+  // Эталон зонирования ч.2 (этап 296): сняты в dev-проекте (проба 296-zone-ui),
   // внутренние ID комнаты/рёбер/делителя/закладной заменены на room1/wall1..4/
   // fz1|hz1|cz1|zd1/rg1/v1/v2 (сквозное обезличивание).
   "ui-ref-floorzone-delimiter.json",
   "ui-ref-hydrozone-delimiter.json",
   "ui-ref-capzone-delimiter.json",
   "ui-ref-ceilzone-delimiter-rigel.json",
+  // Эталон зонирования ч.5 (этап 318): zone_c листа «Перегородки» снят drag'ом
+  // UI в dev-проекте (проба 318-zonec-name), ID — zd1/v1/v2/room1/wall1..4
+  // синтетические (сквозное обезличивание).
+  "ui-ref-zonec-delimiter.json",
   // Эталоны «Электрощиток» ч.2 (этап 284): сняты в dev-проекте (пробы
   // 284-wire-matrix/284-bus2), внутренние ID щитка/портов/проводов/шины/коллектора
   // заменены на id1… (сквозное обезличивание).
