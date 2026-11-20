@@ -62,12 +62,29 @@ const snap = async (objectId: string, tag: string): Promise<LoadedModel> => {
   return m;
 };
 
-const created: Array<{ kind: "wall" | "delimiter" | "ceiling" | "rigel"; siteId?: string; roomRef?: string; roomId?: string }> = [];
+const created: Array<{ kind: "wall" | "delimiter" | "rigel"; siteId?: string }> = [];
 let opened = false;
 const freshLabel = async (coll: "walls" | "rigels", siteId: string): Promise<string | null> => {
   const mg = await call("model_get", {}, { quiet: true });
   const list = (mg[coll] ?? []) as Array<{ id: string; site_id: string }>;
   return list.find((w) => w.site_id === siteId)?.id ?? null;
+};
+// ревью 263 N7: зачистка только по захваченным site_id через свежий model_get —
+// без меток R<n> (сдвигаются после split/merge/delete) и без «удалить все делители»
+const removeCapturedDelimiters = async (): Promise<void> => {
+  let left = created.filter((c) => c.kind === "delimiter" && c.siteId).map((c) => c.siteId!);
+  for (let guard = 0; guard < 20 && left.length > 0; guard++) {
+    const mg = await call("model_get", {}, { quiet: true });
+    const list = (mg["zone_delimiters"] ?? []) as Array<{ id: string; site_id: string }>;
+    const mine = list.filter((d) => left.includes(d.site_id || d.id));
+    if (mine.length === 0) return;
+    for (const d of mine) {
+      const ref = d.site_id || d.id;
+      try { await call("zone_ceiling_remove", { delimiter_id: ref }, { quiet: true }); } catch (e) { console.log(`  zone_ceiling_remove ${ref}:`, String((e as Error).message).slice(0, 120)); }
+      left = left.filter((s) => s !== ref);
+    }
+  }
+  if (left.length > 0) console.error("CLEANUP: не удалены разделители:", left.join(","));
 };
 const saveStep = async (tag: string): Promise<{ verified: boolean; warnings: unknown[] }> => {
   const res = await call("project_save", {}, { quiet: true });
@@ -80,17 +97,10 @@ const saveStep = async (tag: string): Promise<{ verified: boolean; warnings: unk
 const cleanup = async (): Promise<void> => {
   try {
     if (!opened) return;
-    // делители по свежему finish_get
-    for (const roomRef of [...new Set(created.map((c) => c.roomRef).filter(Boolean) as string[])]) {
-      try {
-        const fin = await call("finish_get", { room_id: roomRef }, { quiet: true });
-        const zds = (((fin as unknown as Array<Record<string, unknown>>)[0]?.["zone_delimiters"] ?? []) as Array<Record<string, unknown>>);
-        for (const d of zds) {
-          try { await call("zone_ceiling_remove", { delimiter_id: String(d["site_id"] ?? d["id"]) }, { quiet: true }); } catch { /* уже нет */ }
-        }
-        try { await call("finish_ceiling_remove", { room_id: roomRef }, { quiet: true }); } catch { /* уже нет */ }
-      } catch { /* комната могла исчезнуть */ }
-    }
+    // разделители — только свои, по захваченным site_id (ревью 263 N7);
+    // finish_ceiling_remove не вызываем: покрытие потолка проба не ставила,
+    // а комнатная метка после split/merge/delete может указать на чужую комнату
+    await removeCapturedDelimiters();
     // ригель по свежей метке
     const rigelSite = created.find((c) => c.kind === "rigel")?.siteId;
     if (rigelSite) {
@@ -248,7 +258,6 @@ try {
   };
   const rectRef = roomInBox(ox, ox + 300, oy, oy + 200);
   const gRef = roomInBox(ox + 400, ox + 800, oy, oy + 400);
-  created.push({ kind: "ceiling", roomRef: rectRef }, { kind: "ceiling", roomRef: gRef });
   console.log("пробные комнаты:", rectRef, gRef);
 
   // 3. ригель в прямоугольной комнате + покрытие потолка
@@ -262,13 +271,13 @@ try {
   // 4. разделители: концы на разных гранях ригеля (верх/лево) + линия в Г-комнате
   const zd1 = await call("zone_ceiling_add", { room_id: rectRef, from_mm: mm(ox, oy + 160), to_mm: mm(ox + 220, oy + 75) }, { quiet: true });
   console.log("zd1 (ригель, верхняя грань):", JSON.stringify(zd1));
-  created.push({ kind: "delimiter", siteId: String((zd1 as { entity?: { site_id?: string } }).entity?.site_id ?? ""), roomRef: rectRef });
+  created.push({ kind: "delimiter", siteId: String((zd1 as { entity?: { site_id?: string } }).entity?.site_id ?? "") });
   const zd2 = await call("zone_ceiling_add", { room_id: rectRef, from_mm: mm(ox + 120, oy), to_mm: mm(ox + 180, oy + 60) }, { quiet: true });
   console.log("zd2 (ригель, левая грань):", JSON.stringify(zd2));
-  created.push({ kind: "delimiter", siteId: String((zd2 as { entity?: { site_id?: string } }).entity?.site_id ?? ""), roomRef: rectRef });
+  created.push({ kind: "delimiter", siteId: String((zd2 as { entity?: { site_id?: string } }).entity?.site_id ?? "") });
   const zd3 = await call("zone_ceiling_add", { room_id: gRef, from_mm: mm(ox + 550, oy), to_mm: mm(ox + 550, oy + 400) }, { quiet: true });
   console.log("zd3 (Г-комната):", JSON.stringify(zd3));
-  created.push({ kind: "delimiter", siteId: String((zd3 as { entity?: { site_id?: string } }).entity?.site_id ?? ""), roomRef: gRef });
+  created.push({ kind: "delimiter", siteId: String((zd3 as { entity?: { site_id?: string } }).entity?.site_id ?? "") });
   // хорда через выемку Г-комнаты — ожидаем отказ (ревью 261 №2)
   try {
     await call("zone_ceiling_add", { room_id: gRef, from_mm: mm(ox + 700, oy + 200), to_mm: mm(ox + 600, oy + 300) }, { quiet: true });
@@ -351,15 +360,9 @@ try {
   const obsDel = await observe("после-wall_delete");
   writeFileSync(`${OUT}/262-live-etalon.json`, JSON.stringify({ object_id: OBJECT_ID, plan_id: PLAN_ID, etalon, obsSplit, obsMerge, obsDel, delWarnings: delStep.warnings }, null, 1));
 
-  // 9. восстановление (до сверки)
-  for (const roomRef of [...new Set(created.map((c) => c.roomRef).filter(Boolean) as string[])]) {
-    try {
-      const fin = await call("finish_get", { room_id: roomRef }, { quiet: true });
-      const zds = (((fin as unknown as Array<Record<string, unknown>>)[0]?.["zone_delimiters"] ?? []) as Array<Record<string, unknown>>);
-      for (const d of zds) await call("zone_ceiling_remove", { delimiter_id: String(d["site_id"] ?? d["id"]) }, { quiet: true });
-      await call("finish_ceiling_remove", { room_id: roomRef }, { quiet: true });
-    } catch { /* комната исчезла */ }
-  }
+  // 9. восстановление (до сверки): разделители — только свои по захваченным
+  // site_id через свежий model_get (ревью 263 N7)
+  await removeCapturedDelimiters();
   const rigelLabel = await freshLabel("rigels", rigelSite);
   if (rigelLabel) await call("rigel_delete", { rigel_id: rigelLabel }, { quiet: true });
   const wallSites = created.filter((c) => c.kind === "wall" && c.siteId).map((c) => c.siteId!);

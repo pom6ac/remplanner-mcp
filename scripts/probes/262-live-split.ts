@@ -52,14 +52,27 @@ const freshLabel = async (coll: "walls" | "rigels", siteId: string): Promise<str
   const list = (mg[coll] ?? []) as Array<{ id: string; site_id: string }>;
   return list.find((w) => w.site_id === siteId)?.id ?? null;
 };
+// ревью 263 N7: зачистка только по захваченным site_id через свежий model_get —
+// без «удалить все делители проекта»
+const removeCapturedDelimiters = async (): Promise<void> => {
+  let left = created.filter((c) => c.kind === "delimiter" && c.siteId).map((c) => c.siteId!);
+  for (let guard = 0; guard < 20 && left.length > 0; guard++) {
+    const mg = await call("model_get", {}, true);
+    const list = (mg["zone_delimiters"] ?? []) as Array<{ id: string; site_id: string }>;
+    const mine = list.filter((d) => left.includes(d.site_id || d.id));
+    if (mine.length === 0) return;
+    for (const d of mine) {
+      const ref = d.site_id || d.id;
+      try { await call("zone_ceiling_remove", { delimiter_id: ref }, true); } catch (e) { console.log(`  zone_ceiling_remove ${ref}:`, String((e as Error).message).slice(0, 120)); }
+      left = left.filter((s) => s !== ref);
+    }
+  }
+  if (left.length > 0) console.error("CLEANUP: не удалены разделители:", left.join(","));
+};
 const cleanup = async (): Promise<void> => {
   try {
     if (!opened) return;
-    const mg = await call("model_get", {}, true);
-    const zds = (mg["zone_delimiters"] ?? []) as Array<{ id: string; site_id: string }>;
-    for (const d of zds) {
-      try { await call("zone_ceiling_remove", { delimiter_id: d.site_id || d.id }, true); } catch { /* уже нет */ }
-    }
+    await removeCapturedDelimiters();
     const wallSites = created.filter((c) => c.kind === "wall" && c.siteId).map((c) => c.siteId!);
     let left = [...wallSites];
     for (let pass = 0; pass < 4 && left.length > 0; pass++) {
@@ -94,7 +107,15 @@ const observeZones = async (tag: string, minX: number): Promise<void> => {
   }));
 };
 
+// ревью 263 N7: гард контрольного проекта (только GET) до и после прогона
+const snapReadonly = async (tag: string): Promise<unknown> => {
+  const m = await loadModel(ctx.session(), READONLY_ID, "1");
+  writeFileSync(`${OUT}/get-${READONLY_ID}-split-${tag}.json`, JSON.stringify(m, null, 1));
+  return m;
+};
+
 try {
+  const snapBefore = await snapReadonly("before");
   const before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const backupPath = `.orca-reports/backup-${OBJECT_ID}-262.json`;
   if (!existsSync(backupPath)) throw new Error("нет бэкапа 262 — сначала 262-live-check");
@@ -191,11 +212,9 @@ try {
     console.log("C: разрез отклонён/не прошёл:", String((e as Error).message).slice(0, 300));
   }
 
-  // восстановление
-  const mg = await call("model_get", {}, true);
-  for (const d of (mg["zone_delimiters"] ?? []) as Array<{ id: string; site_id: string }>) {
-    try { await call("zone_ceiling_remove", { delimiter_id: d.site_id || d.id }, true); } catch { /* уже нет */ }
-  }
+  // восстановление: разделители — только свои по захваченным site_id через
+  // свежий model_get (ревью 263 N7)
+  await removeCapturedDelimiters();
   const wallSites = created.filter((c) => c.kind === "wall" && c.siteId).map((c) => c.siteId!);
   let left = [...wallSites];
   for (let guard = 0; guard < 60 && left.length > 0; guard++) {
@@ -209,6 +228,12 @@ try {
   if (!saveR["verified"]) throw new Error("restore save не verified");
   created.length = 0;
   opened = false;
+
+  // контрольный проект после (ревью 263 N7)
+  const snapAfter = await loadModel(ctx.session(), READONLY_ID, "1");
+  const roSame = sig(snapAfter.model) === sig(snapBefore.model);
+  console.log("контрольный проект:", roSame ? "не изменился" : "ИЗМЕНИЛСЯ — СТОП");
+  if (!roSame) throw new Error("контрольный проект изменился");
   console.log("262-live-split OK");
 } catch (e) {
   console.error("FAIL:", String((e as Error).message ?? e).slice(0, 4000));
