@@ -10,7 +10,7 @@ import type { Model, Wall } from "../../src/model/types.ts";
 import { addCeilingRigel, updateCeilingRigel, deleteCeilingRigel } from "../../src/model/ceiling-rigels.ts";
 import { addZoneCeiling, removeZoneCeiling } from "../../src/model/zone.ts";
 import { rebuildCeilingZones } from "../../src/model/ceiling-zones.ts";
-import { finishCompare, finishList, setCeilingFinish, removeCeilingFinish, addCeilingNiche, removeCeilingNiche } from "../../src/model/finish.ts";
+import { finishCompare, finishList, finishSignature, setCeilingFinish, removeCeilingFinish, addCeilingNiche, removeCeilingNiche } from "../../src/model/finish.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import { compactModel } from "../../src/model/compact.ts";
 import type { LoadedModel } from "../../src/api.ts";
@@ -524,6 +524,60 @@ test("314 E: finish_get.niches[].wall определяется линией ни
   const fl = finishList(model, "room1")[0] as Record<string, unknown>;
   const walls = ((fl["niches"] ?? []) as Array<{ wall: string | null }>).map((n) => n.wall).sort();
   assert.deepEqual(walls, ["W3", "W4"], `метки стен ниш в обеих зонах: ${JSON.stringify(fl["niches"])}`);
+});
+
+// ---------- ревью 315 F2: коллинеарные рёбра — метка ниши по СВОЕМУ ребру ----------
+
+/** Однозонная комната с верхней стеной из двух коллинеарных отрезков
+ *  wallT1 (100..250) и wallT2 (250..400) — сценарий L1 (315-exp1).
+ *  Порядок стен в model.walls: wallR, wallB, wallL, wallT1, wallT2 → метки W1..W5. */
+function collinearTopRoom(): Model {
+  const poly: Pt[] = [
+    { x: 400, y: 100 }, { x: 400, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }, { x: 250, y: 100 },
+  ];
+  const pids = ["wallR", "wallB", "wallL", "wallT1", "wallT2"];
+  const edges = poly.map((p, i) => {
+    const q = poly[(i + 1) % poly.length]!;
+    return { p1: p, p2: q, c: { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 }, length: Math.hypot(q.x - p.x, q.y - p.y), pid: pids[i] };
+  });
+  return {
+    walls: (() => {
+      const w = frameWalls(100, 100, 400, 300) as Record<string, Wall>;
+      delete w["wallT"];
+      const mkT = (id: string, x2: number): Wall =>
+        ({ id, plan: "a", role: "wall", child: 0, archive: 0, demount: 0, depth: 10, height: 270, p1: { x: 95, y: 95, role: "p1", link: 0 }, p2: { x: x2, y: 95, role: "p2", link: 0 } }) as unknown as Wall;
+      w["wallT1"] = mkT("wallT1", 255);
+      w["wallT2"] = mkT("wallT2", 405);
+      return w as Record<string, Wall>;
+    })(),
+    pillars: {},
+    rooms2: { room1: { id: "room1", polygon: poly, points: poly, edges, zones: [{ name: null }], ceilings: [{ exist: false }] } },
+  } as unknown as Model;
+}
+
+test("315 F2: ниша на коллинеарной стене метится по своему ребру — W5, как на 141fd2b (L1)", () => {
+  const model = collinearTopRoom();
+  setCeilingFinish(model, "room1", "stretch_ceiling", {});
+  addCeilingNiche(model, "room1", "wallT2");
+  const fl = finishList(model, "room1")[0] as Record<string, unknown>;
+  assert.deepEqual(
+    ((fl["niches"] ?? []) as Array<{ wall: string | null }>).map((n) => n.wall),
+    ["W5"],
+    `метка ниши на wallT2 (коллинеарные wallT1/wallT2): ${JSON.stringify(fl["niches"])}`,
+  );
+});
+
+test("315 F2: nichesSig различает перенос ниши между коллинеарными стенами", () => {
+  const onT1 = collinearTopRoom();
+  setCeilingFinish(onT1, "room1", "stretch_ceiling", {});
+  addCeilingNiche(onT1, "room1", "wallT1");
+  const onT2 = collinearTopRoom();
+  setCeilingFinish(onT2, "room1", "stretch_ceiling", {});
+  addCeilingNiche(onT2, "room1", "wallT2");
+  const sig1 = finishSignature(onT1, "room1").niches ?? [];
+  const sig2 = finishSignature(onT2, "room1").niches ?? [];
+  assert.deepEqual(sig1.map((n) => n.pid), ["wallT1"], `сигнатура ниши на wallT1: ${JSON.stringify(sig1)}`);
+  assert.deepEqual(sig2.map((n) => n.pid), ["wallT2"], `сигнатура ниши на wallT2: ${JSON.stringify(sig2)}`);
 });
 
 // ---------- ревью 313 №4: ниши переносятся только в зону-наследника отделки ----------

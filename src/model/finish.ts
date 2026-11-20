@@ -1024,12 +1024,22 @@ function moldingSigs(room: RoomRec, key: "floorMoldings" | "ceilingMoldings", ed
 
 /** Ребро комнаты, на котором целиком лежит линия (допуск UI-магнита 0.05 см):
  *  pid ребра или undefined — общий помощник ниш (ревью 313 E, «Что упростить» 2:
- *  nichesSig и finishList определяют стену ниши геометрически, не по индексу). */
+ *  nichesSig и finishList определяют стену ниши геометрически, не по индексу).
+ *  Ревью 315 F2: концы линии должны проектироваться В ПРЕДЕЛЫ отрезка
+ *  (-ε ≤ projT ≤ 1+ε, ε — те же 0.05 см вдоль ребра), иначе в комнате с
+ *  коллинеарными рёбрами (стена из двух отрезков в линию) линия ниши на втором
+ *  отрезке получала метку первого — регрессия против 141fd2b. */
 function edgePidByLine(edges: Array<{ p1?: Point; p2?: Point; pid?: string }>, line: { p1: Point; p2: Point }): string | undefined {
   for (const e of edges) {
-    if (e?.p1 && e?.p2 && projD(line.p1, e.p1, e.p2) <= 0.05 && projD(line.p2, e.p1, e.p2) <= 0.05) {
-      return e.pid;
-    }
+    if (!e?.p1 || !e?.p2) continue;
+    const len = Math.hypot(e.p2.x - e.p1.x, e.p2.y - e.p1.y);
+    if (len < 1e-9) continue;
+    const tEps = 0.05 / len;
+    const onSeg = (p: Point): boolean => {
+      const t = projT(p, e.p1!, e.p2!);
+      return projD(p, e.p1!, e.p2!) <= 0.05 && -tEps <= t && t <= 1 + tEps;
+    };
+    if (onSeg(line.p1) && onSeg(line.p2)) return e.pid;
   }
   return undefined;
 }
@@ -1037,7 +1047,8 @@ function edgePidByLine(edges: Array<{ p1?: Point; p2?: Point; pid?: string }>, l
 /** Закарнизные ниши (niches по записям ceilings) в виде сигнатур (полная проекция —
  *  ревью 246 №10). Зонированный потолок (ревью 311 №1): ниши могут стоять в любой
  *  записи — обходятся все; pid — ребро комнаты, на котором лежит линия ниши
- *  (геометрически; запасной путь — индексная привязка для одиночной записи). */
+ *  (геометрически; для однозонной записи (ceilings.length ≤ 1) сначала индексная
+ *  привязка — как на 141fd2b, ревью 315 F2). */
 function nichesSig(room: RoomRec): NonNullable<FinishSig["niches"]> {
   const out: NonNullable<FinishSig["niches"]> = [];
   const edges = Array.isArray(room.edges) ? room.edges : [];
@@ -1050,10 +1061,13 @@ function nichesSig(room: RoomRec): NonNullable<FinishSig["niches"]> {
     for (let i = 0; i < arr.length; i++) {
       const nrec = arr[i] as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined;
       if (!nrec || nrec.exist !== true) continue;
+      const indexPid = edges[i]?.pid as string | undefined;
       for (const part of Object.values(nrec.parts ?? {})) {
         const line = part.line as { p1?: Point; p2?: Point } | undefined;
         if (!line?.p1 || !line?.p2) continue;
-        const pid = pidByLine(line as { p1: Point; p2: Point }) ?? (ci === 0 ? edges[i]?.pid as string | undefined : undefined);
+        const pid = ceilings.length <= 1
+          ? indexPid ?? pidByLine(line as { p1: Point; p2: Point })
+          : pidByLine(line as { p1: Point; p2: Point }) ?? (ci === 0 ? indexPid : undefined);
         out.push({
           pid,
           line: [line.p1, line.p2],
@@ -1697,16 +1711,21 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
           const rec = arr[i] as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined;
           if (rec?.exist !== true) continue;
           // ревью 313 E: стена ниши — по линии части (геометрически, в любой зоне);
-          // запасной путь — индексная привязка для одиночной записи
-          let pid: string | undefined;
-          for (const part of Object.values(rec.parts ?? {})) {
-            const line = part["line"] as { p1?: Point; p2?: Point } | undefined;
-            if (line?.p1 && line?.p2) {
-              pid = edgePidByLine(edgesArr, line as { p1: Point; p2: Point });
-              if (pid) break;
+          // для однозонной записи сначала индексная привязка (как на 141fd2b, F2),
+          // запасной путь — индекс для ci === 0
+          const singleZone = ceilingsArr.length <= 1;
+          const indexPid = edgesArr[i]?.pid as string | undefined;
+          let pid: string | undefined = singleZone ? indexPid : undefined;
+          if (!pid) {
+            for (const part of Object.values(rec.parts ?? {})) {
+              const line = part["line"] as { p1?: Point; p2?: Point } | undefined;
+              if (line?.p1 && line?.p2) {
+                pid = edgePidByLine(edgesArr, line as { p1: Point; p2: Point });
+                if (pid) break;
+              }
             }
           }
-          pid ??= ci === 0 ? edgesArr[i]?.pid as string | undefined : undefined;
+          pid ??= ci === 0 ? indexPid : undefined;
           niches.push({ wall: wallLabel(pid, model) });
         }
       });
