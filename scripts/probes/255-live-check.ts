@@ -5,12 +5,12 @@
 // item_delete щитка (каскад конструктора, нет висячих shield_id) → save →
 // счетчики как до прогона. GET рабочего проекта (env) — только чтение до/после.
 //
-// Ревью 256 №3: предмет удаляется только по захваченному site_id (метка
-// резолвится из свежей модели непосредственно перед удалением — инцидент 240);
-// очистка и сверка восстановления — в finally при любом исходе (удаление по
-// site_id, при расхождении — возврат бэкапа project_import_plan + save);
-// после project_open модель сверяется с GET до первой записи («план в
-// редакторе == сервер»).
+// Ревью 256 №3: предмет удаляется только по захваченному site_id (резолв — из
+// РАБОЧЕЙ модели редактора после project_open, непосредственно перед удалением
+// — инцидент 240, ревью 258 №1); очистка и сверка восстановления — в finally
+// при любом исходе (удаление по site_id, при расхождении — возврат бэкапа
+// project_import_plan + save); после project_open модель сверяется с GET до
+// первой записи («план в редакторе == сервер»).
 // Запуск: node --experimental-strip-types scripts/probes/255-live-check.ts run
 import { mkdirSync, writeFileSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
@@ -23,6 +23,7 @@ import { ServerContext } from "../../src/server/context.ts";
 import { BASE_URL, HTTP_TIMEOUT_MS, USER_AGENT } from "../../src/config.ts";
 import { cookieHeader, type SessionState } from "../../src/session.ts";
 import { toModel } from "../../src/model/canonical.ts";
+import { resolveItem } from "../../src/dto/items.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
@@ -134,11 +135,18 @@ type Compact = {
 };
 const mg = async (): Promise<Compact> => (await call("model_get", {})) as unknown as Compact;
 
-/** Метка I<n> предмета с захваченным site_id из СВЕЖЕЙ модели (инцидент 240). */
-const itemLabelBySiteId = async (siteId: string): Promise<string | null> => {
-  const raw = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const idx = Object.keys((raw.model["items"] ?? {}) as Record<string, unknown>).indexOf(siteId);
-  return idx >= 0 ? `I${idx + 1}` : null;
+/** Предмет по site_id из РАБОЧЕЙ модели редактора после project_open — тот же
+ *  резолвер, что в item_delete (dto/items.ts: resolveItem принимает id сайта
+ *  напрямую; ревью 258 №1: позиционная метка из порядка ключей GET не
+ *  используется — инцидент 240). Возвращает id сайта или null. */
+const itemLabelBySiteId = (siteId: string): string | null => {
+  const ws = ctx.workspaceOrNull;
+  if (!ws) return null;
+  try {
+    return resolveItem(ws.model, siteId).id;
+  } catch {
+    return null;
+  }
 };
 
 let readonlyBefore: LoadedModel | null = null;
@@ -232,7 +240,7 @@ try {
   else copyFileSync(pngPath, `${OUT}/255-render.png`);
 
   // 5. очистка (в дополнение к finally): щиток-предмет по site_id + save
-  const cleanupLabel = await itemLabelBySiteId(shieldItemSiteId);
+  const cleanupLabel = itemLabelBySiteId(shieldItemSiteId);
   if (cleanupLabel) {
     await call("item_delete", { item_id: cleanupLabel });
     const sv = (await call("project_save", {})) as { verified?: boolean };
@@ -268,9 +276,10 @@ try {
   try {
     if (ownBefore) {
       if (shieldItemSiteId) {
-        const label = await itemLabelBySiteId(shieldItemSiteId);
+        // ревью 258 №1: сначала project_open (рабочая модель = сервер), потом резолв
+        await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
+        const label = itemLabelBySiteId(shieldItemSiteId);
         if (label) {
-          await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
           await call("item_delete", { item_id: label });
           const sv = (await call("project_save", {})) as { verified?: boolean };
           console.log("finally: пробный щиток удалён, save verified:", sv.verified === true);

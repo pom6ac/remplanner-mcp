@@ -102,13 +102,9 @@ async function pickTool(key: string): Promise<string> {
 const writeOut = (name: string, data: unknown) =>
   writeFileSync(`${OUT}/${name}.json`, JSON.stringify(data, null, 1) + "\n");
 
-// 0. бэкап GET (только чтение)
-const model = await loadModel(session, OBJECT_ID, PLAN_ID);
-writeFileSync(`${OUT}/backup-${OBJECT_ID}-255.json`, JSON.stringify({
-  _source: "GET через loadModel, dev-проект из env, scripts/probes/255-shield-scout.ts, только чтение; id не печатаются",
-  model: model.model,
-}, null, 1));
-console.log("backup ok");
+// Бэкап GET (только чтение) загружается ВНУТРИ try (258 №2) — блок try/finally
+// в конце файла; runProbe получает GET-модель параметром.
+let model: Awaited<ReturnType<typeof loadModel>> | null = null;
 
 // Модель редактора == сервер (гард ревью 256 №8): copy("server") в редакторе
 // сравнивается с GET до пробы (по сериализуемой форме).
@@ -117,7 +113,13 @@ const editorModelMatchesGet = async (get: Record<string, unknown>): Promise<bool
   return JSON.stringify(copy) === JSON.stringify(get);
 };
 
-const runProbe = async (): Promise<boolean> => {
+const runProbe = async (get: Record<string, unknown>): Promise<boolean> => {
+// 0. гард «модель редактора == GET» ДО любых действий (258 №2): расхождение —
+// стоп до рисования реек/модулей, ничего не охранявший гард в конце убран
+if (!(await editorModelMatchesGet(get))) {
+  console.error("гард: модель редактора не равна GET — стоп до любых действий");
+  return false;
+}
 // 1. каталог shield_* и доступность листа на тарифе
 const recon = await page.evaluate(() => {
   const w: any = window as any;
@@ -139,7 +141,7 @@ writeOut("255-shield-recon", recon);
 console.log("sheet:", JSON.stringify(recon.sheetShield), "tools:", Object.keys(recon.shieldTools).length, "shields:", JSON.stringify(recon.shields).slice(0, 200));
 
 // 2. щиток-предмет: точка в комнате у ребра (12 см внутрь), лист «Электропроводка»
-const rooms = Object.values<any>(model.model.rooms2 ?? {});
+const rooms = Object.values<any>(get.rooms2 ?? {});
 const room = rooms[0]!;
 const poly = (room.polygon ?? []).map((p: any) => ({ x: p.x, y: p.y }));
 const cx = poly.reduce((s: number, p: any) => s + p.x, 0) / poly.length;
@@ -225,7 +227,7 @@ writeOut("255-shield-full", { keys: Object.keys(recon.shieldTools), shields: ful
 console.log("shields keys:", Object.keys(full));
 console.log("shields:", JSON.stringify(full).slice(0, 2500));
 
-return await editorModelMatchesGet(model.model);
+return true;
 }
 
 function diffOf(before: any, after: any) {
@@ -240,7 +242,14 @@ function diffOf(before: any, after: any) {
 
 let probeOk = false;
 try {
-  probeOk = await runProbe();
+  // 0. бэкап GET — внутри try (258 №2): при throw браузер закроется в finally
+  model = await loadModel(session, OBJECT_ID, PLAN_ID);
+  writeFileSync(`${OUT}/backup-${OBJECT_ID}-255.json`, JSON.stringify({
+    _source: "GET через loadModel, dev-проект из env, scripts/probes/255-shield-scout.ts, только чтение; id не печатаются",
+    model: model.model,
+  }, null, 1));
+  console.log("backup ok");
+  probeOk = await runProbe(model.model);
   if (!probeOk) console.log("гард: модель редактора не равна GET");
 } catch (e) {
   console.error("PROBE_ERROR:", (e as Error).message);
@@ -251,7 +260,7 @@ try {
     await page.waitForFunction(() => (window as any).WALLS && (window as any).$Project, null, { timeout: 60000 });
     await page.waitForTimeout(3000);
     const after = await loadModel(session, OBJECT_ID, PLAN_ID);
-    const same = JSON.stringify(after.model) === JSON.stringify(model.model);
+    const same = model ? JSON.stringify(after.model) === JSON.stringify(model.model) : false;
     console.log("GET после перезагрузки:", same ? "не изменился (откат ОК)" : "ИЗМЕНИЛСЯ");
   } catch (e) {
     console.error("ROLLBACK_ERROR:", (e as Error).message.slice(0, 300));
