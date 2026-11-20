@@ -98,6 +98,41 @@ test("298 №2: zone_floor_remove молча не удаляет раздели�
   assert.equal(removeZoneCeiling(m, res.id).removed, true, "правильный инструмент удаляет");
 });
 
+test("299 мелочь: remove по метке ZD<n> при несовпадении типа называет метку, а не site_id", () => {
+  const { m, room } = modelWithRefRoom();
+  const res = addZoneCeiling(m, room, CROSS_MM);
+  assert.throws(
+    () => removeZoneFloor(m, "ZD1"),
+    (e: unknown) => {
+      const err = e as { code?: string; message?: string };
+      return err.code === "INVALID_ARGUMENT" && /ZD1/.test(err.message ?? "") && !(err.message ?? "").includes(res.id);
+    },
+  );
+});
+
+test("299 мелочь: legacy zone_c без подсказки несуществующего zone_c_remove", () => {
+  const legacy = {
+    id: "zc", matrix: [[null, { length: 1 }], [{ length: 1 }, null]],
+    vertexes: [
+      { id: "v1", point: { x: 200, y: 10 }, type: "node" },
+      { id: "v2", point: { x: 200, y: 310 }, type: "node" },
+    ],
+    items: { v1: "node", v2: "node" },
+    type: "zone_c", length: 3, id_room: "r1", on_size: 1,
+  };
+  const exp = { rooms2: { r1: { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }] } }, zone_delimiters: { zc: legacy } };
+  const res = zoneDelimiterCompare(exp, { rooms2: structuredClone(exp.rooms2), zone_delimiters: {} }, "normalize", { affectedRooms: new Set(["r1"]) });
+  assert.ok(res.warnings.some((w) => /не сохранил/.test(w)), JSON.stringify(res.warnings));
+  assert.equal(res.warnings.some((w) => w.includes("zone_c_remove")), false, JSON.stringify(res.warnings));
+  // у типов с инструментом подсказка остаётся
+  const ceil = structuredClone(legacy) as Record<string, unknown>;
+  ceil["type"] = "zone_ceiling";
+  ceil["plan"] = "ceiling";
+  const exp2 = { rooms2: { r1: { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }] } }, zone_delimiters: { zc: ceil } };
+  const res2 = zoneDelimiterCompare(exp2, { rooms2: structuredClone(exp2.rooms2), zone_delimiters: {} }, "normalize", { affectedRooms: new Set(["r1"]) });
+  assert.ok(res2.warnings.some((w) => w.includes("zone_ceiling_remove")), JSON.stringify(res2.warnings));
+});
+
 // ---------- №3: единый текст магнита ----------
 
 test("298 №3: текст магнита — ребро в 150 мм (ригель 100 мм — только потолок), без путаницы 100/150", () => {

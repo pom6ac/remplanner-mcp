@@ -487,8 +487,9 @@ export function addZoneCeiling(
 export function removeZoneDelimiter(
   model: Model,
   delimiterRef: string,
-  opts: { expectedType?: ZoneDelimiterType } = {},
+  opts: { expectedType?: ZoneDelimiterType; /** метка ZD<n>, под которой вызван remove (мелочь 299: текст ошибки называет её, а не site_id) */ refLabel?: string } = {},
 ): { room_id: string | null; removed: boolean } {
+  const shownRef = opts.refLabel ?? delimiterRef;
   const map = delimiterMapOf(model);
   // по ключу хранилища или по id записи (per-room ключ может не совпадать с id)
   const hit = Object.entries(map).find(([k, e]) => k === delimiterRef || String(e.rec["id"] ?? "") === delimiterRef);
@@ -497,9 +498,13 @@ export function removeZoneDelimiter(
     if (opts.expectedType) {
       const actual = String(migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy })["type"] ?? "");
       if (actual !== opts.expectedType) {
+        // подсказка инструмента — только для типов, у которых инструмент есть
+        // (мелочь 299: у legacy zone_c инструмента zone_c_remove нет)
+        const hint = actual in ZONE_DELIMITER_PLANS ? `: используйте ${actual}_remove`
+          : actual === "" ? `: используйте ${opts.expectedType}_remove` : "";
         throw new McpError(
           "INVALID_ARGUMENT",
-          `разделитель ${delimiterRef} — ${actual || "неизвестного типа"}, а не ${opts.expectedType}: используйте ${actual || opts.expectedType}_remove`,
+          `разделитель ${shownRef} — ${actual || "неизвестного типа"}, а не ${opts.expectedType}${hint}`,
         );
       }
     }
@@ -521,7 +526,7 @@ export function removeZoneDelimiter(
   if (m) {
     const entry = zoneDelimiterList(model)[Number(m[1]) - 1];
     if (entry && String(entry["id"] ?? "") === delimiterRef && entry["site_id"] !== undefined) {
-      return removeZoneDelimiter(model, String(entry["site_id"]), opts);
+      return removeZoneDelimiter(model, String(entry["site_id"]), { ...opts, refLabel: delimiterRef });
     }
   }
   throw new McpError("NOT_FOUND", `разделитель ${delimiterRef} не найден`);
@@ -860,7 +865,10 @@ export function zoneDelimiterCompare(
         warnings.push(`zone_topology_changed: room ${e.idRoom}: редактор переопределил разделитель зон ${e.key} при изменении стен (${e.type}, ${Math.round(e.length * 100)} см → ${Math.round(shifted.length * 100)} см) — проверьте зоны (${e.type})`);
         continue;
       }
-      warnings.push(`zone_topology_changed: room ${e.idRoom}: комната изменена стенами, редактор не сохранил разделитель зон ${e.key} (${e.type}, ${Math.round(e.length * 100)} см) — при переносе или удалении стен сначала удалите разделители (${e.type}_remove)`);
+      // мелочь 299: у legacy zone_c инструмента zone_c_remove нет — подсказка
+      // только для типов с инструментом
+      const removeHint = e.type in ZONE_DELIMITER_PLANS ? ` — при переносе или удалении стен сначала удалите разделители (${e.type}_remove)` : "";
+      warnings.push(`zone_topology_changed: room ${e.idRoom}: комната изменена стенами, редактор не сохранил разделитель зон ${e.key} (${e.type}, ${Math.round(e.length * 100)} см)${removeHint}`);
       continue;
     }
     // ревью 263 N2: в save затронутая комната сверяется строго (редактор уже
