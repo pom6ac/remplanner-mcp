@@ -150,6 +150,12 @@ test("268: эталон ui-ref-climate3-wire-wf-contour — wiring_add warm_floo
   assert.equal(wire.length, Math.round((d / 100) * 100) / 100);
   // ревью 271 N2: маскированный deepEqual кабеля целиком — type, matrix, items
   // и набор ключей кабеля и вершин; id → позиционные метки, point/length/pp маскированы
+  // ревью 278 P3: утверждение «MCP не пишет pp у не-multi вершин» — не только комментарий:
+  // если pp появится, тест останется зелёным только благодаря маске — ловим явно
+  assert.ok(
+    wire.vertexes.every((v) => v.type === "multi" || !("pp" in v)),
+    "MCP не пишет pp у не-multi вершин кабеля тёплого пола",
+  );
   assert.deepEqual(maskedCable(wire, vertexLabels(wire)), maskedCable(cable, vertexLabels(cable)));
 });
 
@@ -439,7 +445,7 @@ test("268: коллекторный узел подключается к маг�
   assert.equal(p2.vertexes[0]!.type, "warm_floor");
 });
 
-test("ревью 271 N4: видам с faceOffsetCm gap_mm > 0 — INVALID_ARGUMENT (в item_add и item_update)", () => {
+test("ревью 271 N4 + 278 P1: видам с faceOffsetCm любой gap_mm ≠ 0 — INVALID_ARGUMENT (в item_add и item_update)", () => {
   const roomsOf = (m: Model): RoomPolygon[] =>
     Object.entries(m.rooms2 as Record<string, { polygon: { x: number; y: number }[]; area: number }>)
       .map(([roomId, r]) => ({ roomId, polygon: r.polygon, areaCm2: r.area * 10_000, axisAreaCm2: null }));
@@ -458,6 +464,17 @@ test("ревью 271 N4: видам с faceOffsetCm gap_mm > 0 — INVALID_ARGUM
         () => againstWallCenter(wall, { offset_mm: 1000, gap_mm: 50 }, item.width, item.height, roomsOf(m), t.name),
         (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
         `${t.name}: item_update gap_mm 50`,
+      );
+      // ревью 278 P1: отрицательный gap_mm тоже отказ (раньше молча сдвигал pc в стену)
+      assert.throws(
+        () => addItem(m, { name: t.name, position: { againstWall: { wallId: wall.id, offsetMm: 1000, gapMm: -50 } }, catalogEntry: entry(t.name) } as never),
+        (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+        `${t.name}: item_add gap_mm −50`,
+      );
+      assert.throws(
+        () => againstWallCenter(wall, { offset_mm: 1000, gap_mm: -50 }, item.width, item.height, roomsOf(m), t.name),
+        (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+        `${t.name}: item_update gap_mm −50`,
       );
     } else {
       // ext_manifold_box — общая формула (вплотную = depth/2), gap_mm применяется как у всех

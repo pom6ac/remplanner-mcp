@@ -580,7 +580,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "У коллекторных узлов (radiator_collector, ext_manifold_box, int_manifold_box) точка привязки по виду, как в редакторе: " +
         "int_manifold_box утоплен в стену (pc на 55 мм в стену от внутренней грани), radiator_collector на 45.5 мм от грани, " +
         "ext_manifold_box вплотную; смещение снято для каталожной глубины — depth_mm на точку привязки не влияет; " +
-        "gap_mm для них не применяется (gap_mm > 0 — INVALID_ARGUMENT). " +
+        "gap_mm для них не применяется (gap_mm ≠ 0 — INVALID_ARGUMENT). " +
         "Точка вне помещений → OUTSIDE_ROOM. Размеры берутся из каталога; width_mm/depth_mm/height_mm переопределяют (если resizable). " +
         "Лестницы (меню «Лестницы»: ladder_march, ladder_console, ladder_2march, ladder_2march-fan, ladder_2march_console-fan, " +
         "ladder_2march_console, ladder_trapeze, rounded_staircase, ladder_march_double, ladder_fan_2march, ladder_3march, ladder_3march_fan, " +
@@ -1109,6 +1109,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "как в редакторе. MCP не подрезает демолинию в углах (редактор подрезает её на пересечениях с демолиниями " +
         "соседних рёбер): у выпуклого угла участок может доходить до грани угла — на ~5 см дальше, чем допускает " +
         "редактор (живо не проверено — открытый вопрос ревью 276 N1). Длина участка — не короче 200 мм с бонусом конца демолинии (правило редактора); " +
+        "минимум 200 мм проверяется по НЕПОДРЕЗАННОЙ демолинии: на ребре ~250 мм MCP примет участок, который редактор отвергнет (следствие той же оговорки про углы); " +
         "пересечение существующей тёплой стены на том же ребре — отказ (стык вплотную допустим). Проёмы " +
         "(двери/окна) на ребре не проверяются — как в редакторе: часть на ребре с проёмом сохраняется " +
         "без подрезки (живая проба 275). height_mm " +

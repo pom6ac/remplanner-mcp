@@ -87,146 +87,192 @@ function errCode(result: unknown): string {
 const text = (r: unknown): string => ((r as ToolCallResult).content as { text: string }[])[0]!.text;
 
 test("smoke: listTools — все инструменты design §7.1–7.4, 7.6 с описаниями и схемами", async () => {
-  const client = await start();
-  const { tools } = await client.listTools();
-  const names = tools.map((t) => t.name).sort();
-  assert.deepEqual(names, [...EXPECTED_TOOLS].sort());
-  for (const t of tools) {
-    assert.ok(t.description && t.description.length > 30, `у ${t.name} пустое описание`);
+  let client: Client | undefined;
+  try {
+    client = await start();
+    const { tools } = await client.listTools();
+    const names = tools.map((t) => t.name).sort();
+    assert.deepEqual(names, [...EXPECTED_TOOLS].sort());
+    for (const t of tools) {
+      assert.ok(t.description && t.description.length > 30, `у ${t.name} пустое описание`);
+    }
+    // сценарий «нарисовал → validate → render → save» упомянут в описаниях мутирующих инструментов
+    const wallAdd = tools.find((t) => t.name === "wall_add")!;
+    assert.match(wallAdd.description!, /project_save/);
+    const save = tools.find((t) => t.name === "project_save")!;
+    assert.match(save.description!, /SAVE_CONFLICT/);
+    const takeOverHint = tools.find((t) => t.name === "auth_status")!;
+    assert.ok(takeOverHint.description!.length > 0);
+  } finally {
+    if (client) await client.close();
   }
-  // сценарий «нарисовал → validate → render → save» упомянут в описаниях мутирующих инструментов
-  const wallAdd = tools.find((t) => t.name === "wall_add")!;
-  assert.match(wallAdd.description!, /project_save/);
-  const save = tools.find((t) => t.name === "project_save")!;
-  assert.match(save.description!, /SAVE_CONFLICT/);
-  const takeOverHint = tools.find((t) => t.name === "auth_status")!;
-  assert.ok(takeOverHint.description!.length > 0);
-  await client.close();
 });
 
 test("smoke: офлайн-режим — model_get и rooms_list на фикстуре 4000×3000", async () => {
-  const client = await start();
-  const res = await client.callTool({ name: "model_get", arguments: {} });
-  assert.ok(!res.isError, JSON.stringify(res.content));
-  const model = JSON.parse(text(res)) as {
-    walls: { id: string; len_mm: number; thickness_mm: number }[];
-    rooms: { area_m2: number }[];
-    items: unknown[];
-  };
-  assert.equal(model.walls.length, 4);
-  assert.ok(model.walls.every((w) => w.len_mm >= 2990), "осевые длины 4000/3000 мм");
-  assert.equal(model.rooms.length, 1);
-  assert.ok(Math.abs(model.rooms[0]!.area_m2 - 10.64) < 0.02, `площадь ${model.rooms[0]!.area_m2}`);
+  let client: Client | undefined;
+  try {
+    client = await start();
+    const res = await client.callTool({ name: "model_get", arguments: {} });
+    assert.ok(!res.isError, JSON.stringify(res.content));
+    const model = JSON.parse(text(res)) as {
+      walls: { id: string; len_mm: number; thickness_mm: number }[];
+      rooms: { area_m2: number }[];
+      items: unknown[];
+    };
+    assert.equal(model.walls.length, 4);
+    assert.ok(model.walls.every((w) => w.len_mm >= 2990), "осевые длины 4000/3000 мм");
+    assert.equal(model.rooms.length, 1);
+    assert.ok(Math.abs(model.rooms[0]!.area_m2 - 10.64) < 0.02, `площадь ${model.rooms[0]!.area_m2}`);
 
-  const rooms = await client.callTool({ name: "rooms_list", arguments: {} });
-  assert.ok(!rooms.isError);
-  await client.close();
+    const rooms = await client.callTool({ name: "rooms_list", arguments: {} });
+    assert.ok(!rooms.isError);
+  } finally {
+    if (client) await client.close();
+  }
 });
 
 test("smoke: офлайн — wall_add меняет рабочую копию, validate проходит без связей, undo откатывает", async () => {
-  const client = await start();
-  // перегородка вне контура фикстуры (та занимает оси 0..400 x 0..300) — наложение по оси запрещено
-  const add = await client.callTool({ name: "wall_add", arguments: { start: { x: 5000, y: 0 }, end: { x: 5000, y: 6000 } } });
-  assert.ok(!add.isError, text(add));
-  const added = JSON.parse(text(add)) as { entity: { id: string } | null };
-  assert.ok(added.entity);
+  let client: Client | undefined;
+  try {
+    client = await start();
+    // перегородка вне контура фикстуры (та занимает оси 0..400 x 0..300) — наложение по оси запрещено
+    const add = await client.callTool({ name: "wall_add", arguments: { start: { x: 5000, y: 0 }, end: { x: 5000, y: 6000 } } });
+    assert.ok(!add.isError, text(add));
+    const added = JSON.parse(text(add)) as { entity: { id: string } | null };
+    assert.ok(added.entity);
 
-  // §12.3: Node не пишет связи; фикстура нормализованная (со связями редактора),
-  // поэтому у новой стены валидатор отмечает только свободные узлы — геометрия чистая
-  const validate = await client.callTool({ name: "model_validate", arguments: {} });
-  const v = JSON.parse(text(validate)) as { ok: boolean; problems: { code: string }[] };
-  assert.ok(v.problems.every((p) => p.code === "WALL_DANGLING"), `только свободные узлы: ${JSON.stringify(v.problems)}`);
+    // §12.3: Node не пишет связи; фикстура нормализованная (со связями редактора),
+    // поэтому у новой стены валидатор отмечает только свободные узлы — геометрия чистая
+    const validate = await client.callTool({ name: "model_validate", arguments: {} });
+    const v = JSON.parse(text(validate)) as { ok: boolean; problems: { code: string }[] };
+    assert.ok(v.problems.every((p) => p.code === "WALL_DANGLING"), `только свободные узлы: ${JSON.stringify(v.problems)}`);
 
-  const undo = await client.callTool({ name: "undo", arguments: {} });
-  const u = JSON.parse(text(undo)) as { applied: number };
-  assert.equal(u.applied, 1);
+    const undo = await client.callTool({ name: "undo", arguments: {} });
+    const u = JSON.parse(text(undo)) as { applied: number };
+    assert.equal(u.applied, 1);
 
-  const get = await client.callTool({ name: "model_get", arguments: {} });
-  const m = JSON.parse(text(get)) as { walls: unknown[] };
-  assert.equal(m.walls.length, 4);
-  await client.close();
+    const get = await client.callTool({ name: "model_get", arguments: {} });
+    const m = JSON.parse(text(get)) as { walls: unknown[] };
+    assert.equal(m.walls.length, 4);
+  } finally {
+    if (client) await client.close();
+  }
 });
 
 test("smoke: офлайн — сетевые операции дают AUTH_REQUIRED", async () => {
-  const client = await start();
-  assert.equal(errCode(await client.callTool({ name: "project_save", arguments: {} })), "AUTH_REQUIRED");
-  assert.equal(errCode(await client.callTool({ name: "render_plan", arguments: {} })), "AUTH_REQUIRED");
-  assert.equal(errCode(await client.callTool({ name: "project_create", arguments: {} })), "AUTH_REQUIRED");
-  await client.close();
+  // ревью 269 m3: тест не должен зависеть от сети песочницы. Подменяем fetch:
+  // если какой-то путь всё же полез в сеть — падаем быстро и одинаково на любой
+  // машине, вместо реального POST на сайт (раньше project_create в сети создавал
+  // осиротевший анонимный проект, а в песочнице давал SITE_ERROR «сетевая
+  // ошибка»; AUTH_REQUIRED теперь даёт офлайн-guard в ServerContext.createAnon).
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    throw new Error("smoke: сеть запрещена — сетевая операция дошла до HTTP");
+  }) as typeof fetch;
+  let client: Client | undefined;
+  try {
+    client = await start();
+    assert.equal(errCode(await client.callTool({ name: "project_save", arguments: {} })), "AUTH_REQUIRED");
+    assert.equal(errCode(await client.callTool({ name: "render_plan", arguments: {} })), "AUTH_REQUIRED");
+    assert.equal(errCode(await client.callTool({ name: "project_create", arguments: {} })), "AUTH_REQUIRED");
+  } finally {
+    if (client) await client.close();
+    globalThis.fetch = original;
+  }
 });
 
 test("smoke: каталог на фикстуре — «диван» находит позиции, catalog_get по имени", async () => {
-  const client = await start();
-  const res = await client.callTool({ name: "catalog_search", arguments: { query: "диван", limit: 5 } });
-  assert.ok(!res.isError, JSON.stringify(res.content));
-  const found = JSON.parse(text(res)) as { name: string; width_mm: number }[];
-  assert.ok(found.length > 0, "есть совпадения по «диван»");
-  const one = await client.callTool({ name: "catalog_get", arguments: { name: found[0]!.name } });
-  assert.ok(!one.isError);
-  await client.close();
+  let client: Client | undefined;
+  try {
+    client = await start();
+    const res = await client.callTool({ name: "catalog_search", arguments: { query: "диван", limit: 5 } });
+    assert.ok(!res.isError, JSON.stringify(res.content));
+    const found = JSON.parse(text(res)) as { name: string; width_mm: number }[];
+    assert.ok(found.length > 0, "есть совпадения по «диван»");
+    const one = await client.callTool({ name: "catalog_get", arguments: { name: found[0]!.name } });
+    assert.ok(!one.isError);
+  } finally {
+    if (client) await client.close();
+  }
 });
 
 test("smoke: схемы отвергают отрицательные размеры и неизвестный тип проёма", async () => {
-  const client = await start();
-  const neg = await client.callTool({ name: "wall_add", arguments: { start: { x: -100, y: 0 }, end: { x: 500, y: 0 } } });
-  assert.equal(neg.isError, true, "отрицательная координата отвергается");
-  const badType = await client.callTool({ name: "opening_add", arguments: { wall_id: "W1", type: "portal_x" } });
-  assert.equal(badType.isError, true, "неизвестный тип проёма отвергается");
-  const badProj = await client.callTool({ name: "project_clear", arguments: { confirm: "yes" } });
-  assert.equal(badProj.isError, true, "confirm литерал true обязателен");
-  await client.close();
+  let client: Client | undefined;
+  try {
+    client = await start();
+    const neg = await client.callTool({ name: "wall_add", arguments: { start: { x: -100, y: 0 }, end: { x: 500, y: 0 } } });
+    assert.equal(neg.isError, true, "отрицательная координата отвергается");
+    const badType = await client.callTool({ name: "opening_add", arguments: { wall_id: "W1", type: "portal_x" } });
+    assert.equal(badType.isError, true, "неизвестный тип проёма отвергается");
+    const badProj = await client.callTool({ name: "project_clear", arguments: { confirm: "yes" } });
+    assert.equal(badProj.isError, true, "confirm литерал true обязателен");
+  } finally {
+    if (client) await client.close();
+  }
 });
 
 test("smoke: световые линии — update принимает отрицательные координаты (85 №1: план может уходить в минус, как в add)", async () => {
-  const client = await start();
-  for (const [addTool, updTool, idKey] of [
-    ["led_strip_add", "led_strip_update", "led_strip_id"],
-    ["stripe_add", "stripe_update", "stripe_id"],
-    ["line_light_add", "line_light_update", "line_light_id"],
-  ] as const) {
-    const add = await client.callTool({ name: addTool, arguments: { kind: "recessed", path: [{ x: -1000, y: -1000 }, { x: 0, y: -1000 }] } });
-    assert.ok(!add.isError, `${addTool}: ${text(add)}`);
-    const added = JSON.parse(text(add)) as { entity: { site_id: string } | null };
-    assert.ok(added.entity, `${addTool}: сущность создана`);
-    const upd = await client.callTool({
-      name: updTool,
-      arguments: { [idKey]: added.entity!.site_id, positions: [{ vertex: 0, x_mm: -500, y_mm: -2000 }] },
-    });
-    assert.ok(!upd.isError, `${updTool}: отрицательные координаты допустимы: ${text(upd)}`);
-    const compact = JSON.parse(text(upd)) as { entity: { from: number[] } | null };
-    assert.deepEqual(compact.entity!.from, [-500, -2000], `${updTool}: узел перенесён в минус`);
+  let client: Client | undefined;
+  try {
+    client = await start();
+    for (const [addTool, updTool, idKey] of [
+      ["led_strip_add", "led_strip_update", "led_strip_id"],
+      ["stripe_add", "stripe_update", "stripe_id"],
+      ["line_light_add", "line_light_update", "line_light_id"],
+    ] as const) {
+      const add = await client.callTool({ name: addTool, arguments: { kind: "recessed", path: [{ x: -1000, y: -1000 }, { x: 0, y: -1000 }] } });
+      assert.ok(!add.isError, `${addTool}: ${text(add)}`);
+      const added = JSON.parse(text(add)) as { entity: { site_id: string } | null };
+      assert.ok(added.entity, `${addTool}: сущность создана`);
+      const upd = await client.callTool({
+        name: updTool,
+        arguments: { [idKey]: added.entity!.site_id, positions: [{ vertex: 0, x_mm: -500, y_mm: -2000 }] },
+      });
+      assert.ok(!upd.isError, `${updTool}: отрицательные координаты допустимы: ${text(upd)}`);
+      const compact = JSON.parse(text(upd)) as { entity: { from: number[] } | null };
+      assert.deepEqual(compact.entity!.from, [-500, -2000], `${updTool}: узел перенесён в минус`);
+    }
+  } finally {
+    if (client) await client.close();
   }
-  await client.close();
 });
 
 test("smoke: item_add в центр комнаты, items_list, item_delete", async () => {
-  const client = await start();
-  const { tools } = await client.listTools();
-  void tools;
-  // ищем диван в фикстурном каталоге
-  const search = await client.callTool({ name: "catalog_search", arguments: { query: "диван", limit: 1 } });
-  const found = JSON.parse(text(search)) as { name: string }[];
-  assert.ok(found.length > 0, "в catalog-sample.json есть диван");
-  const add = await client.callTool({ name: "item_add", arguments: {
-    name: found[0]!.name,
-    position: { in_room: { room_id: "R1", corner: "center" } },
-  } });
-  assert.ok(!add.isError, JSON.stringify(add.content));
-  const list = await client.callTool({ name: "items_list", arguments: {} });
-  const items = JSON.parse(text(list)) as { id: string }[];
-  assert.equal(items.length, 1);
-  const del = await client.callTool({ name: "item_delete", arguments: { item_id: items[0]!.id } });
-  assert.ok(!del.isError);
-  await client.close();
+  let client: Client | undefined;
+  try {
+    client = await start();
+    const { tools } = await client.listTools();
+    void tools;
+    // ищем диван в фикстурном каталоге
+    const search = await client.callTool({ name: "catalog_search", arguments: { query: "диван", limit: 1 } });
+    const found = JSON.parse(text(search)) as { name: string }[];
+    assert.ok(found.length > 0, "в catalog-sample.json есть диван");
+    const add = await client.callTool({ name: "item_add", arguments: {
+      name: found[0]!.name,
+      position: { in_room: { room_id: "R1", corner: "center" } },
+    } });
+    assert.ok(!add.isError, JSON.stringify(add.content));
+    const list = await client.callTool({ name: "items_list", arguments: {} });
+    const items = JSON.parse(text(list)) as { id: string }[];
+    assert.equal(items.length, 1);
+    const del = await client.callTool({ name: "item_delete", arguments: { item_id: items[0]!.id } });
+    assert.ok(!del.isError);
+  } finally {
+    if (client) await client.close();
+  }
 });
 
 test("smoke: auth_status и editor_status в офлайне не падают", async () => {
-  const client = await start();
-  const auth = await client.callTool({ name: "auth_status", arguments: {} });
-  assert.ok(!auth.isError);
-  const status = JSON.parse(text(auth)) as { mode: string };
-  assert.equal(status.mode, "offline");
-  const es = await client.callTool({ name: "editor_status", arguments: {} });
-  assert.ok(!es.isError, JSON.stringify(es.content));
-  await client.close();
+  let client: Client | undefined;
+  try {
+    client = await start();
+    const auth = await client.callTool({ name: "auth_status", arguments: {} });
+    assert.ok(!auth.isError);
+    const status = JSON.parse(text(auth)) as { mode: string };
+    assert.equal(status.mode, "offline");
+    const es = await client.callTool({ name: "editor_status", arguments: {} });
+    assert.ok(!es.isError, JSON.stringify(es.content));
+  } finally {
+    if (client) await client.close();
+  }
 });
