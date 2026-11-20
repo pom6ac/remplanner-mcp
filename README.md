@@ -214,7 +214,15 @@ shield_rail_add / shield_module_add (+ update/delete)  # конструктор 
                           #  провода между портами модулей и ввода (фаза/фаза2/фаза3/ноль/земля);
                           #  shield_module_update rail=... index=... — перенос между рейками и порядок
                           #  (drag); удаление модуля/рейки каскадно удаляет провода к его портам;
-                          #  item_delete щитка удаляет конструктор каскадно; шины/коллекторы — следующий этап
+                          #  item_delete щитка удаляет конструктор каскадно
+shield_bus_add / update / delete  # шины (нулевые шины-бары, shield_busbar) над/под щитком:
+                          #  position T|B, align L|C|R, sockets 4..25 (по умолчанию 6); провод
+                          #  к гнезду — shield_wire_add {bus, port}; bus.connection = тип провода
+                          #  (к шине с другим connection провод не ставится — как в редакторе);
+                          #  удаление шины каскадно удаляет её провода (deleted_wires)
+shield_collector_add / update / delete  # коллекторы-гребёнки (shield_collector) на модулях одной
+                          #  рейки: modules — подряд, одна ширина, ≥2 (коллектор на одном модуле
+                          #  редактор удаляет); модель: model_get shields[].bus_list/collector_list
 warm_floor_add            # тёплый пол (лист «Тёплые полы»): контур kind: cable|infrared|water (водяной — PRO)
 warm_wall_add / warm_wall_list / warm_wall_update / warm_wall_delete  # тёплая стена (лист «Тёплые полы»,
                           #  тариф «Расширенный»): участок на ребре комнаты (room_id + edge +
