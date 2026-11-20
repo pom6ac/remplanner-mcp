@@ -46,7 +46,7 @@ import {
   FLOOR_MOLDING_TYPES, setFloorMolding, removeFloorMolding, setCeilingMolding, removeCeilingMolding,
   addCeilingNiche, removeCeilingNiche,
 } from "../model/finish.ts";
-import { addZoneDelimiter, removeZoneDelimiter, zoneDelimiterList } from "../model/zone.ts";
+import { addZoneDelimiter, removeZoneDelimiter, zoneDelimiterList, ZONE_DELIMITER_PLANS, type ZoneDelimiterType } from "../model/zone.ts";
 import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
 } from "../model/terraces.ts";
@@ -84,6 +84,61 @@ import { rawEditorPayload } from "../dto/model-payload.ts";
 // невозможным.
 const shieldIndexDin = z.number().finite().min(0).max(SHIELD_RAIL_MAX_DIN).multipleOf(0.5)
   .describe("DIN-позиция на рейке, сетка 0.5 (0..48)");
+
+/**
+ * Тексты инструментов zone_<t>_add/remove по типу разделителя (ревью 298 №11:
+ * один источник — из него же генерируются и метки, и подсказки; снапшот c4
+ * байт-в-байт совпадает с прежними литералами).
+ */
+const ZONE_TOOL_TEXTS: Record<ZoneDelimiterType, { add: string; remove: string }> = {
+  zone_ceiling: {
+    add:
+      "Провести линию-разделитель зон потолка в комнате (лист «Потолки», инструмент " +
+      "«Зонировать потолок»; PRO). Линия делит потолок комнаты на зоны с разной отделкой. " +
+      "from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм) " +
+      "или к грани потолочного ригеля/закладной (в 100 мм), как в редакторе: линия строится " +
+      "внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны, " +
+      "ригели и другие разделители зон потолка. id — метка ZD<n> для zone_ceiling_remove и finish_get. " +
+      "После правки вызывайте model_validate и project_save.",
+    remove:
+      "Удалить линию-разделитель зон потолка (инструмент «ластик» на линии). " +
+      "delimiter_id — метка ZD<n> из finish_get или id сайта из zone_ceiling_add.",
+  },
+  zone_floor: {
+    add:
+      "Провести линию-разделитель зон пола в комнате (лист «Напольные покрытия», инструмент " +
+      "«Зонирование»; PRO). Линия делит пол комнаты на зоны с разным покрытием. " +
+      "from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм), как в редакторе: " +
+      "линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны " +
+      "и другие разделители зон пола (разделители других листов — потолка — пересекать можно). " +
+      "id — метка ZD<n> для zone_floor_remove и finish_get. После правки вызывайте model_validate и project_save.",
+    remove:
+      "Удалить линию-разделитель зон пола (инструмент «ластик» на линии). " +
+      "delimiter_id — метка ZD<n> из finish_get или id сайта из zone_floor_add.",
+  },
+  zone_hydroisolation: {
+    add:
+      "Провести линию-разделитель зон гидроизоляции в комнате (лист «Гидроизоляция», инструмент " +
+      "«Зонирование»; PRO). from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм), " +
+      "как в редакторе: линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает " +
+      "стены, колонны и другие разделители зон гидроизоляции (разделители других листов пересекать можно). " +
+      "id — метка ZD<n> для zone_hydroisolation_remove и finish_get. После правки вызывайте model_validate и project_save.",
+    remove:
+      "Удалить линию-разделитель зон гидроизоляции (инструмент «ластик» на линии). " +
+      "delimiter_id — метка ZD<n> из finish_get или id сайта из zone_hydroisolation_add.",
+  },
+  zone_floor_cap: {
+    add:
+      "Провести линию-разделитель зон стяжки в комнате (лист «Стяжка», инструмент «Зонирование»; PRO). " +
+      "from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм), как в редакторе: " +
+      "линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны " +
+      "и другие разделители зон стяжки (разделители других листов пересекать можно). " +
+      "id — метка ZD<n> для zone_floor_cap_remove и finish_get. После правки вызывайте model_validate и project_save.",
+    remove:
+      "Удалить линию-разделитель зон стяжки (инструмент «ластик» на линии). " +
+      "delimiter_id — метка ZD<n> из finish_get или id сайта из zone_floor_cap_add.",
+  },
+};
 
 export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   const wsOf = () => ctx.workspace();
@@ -136,6 +191,45 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       });
     }
   };
+
+  // Зонирование (класс ZoneDelimitering, этапы 260/296, PRO): обработчики
+  // zone_<t>_add/remove генерируются из одной таблицы типов ZONE_TOOL_TEXTS
+  // (ревью 298 №11); модельный слой один — addZoneDelimiter/removeZoneDelimiter
+  // с типом. Метки ZD сквозные. Разделители разных листов (plan) в одной
+  // комнате могут пересекаться; магнит к ригелям и проверка ригелей — только
+  // у зоны потолка.
+  const zoneTools: Record<string, ToolDefLike> = {};
+  for (const t of Object.keys(ZONE_DELIMITER_PLANS) as ZoneDelimiterType[]) {
+    const texts = ZONE_TOOL_TEXTS[t];
+    zoneTools[`${t}_add`] = tool(
+      texts.add,
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        from_mm: mmPoint.describe("начало линии, мм"),
+        to_mm: mmPoint.describe("конец линии, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply(`${t}_add`, (m) => addZoneDelimiter(m, a["room_id"] as string, {
+          type: t,
+          fromMm: a["from_mm"] as MmPoint,
+          toMm: a["to_mm"] as MmPoint,
+        }));
+        const n = zoneDelimiterList(ws.model).findIndex((d) => d["site_id"] === res.id);
+        return ok({ room_id: a["room_id"], id: `ZD${n + 1}`, site_id: res.id, length_mm: res.length_mm, hint: SCENARIO_HINT });
+      },
+    );
+    zoneTools[`${t}_remove`] = tool(
+      texts.remove,
+      { delimiter_id: z.string().min(1).describe("метка ZD<n> из finish_get или id разделителя") },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply(`${t}_remove`, (m) => removeZoneDelimiter(m, a["delimiter_id"] as string, { expectedType: t }));
+        return ok({ delimiter_id: a["delimiter_id"], room_id: res.room_id, removed: res.removed, hint: SCENARIO_HINT });
+      },
+    );
+  }
+
 
   return {
     // ---------- Стены и помещения (§7.2) ----------
@@ -2166,149 +2260,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
     ),
 
-    // ---------- Зонирование (класс ZoneDelimitering, этапы 260/296, PRO) ----------
-    zone_ceiling_add: tool(
-      "Провести линию-разделитель зон потолка в комнате (лист «Потолки», инструмент " +
-        "«Зонировать потолок»; PRO). Линия делит потолок комнаты на зоны с разной отделкой. " +
-        "from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм) " +
-        "или к грани потолочного ригеля/закладной (в 100 мм), как в редакторе: линия строится " +
-        "внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны, " +
-        "ригели и другие разделители зон потолка. id — метка ZD<n> для zone_ceiling_remove и finish_get. " +
-        "После правки вызывайте model_validate и project_save.",
-      {
-        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
-        from_mm: mmPoint.describe("начало линии, мм"),
-        to_mm: mmPoint.describe("конец линии, мм"),
-      },
-      async (a) => {
-        const ws = wsOf();
-        const res = ws.apply("zone_ceiling_add", (m) => addZoneDelimiter(m, a["room_id"] as string, {
-          type: "zone_ceiling",
-          fromMm: a["from_mm"] as MmPoint,
-          toMm: a["to_mm"] as MmPoint,
-        }));
-        const n = zoneDelimiterList(ws.model).findIndex((d) => d["site_id"] === res.id);
-        return ok({ room_id: a["room_id"], id: `ZD${n + 1}`, site_id: res.id, length_mm: res.length_mm, hint: SCENARIO_HINT });
-      },
-    ),
-
-    zone_ceiling_remove: tool(
-      "Удалить линию-разделитель зон потолка (инструмент «ластик» на линии). " +
-        "delimiter_id — метка ZD<n> из finish_get или id сайта из zone_ceiling_add.",
-      { delimiter_id: z.string().min(1).describe("метка ZD<n> из finish_get или id разделителя") },
-      async (a) => {
-        const ws = wsOf();
-        const res = ws.apply("zone_ceiling_remove", (m) => removeZoneDelimiter(m, a["delimiter_id"] as string));
-        return ok({ delimiter_id: a["delimiter_id"], room_id: res.room_id, removed: res.removed, hint: SCENARIO_HINT });
-      },
-    ),
-
-    // Зонирование пола / гидроизоляции / стяжки (этап 296): тот же класс
-    // ZoneDelimitering, одна модельная функция addZoneDelimiter, тип — параметр.
-    // Разделители разных листов (plan) в одной комнате могут пересекаться;
-    // магнит к ригелям и проверка ригелей — только у зоны потолка.
-    zone_floor_add: tool(
-      "Провести линию-разделитель зон пола в комнате (лист «Напольные покрытия», инструмент " +
-        "«Зонирование»; PRO). Линия делит пол комнаты на зоны с разным покрытием. " +
-        "from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм), как в редакторе: " +
-        "линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны " +
-        "и другие разделители зон пола (разделители других листов — потолка — пересекать можно). " +
-        "id — метка ZD<n> для zone_floor_remove и finish_get. После правки вызывайте model_validate и project_save.",
-      {
-        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
-        from_mm: mmPoint.describe("начало линии, мм"),
-        to_mm: mmPoint.describe("конец линии, мм"),
-      },
-      async (a) => {
-        const ws = wsOf();
-        const res = ws.apply("zone_floor_add", (m) => addZoneDelimiter(m, a["room_id"] as string, {
-          type: "zone_floor",
-          fromMm: a["from_mm"] as MmPoint,
-          toMm: a["to_mm"] as MmPoint,
-        }));
-        const n = zoneDelimiterList(ws.model).findIndex((d) => d["site_id"] === res.id);
-        return ok({ room_id: a["room_id"], id: `ZD${n + 1}`, site_id: res.id, length_mm: res.length_mm, hint: SCENARIO_HINT });
-      },
-    ),
-
-    zone_floor_remove: tool(
-      "Удалить линию-разделитель зон пола (инструмент «ластик» на линии). " +
-        "delimiter_id — метка ZD<n> из finish_get или id сайта из zone_floor_add.",
-      { delimiter_id: z.string().min(1).describe("метка ZD<n> из finish_get или id разделителя") },
-      async (a) => {
-        const ws = wsOf();
-        const res = ws.apply("zone_floor_remove", (m) => removeZoneDelimiter(m, a["delimiter_id"] as string));
-        return ok({ delimiter_id: a["delimiter_id"], room_id: res.room_id, removed: res.removed, hint: SCENARIO_HINT });
-      },
-    ),
-
-    zone_hydroisolation_add: tool(
-      "Провести линию-разделитель зон гидроизоляции в комнате (лист «Гидроизоляция», инструмент " +
-        "«Зонирование»; PRO). from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм), " +
-        "как в редакторе: линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает " +
-        "стены, колонны и другие разделители зон гидроизоляции (разделители других листов пересекать можно). " +
-        "id — метка ZD<n> для zone_hydroisolation_remove и finish_get. После правки вызывайте model_validate и project_save.",
-      {
-        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
-        from_mm: mmPoint.describe("начало линии, мм"),
-        to_mm: mmPoint.describe("конец линии, мм"),
-      },
-      async (a) => {
-        const ws = wsOf();
-        const res = ws.apply("zone_hydroisolation_add", (m) => addZoneDelimiter(m, a["room_id"] as string, {
-          type: "zone_hydroisolation",
-          fromMm: a["from_mm"] as MmPoint,
-          toMm: a["to_mm"] as MmPoint,
-        }));
-        const n = zoneDelimiterList(ws.model).findIndex((d) => d["site_id"] === res.id);
-        return ok({ room_id: a["room_id"], id: `ZD${n + 1}`, site_id: res.id, length_mm: res.length_mm, hint: SCENARIO_HINT });
-      },
-    ),
-
-    zone_hydroisolation_remove: tool(
-      "Удалить линию-разделитель зон гидроизоляции (инструмент «ластик» на линии). " +
-        "delimiter_id — метка ZD<n> из finish_get или id сайта из zone_hydroisolation_add.",
-      { delimiter_id: z.string().min(1).describe("метка ZD<n> из finish_get или id разделителя") },
-      async (a) => {
-        const ws = wsOf();
-        const res = ws.apply("zone_hydroisolation_remove", (m) => removeZoneDelimiter(m, a["delimiter_id"] as string));
-        return ok({ delimiter_id: a["delimiter_id"], room_id: res.room_id, removed: res.removed, hint: SCENARIO_HINT });
-      },
-    ),
-
-    zone_floor_cap_add: tool(
-      "Провести линию-разделитель зон стяжки в комнате (лист «Стяжка», инструмент «Зонирование»; PRO). " +
-        "from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм), как в редакторе: " +
-        "линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны " +
-        "и другие разделители зон стяжки (разделители других листов пересекать можно). " +
-        "id — метка ZD<n> для zone_floor_cap_remove и finish_get. После правки вызывайте model_validate и project_save.",
-      {
-        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
-        from_mm: mmPoint.describe("начало линии, мм"),
-        to_mm: mmPoint.describe("конец линии, мм"),
-      },
-      async (a) => {
-        const ws = wsOf();
-        const res = ws.apply("zone_floor_cap_add", (m) => addZoneDelimiter(m, a["room_id"] as string, {
-          type: "zone_floor_cap",
-          fromMm: a["from_mm"] as MmPoint,
-          toMm: a["to_mm"] as MmPoint,
-        }));
-        const n = zoneDelimiterList(ws.model).findIndex((d) => d["site_id"] === res.id);
-        return ok({ room_id: a["room_id"], id: `ZD${n + 1}`, site_id: res.id, length_mm: res.length_mm, hint: SCENARIO_HINT });
-      },
-    ),
-
-    zone_floor_cap_remove: tool(
-      "Удалить линию-разделитель зон стяжки (инструмент «ластик» на линии). " +
-        "delimiter_id — метка ZD<n> из finish_get или id сайта из zone_floor_cap_add.",
-      { delimiter_id: z.string().min(1).describe("метка ZD<n> из finish_get или id разделителя") },
-      async (a) => {
-        const ws = wsOf();
-        const res = ws.apply("zone_floor_cap_remove", (m) => removeZoneDelimiter(m, a["delimiter_id"] as string));
-        return ok({ delimiter_id: a["delimiter_id"], room_id: res.room_id, removed: res.removed, hint: SCENARIO_HINT });
-      },
-    ),
+    ...zoneTools,
 
     // ---------- Терраса и участок (пункты меню «Терраса и участок», этап 64) ----------
     terrace_add: tool(
