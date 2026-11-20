@@ -5,8 +5,9 @@
 import { chromium } from "playwright-core";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { loadSession } from "../../src/session.ts";
-import { STATE_PATH } from "../../src/config.ts";
-import { loadModel } from "../../src/api.ts";
+import { cookieHeader } from "../../src/session.ts";
+import { STATE_PATH, BASE_URL, HTTP_TIMEOUT_MS, USER_AGENT } from "../../src/config.ts";
+import { loadModel, saveModel } from "../../src/api.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_* из env)");
@@ -56,6 +57,19 @@ const ownSig = (m: Record<string, unknown>): string => {
   return `${walls}#${roomSig}#${colls}`;
 };
 const writeOut = (name: string, data: unknown) => writeFileSync(`${OUT}/${name}.json`, JSON.stringify(data, null, 1) + "\n");
+// authkey объекта из ЛК (для A-транспорта восстановления бэкапа — как в 291-live-check)
+const authKeyFor = async (session: ReturnType<typeof loadSession>, objectId: string): Promise<string> => {
+  const res = await fetch(`${BASE_URL}/client/`, {
+    headers: { cookie: cookieHeader(session, "remplanner.ru"), "user-agent": USER_AGENT, referer: `${BASE_URL}/client/` },
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+  });
+  const html = await res.text();
+  const i = html.indexOf(`data-object="${objectId}"`);
+  if (i < 0) throw new Error("в ЛК нет объекта dev-проекта (restore невозможен)");
+  const m = /data-auth\S+="([0-9a-f]+)"/.exec(html.slice(i, i + 400));
+  if (!m) throw new Error("в ЛК нет authkey для объекта (restore невозможен)");
+  return m[1]!;
+};
 const clearFog = () => page.evaluate(() => {
   const f: any = document.querySelector("#planner_ui_message_fog");
   if (f && f.classList.contains("active") && !f.innerHTML.trim()) f.classList.remove("active");
@@ -108,6 +122,7 @@ const pickTool = async (key: string): Promise<string> => {
 };
 
 let probeOk = false;
+let restoreOk = false;
 let backup: Awaited<ReturnType<typeof loadModel>> | null = null;
 let readonlyBefore: Awaited<ReturnType<typeof loadModel>> | null = null;
 try {
@@ -116,6 +131,13 @@ try {
   readonlyBefore = await loadModel(session, READONLY_ID, READONLY_PLAN_ID);
   if (readonlyBefore.data_empty === true) throw new Error("контрольный GET рабочего проекта пуст (data_empty) — стоп");
   console.log("backup ok");
+  // гард «план в редакторе == сервер»: данные copy("server") сравниваются с GET-бэкапом
+  // (не только id/plan_id из dataset) — до любой записи
+  const openedCopy = await copyServer();
+  if (ownSig(openedCopy) !== ownSig(backup.model)) {
+    throw new Error('гард «план в редакторе == сервер» не прошёл (copy("server") vs GET) — стоп до любой записи');
+  }
+  console.log('гард «план в редакторе == сервер» (copy("server") vs GET): ОК');
   const get = backup.model as Record<string, unknown>;
 
   // 1. щиток-предмет
@@ -137,13 +159,13 @@ try {
   await switchSheet("shield");
   await clickAt({ x: shieldItem.pc.x, y: shieldItem.pc.y });
   await page.waitForTimeout(800);
-  const addModules = await page.evaluate(() => {
+  const addModules = await page.evaluate((): { railId: string; modules: string[] } | "no instance" => {
     const w: any = window as any;
     const inst = Object.values<any>(w.SHIELDS ?? {})[0];
     if (!inst) return "no instance";
-    const railId = Object.keys(inst.rails)[0];
+    const railId: string = Object.keys(inst.rails)[0]!;
     for (let i = 0; i < 5; i++) inst.add_module(railId, "shield_module");
-    return { railId, modules: Object.keys(Object.values(inst.rails)[0].modules) };
+    return { railId, modules: Object.keys(Object.values<any>(inst.rails)[0]!.modules) };
   });
   console.log("addModules:", JSON.stringify(addModules));
 
@@ -181,10 +203,10 @@ try {
   // 4. коллектор: tool shield_collector; mousedown порта модуля0 → hover портами
   //    модулей 1..3 → mousedown порта модуля3 (карту строит port_mouseover)
   if ((await pickTool("shield_collector")) !== "ok") throw new Error("shield_collector недоступен");
-  const portEls = await page.evaluate(() => {
+  const portEls = await page.evaluate((): { id: string; x: number; y: number }[] => {
     const w: any = window as any;
     const inst = Object.values<any>(w.SHIELDS ?? {})[0];
-    const mods = Object.values<any>(Object.values(inst.rails)[0].modules).sort((a: any, b: any) => a.index - b.index);
+    const mods = Object.values<any>(Object.values<any>(inst.rails)[0]!.modules).sort((a: any, b: any) => a.index - b.index);
     const out: { id: string; x: number; y: number }[] = [];
     for (const m of mods) {
       for (const p of m.ports) {
@@ -213,10 +235,10 @@ try {
   });
   writeOut("293-port-els", portEls.slice(0, 24));
   console.log("port els:", portEls.length);
-  const mods = await page.evaluate(() => {
+  const mods = await page.evaluate((): { id: string; index: number; ports: string[] }[] => {
     const w: any = window as any;
     const inst = Object.values<any>(w.SHIELDS ?? {})[0];
-    return Object.values<any>(Object.values(inst.rails)[0].modules).sort((a: any, b: any) => a.index - b.index).map((m: any) => ({ id: m.id, index: m.index, ports: m.ports.map((p: any) => p.id) }));
+    return Object.values<any>(Object.values<any>(inst.rails)[0]!.modules).sort((a: any, b: any) => a.index - b.index).map((m: any) => ({ id: m.id, index: m.index, ports: m.ports.map((p: any) => p.id) }));
   });
   writeOut("293-mods", mods);
   const srcPort = portEls.find((p) => p.id === mods[0]!.ports[0]);
@@ -324,11 +346,31 @@ try {
     if (backup) {
       const after = await loadModel(session, OBJECT_ID, PLAN_ID);
       const same = ownSig(after.model) === ownSig(backup.model);
-      console.log("GET после перезагрузки:", same ? "не изменился (откат ОК)" : "ИЗМЕНИЛСЯ");
+      if (same) {
+        console.log("GET после перезагрузки: не изменился (откат ОК)");
+        restoreOk = true;
+      } else {
+        // ревью 293 №4(в): при расхождении сигнатуры бэкап возвращается
+        // A-транспортом (как в 291-live-check), а не только фиксируется в отчёте
+        console.log("GET после перезагрузки: ИЗМЕНИЛСЯ — возврат бэкапа");
+        const fresh = await loadModel(session, OBJECT_ID, PLAN_ID);
+        const sv = await saveModel(session, {
+          objectId: OBJECT_ID,
+          planId: PLAN_ID,
+          authkey: await authKeyFor(session, OBJECT_ID),
+          saveId: fresh.save_id,
+          model: backup.model,
+        });
+        console.log("finally: бэкап возвращён (A-транспорт), ok:", sv.ok, "conflict:", sv.conflict);
+        const restored = await loadModel(session, OBJECT_ID, PLAN_ID);
+        restoreOk = ownSig(restored.model) === ownSig(backup.model);
+        console.log("finally: сверка сигнатуры после восстановления:", restoreOk ? "OK" : "MISMATCH");
+      }
     }
   } catch (e) {
     console.error("ROLLBACK_ERROR:", (e as Error).message.slice(0, 300));
+    restoreOk = false;
   }
   await browser.close().catch(() => {});
 }
-process.exit(probeOk ? 0 : 1);
+process.exit(probeOk && restoreOk ? 0 : 1);
