@@ -11,6 +11,7 @@ import { addZoneCeiling } from "../../src/model/zone.ts";
 import { compactModel } from "../../src/model/compact.ts";
 import { finishList } from "../../src/model/finish.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
+import { moveWall } from "../../src/model/walls.ts";
 import type { LoadedModel } from "../../src/api.ts";
 
 const REF = JSON.parse(readFileSync("tests/fixtures/ui-ref-zones3-ceiling-rigel.json", "utf8")) as {
@@ -382,6 +383,32 @@ test("307 N1: правка стен в проекте с MCP-закладной 
     } as unknown as Wall;
     return "new1";
   });
+});
+
+// ---------- 308 (третье ревью): N7 — applyWalls: нормализация удалила закладную → отказ ----------
+
+test("308 N7: wall_move стены-опоры — нормализация удалила закладную → INVALID_GEOMETRY, модель не изменена, save не вызван", async () => {
+  const { m } = mockModelWithRigel();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  let saves = 0;
+  const ws = saveMock(server, () => { saves += 1; }, (norm) => {
+    const rooms = norm["rooms2"] as Record<string, Record<string, unknown>>;
+    for (const r of Object.values(rooms)) delete r["rigels"];
+  });
+  await ws.open("0", "1");
+  const before = JSON.stringify(ws.model);
+  await assert.rejects(
+    () => ws.applyWalls("wall_move", (mm) => moveWall(mm, { wallId: "wall4", offsetMm: 300 })),
+    (e: unknown) => {
+      const err = e as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(err.code, "INVALID_GEOMETRY", `код: ${err.code}, сообщение: ${err.message}`);
+      const cm = err.details?.["ceiling_rigel_mismatches"] as string[] | undefined;
+      assert.ok(Array.isArray(cm) && cm.some((p) => p.includes("CR1")), `details.ceiling_rigel_mismatches: ${JSON.stringify(err.details)?.slice(0, 400)}`);
+      return true;
+    },
+  );
+  assert.equal(JSON.stringify(ws.model), before, "модель не изменилась после отказа");
+  assert.equal(saves, 0, "save не вызывался");
 });
 
 void refModelLike;
