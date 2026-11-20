@@ -197,9 +197,20 @@ function commentClean(comment: string | undefined): string {
   return s;
 }
 
+/** Умолчание номинала без списка (RailModule ctor: e.subtype || dims.module.default_subtype,
+ *  бандл app.3.0) — ревью 256 №1. */
+export const SHIELD_MODULE_DEFAULT_SUBTYPE = "5A";
+
+/** Номинал по правилам редактора (add_new_module + RailModule ctor):
+ *  default_subtype ?? subtypes[0] ?? "5A". */
+function defaultSubtypeOf(type: string): string {
+  const def = SHIELD_MODULE_TYPES[type]!;
+  return def.default_subtype ?? def.subtypes?.[0] ?? SHIELD_MODULE_DEFAULT_SUBTYPE;
+}
+
 function subtypeOf(type: string, subtype: string | undefined): string {
   const def = SHIELD_MODULE_TYPES[type]!;
-  if (subtype === undefined) return def.default_subtype ?? "";
+  if (subtype === undefined) return defaultSubtypeOf(type);
   if (def.subtypes && !def.subtypes.includes(subtype)) {
     throw new McpError(
       "INVALID_ARGUMENT",

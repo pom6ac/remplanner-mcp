@@ -141,6 +141,63 @@ test("255: эталон ui-ref-shield-module — форма модуля вос�
 
 // ---------- add/update/delete ----------
 
+// Ревью 256 №1: редактор ставит модулю subtype = default_subtype ?? subtypes[0],
+// иначе RailModule-ctor берёт dims.module.default_subtype ("5A"); MCP с пустым
+// subtype после restore редактора превращался в "5A" и save падал
+// NORMALIZATION_DROPPED. Умолчания 12 типов без default_subtype сверены с дампом
+// ShieldDimensions.module_types (255-module-classes.json).
+const EDITOR_SUBTYPE_DEFAULTS: Record<string, string> = {
+  shield_module_uzip: "5A", shield_module_uzip_2x: "5A", shield_module_uzip_4x: "5A",
+  shield_module_terminal: "5A", shield_module_terminal_x2: "5A",
+  shield_module_din_bus: "5A", shield_module_cross: "5A", shield_module_cross_4x: "5A",
+  shield_module_socket: "5A", shield_module_counter: "5A", shield_module_splitter: "5A",
+  shield_module_uvr: "63A",
+};
+
+/** Restore редактора (RailModule ctor): e.subtype || "5A", e.group_number || 0, e.comment || "". */
+function editorRestoreShields(shields: Record<string, Shield>): void {
+  for (const s of Object.values(shields)) {
+    for (const rail of Object.values(s.rails)) {
+      for (const mod of Object.values(rail.modules)) {
+        mod.subtype = mod.subtype || "5A";
+        mod.group_number = mod.group_number || 0;
+        mod.comment = mod.comment || "";
+      }
+    }
+  }
+}
+
+test("256 №1: все 35 типов — проекция после «restore редактора» равна исходной, subtype по таблице редактора", () => {
+  for (const type of Object.keys(SHIELD_MODULE_TYPES)) {
+    const { m, shield } = scenario();
+    ensureShieldForItem(m, shield);
+    addShieldModule(m, shield.id, { type });
+    const s = findShieldByItem(m, shield.id)!;
+    const restored = structuredClone({ s1: s });
+    editorRestoreShields(restored);
+    assert.deepEqual(shieldProjection(s), shieldProjection(restored.s1!), `restore редактора меняет модуль типа ${type}`);
+    if (type in EDITOR_SUBTYPE_DEFAULTS) {
+      const mod = Object.values(Object.values(s.rails)[0]!.modules)[0]!;
+      assert.equal(mod.subtype, EDITOR_SUBTYPE_DEFAULTS[type], `subtype типа ${type}`);
+    }
+  }
+});
+
+test("256 №1: mock save — щиток с uzip/terminal/uvr (restore редактора дописывает subtype) — verified", async () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module_uzip" });
+  addShieldModule(m, shield.id, { type: "shield_module_terminal" });
+  addShieldModule(m, shield.id, { type: "shield_module_uvr" });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    editorRestoreShields(norm.shields as Record<string, Shield>);
+  });
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true, JSON.stringify(res).slice(0, 500));
+});
+
 test("255: shield_rail_add — вторая рейка в конец, index 1; первая — index 0", () => {
   const { m, shield } = scenario();
   ensureShieldForItem(m, shield);
