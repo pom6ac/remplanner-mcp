@@ -410,6 +410,40 @@ test("268: коллекторный узел подключается к маг�
   assert.equal(p2.vertexes[0]!.type, "warm_floor");
 });
 
+test("ревью 271 N4: видам с faceOffsetCm gap_mm > 0 — INVALID_ARGUMENT (в item_add и item_update)", () => {
+  const roomsOf = (m: Model): RoomPolygon[] =>
+    Object.entries(m.rooms2 as Record<string, { polygon: { x: number; y: number }[]; area: number }>)
+      .map(([roomId, r]) => ({ roomId, polygon: r.polygon, areaCm2: r.area * 10_000, axisAreaCm2: null }));
+  for (const t of MANIFOLD_TESTS) {
+    const m = baseModel();
+    const wall = Object.values(m.walls).find((w) => w.p1.y === w.p2.y)!;
+    if (faceOffsetCm(t.name) !== null) {
+      // точка привязки по виду — gap_mm молча не применяется → отказ
+      assert.throws(
+        () => addItem(m, { name: t.name, position: { againstWall: { wallId: wall.id, offsetMm: 1000, gapMm: 50 } }, catalogEntry: entry(t.name) } as never),
+        (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+        `${t.name}: item_add gap_mm 50`,
+      );
+      const item = addItem(m, { name: t.name, position: { againstWall: { wallId: wall.id, offsetMm: 1000 } }, catalogEntry: entry(t.name) } as never);
+      assert.throws(
+        () => againstWallCenter(wall, { offset_mm: 1000, gap_mm: 50 }, item.width, item.height, roomsOf(m), t.name),
+        (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+        `${t.name}: item_update gap_mm 50`,
+      );
+    } else {
+      // ext_manifold_box — общая формула (вплотную = depth/2), gap_mm применяется как у всех
+      const sofaish = addItem(m, { name: t.name, position: { againstWall: { wallId: wall.id, offsetMm: 1000, gapMm: 50 } }, catalogEntry: entry(t.name) } as never);
+      const plain = addItem(m, { name: t.name, position: { againstWall: { wallId: wall.id, offsetMm: 1000 } }, catalogEntry: entry(t.name) } as never);
+      assert.equal(Math.round((sofaish.pc.y - plain.pc.y) * 100) / 100, 5, `${t.name}: gap 50 мм отодвигает pc`);
+    }
+  }
+  // обычный предмет — gap_mm прежнее правило (не падает)
+  const m3 = baseModel();
+  const wall3 = Object.values(m3.walls).find((w) => w.p1.y === w.p2.y)!;
+  const sofa = addItem(m3, { name: "sofa", position: { againstWall: { wallId: wall3.id, offsetMm: 1000, gapMm: 50 } }, catalogEntry: entry("sofa") } as never);
+  assert.equal(sofa.id_room, "r1");
+});
+
 // ---------- держатели ссылок для сверок ----------
 
 test("268: elecLinkHolders включает контуры тёплого пола (props + name = type контура)", () => {

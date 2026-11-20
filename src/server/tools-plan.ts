@@ -576,8 +576,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       "Поставить предмет из каталога (name — точное имя из catalog_search). Позиция: center (координаты в мм, точка внутри комнаты) " +
         "ИЛИ against_wall (у стены, вплотную к внутренней грани при gap_mm=0) ИЛИ in_room (угол комнаты R<n>). " +
         "У коллекторных узлов (radiator_collector, ext_manifold_box, int_manifold_box) точка привязки по виду, как в редакторе: " +
-        "int_manifold_box утоплен в стену (pc на 5.5 см в стену от внутренней грани), radiator_collector на 4.55 см от грани, " +
-        "ext_manifold_box вплотную; gap_mm для них не применяется. " +
+        "int_manifold_box утоплен в стену (pc на 55 мм в стену от внутренней грани), radiator_collector на 45.5 мм от грани, " +
+        "ext_manifold_box вплотную; смещение снято для каталожной глубины — depth_mm на точку привязки не влияет; " +
+        "gap_mm для них не применяется (gap_mm > 0 — INVALID_ARGUMENT). " +
         "Точка вне помещений → OUTSIDE_ROOM. Размеры берутся из каталога; width_mm/depth_mm/height_mm переопределяют (если resizable). " +
         "Лестницы (меню «Лестницы»: ladder_march, ladder_console, ladder_2march, ladder_2march-fan, ladder_2march_console-fan, " +
         "ladder_2march_console, ladder_trapeze, rounded_staircase, ladder_march_double, ladder_fan_2march, ladder_3march, ladder_3march_fan, " +
