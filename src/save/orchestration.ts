@@ -455,12 +455,17 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     { affectedRooms: zoneAffected },
   );
   // этап 303: потолочные закладные до записи сверяются с нормализованной моделью
-  // (затронутость комнат — по грани стены, zoneAffectedRoomIds)
+  // (затронутость комнат — по грани стены, zoneAffectedRoomIds; связи — по
+  // геометрии граней, ревью 304 M6)
   const ceilingRigelNorm = ceilingRigelCompare(
     (host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, unknown> | undefined,
     ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
     "normalize",
-    { affectedRooms: zoneAffected },
+    {
+      affectedRooms: zoneAffected,
+      walls: { ...(host.model().walls ?? {}), ...((norm.model as Record<string, unknown>)["walls"] ?? {}) } as Record<string, unknown>,
+      pillars: { ...(host.model().pillars ?? {}), ...((norm.model as Record<string, unknown>)["pillars"] ?? {}) } as Record<string, unknown>,
+    },
   );
   // этап 113: размеры и комментарии до записи сверяются с нормализованной моделью
   const dimsNorm = dimsMismatches(host.model(), norm.model as Record<string, unknown>);
@@ -786,12 +791,17 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     warnings.push(...warmAfterCheck.warnings);
     const warmAfter = warmAfterCheck.problems;
     // этап 303: закладные после save — нормализованное ожидание против сервера,
-    // строго (затронутые изменёнными стенами комнаты — по грани)
+    // строго (затронутые изменёнными стенами комнаты — по грани; связи — по
+    // геометрии граней, ревью 304 M6)
     const ceilingRigelAfterCheck = ceilingRigelCompare(
       ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
       ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
       "save",
-      { affectedRooms: zoneAffectedAfter },
+      {
+        affectedRooms: zoneAffectedAfter,
+        walls: { ...((norm.model as Record<string, unknown>)["walls"] ?? {}), ...(after.model["walls"] ?? {}) } as Record<string, unknown>,
+        pillars: { ...((norm.model as Record<string, unknown>)["pillars"] ?? {}), ...(after.model["pillars"] ?? {}) } as Record<string, unknown>,
+      },
     );
     warnings.push(...ceilingRigelAfterCheck.warnings);
     const ceilingRigelAfter = ceilingRigelAfterCheck.problems;

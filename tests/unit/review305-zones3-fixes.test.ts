@@ -209,7 +209,7 @@ test("305 M5: save + затронутая комната + смена ceiling_ty
 test("305 M5: save + затронутая комната + пересчитанный полигон (ось цела) → предупреждение", () => {
   const exp = roomsLike({ rg1: structuredClone(REF_RG) });
   const reshaped = roomsLike({
-    rg1: { ...structuredClone(REF_RG), polygon: [{ x: 206, y: 10 }, { x: 206, y: 310 }, { x: 194, y: 310 }, { x: 194, y: 10 }] },
+    rg1: { ...structuredClone(REF_RG), polygon: [{ x: 207, y: 10 }, { x: 207, y: 310 }, { x: 193, y: 310 }, { x: 193, y: 10 }] },
   });
   const res = ceilingRigelCompare(exp, reshaped, "save", { affectedRooms: new Set(["room1"]) });
   assert.deepEqual(res.problems, [], "полигон редактор пересчитывает (calc) — не отказ");

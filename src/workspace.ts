@@ -649,12 +649,17 @@ export class Workspace {
         { affectedRooms: zoneAffected },
       );
       // этап 303: потолочные закладные после нормализации не теряются
-      // (затронутость комнат — по грани стены, zoneAffected)
+      // (затронутость комнат — по грани стены, zoneAffected; связи сверяются
+      // по геометрии граней — ревью 304 M6)
       const ceilingRigelNorm = ceilingRigelCompare(
         (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined,
         ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
         "normalize",
-        { affectedRooms: zoneAffected },
+        {
+          affectedRooms: zoneAffected,
+          walls: { ...(this.modelInternal!.walls ?? {}), ...((norm.model as Record<string, unknown>)["walls"] ?? {}) } as Record<string, unknown>,
+          pillars: { ...(this.modelInternal!.pillars ?? {}), ...((norm.model as Record<string, unknown>)["pillars"] ?? {}) } as Record<string, unknown>,
+        },
       );
       warnings.push(...zoneNorm.warnings);
       warnings.push(...warmNorm.warnings);

@@ -16,9 +16,11 @@ import { roomPolygonOf, roomsMapOf, matchRoomsByContour, roomHeirs, overlapShare
  * записи — живой эталон probes/303-ceiling-rigel.ts + fixtures/ui-ref-ceiling-rigel.json:
  *   {id, id_room, p1 {x,y,link {ot:"wall"|"pillar", id, z1}}, p2 {…}, width (см),
  *    ceiling_type, polygon [l1,l2,r2,r1]}
- * Связи концов — к боковым граням стен (l/r) и граням колонн (t/r/b/l) — производные
- * редактора (CeilingRigel.calc при restore пересчитывает их и polygon), в API не
- * протекают. Ширина width: умолчание 10 см, панель 10..100 см (defs.ceiling_rigel:
+ * Связи концов — к боковым граням стен (l/r), торцам стен (s/e) и граням колонн
+ * (t/r/b/l) — ХРАНИМОЕ поле записи (M6 ревью 304: CeilingRigel.calc связи только
+ * читает, restoreRigels их не вычисляет — связь ставит mouseup при создании; от
+ * связи зависят подрезка полигона по грани и edges.s/e), в API не протекает.
+ * Ширина width: умолчание 10 см, панель 10..100 см (defs.ceiling_rigel:
  * width 10, widthMin 10, widthMax 100 — проба 303). ceiling_type — отделка потолка
  * на закладной (инструменты группы ceiling_elements), "" — без отделки.
  *
@@ -472,6 +474,23 @@ export function ceilingRigelList(model: Model, roomRef?: string): Array<Record<s
 
 const COORD_TOL_CM = 1;
 
+/** Связь конца в сверке: объект {ot,id,z1}, 0 (связи нет) или undefined
+ *  (поля нет). Ревью 304 M6: связь — ХРАНИМОЕ поле (CeilingRigel.calc его
+ *  только читает, restoreRigels не вычисляет — связь ставит mouseup), от него
+ *  зависят подрезка полигона по грани и edges.s/e, поэтому сверяется. */
+type RigelLinkNorm = { ot: string; id: string; z1: string } | 0 | undefined;
+
+function normLink(v: unknown): RigelLinkNorm {
+  if (v === undefined) return undefined;
+  if (v === null || v === 0) return 0;
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    if (o["ot"] === undefined && o["id"] === undefined && o["z1"] === undefined) return 0;
+    return { ot: String(o["ot"] ?? ""), id: String(o["id"] ?? ""), z1: String(o["z1"] ?? "") };
+  }
+  return 0;
+}
+
 type CeilingRigelSig = {
   id: string;
   roomId: string;
@@ -480,6 +499,12 @@ type CeilingRigelSig = {
   width: number;
   ceilingType: string;
   polygon: Point[];
+  /** Связи концов (M6 ревью 304): хранимое поле, сверяется с обеих сторон. */
+  p1Link: RigelLinkNorm;
+  p2Link: RigelLinkNorm;
+  /** id_room относительно своего хранилища: undefined — поля нет, "self" —
+   *  указывает на комнату записи, иначе — чужой id (M6 ревью 304). */
+  idRoomRef: string | undefined;
 };
 
 function rigelSigsOf(roomsModel: Record<string, unknown> | undefined): CeilingRigelSig[] {
@@ -495,6 +520,9 @@ function rigelSigsOf(roomsModel: Record<string, unknown> | undefined): CeilingRi
         width: Number(rec.width ?? 0),
         ceilingType: String(rec.ceiling_type ?? ""),
         polygon: Array.isArray(rec.polygon) ? rec.polygon.map((p) => ({ x: p.x, y: p.y })) : [],
+        p1Link: normLink((rec.p1 as { link?: unknown }).link),
+        p2Link: normLink((rec.p2 as { link?: unknown }).link),
+        idRoomRef: rec.id_room === undefined ? undefined : (String(rec.id_room) === rid ? "self" : String(rec.id_room)),
       });
     }
   }
@@ -505,9 +533,47 @@ function samePt(a: Point, b: Point): boolean {
   return Math.abs(a.x - b.x) <= COORD_TOL_CM && Math.abs(a.y - b.y) <= COORD_TOL_CM;
 }
 
-function sameSig(a: CeilingRigelSig, b: CeilingRigelSig): boolean {
+export type CeilingRigelLinkContext = {
+  walls?: Record<string, unknown>;
+  pillars?: Record<string, unknown>;
+};
+
+/** Грань, на которую указывает связь, в геометрии своей модели (M6 ревью 304:
+ *  id стен может смениться при пересоздании — сопоставляем по геометрии). */
+function linkEdge(link: RigelLinkNorm, ctx: CeilingRigelLinkContext | undefined): Segment | null {
+  if (!link || !ctx) return null;
+  if (link.ot === "wall" && ctx.walls) {
+    const wall = ctx.walls[link.id] as Model["walls"][string] | undefined;
+    if (wall) for (const [z1, edge] of wallSideSegments(wall)) if (z1 === link.z1) return edge;
+    return null;
+  }
+  if (link.ot === "pillar" && ctx.pillars) {
+    const pillar = ctx.pillars[link.id] as Model["pillars"][string] | undefined;
+    if (pillar) for (const [z1, edge] of pillarSegments(pillar)) if (z1 === link.z1) return edge;
+    return null;
+  }
+  return null;
+}
+
+function sameEdge(a: Segment, b: Segment): boolean {
+  return (samePt(a.p1, b.p1) && samePt(a.p2, b.p2)) || (samePt(a.p1, b.p2) && samePt(a.p2, b.p1));
+}
+
+/** Связи совпадают: наличие поля с обеих сторон — отдельно (M6 ревью 304);
+ *  объекты — по ot/id/z1 или по геометрии грани (id мог смениться). */
+function sameLink(a: RigelLinkNorm, b: RigelLinkNorm, ctx: CeilingRigelLinkContext | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a === 0 || b === 0) return a === b;
+  if (a.ot === b.ot && a.id === b.id && a.z1 === b.z1) return true;
+  const ea = linkEdge(a, ctx), eb = linkEdge(b, ctx);
+  return ea !== null && eb !== null && sameEdge(ea, eb);
+}
+
+function sameSig(a: CeilingRigelSig, b: CeilingRigelSig, ctx?: CeilingRigelLinkContext): boolean {
   if (Math.abs(a.width - b.width) > COORD_TOL_CM) return false;
   if (a.ceilingType !== b.ceilingType) return false;
+  if (!sameLink(a.p1Link, b.p1Link, ctx) || !sameLink(a.p2Link, b.p2Link, ctx)) return false;
+  if (a.idRoomRef !== b.idRoomRef) return false;
   const fwd = samePt(a.p1, b.p1) && samePt(a.p2, b.p2);
   const rev = samePt(a.p1, b.p2) && samePt(a.p2, b.p1);
   if (!fwd && !rev) return false;
@@ -531,15 +597,22 @@ export type CeilingRigelCompareOpts = {
   /** Комнаты, затронутые изменёнными стенами (затронутость по грани —
    *  zoneAffectedRoomIds); в них сверка нестрогая. */
   affectedRooms?: Set<string>;
+  /** Стены/колонны обеих моделей (M6 ревью 304): связи сверяются по геометрии
+   *  граней, когда id объекта сменился при пересоздании. */
+  walls?: Record<string, unknown>;
+  pillars?: Record<string, unknown>;
 };
 
 /**
  * Сверка закладных по комнатам (сопоставление комнат по каноническому контуру и
  * наследникам топологии — как zoneDelimiterCompare). Совпадающая комната —
  * строгая сверка по id записи (+ геометрический запасной путь для записей с
- * новым id, один-к-одному). Комната, затронутая изменёнными стенами: в normalize
- * расхождение/пропажа — предупреждение; в save — проблема, кроме случая, когда
- * запись найдена по геометрии (id сменился) — предупреждение.
+ * новым id, один-к-одному); с ревью 304 M5/M6 в сверку входят ceiling_type,
+ * связи концов (p1.link/p2.link — хранимое поле, calc его не пересчитывает) и
+ * id_room. Комната, затронутая изменёнными стенами: в normalize расхождение/
+ * пропажа — предупреждение; в save — проблема; послабление «форма/связи» —
+ * только для полигона (его calc действительно пересчитывает), ceiling_type и
+ * связи в save сверяются строго.
  */
 export function ceilingRigelCompare(
   expectedRooms: Record<string, unknown> | undefined,
@@ -549,6 +622,7 @@ export function ceilingRigelCompare(
 ): { problems: string[]; warnings: string[] } {
   const problems: string[] = [];
   const warnings: string[] = [];
+  const ctx: CeilingRigelLinkContext = { walls: opts.walls, pillars: opts.pillars };
   const exp = rigelSigsOf(expectedRooms);
   const got = rigelSigsOf(gotRooms);
   if (exp.length === 0 && got.length === 0) return { problems, warnings };
@@ -590,15 +664,24 @@ export function ceilingRigelCompare(
     );
     if (byId) {
       used.add(byId.id);
-      if (sameSig(e, byId)) continue;
+      if (sameSig(e, byId, ctx)) continue;
       if (!affected) {
         problems.push(`room ${e.roomId}: закладная ${e.id} изменилась на сервере (width ${e.width} → ${byId.width}, ceiling_type ${e.ceilingType || '""'} → ${byId.ceilingType || '""'})`);
         continue;
       }
-      // затронутая комната: форма могла перестроиться (связи пересчитаны) —
-      // сопоставим по оси с допуском; иначе предупреждение (normalize) / проблема (save)
+      // затронутая комната: форма могла перестроиться — сопоставим по оси
+      // с допуском. Ревью 304 M5/M6: в save отделка и связи сверяются строго
+      // (calc читает связи, а не пересчитывает; пересчитывает только полигон)
       const axisKept = samePt(e.p1, byId.p1) && samePt(e.p2, byId.p2);
       if (axisKept && Math.abs(e.width - byId.width) <= COORD_TOL_CM) {
+        if (mode === "save" && e.ceilingType !== byId.ceilingType) {
+          problems.push(`room ${e.roomId}: закладная ${e.id} потеряла отделку на сервере (ceiling_type ${e.ceilingType || '""'} → ${byId.ceilingType || '""'}) — редактор отделку закладной не пересчитывает`);
+          continue;
+        }
+        if (mode === "save" && (!sameLink(e.p1Link, byId.p1Link, ctx) || !sameLink(e.p2Link, byId.p2Link, ctx))) {
+          problems.push(`room ${e.roomId}: закладная ${e.id} потеряла связь конца на сервере (p1.link ${JSON.stringify(e.p1Link ?? null)} → ${JSON.stringify(byId.p1Link ?? null)}, p2.link ${JSON.stringify(e.p2Link ?? null)} → ${JSON.stringify(byId.p2Link ?? null)}) — редактор связи не пересчитывает`);
+          continue;
+        }
         warnings.push(`room ${e.roomId}: редактор пересчитал закладную ${e.id} (форма/связи)`);
         continue;
       }
@@ -610,7 +693,7 @@ export function ceilingRigelCompare(
       continue;
     }
     // геометрический запасной путь — записи got с действительно новым id
-    const found = got.find((g) => !used.has(g.id) && !expectedIds.has(g.id) && sameSig(e, g));
+    const found = got.find((g) => !used.has(g.id) && !expectedIds.has(g.id) && sameSig(e, g, ctx));
     if (found) {
       used.add(found.id);
       warnings.push(`room ${e.roomId}: редактор сменил id закладной: ${e.id} → ${found.id}`);
