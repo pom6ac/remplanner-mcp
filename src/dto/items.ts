@@ -140,10 +140,15 @@ export function againstWallCenter(
   itemDepthCm: number,
   rooms: RoomPolygon[],
   itemName?: string,
-): { center: MmPoint; pcCm: { x: number; y: number }; angleDeg: number; probePointCm: { x: number; y: number } } {
+): { center: MmPoint; pcCm: { x: number; y: number }; angleDeg: number; probePointCm?: { x: number; y: number } } {
+  // ревью 271 N1: пробная точка грани нужна только видам с pc в стене
+  // (faceOffsetCm !== null) — те же виды, у которых item_add её использует;
+  // item_update против обычных видов не должен получать её, иначе pc вне
+  // комнат проходит без OUTSIDE_ROOM (расхождение add/update)
+  const face = itemName !== undefined ? faceOffsetCm(itemName) : null;
   const { pc, angleDeg, probePoint } = againstWallPlacement(wall, {
     wallId: wall.id, offsetMm: aw.offset_mm, from: aw.from, gapMm: aw.gap_mm,
-  }, itemWidthCm, itemDepthCm, rooms, itemName !== undefined ? faceOffsetCm(itemName) ?? undefined : undefined);
+  }, itemWidthCm, itemDepthCm, rooms, face ?? undefined);
   return {
     center: { x: round0(cmToMm(pc.x)), y: round0(cmToMm(pc.y)) },
     // точный центр в см модели (точность хранения 0.1 мм) — tools-plan передаёт
@@ -151,7 +156,7 @@ export function againstWallCenter(
     // округлением до целых мм
     pcCm: { x: pc.x, y: pc.y },
     angleDeg: Math.round(angleDeg),
-    probePointCm: { x: probePoint.x, y: probePoint.y },
+    ...(face !== null ? { probePointCm: { x: probePoint.x, y: probePoint.y } } : {}),
   };
 }
 

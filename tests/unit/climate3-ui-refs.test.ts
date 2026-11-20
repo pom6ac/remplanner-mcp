@@ -47,6 +47,7 @@ function baseModel(): Model {
 
 const CATALOG: Record<string, Record<string, unknown>> = {
   socket_thermo: { id: 44, group: "sockets", width: 14, height: 14, self_height: 0, plan: { warm_floor: 11 }, anchor: "wall", over_floor: { value: 90, display: true }, title: "Терморегулятор" },
+  sofa: { id: 1, group: "furniture", width: 200, height: 90, self_height: 80, plan: { init: 1 }, over_floor: { value: 0, display: false }, title: "Диван" },
   radiator_collector: { id: 922, group: "furniture", width: 48, height: 10, self_height: 0, plan: { radiators: 26, warm_floor: 11 }, anchor: "wall", over_floor: { value: 0, display: false }, title: "Отопительный коллектор" },
   ext_manifold_box: { id: 1677, group: "furniture", width: 60, height: 15, self_height: 65, plan: { radiators: 26, warm_floor: 11 }, anchor: "wall", over_floor: { value: 0, display: false }, title: "Коллекторный шкаф внешний" },
   int_manifold_box: { id: 1678, group: "furniture", width: 60, height: 15, self_height: 65, plan: { radiators: 26, warm_floor: 11 }, anchor: "wall", over_floor: { value: 0, display: false }, title: "Коллекторный шкаф встроенный" },
@@ -331,6 +332,28 @@ test("ревью 269 М1: item_update against_wall — то же правило 
     assert.equal(upd.id_room, "r1", `${t.name}: комната по пробной точке на грани (pc в стене — не OUTSIDE_ROOM)`);
     assert.equal(upd.id_wall, wall.id);
   }
+});
+
+test("ревью 271 N1: обычный предмет — пробная точка грани не передаётся в item_update (pc вне комнат → OUTSIDE_ROOM, как в item_add)", () => {
+  const m = baseModel();
+  const wall = Object.values(m.walls).find((w) => w.p1.y === w.p2.y)!;
+  const rooms: RoomPolygon[] = Object.entries(m.rooms2 as Record<string, { polygon: { x: number; y: number }[]; area: number }>)
+    .map(([roomId, r]) => ({ roomId, polygon: r.polygon, areaCm2: r.area * 10_000, axisAreaCm2: null }));
+  const sofa = addItem(m, { name: "sofa", position: { againstWall: { wallId: wall.id, offsetMm: 500 } }, catalogEntry: entry("sofa") } as never);
+  // путь tools-plan item_update against_wall: результат againstWallCenter уходит
+  // в updateItem как есть (ревью 269 М1 — одно правило с item_add)
+  const at = againstWallCenter(wall, { offset_mm: 500 }, sofa.width, 700, rooms, "sofa");
+  // пробная точка грани нужна только видам с pc в стене (faceOffsetCm !== null);
+  // в item_add она и не используется — правила add/update не расходятся
+  assert.equal(at.probePointCm, undefined, "probePointCm — только для видов с faceOffsetCm !== null");
+  // глубина 7000 мм (depth_mm в item_update): pc = грань + 350 см вне комнаты 300 см → OUTSIDE_ROOM
+  assert.throws(
+    () => updateItem(m, {
+      itemId: sofa.id, centerCm: at.pcCm, angleDeg: at.angleDeg, idWall: wall.id,
+      resnapToWall: true, rooms, againstWallProbe: at.probePointCm,
+    }),
+    (e: unknown) => e instanceof McpError && e.code === "OUTSIDE_ROOM",
+  );
 });
 
 test("268: коллекторный узел подключается к магистралям отопления и тёплого пола (multi — массив ссылок)", () => {

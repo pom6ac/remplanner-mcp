@@ -716,8 +716,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
               // скрытая связь «пришёл idWall»
               resnapToWall: true,
               rooms: ws.rooms(),
-              // ревью 269 М1: у видов с pc в стене (int_manifold_box) комната по
-              // пробной точке на внутренней грани
+              // ревью 269 М1, 271 N1: у видов с pc в стене (faceOffsetCm !== null)
+              // комната по пробной точке на внутренней грани; againstWallCenter
+              // отдаёт пробную точку только для них — у обычных видов undefined,
+              // как в item_add (pc вне комнат → OUTSIDE_ROOM)
               againstWallProbe: at.probePointCm,
               widthMm: a["width_mm"] as number | undefined, depthMm: a["depth_mm"] as number | undefined,
               heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined,
