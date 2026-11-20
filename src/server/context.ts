@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 import { STATE_PATH, STATE_ANON_PATH, CACHE_DIR } from "../config.ts";
 import { TOOL_COORD_LIMIT_MM } from "../limits.ts";
@@ -289,7 +290,7 @@ export class ServerContext {
   async tools(): Promise<ToolsBundle> {
     if (this.toolsBundle !== null) return this.toolsBundle;
     if (this.mode === "offline") {
-      const path = this.fixturePath!.replace(/[^/]*$/, "catalog-sample.json");
+      const path = join(dirname(this.fixturePath!), "catalog-sample.json");
       if (!existsSync(path)) {
         throw new McpError("NOT_FOUND", `офлайн-фикстура каталога не найдена: ${path}`);
       }
