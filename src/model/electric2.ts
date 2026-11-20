@@ -6,6 +6,7 @@ import { McpError } from "../errors.ts";
 import { add, scale, sub } from "./geometry.ts";
 import { gasLineLengthM } from "./pipes.ts";
 import { wallInwardNormal, SOCKET_GROUP_SUBS, parseSwitchVertexId, type SocketGroupSub } from "./electric.ts";
+import { warmWallEntries, warmWallCableOf, clearWarmWallCableLink, warmWallLinkHolders, resolveWarmWallEntry } from "./warmwall.ts";
 
 /**
  * Кабели-проводка (часть 2, 2026-11-19): лист «Электропроводка» — model.cables_socket
@@ -135,7 +136,7 @@ export function elecVertexPoint(model: Model, item: ItemProps, sub?: SocketGroup
 
 /** Вершина-предмет кабеля: {vertex, holder} — holder для обратной ссылки. */
 type ElecVertexSpec = {
-  kind: "multi" | "electrospot" | "warm_floor";
+  kind: "multi" | "electrospot" | "warm_floor" | "warm_wall";
   vertex: ElecCableVertex;
   itemId: string;
   subId?: string;
@@ -164,9 +165,47 @@ export function elecContourVertex(model: Model, contourId: string): ElecVertexSp
   return { kind: "warm_floor", itemId: wf.id, vertex: { id: wf.id, point: { ...p0 }, type: "warm_floor" } };
 }
 
-/** Резолв элемента пути wiring_add для кабелей тёплого пола: контур (warm_floors) или предмет. */
+/**
+ * Вершина-тёплая стена кабеля warm_floor_wire (этап 273, пробы 273-recon2/273-recon3):
+ * {id: id части (WarmLine в rooms2[rid].warms_walls[edge].parts), point: центр
+ * линии части (LIB.lineCenter), type: "warm_wall"}; pp {i, d} — производное
+ * протяжки, MCP не пишет. Обратная ссылка — props части:
+ * cables_warm_floor.cable_warm_floor_id (СКАЛЯР — у тёплой стены одно
+ * подключение, l10n cabling_warm_floor_not_connect_same_wall).
+ */
+export function elecWarmWallVertex(model: Model, warmWallRef: string): ElecVertexSpec {
+  const hit = resolveWarmWallEntry(model, warmWallRef);
+  const linked = warmWallCableOf(hit.part);
+  if (linked) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `тёплая стена ${hit.part.id} уже подключена к кабелю тёплого пола ${linked} — у тёплой стены одно подключение (не_connect_same_wall); сначала удалите его (wiring_delete)`,
+      { details: { kind: "already_connected", item: hit.part.id, wiring: linked } },
+    );
+  }
+  const line = hit.part.line;
+  const center = { x: r2((line.p1.x + line.p2.x) / 2), y: r2((line.p1.y + line.p2.y) / 2) };
+  return { kind: "warm_wall", itemId: hit.part.id, vertex: { id: hit.part.id, point: center, type: "warm_wall" } };
+}
+
+/** Контур тёплого пола по id или метке WF<n> (одна карта меток с tools-plan). */
+function resolveContourRef(model: Model, ref: string): string {
+  if (model.warm_floors?.[ref]) return ref;
+  const m = /^WF(\d+)$/.exec(ref);
+  if (m) {
+    const wf = Object.values(model.warm_floors ?? {})[Number(m[1]) - 1];
+    if (wf) return wf.id;
+  }
+  return ref;
+}
+
+/** Резолв элемента пути wiring_add для кабелей тёплого пола: контур, тёплая стена
+ *  (id части или метка WW<n> — предмета с таким литеральным id не бывает) или предмет. */
 export function elecVertexOfRef(model: Model, coll: ElecCableColl, itemId: string): ElecVertexSpec {
-  if (coll === "cables_warm_floor" && model.warm_floors?.[itemId]) return elecContourVertex(model, itemId);
+  if (coll === "cables_warm_floor") {
+    if (model.warm_floors?.[itemId] || /^WF\d+$/.test(itemId)) return elecContourVertex(model, resolveContourRef(model, itemId));
+    if (/^WW\d+$/.test(itemId) || warmWallEntries(model).some((e) => e.part.id === itemId)) return elecWarmWallVertex(model, itemId);
+  }
   return itemVertex(model, coll, itemId);
 }
 
@@ -223,6 +262,8 @@ function holderOf(model: Model, coll: ElecCableColl, itemId: string, subId?: str
 function assertScalarSlotsFree(model: Model, coll: ElecCableColl, cableType: string, specs: ElecVertexSpec[]): void {
   for (const s of specs) {
     if (s.kind === "multi") continue;
+    // тёплая стена: занятость слота проверяет elecWarmWallVertex (props части)
+    if (s.kind === "warm_wall") continue;
     if (s.kind === "warm_floor") {
       const wf = model.warm_floors?.[s.itemId];
       const cur = (wf?.props?.[coll] as { [k: string]: unknown } | undefined)?.[elecLinkKey(coll, cableType)];
@@ -304,10 +345,12 @@ export function addElecCable(model: Model, params: { tool: string; path: ElecPat
   const cableType = params.tool;
   validatePath(params.path ?? []);
   const specs: ElecVertexSpec[] = [];
+  const refToSpec = new Map<string, ElecVertexSpec>();
   const seenItems = new Set<string>();
   for (const el of params.path) {
     if ("itemId" in el) {
       const v = elecVertexOfRef(model, coll, el.itemId);
+      if (!refToSpec.has(el.itemId)) refToSpec.set(el.itemId, v);
       if (specs.some((s) => s.vertex.id === v.vertex.id && s.vertex.type !== "node" && v.vertex.type !== "node")) {
         throw new McpError("INVALID_ARGUMENT", `предмет ${el.itemId} встречается в пути кабеля дважды — у вершины-предмета одно подключение`);
       }
@@ -333,11 +376,23 @@ export function addElecCable(model: Model, params: { tool: string; path: ElecPat
         { details: { kind: "two_thermo", items: thermos.map((s) => s.itemId) } },
       );
     }
-    const contours = specs.filter((s) => s.kind === "warm_floor");
+    // тёплая стена в счёте контуров наравне с контуром тёплого пола (ревью 274
+    // №2): в редакторе запрещён прямой штрих тёплая стена—контур и
+    // стена—стена (source_items: от warm_wall_cable — только socket_group и
+    // node), а «не более одного контура/тёплой стены на кабель» — MCP строже
+    // редактора (в редакторе стена—node—стена допустима)
+    const contours = specs.filter((s) => s.kind === "warm_floor" || s.kind === "warm_wall");
     if (contours.length > 1) {
+      // текст по составу пути (ревью 276 N2): без тёплой стены — правило
+      // прямого штриха контур–контур (not_connect_two_floor), с тёплой
+      // стеной — прямой штрих тёплая стена—контур и стена—стена (source_items)
+      const walls = contours.filter((s) => s.kind === "warm_wall").length;
+      const rule = walls > 0
+        ? "в редакторе запрещён прямой штрих тёплая стена—контур и стена—стена"
+        : "в редакторе запрещён прямой штрих контур–контур";
       throw new McpError(
         "INVALID_ARGUMENT",
-        `в пути кабеля тёплого пола ${contours.length} контура — MCP строже редактора: в редакторе запрещён прямой штрих контур–контур; терморегулятор с двумя контурами MCP не строит — подключите каждый контур отдельным кабелем`,
+        `в пути кабеля тёплого пола ${contours.length} контура/тёплой стены — MCP строже редактора: ${rule}, а у кабеля MCP строит не более одной тёплой стены или контура — подключите каждую отдельным кабелем`,
         { details: { kind: "two_contours", items: contours.map((s) => s.itemId) } },
       );
     }
@@ -357,7 +412,7 @@ export function addElecCable(model: Model, params: { tool: string; path: ElecPat
       }
       vertexes.push({ id: `_${newId(5)}`, point: p, type: "node" });
     } else {
-      const spec = specByItem.get(el.itemId);
+      const spec = refToSpec.get(el.itemId) ?? specByItem.get(el.itemId);
       if (!spec) throw new McpError("INVALID_ARGUMENT", `предмет ${el.itemId} не разрешён в пути этого кабеля`);
       if (vertexes.some((v) => v.id === spec.vertex.id && v.type !== "node")) {
         throw new McpError("INVALID_ARGUMENT", `предмет ${el.itemId} встречается в пути кабеля дважды — у вершины-предмета одно подключение`);
@@ -399,11 +454,23 @@ export function addElecCable(model: Model, params: { tool: string; path: ElecPat
   const backupCables = had ? structuredClone(model[coll]) : undefined;
   const backupItems = structuredClone(model.items);
   const backupWarmFloors = structuredClone(model.warm_floors);
+  const hadRooms2 = model.rooms2 !== undefined;
+  const backupRooms2 = hadRooms2 ? structuredClone(model.rooms2) : undefined;
   (model as Record<string, unknown>)[coll] ??= {};
   try {
     model[coll]![candidate.id] = candidate;
     for (const s of specs) {
       const key = elecLinkKey(coll, cableType);
+      if (s.kind === "warm_wall") {
+        // ссылка в props части тёплой стены (rooms2[rid].warms_walls[edge].parts)
+        // — как set_tree_id редактора (проба 273-recon2: props дописаны сразу)
+        const entry = warmWallEntries(model).find((e) => e.part.id === s.itemId);
+        if (!entry) continue;
+        const props = (entry.part.props ??= { id: entry.part.id, name: "warm_wall_cable" });
+        const box = (props as unknown as Record<string, Record<string, unknown>>)[coll] ??= {} as Record<string, unknown>;
+        box[key] = candidate.id;
+        continue;
+      }
       if (s.kind === "warm_floor") {
         // ссылка в props контура (cables_warm_floor.cable_warm_floor_id) — как
         // set_tree_id редактора (проба 268-recon5: props дописаны сразу)
@@ -432,6 +499,10 @@ export function addElecCable(model: Model, params: { tool: string; path: ElecPat
       if (backupWarmFloors) model.warm_floors = backupWarmFloors;
       else delete model.warm_floors;
     }
+    if (hadRooms2) {
+      if (backupRooms2 !== undefined) model.rooms2 = backupRooms2;
+      else delete model.rooms2;
+    } else delete model.rooms2;
     throw e;
   }
   return candidate;
@@ -542,6 +613,8 @@ function unlinkElecCable(model: Model, coll: ElecCableColl, cable: ElecCable): v
       }
     }
   }
+  // тёплые стены: props части в rooms2 (этап 273)
+  if (coll === "cables_warm_floor") clearWarmWallCableLink(model, cable.id);
 }
 
 /**
@@ -640,6 +713,10 @@ export function elecLinkHolders(model: Model): Record<string, ElecLinkItem> {
   }
   for (const wf of Object.values(model.warm_floors ?? {})) {
     out[wf.id] = { ...(wf.props ?? {}), name: wf.type } as ElecLinkItem;
+  }
+  // тёплые стены (этап 273): props части, name = "warm_wall_cable" (скалярная ссылка)
+  for (const [id, holder] of Object.entries(warmWallLinkHolders(model))) {
+    out[id] = holder as ElecLinkItem;
   }
   return out;
 }

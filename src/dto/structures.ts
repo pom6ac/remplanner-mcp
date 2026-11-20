@@ -4,6 +4,7 @@ import { resolveItem } from "./items.ts";
 import { findPipe } from "../model/pipes.ts";
 import { RIGEL_CEILING_TYPES } from "../model/rigels.ts";
 import { LIGHT_COLLECTION_BY_KIND, type LightKind } from "../model/lighting.ts";
+import { resolveWarmWallEntry } from "../model/warmwall.ts";
 import type { Model, Pillar, Rigel, GasLine, Pipe, WarmFloor, LedStrip, StripLight, LineStrip } from "../model/types.ts";
 
 // DTO группы «колонны, ригели, трубы, тёплый пол, световые линии, проёмы пола»:
@@ -81,6 +82,14 @@ export function resolveWarmFloor(model: Model, ref: string): WarmFloor {
     if (wf) return wf;
   }
   return throwNotFound(`контур тёплого пола ${ref} не найден (id сайта или метка WF<n> из model_get)`);
+}
+
+/**
+ * Тёплая стена по id части (WarmLine) или метке WW<n> из warm_wall_list (этап 273).
+ * Одна карта меток с warm_wall_list — модельная resolveWarmWallEntry (ревью 274 №1).
+ */
+export function resolveWarmWall(model: Model, ref: string): string {
+  return resolveWarmWallEntry(model, ref).part.id;
 }
 
 /** Световая линия по site-id или метке LS/SL/LL1…_n из model_get (этап 84). */

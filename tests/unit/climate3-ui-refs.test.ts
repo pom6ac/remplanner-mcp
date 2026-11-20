@@ -19,6 +19,7 @@ import type { RoomPolygon } from "../../src/model/rooms.ts";
 import { againstWallCenter } from "../../src/dto/items.ts";
 import { addWarmFloor, updateWarmFloor, deleteWarmFloor } from "../../src/model/climate.ts";
 import { addElecCable, deleteElecCable, elecLinkKey, elecContourVertex, elecLinkHolders } from "../../src/model/electric2.ts";
+import { warmWallAdd } from "../../src/model/warmwall.ts";
 import { addPipe } from "../../src/model/pipes.ts";
 import { compactModel } from "../../src/model/compact.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
@@ -192,7 +193,7 @@ test("ревью 269 m2: у кабеля тёплого пола не более
   // путь C: контур → узел → контур
   assert.throws(
     () => addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: wfc.id }, { x: 2000, y: 2000 }, { itemId: wfi.id }] }),
-    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("MCP не строит"),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("MCP строже редактора"),
   );
   // путь C2: контур → терморегулятор → контур — тоже отклоняется: MCP строже
   // редактора — в редакторе запрещён прямой штрих контур–контур
@@ -200,11 +201,39 @@ test("ревью 269 m2: у кабеля тёплого пола не более
   // прежнее сообщение «добавьте узел» противоречило факту
   assert.throws(
     () => addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: wfc.id }, { itemId: thermo2.id }, { itemId: wfi.id }] }),
-    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("MCP не строит"),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("MCP строже редактора"),
   );
   // один контур с терморегулятором и узлами — допустим
   const wire = addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: thermo2.id }, { x: 2000, y: 2000 }, { itemId: wfc.id }] });
   assert.equal(wire.vertexes.some((v) => v.id === wfc.id), true);
+});
+
+test("ревью 276 N2: текст ошибки по составу пути — контур–контур отдельно от тёплой стены", () => {
+  const { m, thermo, wfc } = scenario();
+  const wfi = addWarmFloor(m, { kind: "infrared", corner1: { x: 5500, y: 500 }, corner2: { x: 6500, y: 1500 } });
+  const thermo2 = addItem(m, { name: "socket_thermo", position: { againstWall: { wallId: topWall(m), offsetMm: 3000 } }, catalogEntry: entry("socket_thermo") } as never);
+  // путь «контур → терморегулятор → контур»: без тёплой стены — пояснение про
+  // прямой штрих контур–контур (not_connect_two_floor), не про тёплую стену
+  try {
+    addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: wfc.id }, { itemId: thermo2.id }, { itemId: wfi.id }] });
+    assert.fail("ожидался отказ");
+  } catch (e) {
+    const msg = String((e as McpError).message);
+    assert.ok(msg.includes("контур–контур"), msg);
+    assert.ok(!msg.includes("тёплая стена"), msg);
+    assert.ok(msg.includes("MCP строже редактора"), msg);
+  }
+  // путь с тёплой стеной: пояснение про прямой штрих тёплая стена—контур/стена—стена
+  const ww = warmWallAdd(m, { roomRef: "r1", edge: 0, startMm: 1000, endMm: 3000 });
+  try {
+    addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: ww.id }, { itemId: wfc.id }] });
+    assert.fail("ожидался отказ");
+  } catch (e) {
+    const msg = String((e as McpError).message);
+    assert.ok(msg.includes("тёплая стена"), msg);
+    assert.ok(msg.includes("MCP строже редактора"), msg);
+  }
+  void thermo;
 });
 
 test("268: атомарность — отказ (контур уже подключён) не меняет модель (кабели, items, warm_floors)", () => {

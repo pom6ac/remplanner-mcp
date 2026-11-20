@@ -61,6 +61,8 @@ const EXPECTED_TOOLS = [
   "comment_add", "comment_update", "comment_delete", "comments_list",
   // §7.4i — тёплый пол, кондиционеры, вентиляция (этап 122)
   "warm_floor_add", "warm_floor_update", "warm_floor_delete",
+  // §7.4i — тёплая стена (этап 273)
+  "warm_wall_add", "warm_wall_list", "warm_wall_update", "warm_wall_delete",
   // §7.6
   "model_get", "model_validate", "render_plan",
 ];

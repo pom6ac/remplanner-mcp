@@ -13,6 +13,7 @@ import { McpError } from "../errors.ts";
 import { addRigel, updateRigel, deleteRigel } from "../model/rigels.ts";
 import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind, type ClimatePipeKind } from "../model/pipes.ts";
 import { addWarmFloor, updateWarmFloor, deleteWarmFloor } from "../model/climate.ts";
+import { warmWallAdd, warmWallUpdate, warmWallDelete, warmWallList, warmWallEntries } from "../model/warmwall.ts";
 import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, type LightKind } from "../model/lighting.ts";
 import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.ts";
 import { addElecCable, updateElecCable, deleteElecCable, MAX_ELEC_PATH_NODES, SOCKET_CABLE_TOOLS, type ElecPathElement } from "../model/electric2.ts";
@@ -60,7 +61,7 @@ import { throwNotFound } from "../dto/common.ts";
 import { resolveWall, wallRef, thickness, resolveWallMaterial } from "../dto/walls.ts";
 import { swing, resolveOpeningWall, openingAddArgs, openingUpdateParams } from "../dto/openings.ts";
 import { position, positionMove, resolveItem, normalizePosition, againstWallCenter, itemsInRoom, catalogFoundView, catalogEntryView } from "../dto/items.ts";
-import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGasLine, resolvePipe, resolveWarmFloor, resolveLightLine, resolveFloorHole, resolveCableLamp } from "../dto/structures.ts";
+import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGasLine, resolvePipe, resolveWarmFloor, resolveWarmWall, resolveLightLine, resolveFloorHole, resolveCableLamp } from "../dto/structures.ts";
 import { resolveBorder, borderResponse } from "../dto/borders.ts";
 import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInternal, sheetPublic, commentTextWarnings } from "../dto/dims.ts";
 import { rawEditorPayload } from "../dto/model-payload.ts";
@@ -368,9 +369,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     rooms_list: tool(
-      "Список комнат с площадями (по внутренним граням, как показывает редактор), периметром и именами. " +
-        "Комнаты считает редактор (rooms2 нормализованной модели). Если модель ещё не нормализовалась " +
-        "(нет редактора) — список пуст: добавьте комнату и сохраните.",
+      "Список комнат с площадями (по внутренним граням, как показывает редактор), периметром, именами и " +
+        "рёбрами контура (edges: индекс, вершины и длина в мм, в порядке rooms2.edges — для выбора edge в " +
+        "warm_wall_add). Комнаты считает редактор (rooms2 нормализованной модели). Если модель ещё не " +
+        "нормализовалась (нет редактора) — список пуст: добавьте комнату и сохраните.",
       {},
       async () => {
         const ws = wsOf();
@@ -1097,6 +1099,94 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
     ),
 
+    // ---------- Тёплая стена (лист «Тёплые полы», этап 273) ----------
+    warm_wall_add: tool(
+      "Протянуть тёплую стену (лист «Тёплые полы» → «Кабельная тёплая стена», тариф «Расширенный»): участок " +
+        "на ребре комнаты. room_id — метка R<n> или id комнаты; edge — индекс ребра комнаты (0-based; рёбра " +
+        "комнаты с направлением и длиной — в rooms_list, поле edges); start_mm/end_mm — границы участка вдоль " +
+        "ребра от его первой вершины (мм). " +
+        "Линия кладётся на демолинию ребра (ребро + 5 см внутрь комнаты, сторона «внутрь» по ориентации контура), " +
+        "как в редакторе. MCP не подрезает демолинию в углах (редактор подрезает её на пересечениях с демолиниями " +
+        "соседних рёбер): у выпуклого угла участок может доходить до грани угла — на ~5 см дальше, чем допускает " +
+        "редактор (живо не проверено — открытый вопрос ревью 276 N1). Длина участка — не короче 200 мм с бонусом конца демолинии (правило редактора); " +
+        "пересечение существующей тёплой стены на том же ребре — отказ (стык вплотную допустим). Проёмы " +
+        "(двери/окна) на ребре не проверяются — как в редакторе: часть на ребре с проёмом сохраняется " +
+        "без подрезки (живая проба 275). height_mm " +
+        "(умолчание 1350) — высота от пола до верха, height_from_floor_mm (умолчание 150) — отступ нижней кромки; " +
+        "MCP ограничивает обе высоты диапазоном 0..5000 мм (редактор принимает любое значение ≥ 0). На одном ребре " +
+        "может быть несколько участков (parts), у каждого — не более одного кабеля терморегулятора. Перенос на " +
+        "другое ребро не поддерживается — удалите и создайте заново. После добавления вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из rooms_list или id комнаты"),
+        edge: mmInt.describe("индекс ребра комнаты (0-based, поле edges в rooms_list)"),
+        start_mm: mmIntSigned.describe("начало участка вдоль ребра от его первой вершины, мм"),
+        end_mm: mmIntSigned.describe("конец участка вдоль ребра, мм"),
+        height_mm: mmInt.optional().describe("высота от пола до верха, мм (умолчание 1350)"),
+        height_from_floor_mm: mmInt.optional().describe("отступ нижней кромки от пола, мм (умолчание 150)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("warm_wall_add", (m) => warmWallAdd(m, {
+          roomRef: a["room_id"] as string,
+          edge: a["edge"] as number,
+          startMm: a["start_mm"] as number,
+          endMm: a["end_mm"] as number,
+          heightMm: a["height_mm"] as number | undefined,
+          heightFromFloorMm: a["height_from_floor_mm"] as number | undefined,
+        }));
+        return ok({ ...res, hint: SCENARIO_HINT });
+      },
+    ),
+
+    warm_wall_list: tool(
+      "Список тёплых стен (участков warm_wall_cable в комнатах): id, комната (метка R<n>), ребро, " +
+        "длина/высоты в мм, ссылка на кабель терморегулятора. Метки WW<n> — сквозная нумерация по полному " +
+        "списку (фильтр по комнате не перенумеровывает); действуют в warm_wall_update/warm_wall_delete/wiring_add.",
+      { room_id: z.string().min(1).optional().describe("фильтр по комнате (метка R<n> или id)") },
+      async (a) => {
+        const ws = wsOf();
+        return ok({ warm_walls: a["room_id"] === undefined ? warmWallList(ws.model) : warmWallList(ws.model, a["room_id"] as string) });
+      },
+    ),
+
+    warm_wall_update: tool(
+      "Изменить тёплую стену: новые границы участка по тому же ребру (start_mm/end_mm — только явно " +
+        "переданные) и/или высоты (мм; MCP ограничивает 0..5000 мм — редактор принимает любое ≥ 0). " +
+        "Участок не должен пересекать соседние части ребра. Если к стене " +
+        "подключён кабель, его вершина следует за центром линии. warm_wall_id — метка WW<n> из warm_wall_list " +
+        "или id сайта.",
+      {
+        warm_wall_id: z.string().min(1).describe("метка WW<n> из warm_wall_list или id сайта"),
+        start_mm: mmIntSigned.optional().describe("новое начало участка, мм"),
+        end_mm: mmIntSigned.optional().describe("новый конец участка, мм"),
+        height_mm: mmInt.optional().describe("высота от пола до верха, мм"),
+        height_from_floor_mm: mmInt.optional().describe("отступ нижней кромки от пола, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("warm_wall_update", (m) => warmWallUpdate(m, {
+          warmWallId: resolveWarmWall(m, a["warm_wall_id"] as string),
+          startMm: a["start_mm"] as number | undefined,
+          endMm: a["end_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+          heightFromFloorMm: a["height_from_floor_mm"] as number | undefined,
+        }));
+        return ok({ ...res, hint: SCENARIO_HINT });
+      },
+    ),
+
+    warm_wall_delete: tool(
+      "Удалить тёплую стену (метка WW<n> из warm_wall_list). Подключённый кабель терморегулятора — отказ: " +
+        "сначала wiring_delete (в редакторе кабель удаляется вместе с линией; здесь удаление осознанное).",
+      { warm_wall_id: z.string().min(1).describe("метка WW<n> из warm_wall_list или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("warm_wall_delete", (m) => warmWallDelete(m, resolveWarmWall(m, a["warm_wall_id"] as string)));
+        // ответ идентифицирует объект после сдвига меток (ревью 274 №10)
+        return ok({ deleted: res.id, room: res.room, edge: res.edge, hint: SCENARIO_HINT });
+      },
+    ),
+
     // ---------- Освещение: световые линии (лист «Освещение», этап 84) ----------
     led_strip_add: tool(
       "Провести светодиодную ленту (лист «Освещение» → «Светодиодная подсветка», PRO): ломаная по точкам path " +
@@ -1316,7 +1406,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "терморегулятор (socket_thermo) с контуром тёплого пола: кабельным или инфракрасным " +
         "({item_id: \"<WF<n> или id контура>\"}; вершина-контур {id, point: polygon[0], type: warm_floor}, " +
         "ссылка в props контура; водяной контур к проводу не подключается — у него магистрали " +
-        "pipe_add kind=warm_floor; один терморегулятор на кабель), conditioner_wire (cables_conditioner) — " +
+        "pipe_add kind=warm_floor), а также с тёплой стеной ({item_id: \"<WW<n> из warm_wall_list " +
+        "или id части>\"}; вершина {id, point: центр линии, type: warm_wall}, ссылка в props части; " +
+        "прямой штрих тёплая стена—контур и тёплая стена—тёплая стена редактор не допускает; у тёплой " +
+        "стены одно подключение, как у контура; один терморегулятор на кабель; у кабеля не более " +
+        "одной тёплой стены или контура — MCP строже редактора), conditioner_wire (cables_conditioner) — " +
         "связывает блоки кондиционера: внутренний/внешний блок, канальные/кассетные блоки, клапан, " +
         "бризер, рекуператор, щиток (коробки, розетки и выводы проводов не подключаются — ревью 253 Н2, " +
         "проба 250-connect4). У multi-предметов (щиток, коробки) допускается несколько " +
@@ -1344,6 +1438,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             const ref = String(p["item_id"]);
             if (toolKey === "warm_floor_wire" && ((m.warm_floors ?? {})[ref] || /^WF\d+$/.test(ref))) {
               return { itemId: resolveWarmFloor(m, ref).id };
+            }
+            // тёплая стена (этап 273): id части WarmLine или метка WW<n> из warm_wall_list
+            if (toolKey === "warm_floor_wire" && (/^WW\d+$/.test(ref) || warmWallEntries(m).some((e) => e.part.id === ref))) {
+              return { itemId: resolveWarmWall(m, ref) };
             }
             return { itemId: resolveItem(m, ref).id };
           }),

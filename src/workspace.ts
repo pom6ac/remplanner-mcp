@@ -23,6 +23,7 @@ import { dist } from "./model/geometry.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { finishCompare } from "./model/finish.ts";
 import { zoneDelimiterCompare } from "./model/zone.ts";
+import { warmWallsCompare } from "./verify/warmwall.ts";
 import { demolitionMismatches } from "./model/demolition.ts";
 import { roomsSaveCompare, roomsChangePolicy, zoneAffectedRoomIds, type RoomsChangePolicy } from "./model/rooms-save.ts";
 import { dimsMismatches } from "./model/dims.ts";
@@ -638,10 +639,19 @@ export class Workspace {
         "normalize",
         { affectedRooms: zoneAffected },
       );
+      // этап 273: тёплые стены после нормализации не теряются (затронутость
+      // комнат — по грани стены; части редактор мигрирует — сверка по геометрии)
+      const warmNorm = warmWallsCompare(
+        this.modelInternal! as unknown as Record<string, unknown>,
+        norm.model as unknown as Record<string, unknown>,
+        "normalize",
+        { affectedRooms: zoneAffected },
+      );
       warnings.push(...zoneNorm.warnings);
-      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0 || zoneNorm.problems.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, пометки демонтажа, размеры/комментарии, сущности климата, щитки или разделители зон потолка — мутация отменена`, {
-          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm, shield_mismatches: shieldsNorm, zone_mismatches: zoneNorm.problems },
+      warnings.push(...warmNorm.warnings);
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0 || zoneNorm.problems.length > 0 || warmNorm.problems.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, пометки демонтажа, размеры/комментарии, сущности климата, щитки, разделители зон потолка или тёплые стены — мутация отменена`, {
+          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm, shield_mismatches: shieldsNorm, zone_mismatches: zoneNorm.problems, warmwall_mismatches: warmNorm.problems },
         });
       }
       // нормализованная копия становится канонической
