@@ -437,6 +437,25 @@ test("312 №2: merge — объединённая комната потерял
   assert.ok(lost.problems.some((p) => p.includes("объединённая комната потеряла покрытие потолка")), JSON.stringify(lost.problems));
 });
 
+// ревью 313 №10: потеря только во 2-й зоне при неизменной [0] — красный на eb73ab5
+test("313 №10: merge — [0] не изменился, вторая зона получила чужой материал → problem", () => {
+  const expRooms: Record<string, Record<string, unknown>> = {
+    a: { polygon: [{ x: 200, y: 100 }, { x: 200, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }], ceilings: [
+      { exist: true, id: "_cA", material: "gypsum_ceiling", level: 0, profile: "standard", polygon: [{ x: 200, y: 100 }, { x: 200, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }] },
+      { exist: true, id: "_cA2", material: "stretch_ceiling", level: 0, profile: "standard", polygon: [{ x: 200, y: 100 }, { x: 200, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }] },
+    ] },
+    room2: { polygon: [{ x: 300, y: 100 }, { x: 300, y: 300 }, { x: 200, y: 300 }, { x: 200, y: 100 }], ceilings: [] },
+  };
+  const merged = {
+    _m: { polygon: [{ x: 300, y: 100 }, { x: 300, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }], ceilings: [
+      { exist: true, id: "_cM", material: "gypsum_ceiling", level: 0, profile: "standard", polygon: [{ x: 300, y: 100 }, { x: 300, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }] },
+      { exist: true, id: "_cM2", material: "rack_ceiling", level: 0, profile: "standard", polygon: [{ x: 300, y: 100 }, { x: 300, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }] },
+    ] },
+  };
+  const res = finishCompare(expRooms, structuredClone(merged), undefined, undefined, "normalize");
+  assert.ok(res.problems.some((p) => p.includes("объединённая комната потеряла покрытие потолка") && p.includes("stretch_ceiling")), JSON.stringify(res.problems));
+});
+
 // ---------- ревью 313 A: model_get читает отделку по зонам, не только ceilings[0] ----------
 
 test("314 A: после закладной model_get показывает отделку зоны (регрессия против 141fd2b)", () => {
@@ -710,13 +729,19 @@ test("310: mock save — нормализация потеряла отделк�
     ceilings: structuredClone(d.ceilings),
   });
   (m.zone_delimiters ??= {} as never)[d.delimiter_id] = structuredClone(d.delimiter) as never;
+  // ревью 313 №10: потеря ТОЛЬКО во 2-й зоне при неизменной [0] — старая сверка
+  // по ceilings[0] её не видит (красный на eb73ab5)
+  const ceilingsM = (((m.rooms2 as Record<string, Record<string, unknown>>)[d.room_id]!)["ceilings"]) as Array<Record<string, unknown>>;
+  ceilingsM[1] = { exist: true, id: "_cZ2", material: "stretch_ceiling", level: 0, profile: "standard", polygon: structuredClone(ceilingsM[1]!["polygon"] ?? []) };
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
   let wrote = false;
   const ws = saveMock4(server, () => { wrote = true; }, (norm) => {
-    // редактор при пересчёте зон потерял отделку (как updateZones без restoreCeiling)
+    // редактор при пересчёте зон потерял отделку зон [1..] (updateZones без restoreCeiling),
+    // ceilings[0] не тронут
     const rooms = norm["rooms2"] as Record<string, Record<string, unknown>>;
     for (const r of Object.values(rooms)) {
-      r["ceilings"] = ((r["ceilings"] as Array<Record<string, unknown>>) ?? []).map((c) => ({ ...c, exist: false, material: undefined }));
+      const cs = (r["ceilings"] as Array<Record<string, unknown>> | undefined) ?? [];
+      r["ceilings"] = cs.map((c, i) => i === 0 ? c : { ...c, exist: false, material: undefined });
     }
   });
   await ws.open("0", "1");
