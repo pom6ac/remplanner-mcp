@@ -85,9 +85,17 @@ writeFileSync(`${OUT}/275-get-readonly-before.json`, JSON.stringify(roBefore, nu
 const captureNewWalls = async (known: Set<string>): Promise<void> => {
   const mgNow = (await call("model_get", {})) as unknown as { walls: { site_id?: string }[] };
   for (const w of mgNow.walls) {
-    if (w.site_id && !known.has(w.site_id)) created.walls.push(w.site_id);
+    if (w.site_id && !known.has(w.site_id) && !created.walls.includes(w.site_id)) created.walls.push(w.site_id);
   }
   writeCreated();
+};
+
+/** Миграция id части (id_old): обновить захваченный site_id, иначе зачистка и
+ *  контроль остатков пропустят часть с новым id (ревью 276 N5 — аналог 273). */
+const refreshCapturedPart = (oldId: string, part: { id: string }): void => {
+  if (part.id === oldId) return;
+  const hit = created.warm_walls.indexOf(oldId);
+  if (hit >= 0) { console.log(`миграция id части: ${oldId} → ${part.id}`); created.warm_walls[hit] = part.id; writeCreated(); }
 };
 
 const deleteBySite = async (entries: (string | { coll: string; site_id: string })[], tool: string, arg: string): Promise<void> => {
@@ -196,7 +204,7 @@ try {
   const after3 = (await rawGet("after-door-part")).model;
   const parts3 = allParts(after3).filter((p) => p.id === wwAcross || p.id === wwBeside || String((p.props as { id?: string })?.id ?? "") === wwAcross || String((p.props as { id?: string })?.id ?? "") === wwBeside);
   console.log("частей после save+reopen:", parts3.length, "(создано 2)");
-  for (const p of parts3) console.log("  ", JSON.stringify({ id: p.id, id_old: p["id_old"] ?? null, line: p.line }));
+  for (const p of parts3) { refreshCapturedPart(wwAcross, p); refreshCapturedPart(wwBeside, p); console.log("  ", JSON.stringify({ id: p.id, id_old: p["id_old"] ?? null, line: p.line })); }
 
   // ---------- №8: разрез стены ЧЕРЕЗ участок «рядом» ----------
   console.log("=== №8: разрез через участок ===");
@@ -248,6 +256,7 @@ try {
   const after5 = (await rawGet("after-cut")).model;
   const partAfter = findPart(after5, wwBeside) ?? findPartByGeometry(after5, partBefore);
   if (!partAfter) throw new Error("участок ПОТЕРЯН после разреза через него (ни по id, ни по геометрии)");
+  refreshCapturedPart(wwBeside, partAfter);
   const wire5 = ((after5.cables_warm_floor ?? {})[wireSite] ?? {}) as { vertexes?: { id: string; type: string }[] };
   const wwv = wire5.vertexes?.find((v) => v.type === "warm_wall");
   const verdict8 = {
