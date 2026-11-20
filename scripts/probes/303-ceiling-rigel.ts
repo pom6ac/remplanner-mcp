@@ -244,8 +244,12 @@ try {
     const before = {
       zones: w.project.copy("server").zone_delimiters ? Object.keys(w.project.copy("server").zone_delimiters).length : 0,
     };
+    // m11 ревью 304: обработчик #cm-ceiling-rigel--remove сериализует комнату
+    // ДО delete (restoreCeilingsAfterChangeRigel(serialize())) — воспроизводим
+    // в том же порядке
+    const roomSnap = typeof room?.serialize === "function" ? room.serialize() : null;
     if (typeof rg.delete === "function") rg.delete();
-    if (room) { room.draw?.(); room.restorer?.restoreCeilingsAfterChangeRigel?.(room.serialize?.()); }
+    if (room) { room.draw?.(); room.restorer?.restoreCeilingsAfterChangeRigel?.(roomSnap); }
     w.$Project.draw({ rooms: 1, save: 1, reset: 0, inWall: 1 });
     const m: any = w.project.copy("server");
     return {
