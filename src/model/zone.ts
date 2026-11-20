@@ -584,6 +584,10 @@ export function zoneDelimiterList(model: Model, roomRef?: string): Array<Record<
 
 export type ZoneDelimiterSig = {
   key: string;
+  /** id записи редактора (rec.id; для legacy без id — ключ хранилища).
+   *  M1 ревью 299: живая проба 298-zone-ids — редактор сохраняет id top-level
+   *  zone_delimiters, поэтому сверка сопоставляет записи прежде всего по id. */
+  id: string;
   p1: Point;
   p2: Point;
   type: string;
@@ -620,6 +624,7 @@ function delimiterSigsOf(model: Record<string, unknown> | undefined): ZoneDelimi
     const items = (rec["items"] ?? {}) as Record<string, string>;
     out.push({
       key,
+      id: String(rec["id"] ?? key),
       p1: q1,
       p2: q2,
       type: String(rec["type"] ?? ""),
@@ -731,6 +736,10 @@ export function zoneDelimiterCompare(
   };
   const midpoint = (e: ZoneDelimiterSig): Point => ({ x: (e.p1.x + e.p2.x) / 2, y: (e.p1.y + e.p2.y) / 2 });
   const used = new Set<string>();
+  // M1 ревью 299: множество id ожидания — записи got с id из него судятся по
+  // id (перестановка/подмена видна), геометрический запасной путь — только
+  // для записей с действительно новым id
+  const expectedIds = new Set(exp.map((e) => e.id));
   // ревью 263 N4: пул нестрогого поиска — только делители комнат got,
   // пересекающих полигон затронутой комнаты (наследники split/merge лежат
   // внутри её полигона и покрыты пересечением); комната без контура не
@@ -794,12 +803,43 @@ export function zoneDelimiterCompare(
   for (const e of exp) {
     const gid = exact.get(e.idRoom) ?? sameOf(e.idRoom);
     const strictList = (gid ? gotByRoom.get(gid) : undefined) ?? [];
-    const found = strictList.filter((g) => !used.has(g.key)).find((g) => sameSig(e, g));
+    const affected = opts.affectedRooms?.has(e.idRoom) ?? false;
+    const heir = heirOf.get(e.idRoom) ?? null;
+    const targetKeys = heir === null ? [] : heir.kind === "split" ? heir.partKeys : [heir.key];
+    // M1 ревью 299: сопоставление прежде всего ПО ID записи (живая проба
+    // 298-zone-ids: редактор сохраняет id top-level zone_delimiters, MCP отдаёт
+    // его агенту как site_id — zone_*_remove <site_id> обязан удалять ту же
+    // линию). id сверяется в парной комнате (save), комнатах-наследниках
+    // (normalize split/merge) или пуле затронутой комнаты (normalize).
+    const byId = got.find(
+      (g) => !used.has(g.key) && g.id === e.id &&
+        ((gid !== undefined && g.idRoom === gid) ||
+          targetKeys.includes(g.idRoom) ||
+          (affected && mode === "normalize" && intersectingPool(e.idRoom).some((p) => p.key === g.key))),
+    );
+    if (byId) {
+      if (sameSig(e, byId)) {
+        used.add(byId.key);
+        continue;
+      }
+      if (!affected) {
+        // id сохранился, запись изменилась (не затронутая комната) — проблема
+        problems.push(`room ${e.idRoom}: разделитель ${e.key} изменился на сервере (id ${e.id}; ${JSON.stringify({ type: e.type, plan: e.plan, length: e.length })} → ${JSON.stringify({ type: byId.type, plan: byId.plan, length: byId.length })})`);
+        used.add(byId.key);
+        continue;
+      }
+      // затронутая комната — прежний путь (magnetShift / нестрогая сверка ниже)
+    }
+    // Геометрический запасной путь — только для записей got, чей id НЕ входит
+    // в множество id ожидания (id действительно сменился; тип+plan и
+    // один-к-одному обеспечивает sameSig и used). Запись с чужим id из
+    // ожидания по геометрии не подбирается — она судится по id выше.
+    const found = strictList.filter((g) => !used.has(g.key) && !expectedIds.has(g.id)).find((g) => sameSig(e, g));
     if (found) {
       used.add(found.key);
+      warnings.push(`room ${e.idRoom}: редактор сменил id разделителя зон ${e.key} (${e.type}): ${e.id} → ${found.id} — проверьте зоны (${e.type})`);
       continue;
     }
-    const affected = opts.affectedRooms?.has(e.idRoom) ?? false;
     // ревью 261 №5/№8, живой эталон 262: комната затронута изменёнными стенами —
     // редактор вправе переопределить разделитель (живой эталон: конец, попавший
     // в узел разреза, перепривязывается к новой стене со сдвигом точки до
@@ -843,19 +883,18 @@ export function zoneDelimiterCompare(
       continue;
     }
     // изменившаяся топология — только в normalize (roomHeirs в save пуст)
-    const heir = heirOf.get(e.idRoom) ?? null;
     if (!heir) {
       problems.push(`room ${e.idRoom}: потерян разделитель зон (${e.type}) ${e.key} (${Math.round(e.length * 100)} см)`);
       continue;
     }
     const mid = midpoint(e);
-    const targetKeys = heir.kind === "split" ? heir.partKeys : [heir.key];
     const inTargets = targetKeys.filter((k) => pointInPolygon(mid, polygonOf(k) ?? [], 0.5));
     if (inTargets.length === 0) {
       problems.push(`room ${e.idRoom}: потерян разделитель зон (${e.type}) ${e.key} (${Math.round(e.length * 100)} см) при ${heir.kind === "split" ? "split" : "merge"}`);
       continue;
     }
-    const heirFound = inTargets.flatMap((k) => gotByRoom.get(k) ?? []).filter((g) => !used.has(g.key)).find((g) => sameSig(e, g));
+    // запасной путь по геометрии — только для записей с новым id (M1 ревью 299)
+    const heirFound = inTargets.flatMap((k) => gotByRoom.get(k) ?? []).filter((g) => !used.has(g.key) && !expectedIds.has(g.id)).find((g) => sameSig(e, g));
     if (heirFound) {
       used.add(heirFound.key);
       continue;

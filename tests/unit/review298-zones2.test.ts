@@ -205,3 +205,91 @@ test("298 №8: лишний делитель на сервере в save — pr
   const { problems } = zoneDelimiterCompare(exp, got, "save");
   assert.ok(problems.some((p) => /неожиданный разделитель/.test(p)), JSON.stringify(problems));
 });
+
+// ---------- 299 M1: сверка сопоставляет записи прежде всего по id ----------
+// (живая проба 298-zone-ids: редактор сохраняет id top-level zone_delimiters;
+// MCP отдаёт его агенту как site_id, поэтому перестановка/подмена id сервером
+// должна быть проблемой, а геометрия — запасным путём для записей с новым id)
+
+function delimRec(id: string, p1: { x: number; y: number }, p2: { x: number; y: number }): Record<string, unknown> {
+  return {
+    id, matrix: [[null, { length: 1 }], [{ length: 1 }, null]],
+    vertexes: [
+      { id: `${id}v1`, point: p1, type: "node" },
+      { id: `${id}v2`, point: p2, type: "node" },
+    ],
+    items: { [`${id}v1`]: "node", [`${id}v2`]: "node" },
+    type: "zone_ceiling", length: Math.round((Math.hypot(p2.x - p1.x, p2.y - p1.y) / 100) * 100) / 100,
+    id_room: "r1", plan: "ceiling", on_size: 1,
+  };
+}
+
+const ROOM_R1 = { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }] };
+const GA = { p1: { x: 100, y: 160 }, p2: { x: 390, y: 160 } };
+const GB = { p1: { x: 200, y: 10 }, p2: { x: 200, y: 310 } };
+
+function twoDiff(): Record<string, unknown> {
+  return {
+    rooms2: { r1: structuredClone(ROOM_R1) },
+    zone_delimiters: { a: delimRec("a", GA.p1, GA.p2), b: delimRec("b", GB.p1, GB.p2) },
+  };
+}
+
+test("299 M1: сервер переставил id двух разных разделителей — problem (оба режима)", () => {
+  const exp = twoDiff();
+  const zd = exp.zone_delimiters as Record<string, Record<string, unknown>>;
+  const a = structuredClone(zd.b!);
+  const b = structuredClone(zd.a!);
+  a["id"] = "a";
+  b["id"] = "b";
+  const got = { rooms2: structuredClone(exp.rooms2), zone_delimiters: { a, b } };
+  for (const mode of ["normalize", "save"] as const) {
+    const { problems } = zoneDelimiterCompare(exp, got, mode);
+    assert.ok(problems.length >= 2 && problems.every((p) => /изменился/.test(p)), `${mode}: ${JSON.stringify(problems)}`);
+  }
+});
+
+test("299 M1: тот же id перенесён на геометрию пропавшего соседа — problem", () => {
+  const exp = twoDiff();
+  const moved = structuredClone((exp.zone_delimiters as Record<string, Record<string, unknown>>).b!);
+  moved["id"] = "a";
+  const got = { rooms2: structuredClone(exp.rooms2), zone_delimiters: { a: moved } };
+  for (const mode of ["normalize", "save"] as const) {
+    const { problems } = zoneDelimiterCompare(exp, got, mode);
+    assert.ok(problems.length > 0, `${mode}: ${JSON.stringify(problems)}`);
+  }
+});
+
+test("299 M1: редактор сменил id при той же геометрии — warning, не problem (запасной путь)", () => {
+  const exp = { rooms2: { r1: structuredClone(ROOM_R1) }, zone_delimiters: { a: delimRec("a", GA.p1, GA.p2) } };
+  const rec = structuredClone(exp.zone_delimiters.a);
+  rec["id"] = "zzzzzzzzz";
+  const got = { rooms2: structuredClone(exp.rooms2), zone_delimiters: { zzzzzzzzz: rec } };
+  for (const mode of ["normalize", "save"] as const) {
+    const res = zoneDelimiterCompare(exp, got, mode);
+    assert.deepEqual(res.problems, [], `${mode}: смена id при той же геометрии не блок: ${JSON.stringify(res)}`);
+    assert.ok(res.warnings.some((w) => /сменил id/.test(w)), `${mode}: ${JSON.stringify(res.warnings)}`);
+  }
+});
+
+test("299 M1: normalize затронутой комнаты — редактор пересоздал id при той же геометрии — не блок", () => {
+  const exp = { rooms2: { r1: structuredClone(ROOM_R1) }, zone_delimiters: { a: delimRec("a", GA.p1, GA.p2) } };
+  const rec = structuredClone(exp.zone_delimiters.a);
+  rec["id"] = "zzzzzzzzz";
+  const got = { rooms2: structuredClone(exp.rooms2), zone_delimiters: { zzzzzzzzz: rec } };
+  const res = zoneDelimiterCompare(exp, got, "normalize", { affectedRooms: new Set(["r1"]) });
+  assert.deepEqual(res.problems, [], JSON.stringify(res));
+});
+
+test("299 M1: запись с id из ожидания не подбирается по геометрии чужой записи", () => {
+  // id b остался на сервере, но его геометрия заменена геометрией a; a потерян.
+  // Запасной путь для a запрещён (got b держит id из ожидания), для b — id на
+  // месте, а геометрия чужая → обе записи не совпали
+  const exp = twoDiff();
+  const rec = structuredClone((exp.zone_delimiters as Record<string, Record<string, unknown>>).a!);
+  rec["id"] = "b";  const got = { rooms2: structuredClone(exp.rooms2), zone_delimiters: { b: rec } };
+  for (const mode of ["normalize", "save"] as const) {
+    const { problems } = zoneDelimiterCompare(exp, got, mode);
+    assert.ok(problems.length >= 2, `${mode}: ${JSON.stringify(problems)}`);
+  }
+});
