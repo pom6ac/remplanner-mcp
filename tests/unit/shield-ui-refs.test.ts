@@ -1467,6 +1467,26 @@ test("291: шина update — align/position меняют type и distance ка
   );
 });
 
+// 293 ревью №10: shield_bus_update с align и sockets в одном вызове — distance
+// считается по НОВОМУ числу гнёзд (иначе для R расходится с формулой drag
+// редактора на 6×Δ: 6→8 гнёзд, align R — 303, а не 315).
+test("293 №10: шина update align+sockets — distance по новому числу гнёзд", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "32A" });
+  const { bus } = addShieldBus(m, shield.id, { position: "T", align: "C" });
+  assert.equal(bus.distance, 157.5);
+  const u = updateShieldBus(m, shield.id, bus.id, { align: "R", sockets: 8 });
+  assert.equal(u.bus.type, "TR");
+  // ширина щитка 393 px; R: 393 − 2×15 − (6×8+12=60) = 303
+  assert.equal(u.bus.distance, 303);
+  // только sockets — distance не трогается (редактор при смене гнёзд его не пересчитывает)
+  const u2 = updateShieldBus(m, shield.id, bus.id, { sockets: 4 });
+  assert.equal(u2.bus.distance, 303);
+});
+
 test("291: шина update sockets — добавление в конец, удаление с конца; провод к удалённому гнезду чистится (deleted_wires)", () => {
   const { m, shield } = scenario();
   ensureShieldForItem(m, shield);

@@ -226,12 +226,13 @@ test("291: shield_bus_add/update/delete — формат ответа (bus_list)
     assert.equal(bus.sockets, 6);
     assert.equal(bus.distance, 157.5);
     assert.equal(bus.connection, "");
-    // обновление: гнёзда 6 → 4, align R
+    // обновление: гнёзда 6 → 4, align R — distance по новому числу гнёзд
+    // (ревью 293 №10): 393 − 2×15 − (6×4+12=36) = 327
     const u = await call(client, "shield_bus_update", { item_id: "sh1", bus_id: bus.bus_id, sockets: 4, align: "R" });
     const sh2 = u["entity"] as { bus_list: { bus_id: string; type: string; sockets: number; distance: number }[] };
     assert.equal(sh2.bus_list![0]!.sockets, 4);
     assert.equal(sh2.bus_list![0]!.type, "TR");
-    assert.equal(sh2.bus_list![0]!.distance, 315);
+    assert.equal(sh2.bus_list![0]!.distance, 327);
     // провод к гнезду шины + удаление шины → deleted_wires
     await call(client, "shield_wire_add", { item_id: "sh1", type: "shield_wire_phase", source: { module_id: idA, port: 0 }, target: { bus: bus.bus_id, port: 0 } });
     const del = await call(client, "shield_bus_delete", { item_id: "sh1", bus_id: bus.bus_id });

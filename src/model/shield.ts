@@ -966,19 +966,13 @@ export type ShieldBusUpdateParams = {
  * shield_bus_update: привязка/ряд и число гнёзд. Смена гнёзд — bus_enter_ports
  * редактора: добавить в конец, удалить с конца; провода к удалённым гнёздам
  * удаляются (bus_remove_port → validate_wires/validate_ports/validate_buses).
+ * Ревью 293 №10: гнёзда меняются ПЕРЕД пересчётом distance, чтобы align в том
+ * же вызове считался по новому числу гнёзд (как формула drag редактора).
  */
 export function updateShieldBus(model: Model, itemId: string, busId: string, params: ShieldBusUpdateParams): { shield: Shield; bus: ShieldBus; deleted_wires: string[] } {
   const { shield } = shieldOfItem(model, itemId);
   const bus = shield.buses?.[busId];
   if (!bus) throw new McpError("NOT_FOUND", `шина ${busId} не найдена в щитке предмета ${itemId}`);
-  if (params.position !== undefined || params.align !== undefined) {
-    const position = params.position ?? (bus.type.startsWith("B") ? "B" : "T");
-    const align = params.align ?? (bus.type.slice(1) as "L" | "C" | "R");
-    bus.type = `${position}${align}`;
-    const sockets = bus.ports.length;
-    const maxDistance = shieldWidthPx(shield) - 2 * SHIELD_BUS_BAR_MARGIN_X_PX - shieldBusWidthPx(sockets);
-    bus.distance = align === "L" ? 0 : align === "R" ? maxDistance : shieldWidthPx(shield) / 2 - shieldBusWidthPx(sockets) / 2 - SHIELD_BUS_BAR_MARGIN_X_PX;
-  }
   let deletedWires: string[] = [];
   if (params.sockets !== undefined && params.sockets !== bus.ports.length) {
     if (!Number.isInteger(params.sockets) || params.sockets < SHIELD_BUS_MIN_SOCKETS || params.sockets > SHIELD_BUS_MAX_SOCKETS) {
@@ -1004,6 +998,14 @@ export function updateShieldBus(model: Model, itemId: string, busId: string, par
       }
       refreshShieldConnections(shield, shieldPorts(shield));
     }
+  }
+  if (params.position !== undefined || params.align !== undefined) {
+    const position = params.position ?? (bus.type.startsWith("B") ? "B" : "T");
+    const align = params.align ?? (bus.type.slice(1) as "L" | "C" | "R");
+    bus.type = `${position}${align}`;
+    const sockets = bus.ports.length;
+    const maxDistance = shieldWidthPx(shield) - 2 * SHIELD_BUS_BAR_MARGIN_X_PX - shieldBusWidthPx(sockets);
+    bus.distance = align === "L" ? 0 : align === "R" ? maxDistance : shieldWidthPx(shield) / 2 - shieldBusWidthPx(sockets) / 2 - SHIELD_BUS_BAR_MARGIN_X_PX;
   }
   return { shield, bus, deleted_wires: deletedWires };
 }
