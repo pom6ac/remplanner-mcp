@@ -873,7 +873,7 @@ connection — тип провода первого подключённого �
 `connection` другого типа провод не ставится — bus port_mousedown; `bus_add_port`
 /`bus_remove_port`/`bus_enter_ports` — добавление гнёзд в конец и удаление с
 конца; ShieldDimensions.bus: default_sockets 6, min 4, max 25; width_bus =
-6×гнёзд + 12 px, проба 291-shield3-ui6). Коллектор: `collectors {collectorId:
+6×гнёзд + 12 px, проба 291-shield3-ui3, дамп .orca-reports/tmp/294-busfactory.json). Коллектор: `collectors {collectorId:
 {id, rail_id, module_width, modules {moduleId: 1}, position: "T"|"B"}}` (живая
 проба 291-shield3-ui3 — drag по портам модулей: module_port_click_collector, карту
 модулей строит port_mouseover — подряд идущие модули одной ширины на рейке;
@@ -900,7 +900,7 @@ L|C|R, по умолчанию центр; sockets 4..25, по умолчани�
 distance по формулам drag редактора (add_bus_move/dragmove: L → 0, C →
 shield_width/2 − width_bus/2 − bus_bar_margin_x, R → максимум; проверено вживую:
 TC 157.5, TR 315 при щитке 12 DIN, shield_width 393 px = module.width 21 px ×
-(length_rails+1) + rail.margin_x 120 px, проба 291-shield3-ui7); distance — px
+(length_rails+1) + rail.margin_x 120 px, проба 291-shield3-ui3); distance — px
 схемы щитка (формат редактора), не мм. `shield_bus_update` — привязка и число
 гнёзд (bus_enter_ports); `shield_bus_delete` — каскад проводов к гнёздам
 (delete_bus → validate_wires/validate_ports). `shield_collector_add/update` —

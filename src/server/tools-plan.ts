@@ -1806,7 +1806,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "modules — список id модулей (из model_get shields[].modules[].module_id) в порядке следования: " +
         "минимум два модуля (коллектор на одном модуле редактор удаляет — validate_collectors), " +
         "все на одной рейке, одной ширины, без чужих модулей внутри диапазона; type модуля — из списка " +
-        "коллекторных (автоматы, УЗО, выключатели нагрузки). После добавления вызывайте model_validate " +
+        "коллекторных (автоматы, УЗО, выключатели нагрузки). position в ответе всегда «T» (верхний ряд): " +
+        "нижний ряд портов (B) не поддержан. После добавления вызывайте model_validate " +
         "и project_save.",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),

@@ -205,7 +205,7 @@ function commentClean(comment: string | undefined): string {
 export const SHIELD_MODULE_DEFAULT_SUBTYPE = "5A";
 
 /** Типы модулей, из которых редактор собирает коллектор (ShieldDimensions.collector.types,
- *  живая проба 291-shield3-ui3/ui4). */
+ *  живая проба 291-shield3-ui3, дампы .orca-reports/tmp/291-dims-defs.json, 293-classes.json). */
 export const SHIELD_COLLECTOR_MODULE_TYPES: ReadonlySet<string> = new Set([
   "shield_module", "shield_module_x2_simple", "shield_module_x2", "shield_module_uzo",
   "shield_module_uzo_fire", "shield_module_x3", "shield_module_off_switch_x3",
@@ -696,7 +696,6 @@ function refreshShieldConnections(shield: Shield, ports: Map<string, { parent_ty
 
 /** Разрешение ссылки на порт (shield_wire_add): id порта или отказ. */
 function resolveShieldPort(shield: Shield, ref: ShieldPortRef, side: string): { portId: string; parentType: string; parentId: string } {
-  const choices = [ref.module_id !== undefined, ref.input !== undefined, ref.bus !== undefined].filter(Boolean).length;
   if (hasCount(ref) !== 1) {
     throw new McpError(
       "INVALID_ARGUMENT",
@@ -863,19 +862,22 @@ export function deleteShieldsForItem(model: Model, itemId: string): string[] {
 
 // ---------- Шины (этап 291, живой эталон ui-ref-shield-bus) ----------
 
-/** Умолчания шины (ShieldDimensions.bus, живые пробы 291-shield3-ui3/ui6). */
+/** Умолчания шины (ShieldDimensions.bus, живая проба 291-shield3-ui3,
+ *  дампы .orca-reports/tmp/291-dims-defs.json, 294-busfactory.json). */
 export const SHIELD_BUS_DEFAULT_SOCKETS = 6;
 export const SHIELD_BUS_MIN_SOCKETS = 4;
 export const SHIELD_BUS_MAX_SOCKETS = 25;
 
-/** Геометрия схемы щитка (ShieldDimensions, проба 291-shield3-ui4/ui7):
+/** Геометрия схемы щитка (ShieldDimensions, проба 291-shield3-ui3, дампы
+ *  .orca-reports/tmp/291-dims-defs.json, 294-busfactory.json):
  *  module.width 21 px на 1 DIN, rail.margin_x() 120 px, шинная полоса —
  *  bus_bar_margin_x 15 px. Все значения в px svg листа щитка (не мм). */
 const SHIELD_MODULE_WIDTH_PX = 21;
 const SHIELD_RAIL_MARGIN_X_PX = 120;
 const SHIELD_BUS_BAR_MARGIN_X_PX = 15;
 
-/** Ширина шины в px (ShieldBusFactory: живая проба 291-shield3-ui6 —
+/** Ширина шины в px (ShieldBusFactory: проба 291-shield3-ui3, дамп
+ *  .orca-reports/tmp/294-busfactory.json —
  *  width_bus = 6×гнёзд + 12, проверено для 4..25 гнёзд). */
 export function shieldBusWidthPx(sockets: number): number {
   return 6 * sockets + 12;
@@ -910,7 +912,8 @@ export type ShieldBusAddParams = {
  * 6 портов {parent_type: "bus", connected: 0}, connection "", type —
  * позиция + привязка («TL», «BC», …), distance по привязке (L → 0, C →
  * центр, R → правый край) — формулы add_bus_move, проверены вживую
- * (291-shield3-ui3: TC distance 157.5; ui7: TL 0, TR 315).
+ * (291-shield3-ui3: TC distance 157.5, TL 0; дампы .orca-reports/tmp/293-*,
+ * 294-busfactory.json).
  */
 export function addShieldBus(model: Model, itemId: string, params: ShieldBusAddParams): { shield: Shield; bus: ShieldBus } {
   if (params.position !== "T" && params.position !== "B") {
@@ -1131,12 +1134,10 @@ export function addShieldCollector(model: Model, itemId: string, params: ShieldC
 }
 
 /**
- * Ряд порта/модуля (Shield.is_lower_row редактора): в модели щитка координат
- * портов нет — ряд определяется по положению модуля на рейке относительно
- * ввода: модуль ниже ввода (index ввода... в конструкторе один ввод сверху,
- * ряд B у модулей нижней половины). Редактор считает по y центра порта;
- * для карты модулей одной ширины на одной рейке ряд один и тот же у всех —
- * консервативно T (верхний ряд), пока живой эталон B-коллектора не снят.
+ * Ряд коллектора (Shield.is_lower_row редактора): is_lower_row — ряд ПОРТОВ
+ * модуля (y порта внутри модуля), а не «половина щитка». MCP всегда ставит
+ * «T» (верхний ряд); ряд B не поддержан, пока живой эталон B-коллектора
+ * не снят (docs/CHANGELOG — «не сделанное»).
  */
 function railIsLowerRow(_shield: Shield, _mod: ShieldModule): boolean {
   return false;

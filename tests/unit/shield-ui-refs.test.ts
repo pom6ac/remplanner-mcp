@@ -1431,7 +1431,7 @@ test("291: шина add — привязка L/R и sockets 4..25; за пред
   const { m, shield } = scenario();
   ensureShieldForItem(m, shield);
   const width = 6 * 6 + 12; // 48
-  const maxDistance = 393 - 2 * 15 - width; // 315 (проба 291-shield3-ui7)
+  const maxDistance = 393 - 2 * 15 - width; // 315 (проба 291-shield3-ui3, дамп .orca-reports/tmp/294-busfactory.json)
   assert.equal(addShieldBus(m, shield.id, { position: "T", align: "L" }).bus.distance, 0);
   assert.equal(addShieldBus(m, shield.id, { position: "B", align: "R" }).bus.distance, maxDistance);
   assert.equal(addShieldBus(m, shield.id, { position: "T", sockets: 4 }).bus.ports.length, 4);
