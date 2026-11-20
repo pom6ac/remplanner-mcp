@@ -6,8 +6,8 @@ import { wallFaces } from "./wall-geometry.ts";
 import { McpError } from "../errors.ts";
 import { dist, lineIntersection, offsetSegment, pointOnSegment, type Segment } from "./geometry.ts";
 import { RIGEL_CEILING_TYPES } from "./rigels.ts";
-import { zoneCeilingDelimiterLines } from "./zone.ts";
-import { roomPolygonOf, roomsMapOf, matchRoomsByContour, roomHeirs, overlapShare, pointInPolygon } from "./room-geo.ts";
+import { zoneCeilingDelimiterLines, segmentInsidePolygon } from "./zone.ts";
+import { roomPolygonOf, roomsMapOf, matchRoomsByContour, roomHeirs, overlapShare, pointInPolygon, distToSeg } from "./room-geo.ts";
 
 /**
  * Потолочные закладные (ceiling_rigel, лист «Потолки», инструмент «Потолочная
@@ -305,14 +305,26 @@ function assertAxisChecks(model: Model, roomId: string, p1: Point, p2: Point, li
     }
   }
   // концы и ось — внутри комнаты (курсор редактора отпускает закладную только
-  // над комнатой)
-  const steps = Math.max(2, Math.ceil(dist(p1, p2) / 25) + 1);
-  for (let k = 0; k <= steps; k++) {
-    const t = k / steps;
-    const p = { x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t };
-    if (!pointInPolygon(p, poly, 0.5)) {
-      throw new McpError("INVALID_ARGUMENT", "закладная проходит вне комнаты — проведите её внутри одной комнаты от стены до стены");
+  // над комнатой). Ревью 304 M4: честная проверка — пересечение оси с рёбрами
+  // комнаты (кроме рёбер, на которых лежат концы — это примыкание) + общий
+  // предикат вложенности segmentInsidePolygon (зоны, ревью 261 №2). Выборка
+  // точек через ≤25 см пропускала короткий заход оси в тело стены у рефлекс-
+  // угла Г-комнаты (304-exp3: 11/11 ACCEPTED), а restore редактора (restoreRigels)
+  // такую закладную удаляет.
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i]!, b = poly[(i + 1) % poly.length]!;
+    // конец на ребре — примыкание, не пересечение
+    if (distToSeg(p1, a, b) <= 0.05 || distToSeg(p2, a, b) <= 0.05) continue;
+    if (segmentsCross(p1, p2, a, b)) {
+      // касание в вершине контура (общая точка рёбер, ось остаётся внутри —
+      // как в зонировании, ревью 263 N6) — не пересечение
+      const q = lineIntersection({ p1, p2 }, { p1: a, p2: b });
+      if (q && poly.some((v) => dist(q, v) <= 0.05)) continue;
+      throw new McpError("INVALID_ARGUMENT", "закладная пересекает ребро/стену комнаты — проведите её внутри одной комнаты от стены до стены");
     }
+  }
+  if (!segmentInsidePolygon(p1, p2, poly)) {
+    throw new McpError("INVALID_ARGUMENT", "закладная проходит вне комнаты — проведите её внутри одной комнаты от стены до стены");
   }
 }
 

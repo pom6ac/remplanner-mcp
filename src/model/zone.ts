@@ -312,8 +312,9 @@ function strictlyInside(p: Point, poly: Point[]): boolean {
  *  отрезка внутри полигона (концы на рёбрах — на границе в допуске магнита),
  *  пересечений рёбер вне концов нет. Хорда, проходящая мимо комнаты через
  *  выемку, отвергается; касание линии в вершине вогнутого контура (общая точка
- *  рёбер) допустимо — поведение закреплено тестом (ревью 263 N6). */
-function segmentInsidePolygon(a: Point, b: Point, poly: Point[], tolCm = 0.5): boolean {
+ *  рёбер) допустимо — поведение закреплено тестом (ревью 263 N6). Экспортирован
+ *  с ревью 304 M4 как общий помощник вложенности (потолочные закладные). */
+export function segmentInsidePolygon(a: Point, b: Point, poly: Point[], tolCm = 0.5): boolean {
   const len = segLen(a, b);
   const steps = Math.max(2, Math.ceil(len / 25) + 1);
   for (let k = 0; k <= steps; k++) {
