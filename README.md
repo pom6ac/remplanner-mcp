@@ -206,12 +206,17 @@ wiring_add / wiring_update / wiring_delete     # кабели-проводка (
                           #  предметы (щиток, коробки, розетки, выводы; кондиционер и внешний блок —
                           #  трасса conditioner_wire); kind: wire_2_05…wire_5_100,
                           #  wire_earth_*, wire_tv/utp/… (cables_socket), warm_floor_wire (терморегулятор
-                          #  ↔ кабельный/ИК контур тёплого пола, ссылка в props контура), conditioner_wire
+                          #  ↔ кабельный/ИК контур тёплого пола (ссылка в props контура) и тёплая
+                          #  стена (вершина warm_wall, ссылка в props части)), conditioner_wire
 shield_rail_add / shield_module_add (+ update/delete)  # конструктор электрощитка (лист «Электрощиток»,
                           #  старшие тарифы PRO): DIN-рейки и модули (автоматы, УЗО, дифавтоматы и др.,
                           #  35 типов; номинал subtype, номер группы, подпись); item_delete щитка
                           #  удаляет конструктор каскадно; провода/шины в щитке — следующий этап
 warm_floor_add            # тёплый пол (лист «Тёплые полы»): контур kind: cable|infrared|water (водяной — PRO)
+warm_wall_add / warm_wall_list / warm_wall_update / warm_wall_delete  # тёплая стена (лист «Тёплые полы»,
+                          #  тариф «Расширенный»): участок на ребре комнаты (room_id + edge +
+                          #  start_mm/end_mm; линия на ребре + 5 см внутрь; высоты 1350/150 мм);
+                          #  подключение кабеля терморегулятора — wiring_add warm_floor_wire (WW<n>)
 item_add conditioner/socket_thermo/fan/radiator_bimetal  # климат: кондиционеры (у стены), терморегулятор,
                           #  вентиляторы, радиаторы (листы «Кондиционеры»/«Вентиляция»/«Радиаторы»)
 item_add radiator_collector/ext_manifold_box/int_manifold_box  # коллекторные узлы (PRO-группа меню,
