@@ -23,7 +23,11 @@ if (process.argv[2] !== "run") {
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
 const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"];
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
-const READONLY_PLAN = process.env["REMPLANNER_PROBE_READONLY_PLAN"] ?? "999030";
+const READONLY_PLAN = process.env["REMPLANNER_PROBE_READONLY_PLAN"];
+if (!READONLY_PLAN) {
+  console.error("нужен REMPLANNER_PROBE_READONLY_PLAN (план контрольного проекта)");
+  process.exit(1);
+}
 if (!OBJECT_ID || !PLAN_ID || !READONLY_ID) {
   console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID");
   process.exit(1);
@@ -55,7 +59,12 @@ const entitySiteId = (res: Record<string, unknown>, what: string): string => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const pause = () => sleep(6000);
 
-const backup = JSON.parse(readFileSync(process.env["REMPLANNER_PROBE_BACKUP"] ?? ".orca-reports/backup-7887657-268.json", "utf8"));
+const backupPath = process.env["REMPLANNER_PROBE_BACKUP"];
+if (!backupPath) {
+  console.error("нужен REMPLANNER_PROBE_BACKUP (путь к бэкапу dev-проекта перед прогоном)");
+  process.exit(1);
+}
+const backup = JSON.parse(readFileSync(backupPath, "utf8"));
 const strip = (m: unknown) => {
   const c = structuredClone(m as Record<string, unknown>);
   delete c.save_id; delete c.log_plan; delete c.session; delete c.version;
