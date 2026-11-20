@@ -12,6 +12,7 @@ import { addZoneCeiling, removeZoneCeiling } from "../../src/model/zone.ts";
 import { rebuildCeilingZones } from "../../src/model/ceiling-zones.ts";
 import { finishCompare, finishList, setCeilingFinish, removeCeilingFinish, addCeilingNiche, removeCeilingNiche } from "../../src/model/finish.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
+import { compactModel } from "../../src/model/compact.ts";
 import type { LoadedModel } from "../../src/api.ts";
 
 type Pt = { x: number; y: number };
@@ -384,6 +385,24 @@ test("312 №2: merge — объединённая комната потерял
   assert.deepEqual(ok.problems, [], "отделка источника сохранена — не потеря");
   const lost = finishCompare(expRooms, { _m: { ...merged["_m"]!, ceilings: [{ exist: false }] } }, undefined, undefined, "normalize");
   assert.ok(lost.problems.some((p) => p.includes("объединённая комната потеряла покрытие потолка")), JSON.stringify(lost.problems));
+});
+
+// ---------- ревью 313 A: model_get читает отделку по зонам, не только ceilings[0] ----------
+
+test("314 A: после закладной model_get показывает отделку зоны (регрессия против 141fd2b)", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  setCeilingFinish(model, "room1", "gypsum_ceiling", {});
+  // закладная у правой стены: отделка по граням уходит в запись [1] (313-exp3)
+  addCeilingRigel(model, "room1", { start: { x: 3700, y: 1005 }, end: { x: 3700, y: 2995 } });
+  assert.equal(
+    ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings as Array<Record<string, unknown>>)[0]!["exist"],
+    false,
+    "отделка не в ceilings[0] — сценарий регрессии",
+  );
+  const compact = compactModel(model);
+  const room = (compact.rooms as Array<Record<string, unknown>>)[0]!;
+  assert.equal(room["ceiling"], "gypsum_ceiling", `model_get.ceiling по первой зоне с отделкой: ${JSON.stringify(room)}`);
+  assert.equal(room["floor"], null);
 });
 
 // ---------- ревью 313 №4: ниши переносятся только в зону-наследника отделки ----------

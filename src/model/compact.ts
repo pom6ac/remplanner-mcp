@@ -7,6 +7,7 @@ import { projectionLength, type Segment } from "./geometry.ts";
 import { parseSwitchVertexId } from "./electric.ts";
 import { zoneDelimiterList } from "./zone.ts";
 import { ceilingRigelList } from "./ceiling-rigels.ts";
+import { ceilingFinishZones } from "./finish.ts";
 
 // Компактное представление модели для агента (< 5 КБ): метки W/R/O/I, мм.
 
@@ -546,7 +547,10 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       length_mm: round0(cmToMm(Math.hypot(e.p2.x - e.p1.x, e.p2.y - e.p1.y))),
     }));
     const floorRec = room2 ? (room2["floors"] as Array<Record<string, unknown>> | undefined)?.[0] : undefined;
-    const ceilingRec = room2 ? (room2["ceilings"] as Array<Record<string, unknown>> | undefined)?.[0] : undefined;
+    // ревью 313 A: отделка потолка по зонам (общий слой ceilingFinishZones) —
+    // после пересчёта зон (закладная/делитель) отделка может стоять в любой
+    // записи; чтение только ceilings[0] показывало null (регрессия против 141fd2b)
+    const ceilingZone = room2 ? ceilingFinishZones(room2 as Parameters<typeof ceilingFinishZones>[0])[0] : undefined;
     return {
       id: `R${i + 1}`,
       name,
@@ -555,11 +559,11 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       perimeter_mm: round0(cmToMm(perimeter)),
       ...(compactEdges.length > 0 ? { edges: compactEdges } : {}),
       floor: floorRec && floorRec["exist"] === true && typeof floorRec["cover"] === "string" ? floorRec["cover"] as string : null,
-      ceiling: ceilingRec && ceilingRec["exist"] === true && typeof ceilingRec["material"] === "string" ? ceilingRec["material"] as string : null,
+      ceiling: ceilingZone ? ceilingZone.material : null,
     };
   });
 
-  const items: CompactItem[] = Object.values(model.items).map((item, i) => {
+  const items: CompactItem[] = Object.values(model.items ?? {}).map((item, i) => {
     // ревью 90 R5: состав под-розеток и высота установки видны в компактном API
     const subs = Array.isArray(item.socket_group) ? (item.socket_group as Array<{ name?: string; id?: string; center?: { x?: number; y?: number } }>) : null;
     const overFloor = item.over_floor;

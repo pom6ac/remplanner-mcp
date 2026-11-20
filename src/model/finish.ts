@@ -929,13 +929,15 @@ function ceilingSigsOf(room: RoomRec): string[] {
 }
 
 /**
- * Отделка по зонам потолка для публичного ответа (этап 312, ревью 311 №1):
- * записи exist===true с материалом, по порядку контейнера ceilings. После
- * пересчёта зон (закладная/делитель) отделка может стоять в любой записи —
- * чтение только ceilings[0] показывало null (регрессия против 141fd2b).
+ * Отделка по зонам потолка для публичного ответа (этап 312, ревью 311 №1;
+ * ревью 313 A — общий слой для finishList, model_get (compact.ts) и
+ * roomHasFloorCeiling): записи exist===true с материалом, по порядку контейнера
+ * ceilings. После пересчёта зон (закладная/делитель) отделка может стоять в
+ * любой записи — чтение только ceilings[0] показывало null (регрессия против
+ * 141fd2b).
  */
-type CeilingZoneFinish = { index: number; material: string; level: number | undefined; profile: string | undefined };
-function ceilingFinishZones(room: RoomRec): CeilingZoneFinish[] {
+export type CeilingZoneFinish = { index: number; material: string; level: number | undefined; profile: string | undefined };
+export function ceilingFinishZones(room: RoomRec): CeilingZoneFinish[] {
   const arr = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
   const out: CeilingZoneFinish[] = [];
   arr.forEach((c, index) => {
@@ -1202,7 +1204,9 @@ function gotPartNear(
 const roomPolygon = (room: unknown): Point[] | undefined => roomPolygonOf(room);
 
 function roomHasFloorCeiling(room: RoomRec): boolean {
-  return Boolean(floorSig(room) || ceilingSigsOf(room).length > 0);
+  // ревью 313 A: отделка потолка по зонам — общий слой ceilingFinishZones
+  // (после пересчёта зон отделка может стоять в любой записи)
+  return Boolean(floorSig(room) || ceilingFinishZones(room).length > 0);
 }
 
 /** Мультимножество exp не покрыто got: список недостающих записей (ревью 311 №2). */
