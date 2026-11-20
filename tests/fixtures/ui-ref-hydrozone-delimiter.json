@@ -1,0 +1,203 @@
+{
+ "_source": "Эталон зонирования гидроизоляции (этап 296, 2026-11-20): линия-delimiter снята drag'ом UI (инструмент «Зонирование» листа «Гидроизоляция», та же кнопка plannertool_zone_floor — тип записи задаётся листом) в dev-проекте пробой scripts/probes/296-zone-ui.ts; записи на сервер не было. type zone_hydroisolation, plan hydroisolation. Координаты — та же синтетическая комната 10..390 × 10..310, ID — hz1/v1/v2/room1/wall1..4; длина пересчитана по синтетическим координатам. Привязка zone — производное редактора.",
+ "room": {
+  "polygon": [
+   {
+    "x": 390,
+    "y": 10
+   },
+   {
+    "x": 390,
+    "y": 310
+   },
+   {
+    "x": 10,
+    "y": 310
+   },
+   {
+    "x": 10,
+    "y": 10
+   }
+  ],
+  "edges": [
+   {
+    "p1": {
+     "x": 390,
+     "y": 10
+    },
+    "p2": {
+     "x": 390,
+     "y": 310
+    },
+    "c": {
+     "x": 390,
+     "y": 160
+    },
+    "length": 300,
+    "side": "r",
+    "pid": "wall1",
+    "pids": {
+     "wall1": "r"
+    },
+    "parent": "wall",
+    "room_side": "l",
+    "inRoom": 0
+   },
+   {
+    "p1": {
+     "x": 390,
+     "y": 310
+    },
+    "p2": {
+     "x": 10,
+     "y": 310
+    },
+    "c": {
+     "x": 200,
+     "y": 310
+    },
+    "length": 380,
+    "side": "t",
+    "pid": "wall2",
+    "pids": {
+     "wall2": "t"
+    },
+    "parent": "wall",
+    "room_side": "b",
+    "inRoom": 0
+   },
+   {
+    "p1": {
+     "x": 10,
+     "y": 310
+    },
+    "p2": {
+     "x": 10,
+     "y": 10
+    },
+    "c": {
+     "x": 10,
+     "y": 160
+    },
+    "length": 300,
+    "side": "l",
+    "pid": "wall3",
+    "pids": {
+     "wall3": "l"
+    },
+    "parent": "wall",
+    "room_side": "r",
+    "inRoom": 0
+   },
+   {
+    "p1": {
+     "x": 10,
+     "y": 10
+    },
+    "p2": {
+     "x": 390,
+     "y": 10
+    },
+    "c": {
+     "x": 200,
+     "y": 10
+    },
+    "length": 380,
+    "side": "b",
+    "pid": "wall4",
+    "pids": {
+     "wall4": "b"
+    },
+    "parent": "wall",
+    "room_side": "t",
+    "inRoom": 0
+   }
+  ]
+ },
+ "zone_delimiters": {
+  "hz1": {
+   "id": "hz1",
+   "matrix": [
+    [
+     null,
+     {
+      "length": 1
+     }
+    ],
+    [
+     {
+      "length": 1
+     },
+     null
+    ]
+   ],
+   "vertexes": [
+    {
+     "id": "v1",
+     "point": {
+      "x": 198.7,
+      "y": 10
+     },
+     "type": "node",
+     "zone": {
+      "room_id": "room1",
+      "edge": {
+       "p1": {
+        "x": 10,
+        "y": 10
+       },
+       "p2": {
+        "x": 390,
+        "y": 10
+       }
+      },
+      "edge_index": 3,
+      "edge_side": "b",
+      "edge_pid": "wall4",
+      "edge_pids": {
+       "wall4": "b"
+      },
+      "type": "room"
+     }
+    },
+    {
+     "id": "v2",
+     "point": {
+      "x": 10,
+      "y": 159.4
+     },
+     "type": "node",
+     "zone": {
+      "room_id": "room1",
+      "edge": {
+       "p1": {
+        "x": 10,
+        "y": 310
+       },
+       "p2": {
+        "x": 10,
+        "y": 10
+       }
+      },
+      "edge_index": 2,
+      "edge_side": "l",
+      "edge_pid": "wall3",
+      "edge_pids": {
+       "wall3": "l"
+      },
+      "type": "room"
+     }
+    }
+   ],
+   "items": {
+    "v1": "node",
+    "v2": "node"
+   },
+   "type": "zone_hydroisolation",
+   "length": 2.41,
+   "id_room": "room1",
+   "plan": "hydroisolation",
+   "on_size": 1
+  }
+ }
+}

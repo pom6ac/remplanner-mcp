@@ -242,8 +242,11 @@ finish_floor_molding_set / finish_ceiling_molding_set  # плинтусы (на�
 finish_ceiling_niche_add  # закарнизная ниша (PRO; требует потолок не краску/побелку)
 finish_wall_set type=wall_apron|painting_tile|wallpaper_tiles  # фартук и комбинированные (PRO, слои 1+2)
 zone_ceiling_add / zone_ceiling_remove  # линии-разделители зон потолка (PRO): концы
-                          #  на рёбрах комнаты или гранях ригелей, без пересечений
-finish_get               # отделка комнат: пол, потолок, стороны стен, плинтусы, ниши, зоны потолка
+                          #  на рёбрах комнаты или гранях ригелей/закладных, без пересечений
+zone_floor_add / zone_hydroisolation_add / zone_floor_cap_add  # разделители зон
+                          #  пола / гидроизоляции / стяжки (PRO, те же листы): рёбра комнаты,
+                          #  без пересечений своего плана; перечень всех зон — finish_get
+finish_get               # отделка комнат: пол, потолок, стороны стен, плинтусы, ниши, зоны (все типы)
 floor_hole_add            # проем в полу (прямоугольник в комнате, level_holes)
 terrace_add               # терраса (замкнутое кольцо границ terrace_borders) + terrace_fence_add / terrace_column_add
 territory_add             # участок (замкнутое кольцо границ territory_borders)

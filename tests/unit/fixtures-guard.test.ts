@@ -58,6 +58,13 @@ const EDITOR_IDS_FORBIDDEN = new Set<string>([
   // внутренние ID щитка/рейки/модуля/портов заменены на id1… (сквозное обезличивание).
   "ui-ref-shield-empty.json",
   "ui-ref-shield-module.json",
+  // Эталоны зонирования ч.2 (этап 296): сняты в dev-проекте (проба 296-zone-ui),
+  // внутренние ID комнаты/рёбер/делителя/закладной заменены на room1/wall1..4/
+  // fz1|hz1|cz1|zd1/rg1/v1/v2 (сквозное обезличивание).
+  "ui-ref-floorzone-delimiter.json",
+  "ui-ref-hydrozone-delimiter.json",
+  "ui-ref-capzone-delimiter.json",
+  "ui-ref-ceilzone-delimiter-rigel.json",
   // Эталоны «Электрощиток» ч.2 (этап 284): сняты в dev-проекте (пробы
   // 284-wire-matrix/284-bus2), внутренние ID щитка/портов/проводов/шины/коллектора
   // заменены на id1… (сквозное обезличивание).
@@ -85,6 +92,9 @@ const EDITOR_IDS_FORBIDDEN = new Set<string>([
 // Копия EDITOR_ID_RE из scripts/anonymize.ts (импортировать из scripts нельзя:
 // тесты не зависят от scripts).
 export const EDITOR_ID_RE = /^_[a-z0-9]{5}(?:_\d+)?$/;
+// Тот же ID внутри строки (m3 ревью 299): упоминание в свободном тексте
+// (_source, описания) — то же нарушение обезличивания, что и целое значение.
+export const EDITOR_ID_SUB_RE = /\b_[a-z0-9]{5}(?:_\d+)?\b/;
 
 // Ключи, в которых числовое значение выглядит как ID проекта/плана/объекта
 // сайта. Регистронезависимо и с camelCase-вариантами (projectId, planId,
@@ -160,12 +170,13 @@ export function scanFile(file: string, root: unknown): Violation[] {
         if (typeof v === "string" && v.trim() !== "" && isSecretKey(k)) {
           out.push({ file, where: here, what: `секретное значение в поле «${k}» — убрать` });
         }
-        // m1 ревью 159: внутренние ID сайта в ключах и строковых значениях copy.
-        if (
-          editorIdsForbidden &&
-          (EDITOR_ID_RE.test(k) || (typeof v === "string" && EDITOR_ID_RE.test(v)))
-        ) {
+        // m1 ревью 159: внутренние ID сайта в ключах и строковых значениях copy;
+        // m3 ревью 299: и внутри строк (подстрокой), не только целые значения.
+        if (editorIdsForbidden && EDITOR_ID_RE.test(k)) {
           out.push({ file, where: here, what: `внутренний ID сайта «${k}» — заменить (scripts/anonymize.ts)` });
+        }
+        if (editorIdsForbidden && typeof v === "string" && (EDITOR_ID_RE.test(v) || EDITOR_ID_SUB_RE.test(v))) {
+          out.push({ file, where: here, what: `внутренний ID сайта в значении «${here}» — заменить (scripts/anonymize.ts)` });
         }
         walk(v, here);
       }
@@ -348,6 +359,26 @@ test("ревью 159 m1: внутренние ID сайта в ключах и �
 test("ревью 159 m1: ключи вида p1_floor в пяти эталонах не срабатывают", () => {
   assert.deepEqual(
     guardProblems("ui-ref-room.json", JSON.stringify({ _source: SRC, copy: { walls: { w1: { p1_floor: 1, id: "id1" } } } })),
+    [],
+  );
+});
+
+// --- m3 ревью 299: внутренние ID сайта внутри строк (_source и описания) ---
+
+test("ревью 299 m3: внутренний ID сайта внутри строки свободного текста ловится", () => {
+  assertCaught(
+    JSON.stringify({ _source: `живой дамп, записи из 296-ui-etalons-raw.json (_abcde/_fghij)` }),
+    "ID в скобках внутри _source",
+    "ui-ref-ceilzone-delimiter-rigel.json",
+  );
+  assertCaught(
+    JSON.stringify({ _source: SRC, note: "id элемента _f00d0_2 из дампа" }),
+    "ID с числовым суффиксом внутри строки",
+    "ui-ref-room.json",
+  );
+  // составные ключи вида p1_floor и обычные слова не срабатывают
+  assert.deepEqual(
+    guardProblems("ui-ref-room.json", JSON.stringify({ _source: SRC, note: "стена wall1, вершина v1, запись zd1" })),
     [],
   );
 });

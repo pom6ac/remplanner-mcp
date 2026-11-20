@@ -192,11 +192,11 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 | Напольные покрытия | Керамогранит, метлах, мозаика, шестигранная плитка | то же | нет | да | **да** |
 | Напольные покрытия | Подъём пола (меню покрытия) | `floors[i].f0offset` | нет | да | нет |
 | Напольные покрытия | Точка начала укладки (`anchor_floor`) | `floors[i].anchor` | нет | да | **да** |
-| Напольные покрытия | Зонирование пола (`zone_floor`) | `zone_delimiters` `zone_floor` | нет | да | **да** |
+| Напольные покрытия | Зонирование пола (`zone_floor`) | верхнеуровневый `zone_delimiters` `zone_floor`, plan `floor` (этап 296) | **да**: `zone_floor_add/remove` (эталон `ui-ref-floorzone-delimiter`), список — `finish_get`/compact `zone_delimiters` (ZD<n>) | да | **да** |
 | Напольные покрытия | Плинтусы, 7 видов (`floor_molding_*`) | `rooms2[rid].floorMoldings` (этап 245) | **да**: `finish_floor_molding_set/remove` (эталон `ui-ref-finish2-floor-molding`) | да | **да** |
 | Потолки (`ceiling`) | 10 типов (натяжной ПВХ/ткань, покраска, ГКЛ, реечный, рейки, ПВХ-панели, побелка, Армстронг, Грильято) | `rooms2[rid].ceilings[i].type`, `level` (опуск), `profile` | нет | да | нет |
 | Потолки | Двухуровневый потолок (`complex_ceiling`) | `ceilings[i].complex`, `radius`, `offset`, `material2` | нет | да | нет |
-| Потолки | Зонирование потолка (`zone_ceiling`) | верхнеуровневый `zone_delimiters` (граф GraphLines: vertexes/matrix, type zone_ceiling, plan ceiling; per-room `rooms2[rid].delimiters` — legacy, редактор мигрирует при restore; привязка узлов zone — производное редактора) | **да**: `zone_ceiling_add/remove` (эталон `ui-ref-ceilzone-delimiter`), список — `finish_get`/compact `zone_delimiters` (ZD<n>) | да | **да** |
+| Потолки | Зонирование потолка (`zone_ceiling`) | верхнеуровневый `zone_delimiters` (граф GraphLines: vertexes/matrix, type zone_ceiling, plan ceiling; per-room `rooms2[rid].delimiters` — legacy, редактор мигрирует при restore; привязка узлов zone — производное редактора, конец на грани закладной — type `rigel_ceiling`, эталон `ui-ref-ceilzone-delimiter-rigel`) | **да**: `zone_ceiling_add/remove` (эталоны `ui-ref-ceilzone-delimiter`, `ui-ref-ceilzone-delimiter-rigel`), список — `finish_get`/compact `zone_delimiters` (ZD<n>) | да | **да** |
 | Потолки | Закарнизная ниша (`ceiling_niche`), потолочный плинтус (`molding`) | `ceilings[0].niches`, `ceilingMoldings` (этап 245) | **да**: `finish_ceiling_niche_add/remove`, `finish_ceiling_molding_set/remove` (эталоны `ui-ref-finish2-ceiling-*`) | да | **да** |
 | Потолки | Потолочная закладная (`ceiling_rigel`), проём в потолке (`ceiling_hole`) | `rooms2[rid].rigels`, `level_holes` | нет | да | нет |
 | Отделка стен (`walls`) | 11 видов без PRO (обои, покраска, побелка, плитка, мозаика, вагонка, панели, штукатурки) | `rooms2[rid].decors`: `{type, layer, line, line_wall, height, height_from_floor}` | нет | да | нет |
@@ -207,7 +207,7 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 | Пользовательские листы | Добавить лист | `custom_plans` | нет | нет | [проверить] |
 | Развёртки (режим «Стены») | Автоматические развёртки, нумерация стен, «назначить первой», «скрыть стену» | `rooms2[rid].prs_first`, `prs_disabled`, `prs_hidden`, `edges_prs` | нет | да | нет (просмотр); экспорт — PDF, PRO |
 | Развёртки | Молдинги, ниши, профили, линейный свет, точка укладки плитки (`wall_molding`, `wall_niche`, `wall_profile`, `line_light`, `anchor_decor`) | `wall_moldings`, `wall_niches`, `line_strips` (`plan:"projections"`), `decors[].anchor` | нет | да | `line_light` — **да**; остальное [проверить] |
-| Гидроизоляция, изоляция, штукатурка, стяжка | схемы для бригады (вне 4 областей) | `rooms2[rid].hydroisolations`, `isolations`, `plasters*`, `caps` | нет | — | частично |
+| Гидроизоляция, изоляция, штукатурка, стяжка | схемы для бригады (вне 4 областей) | `rooms2[rid].hydroisolations`, `isolations`, `plasters*`, `caps`; зонирование гидроизоляции/стяжки — `zone_delimiters` `zone_hydroisolation` (plan `hydroisolation`) / `zone_floor_cap` (plan `floor_cap`) (этап 296) | **да**: `zone_hydroisolation_add/remove`, `zone_floor_cap_add/remove` (эталоны `ui-ref-hydrozone-delimiter`, `ui-ref-capzone-delimiter`) | — | частично |
 
 ## 5. Сводка по областям
 
