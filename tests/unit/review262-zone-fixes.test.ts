@@ -356,3 +356,45 @@ test("262 №7: list/remove/compact нумеруют одинаково; remove(
   assert.deepEqual(zoneDelimiterList(m), []);
   assert.throws(() => removeZoneCeiling(m, "ZD1"), /не найден/);
 });
+
+// ---------- живой эталон 262: split с перепривязкой конца разделителя ----------
+
+test("262 эталон 262: split — редактор перепривязал конец к новой стене (сдвиг 5 см) — предупреждение, не отказ, в save тоже", () => {
+  // ожидание (нормализованная копия): делитель (1773,100)-(1863,5) в левой части
+  const expDelim = structuredClone(REF_DELIM) as unknown as Record<string, unknown>;
+  (expDelim["vertexes"] as Array<{ point: { x: number; y: number } }>)[0]!.point = { x: 1773, y: 100 };
+  (expDelim["vertexes"] as Array<{ point: { x: number; y: number } }>)[1]!.point = { x: 1863, y: 5 };
+  expDelim["length"] = 1.31;
+  expDelim["id_room"] = "left";
+  const exp = modelLike(
+    {
+      left: { polygon: [{ x: 1863, y: 5 }, { x: 1863, y: 195 }, { x: 1773, y: 195 }, { x: 1773, y: 5 }] },
+      right: { polygon: [{ x: 2063, y: 5 }, { x: 2063, y: 195 }, { x: 1873, y: 195 }, { x: 1873, y: 5 }] },
+    },
+    { zd1: expDelim },
+  );
+  // сервер: конец перепривязан к новой стене, точка сдвинута до (1863,10),
+  // id_room другой (редактор пересоздаёт id комнат)
+  const srvDelim = structuredClone(expDelim);
+  (srvDelim["vertexes"] as Array<{ point: { x: number; y: number } }>)[1]!.point = { x: 1863, y: 10 };
+  srvDelim["id_room"] = "srvLeft";
+  const got = modelLike(
+    {
+      srvLeft: { polygon: [{ x: 1863, y: 5 }, { x: 1863, y: 195 }, { x: 1773, y: 195 }, { x: 1773, y: 5 }] },
+      srvRight: { polygon: [{ x: 2063, y: 5 }, { x: 2063, y: 195 }, { x: 1873, y: 195 }, { x: 1873, y: 5 }] },
+    },
+    { zd1x: srvDelim },
+  );
+  const opts = { affectedRooms: new Set(["left"]) };
+  for (const mode of ["normalize", "save"] as const) {
+    const res = zoneDelimiterCompare(exp, got, mode, opts);
+    assert.deepEqual(res.problems, [], `${mode}: перепривязанный делитель не блокирует`);
+    assert.ok(
+      res.warnings.some((w) => w.includes("zone_topology_changed")),
+      `${mode}: предупреждение о переопределении присутствует`,
+    );
+  }
+  // без затронутости той же расхождение — проблема (мутации ловятся)
+  const strict = zoneDelimiterCompare(exp, got, "save");
+  assert.ok(strict.problems.length > 0, "без affectedRooms сверка строга");
+});

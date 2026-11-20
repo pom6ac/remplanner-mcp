@@ -24,7 +24,7 @@ import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./rend
 import { finishCompare } from "./model/finish.ts";
 import { zoneDelimiterCompare } from "./model/zone.ts";
 import { demolitionMismatches } from "./model/demolition.ts";
-import { roomsSaveCompare, roomsChangePolicy, type RoomsChangePolicy } from "./model/rooms-save.ts";
+import { roomsSaveCompare, roomsChangePolicy, affectedRoomIds, type RoomsChangePolicy } from "./model/rooms-save.ts";
 import { dimsMismatches } from "./model/dims.ts";
 import {
   cableConnectionMismatches,
@@ -623,12 +623,17 @@ export class Workspace {
       }
       // этап 260: разделители зон потолка после нормализации не теряются
       // (сопоставление комнат по контуру; ревью 261 №5: комната, затронутая
-      // изменёнными стенами и исчезнувшая, — штатный случай, предупреждение)
+      // изменёнными стенами и исчезнувшая, — штатный случай, предупреждение;
+      // живой эталон 262: id комнат редактор пересоздаёт при перестройке —
+      // затронутость считается по геометрии комнат ожидания)
+      const zoneAffected = wallPolicy.changedWalls
+        ? affectedRoomIds((this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined, wallPolicy.changedWalls)
+        : undefined;
       const zoneNorm = zoneDelimiterCompare(
         this.modelInternal! as unknown as Record<string, unknown>,
         norm.model as unknown as Record<string, unknown>,
         "normalize",
-        { affectedRooms: wallPolicy.affectedRoomIds },
+        { affectedRooms: zoneAffected },
       );
       warnings.push(...zoneNorm.warnings);
       if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0 || zoneNorm.problems.length > 0) {

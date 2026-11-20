@@ -549,9 +549,12 @@ export type ZoneCompareOpts = {
  * комната — строгая сверка (геометрия, тип, план, длина, on_size, полная
  * проекция графа — ревью 261 №4). Топология (split/merge) в режиме normalize:
  * делитель, переживший разрез/слияние по геометрии середины, — норма; пропажа
- * при смене топологии — проблема; комната, затронутая изменёнными стенами,
- * исчезнувшая при нормализации, — предупреждение с подсказкой (ревью 261 №5);
- * в режиме save — строго (все расхождения — проблемы).
+ * при смене топологии — проблема. Комната, затронутая изменёнными стенами
+ * (ревью 261 №5/№8, живой эталон 262: редактор перепривязывает концы
+ * разделителей к новой стене и пересоздаёт id комнат), — нестрогая:
+ * совпадение по полной проекции или с точностью до магнита — предупреждение,
+ * пропажа — предупреждение с подсказкой; в режиме save сервер не имеет права
+ * терять делитель незатронутой комнаты (строго).
  */
 export function zoneDelimiterCompare(
   expectedModel: Record<string, unknown> | undefined,
@@ -588,6 +591,31 @@ export function zoneDelimiterCompare(
       used.add(found.key);
       continue;
     }
+    // ревью 261 №5/№8, живой эталон 262: комната затронута изменёнными стенами —
+    // редактор вправе переопределить разделитель (живой эталон: конец, попавший
+    // в узел разреза, перепривязывается к новой стене со сдвигом точки до
+    // величины магнита). Разделитель, совпавший по полной проекции, — норма;
+    // совпавший по типу/плану с точностью до магнита, — предупреждение;
+    // отсутствующий — предупреждение с подсказкой. Не блок.
+    if (opts.affectedRooms?.has(e.idRoom)) {
+      const pool = [...gotByRoom.values()].flat().filter((g) => !used.has(g.key));
+      const same = pool.find((g) => sameSig(e, g));
+      if (same) {
+        used.add(same.key);
+        continue;
+      }
+      const shifted = pool.find((g) =>
+        g.type === e.type && g.plan === e.plan &&
+        ((dist(e.p1, g.p1) <= ZONE_LIMITS.edgeSnapCm && dist(e.p2, g.p2) <= ZONE_LIMITS.edgeSnapCm) ||
+          (dist(e.p1, g.p2) <= ZONE_LIMITS.edgeSnapCm && dist(e.p2, g.p1) <= ZONE_LIMITS.edgeSnapCm)));
+      if (shifted) {
+        used.add(shifted.key);
+        warnings.push(`zone_topology_changed: room ${e.idRoom}: редактор переопределил разделитель зон ${e.key} при изменении стен (${e.type}, ${Math.round(e.length * 100)} см → ${Math.round(shifted.length * 100)} см) — проверьте зоны потолка`);
+        continue;
+      }
+      warnings.push(`zone_topology_changed: room ${e.idRoom}: комната изменена стенами, редактор не сохранил разделитель зон ${e.key} (${e.type}, ${Math.round(e.length * 100)} см) — при переносе или удалении стен сначала удалите разделители (zone_ceiling_remove)`);
+      continue;
+    }
     const near = strictList.filter((g) => !used.has(g.key)).find((g) => (samePointTol(e.p1, g.p1) && samePointTol(e.p2, g.p2)) || (samePointTol(e.p1, g.p2) && samePointTol(e.p2, g.p1)));
     if (near) {
       problems.push(`room ${e.idRoom}: разделитель ${e.key} изменился на сервере (${JSON.stringify({ type: e.type, plan: e.plan, length: e.length })} → ${JSON.stringify({ type: near.type, plan: near.plan, length: near.length })})`);
@@ -596,21 +624,6 @@ export function zoneDelimiterCompare(
     }
     // изменившаяся топология — только в normalize (roomHeirs в save пуст)
     const heir = heirOf.get(e.idRoom) ?? null;
-    // ревью 261 №5: комната затронута изменёнными стенами — её исчезновение или
-    // перестройка контура при нормализации штатны (ревью 127): разделитель,
-    // который редактор сохранил (под той же или другой комнатой), — не потеря;
-    // удалённый/перестроенный редактором — предупреждение с подсказкой, не блок
-    if (mode === "normalize" && opts.affectedRooms?.has(e.idRoom)) {
-      const pool = [...gotByRoom.values()].flat().filter((g) => !used.has(g.key));
-      const kept = pool.find((g) => sameSig(e, g)) ??
-        pool.find((g) => (samePointTol(e.p1, g.p1) && samePointTol(e.p2, g.p2)) || (samePointTol(e.p1, g.p2) && samePointTol(e.p2, g.p1)));
-      if (kept) {
-        used.add(kept.key);
-        continue;
-      }
-      warnings.push(`zone_topology_changed: room ${e.idRoom}: комната изменена стенами, редактор не сохранил разделитель зон ${e.key} (${e.type}, ${Math.round(e.length * 100)} см) — при переносе или удалении стен сначала удалите разделители (zone_ceiling_remove)`);
-      continue;
-    }
     if (!heir) {
       problems.push(`room ${e.idRoom}: потерян разделитель зон потолка ${e.key} (${e.type}, ${Math.round(e.length * 100)} см)`);
       continue;
