@@ -1,4 +1,4 @@
-import type { Model, ElecCable, ElecCableVertex, ItemProps, Point } from "./types.ts";
+import type { Model, ElecCable, ElecCableVertex, ItemProps, Point, ElecLinkItem } from "./types.ts";
 import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import type { MmPoint } from "./walls.ts";
@@ -6,7 +6,6 @@ import { McpError } from "../errors.ts";
 import { add, scale, sub } from "./geometry.ts";
 import { gasLineLengthM } from "./pipes.ts";
 import { wallInwardNormal, SOCKET_GROUP_SUBS, parseSwitchVertexId, type SocketGroupSub } from "./electric.ts";
-import type { ElecLinkItem } from "../verify/elec.ts";
 
 /**
  * Кабели-проводка (часть 2, 2026-11-19): лист «Электропроводка» — model.cables_socket

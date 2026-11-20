@@ -1,12 +1,11 @@
 import { ELEC_MULTI_ITEMS, ELEC_CABLE_COLLECTIONS, elecLinkKey, type ElecCableColl } from "../model/electric2.ts";
+import type { ElecLinkItem } from "../model/types.ts";
 import type { GasLineSig } from "./graphs.ts";
 import type { VerificationMismatches } from "./types.ts";
 
-/** Предмет с обратными ссылками на кабели-проводку (props.cables_socket и т.п.). */
-export type ElecLinkItem = {
-  name?: string;
-  socket_group?: Array<{ id?: string; name?: string } & Record<string, unknown>>;
-} & Record<string, unknown>;
+// ревью 269 m6: тип ElecLinkItem живёт в model/types (модель не зависит от
+// verify) — здесь переэкспортируется для существующих импортов verify/save
+export type { ElecLinkItem };
 
 /** Коллекции проводки и их свойства для сверки. */
 const COLLS: readonly ElecCableColl[] = ELEC_CABLE_COLLECTIONS;
