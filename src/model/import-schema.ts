@@ -7,6 +7,7 @@ import {
   MAX_IMPORT_GRAPH_NODES,
   MAX_IMPORT_HOLES_PER_WALL,
   MAX_IMPORT_JSON_DEPTH,
+  MAX_SERVICE_COMMENT_CHARS,
   MODEL_COORD_LIMIT_CM,
   MODEL_SIZE_LIMIT_CM,
 } from "../limits.ts";
@@ -169,14 +170,64 @@ function collection(schema: z.ZodType, max: number): z.ZodType {
   });
 }
 
+/** Порт модуля/ввода щитка (этап 255). */
+const shieldPort = z.looseObject({
+  id: idStr,
+  parent_id: idStr.optional(),
+  parent_type: shortStr.optional(),
+  connected: z.number().finite().min(0).max(1).optional(),
+  type: shortStr.optional(),
+});
+
+/** Модуль на DIN-рейке щитка. */
+const shieldModule = z.looseObject({
+  id: idStr,
+  rail_id: idStr.optional(),
+  index: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  width: cmSize.optional(),
+  type: shortStr.optional(),
+  group_number: z.number().finite().min(0).max(9999).optional(),
+  subtype: shortStr.optional(),
+  comment: z.string().max(MAX_SERVICE_COMMENT_CHARS).optional(),
+  ports: z.array(shieldPort).max(MAX_IMPORT_GRAPH_NODES).optional(),
+});
+
+/** Конструктор электрощитка (этап 255): рейки с модулями, вводы, шины/провода — passthrough. */
+const shield = z.looseObject({
+  id: idStr,
+  shield_id: idStr.optional(),
+  on_auto_length_rails: z.number().finite().min(0).max(1).optional(),
+  length_rails: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  rails: collection(
+    z.looseObject({
+      id: idStr,
+      index: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+      modules: collection(shieldModule, MAX_IMPORT_GRAPH_NODES).optional(),
+    }),
+    MAX_IMPORT_GRAPH_NODES,
+  ).optional(),
+  buses: collection(z.looseObject({ id: idStr }), MAX_IMPORT_GRAPH_NODES).optional(),
+  collectors: collection(z.looseObject({ id: idStr }), MAX_IMPORT_GRAPH_NODES).optional(),
+  inputs: collection(
+    z.looseObject({
+      id: idStr,
+      ports: z.array(shieldPort).max(MAX_IMPORT_GRAPH_NODES).optional(),
+      index: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+      phase: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+    }),
+    MAX_IMPORT_GRAPH_NODES,
+  ).optional(),
+  wires: collection(z.looseObject({ id: idStr }), MAX_IMPORT_GRAPH_NODES).optional(),
+});
+
 /**
  * Граф-коллекции схемы импорта — выводятся из реестра MODEL_ENTITY_COLLECTIONS
  * (ревью 241 №1): у схемы импорта больше нет своего перечня, который отстал от
  * реестра (cables_socket/cables_warm_floor/cables_conditioner проходили импорт
  * без схемы графа и лимитов). Не-графовые коллекции реестра имеют собственные
- * схемы в collectionsSchema() (walls/items/pillars/rigels/rulers/comments).
+ * схемы в collectionsSchema() (walls/items/pillars/rigels/rulers/comments/shields).
  */
-const NON_GRAPH_COLLECTIONS = new Set(["walls", "items", "pillars", "rigels", "rulers", "comments"]);
+const NON_GRAPH_COLLECTIONS = new Set(["walls", "items", "pillars", "rigels", "rulers", "comments", "shields"]);
 
 const GRAPH_COLLECTIONS = MODEL_ENTITY_COLLECTIONS.filter((c) => !NON_GRAPH_COLLECTIONS.has(c));
 
@@ -190,6 +241,7 @@ function collectionsSchema(): Record<string, z.ZodType> {
     rigels: collection(rigel, MAX_IMPORT_ENTITIES).optional(),
     rulers: collection(ruler, MAX_IMPORT_ENTITIES).optional(),
     comments: collection(comment, MAX_IMPORT_ENTITIES).optional(),
+    shields: collection(shield, MAX_IMPORT_ENTITIES).optional(),
   };
   for (const key of GRAPH_COLLECTIONS) out[key] = collection(graphEntity, MAX_IMPORT_ENTITIES).optional();
   return out;

@@ -90,6 +90,7 @@
       "pipe_connection_mismatches",
       "pipe_mismatches",
       "room_mismatches",
+      "shield_mismatches",
       "socket_group_mismatches",
       "stripes_light_mismatches",
       "wall_property_mismatches",

@@ -539,6 +539,96 @@ export type CommentEntity = {
   [key: string]: unknown;
 };
 
+/**
+ * Конструктор электрощитка (лист «Электрощиток», plan_shield, часть 3, 2026-11-20):
+ * model.shields[shield.id] — содержимое щитка, связанное с предметом-щитком по
+ * shield_id (предметы electric_shield | electric_shield_internal | electric_shield_old;
+ * lowcurrent-щитки в конструктор не входят — Item.isElectricShield("power"), бандл
+ * app.3.0). Формат сериализации — эталоны tests/fixtures/ui-ref-shield-*.json
+ * (пробы 255-shield-scout, 255-shield-classes):
+ * - щиток `{id, shield_id, on_auto_length_rails (1 — длина реек авто), length_rails
+ *   (DIN, умолчание 12; пишется только при on_auto_length_rails), rails, buses,
+ *   collectors, inputs, wires}`;
+ * - рейка `{id, index, modules: {moduleId: модуль}}`;
+ * - модуль `{id, rail_id, index (позиция в DIN), width (DIN), type (ключ модуля
+ *   каталога, 35 типов), group_number (номер группы, 0), subtype (номинал, напр.
+ *   "16A"/"16A/30mA"), comment (""), ports: [{id, parent_id, parent_type:"module",
+ *   connected}], custom, point_comment?}` — у портов ввода parent_type "input" и
+ *   type shield_wire_earth|null|phase;
+ * - ввод `{id, ports: [фаза/ноль/земля], index, phase}` — создаётся редактором
+ *   автоматически (Shield.init_inputs).
+ * Связей с группами розеток/линиями в модели нет — только номер группы
+ * (group_number); мастер «Построить автоматически» вычисляет их на клиенте и в
+ * модель не пишет. Провода между модулями (wires), шины (buses) и коллекторы
+ * (collectors) — следующий PR этапа 255; в этом PR MCP их не пишет и операции с
+ * модулями/рейками при непустых проводах/шинах отклоняет (атомарный отказ).
+ * Щиток-предмет без записи в shields редактор дополняет записью по умолчанию
+ * (рейка + ввод) при restore — SHIELDS.restore, бандл app.3.0.
+ */
+export type ShieldPort = {
+  id: string;
+  parent_id: string;
+  parent_type: "module" | "input" | (string & {});
+  connected: number;
+  /** Только у портов ввода: shield_wire_earth | shield_wire_null | shield_wire_phase. */
+  type?: string;
+  [key: string]: unknown;
+};
+
+export type ShieldModule = {
+  id: string;
+  rail_id: string;
+  /** Позиция модуля на рейке в DIN-единицах (сумма ширин предыдущих модулей). */
+  index: number;
+  /** Ширина модуля в DIN (0.5–5, ShieldDimensions.module_types). */
+  width: number;
+  /** Ключ модуля каталога UI (shield_module, shield_module_uzo, …). */
+  type: string;
+  /** Номер группы (подпись модуля), 0 — не задана. */
+  group_number: number;
+  /** Номинал ("16A", "16A/30mA", …) из subtypes типа модуля. */
+  subtype: string;
+  comment: string;
+  ports: ShieldPort[];
+  /** Только у shield_custom_module: {ports, type, label}. */
+  custom?: Record<string, unknown>;
+  /** Точка выноса комментария (после переноса комментария в UI). */
+  point_comment?: unknown;
+  [key: string]: unknown;
+};
+
+export type ShieldRail = {
+  id: string;
+  index: number;
+  in_transition?: boolean;
+  modules: Record<string, ShieldModule>;
+  [key: string]: unknown;
+};
+
+export type ShieldInput = {
+  id: string;
+  ports: ShieldPort[];
+  index: number;
+  phase: number;
+  [key: string]: unknown;
+};
+
+export type Shield = {
+  id: string;
+  /** id предмета-щитка (items[].id). */
+  shield_id: string;
+  /** 1 — длина щитка (length_rails) следует за содержимым. */
+  on_auto_length_rails: number;
+  /** Длина щитка в DIN (умолчание 12; при on_auto_length_rails=1 пересчитывается). */
+  length_rails?: number;
+  rails: Record<string, ShieldRail>;
+  buses: Record<string, unknown>;
+  collectors: Record<string, unknown>;
+  inputs: Record<string, ShieldInput>;
+  wires: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
 export type Model = {
   v: number;
   id: string;
@@ -591,6 +681,8 @@ export type Model = {
   rulers?: Record<string, RulerEntity>;
   /** Текстовые комментарии (кнопка «Текстовый комментарий», PRO в UI); может отсутствовать. */
   comments?: Record<string, CommentEntity>;
+  /** Конструктор электрощитка (лист «Электрощиток»); у старых моделей может отсутствовать. */
+  shields?: Record<string, Shield>;
   total_height: number;
   final: boolean;
   rooms1?: Record<string, unknown>;

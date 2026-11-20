@@ -35,8 +35,9 @@ function baseModel(): Record<string, unknown> {
 }
 
 // Коллекции, у которых своя (не графовая) схема: обязательные и предметы/ригели/
-// линейки/комментарии. Всё остальное в реестре — графы (graphEntity).
-const NON_GRAPH_COLLECTIONS = new Set(["walls", "items", "pillars", "rigels", "rulers", "comments"]);
+// линейки/комментарии/щитки (этап 255 — у shields собственная схема). Всё остальное
+// в реестре — графы (graphEntity).
+const NON_GRAPH_COLLECTIONS = new Set(["walls", "items", "pillars", "rigels", "rulers", "comments", "shields"]);
 
 function garbageEntity(): Record<string, unknown> {
   return { id: "e0", vertexes: "garbage", matrix: 5, items: 7, length: -1 };

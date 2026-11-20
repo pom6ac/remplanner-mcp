@@ -34,6 +34,7 @@ import {
   gasLineGraphMismatches,
   missingIds,
   pipeConnectionMismatches,
+  shieldMismatches,
   socketGroupSubsUserMismatches,
   stripVertexIdRoom,
   WATER_PIPE_TYPES,
@@ -587,6 +588,13 @@ export class Workspace {
       );
       // этап 113: размеры и комментарии после нормализации не теряются и не искажаются
       const dimsNorm = dimsMismatches(this.modelInternal!, norm.model as Record<string, unknown>);
+      // этап 255: щитки после нормализации не теряются; редактор дополняет щиток-предмет
+      // без записи записью по умолчанию (SHIELDS.restore) — авто-запись не потеря
+      const shieldsNorm = shieldMismatches(
+        structuredClone((this.modelInternal!["shields"] ?? {}) as Record<string, never>),
+        ((norm.model as Record<string, unknown>)["shields"] ?? {}) as Record<string, never>,
+        { allowAutoCreate: true },
+      );
       // этап 128 (ревью 127 R1/R2/R4): комнаты до записи сверяются с базой (сервер /
       // последний успешный save) с политикой локальных изменений стен: исчезновение
       // затронутой комнаты и новая комната из изменённых стен — предупреждение,
@@ -611,9 +619,9 @@ export class Workspace {
           details: { room_mismatches: roomsNormCheck.problems },
         });
       }
-      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, пометки демонтажа, размеры/комментарии или сущности климата — мутация отменена`, {
-          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm },
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0) {
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, пометки демонтажа, размеры/комментарии, сущности климата или щитки — мутация отменена`, {
+          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm, shield_mismatches: shieldsNorm },
         });
       }
       // нормализованная копия становится канонической

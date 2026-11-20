@@ -10,6 +10,7 @@ import type { ToolEntry } from "../catalog.ts";
 import { McpError } from "../errors.ts";
 import { pipesReferencingItem, refreshPipeForItem } from "./pipes.ts";
 import { elecCablesReferencingItem, refreshElecCablesForItem } from "./electric2.ts";
+import { deleteShieldsForItem } from "./shield.ts";
 import { detachRulerItemTargets, itemComments, deleteComment, refreshRulersForItem, refreshItemComments } from "./dims.ts";
 import {
   CABLE_LAMP_ITEMS, cablesReferencingItem, refreshCablesForItem, refreshSocketGroupSubs,
@@ -551,7 +552,7 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
 }
 
 /** item_delete: предмет, подключённый к трубе или связи, удаляется только после них. */
-export function deleteItem(model: Model, itemId: string): { detached_rulers: string[]; deleted_comments: string[] } {
+export function deleteItem(model: Model, itemId: string): { detached_rulers: string[]; deleted_comments: string[]; deleted_shields: string[] } {
   if (!model.items[itemId]) throw new McpError("NOT_FOUND", `предмет ${itemId} не найден`);
   const linked = pipesReferencingItem(model, itemId);
   if (linked.length > 0) {
@@ -582,13 +583,17 @@ export function deleteItem(model: Model, itemId: string): { detached_rulers: str
     );
   }
   delete model.items[itemId];
+  // этап 255: конструктор щитка привязан по shields[].shield_id — записи щитка
+  // удаляются каскадно (редактор удаляет щитки демонтированных предметов),
+  // иначе висячая ссылка shield_id на удалённый предмет
+  const shields = deleteShieldsForItem(model, itemId);
   // этап 113: привязки размеров к предмету снимаются (геометрия размеров
   // сохраняется; редактор оставил бы висячую привязку — проба 113-fixtures),
   // комментарий предмета (label "item") удаляется каскадно
   const detached = detachRulerItemTargets(model, itemId);
   const comments = itemComments(model, itemId);
   for (const c of comments) deleteComment(model, c.id);
-  return { detached_rulers: detached, deleted_comments: comments.map((c) => c.id) };
+  return { detached_rulers: detached, deleted_comments: comments.map((c) => c.id), deleted_shields: shields };
 }
 
 /** items_list (опционально по комнате-точке). */

@@ -1,4 +1,4 @@
-import type { Cable, ElecCable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip, WarmFloor } from "./types.ts";
+import type { Cable, ElecCable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip, WarmFloor, Shield } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
 import { roomPolygons, type RoomPolygon } from "./rooms.ts";
 import { holeOffsetFromStart } from "./openings.ts";
@@ -269,6 +269,36 @@ export type CompactBorder = {
   to: [number, number];
 };
 
+/** Модуль щитка в компактном виде (этап 255). */
+export type CompactShieldModule = {
+  /** id модуля (id сайта) — для shield_module_update/delete. */
+  module_id: string;
+  /** Индекс рейки (0-based). */
+  rail: number;
+  /** Позиция на рейке, DIN. */
+  index: number;
+  /** Ширина, DIN. */
+  width_din: number;
+  type: string;
+  subtype: string;
+  group_number?: number;
+  comment?: string;
+};
+
+/** Конструктор электрощитка (лист «Электрощиток», этап 255). */
+export type CompactShield = {
+  id: string;
+  site_id: string;
+  /** id предмета-щитка (связь shields[].shield_id). */
+  item: string;
+  /** Длина щитка, DIN. */
+  length_rails_din: number;
+  /** Число DIN-реек. */
+  rails: number;
+  /** Модули по рейкам (порядок: рейка, позиция). */
+  modules: CompactShieldModule[];
+};
+
 export type CompactModel = {
   walls: CompactWall[];
   rooms: CompactRoom[];
@@ -287,6 +317,7 @@ export type CompactModel = {
   cables_socket: CompactElecCable[];
   cables_warm_floor: CompactElecCable[];
   cables_conditioner: CompactElecCable[];
+  shields: CompactShield[];
   warm_floors: CompactWarmFloor[];
   pipes_warm_floor: CompactPipe[];
   pipes_conditioner: CompactPipe[];
@@ -602,6 +633,35 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       };
     });
 
+  // конструктор электрощитка (этап 255): метки SH
+  const compactShields = (src: Record<string, Shield> | undefined): CompactShield[] =>
+    Object.values(src ?? {}).map((shield, i) => {
+      const rails = Object.values(shield.rails ?? {}).sort((a, b) => a.index - b.index);
+      const modules: CompactShieldModule[] = [];
+      for (const [railIdx, rail] of rails.entries()) {
+        for (const mod of Object.values(rail.modules ?? {}).sort((a, b) => a.index - b.index)) {
+          modules.push({
+            module_id: mod.id,
+            rail: railIdx,
+            index: mod.index,
+            width_din: mod.width,
+            type: mod.type,
+            subtype: mod.subtype,
+            ...(mod.group_number ? { group_number: mod.group_number } : {}),
+            ...(mod.comment ? { comment: mod.comment } : {}),
+          });
+        }
+      }
+      return {
+        id: `SH${i + 1}`,
+        site_id: shield.id,
+        item: shield.shield_id,
+        length_rails_din: shield.length_rails ?? 12,
+        rails: rails.length,
+        modules,
+      };
+    });
+
   // контуры тёплого пола (этап 122): метки WF
   const compactWarmFloors = (src: Record<string, WarmFloor> | undefined): CompactWarmFloor[] =>
     Object.values(src ?? {}).map((wf, i) => {
@@ -658,6 +718,7 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     cables_socket: compactElecCables(model.cables_socket, "CS"),
     cables_warm_floor: compactElecCables(model.cables_warm_floor, "CW"),
     cables_conditioner: compactElecCables(model.cables_conditioner, "CC"),
+    shields: compactShields(model.shields),
     warm_floors: compactWarmFloors(model.warm_floors),
     pipes_warm_floor: compactClimatePipes(model.pipes_warm_floor, "PW"),
     pipes_conditioner: compactClimatePipes(model.pipes_conditioner, "PC"),

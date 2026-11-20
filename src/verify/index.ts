@@ -15,6 +15,7 @@ export { itemVerificationMismatches, type ItemSig } from "./items.ts";
 export { socketGroupSubsUserMismatches, socketGroupSubsDerivedMismatches, type SubsItemSig } from "./sockets.ts";
 export { cableConnectionMismatches, cableLinkFormMismatches, type CableLinkItem, type CableLinkLines } from "./cables.ts";
 export { elecCableConnectionMismatches, type ElecLinkItem } from "./elec.ts";
+export { shieldMismatches, isDefaultEmptyShield } from "./shields.ts";
 export type { ElecCableColl } from "../model/electric2.ts";
 export { wallAxisCoveredBy, wallRoleMismatches, balconyWallPropertyMismatches, type BalconyWallProps } from "./walls.ts";
 export { pipeConnectionMismatches, type PipeLinkItem, ALL_PIPE_TYPES, WATER_PIPE_KEYS, WATER_PIPE_TYPES } from "./pipes.ts";
