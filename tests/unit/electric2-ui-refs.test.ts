@@ -84,11 +84,11 @@ test("239: состав раздела — 31 тип кабелей cables_socke
   assert.deepEqual(ELEC_CABLE_TOOLS.cables_conditioner, ["conditioner_wire"]);
 });
 
-test("239: ключи обратных ссылок — cable_<тип>_id / cable_warm_floor_id / cable_conditioner_id", () => {
+test("239: ключи обратных ссылок — cable_<тип>_id / cable_warm_floor_id / conditioner_cable_id (250)", () => {
   assert.equal(elecLinkKey("cables_socket", "wire_3_25"), "cable_wire_3_25_id");
   assert.equal(elecLinkKey("cables_socket", "wire_tv"), "cable_wire_tv_id");
   assert.equal(elecLinkKey("cables_warm_floor", "warm_floor_wire"), "cable_warm_floor_id");
-  assert.equal(elecLinkKey("cables_conditioner", "conditioner_wire"), "cable_conditioner_id");
+  assert.equal(elecLinkKey("cables_conditioner", "conditioner_wire"), "conditioner_cable_id");
 });
 
 test("239: multi-предметы — щитки и коробки; electrospot — розетки и выводы; ленты — CABLE_LINE_ITEMS", () => {
@@ -574,12 +574,12 @@ test("ревью 241 №8: cable_add выключатель → лента ≅ �
   assert.equal(line.props?.cables?.cable_id, cable.id, "обратная ссылка линии — скаляр");
 });
 
-test("ревью 241 №8: ui-ref-elec2-conditioner — синтетический эталон (живьём не снят), структура и items = id вершин", () => {
+test("ревью 241 №8 → 250: ui-ref-elec2-conditioner — живой эталон, вершины electrospot (кондиционеры)", () => {
   const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-elec2-conditioner.json"), "utf8")) as { _source: string; model_object: ElecCable };
-  // помечено синтетическим в _source — живой пробы нет, подключаемые предметы
-  // кондиционера не сняты (открытый вопрос)
-  assert.match(fx._source, /Синтетический эталон/);
+  // снят вживую (проба 250-climate2-connect4): вершины-предметы electrospot с point = pc
+  assert.match(fx._source, /250-climate2-connect4/);
   const ref = fx.model_object;
   assert.deepEqual(ref.items, Object.fromEntries(ref.vertexes.map((v) => [v.id, v.type])), "ключи items = id вершин");
   assert.equal(ref.type, "conditioner_wire");
+  for (const v of ref.vertexes) assert.equal(v.type, "electrospot", "блоки кондиционера — electrospot, не multi");
 });

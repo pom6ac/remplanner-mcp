@@ -156,6 +156,28 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 | Электропроводка | Узел (`electrospot_node`) | вершина графа | да: `item_add` (часть 2) | да | нет |
 | Электрощиток (`shield`) | 43 модуля: DIN-рейки, автоматы, УЗО, шины, провода, «Построить автоматически» | `shields[shield_id]` (рейки, шины, модули, провода) | нет | да | **да** (старшие тарифы, по анонсу) |
 
+### 4.3b Климат (тёплый пол, кондиционеры, вентиляция, радиаторы)
+
+Этап 122 (ядро) и этап 250 (подключения). Листы «Тёплые полы», «Кондиционеры»,
+«Вентиляция», «Радиаторы»; подробности — [remplanner-features.md](remplanner-features.md) §7.10.
+
+| Лист | Инструмент UI (ключ) | Сущность и поля модели | MCP | Эталон | PRO |
+|---|---|---|---|---|---|
+| Тёплые полы | Кабельный/ИК/водяной контур (`warm_floor`, `warm_floor_ir`, `warm_floor_water`) | `warm_floors` — граф-кольцо (polygon, matrix 4×4, length/area, id_room, props; у водяного step/type_water/direction/length_pipes) | **да**: `warm_floor_add`/`warm_floor_update`/`warm_floor_delete` | да (`ui-ref-climate-wf-*`) | водяной **да** |
+| Тёплые полы | Терморегулятор (`socket_thermo`) | `items` (socket_group, план `{warm_floor:11}`, h 90) | **да**: `item_add` | да | нет |
+| Тёплые полы | Соединительный провод (`warm_floor_wire`) | `cables_warm_floor` — вершина терморегулятора `"<id>\|s\|<sub>"` type socket_thermo; к контуру — type warm_floor с pp на полигоне | частично: `wiring_add kind=warm_floor_wire` (терморегулятор); связь с контуром — следующий PR | да (`ui-ref-elec2-warm-floor`) | **да** |
+| Тёплые полы | Соединительные магистрали (`warm_floor_pipe`) | `pipes_warm_floor` — граф; вершины-коллекторы type "collector", водяной контур type "warm_floor" (point polygon[0], ссылка в props контура) | **да**: `pipe_add kind=warm_floor` (узлы, коллекторы, контур) | да (`ui-ref-climate2-warm-floor-pipe-contour`) | **да** |
+| Тёплые полы | Кабельная тёплая стена (`warm_wall_cable`) | тёплая стена — декоративные линии warms_walls в rooms2 + кабель | нет — следующий PR | нет | [проверить] |
+| Кондиционеры | Внутренний/внешний блок, напольный, завеса (`conditioner`, `conditioner_engine`, `floor_conditioner`, `air_curtain`) | `items` (у стены, over_floor из каталога) | **да**: `item_add` | да (`ui-ref-climate-*`) | нет |
+| Кондиционеры | Трасса (`conditioner_wire`) | `cables_conditioner` — вершины electrospot (point = pc), ссылка `props.cables_conditioner.conditioner_cable_id` | **да**: `wiring_add kind=conditioner_wire` (климат ч.2: кондиционер ↔ внешний блок) | да (`ui-ref-elec2-conditioner`, живой) | **да** |
+| Кондиционеры | Дренаж (`conditioner_drainage`) | `pipes_conditioner` — граф; вершины блоков кондиционера type "waterspot", ссылка `props.pipes_conditioner.drainage_pipe_id` | **да**: `pipe_add kind=conditioner_drainage` (климат ч.2) | да (`ui-ref-climate2-conditioner-drainage`) | **да** |
+| Вентиляция | Вентиляторы (free) | `items` | **да**: `item_add` | да | нет |
+| Вентиляция | Решётки/диффузоры/вентустановка (PRO) | `items` — клик в dev-проекте не создал объект (2 попытки, этап 122) | нет | нет | **да** |
+| Вентиляция | Воздуховоды (`ventpipe_out`, `ventpipe_in`) | `pipes_ventilation` — граф с сечением рёбер (width/type/height) и spots {}; вершины вентиляторов/установки, ссылка `props.pipes_ventilation.ventpipe_*_id` | **да**: `pipe_add kind=vent_out/vent_in` (климат ч.2) | да (`ui-ref-climate2-vent-pipe-fan`) | **да** |
+| Радиаторы | 9 радиаторов/конвекторов | `items` (у стены) | **да**: `item_add` | да | нет |
+| Радиаторы | Магистрали отопления (`heat_pipe_hot`, `heat_pipe_cold`) | `pipes_heat` — граф; вершины радиаторов type "waterspot" (point = pc), ссылки `props.pipes_heat.heat_pipe_hot_id/heat_pipe_cold_id`; коллекторы multi | **да**: `pipe_add kind=heat_hot/heat_cold` (климат ч.2: радиатор к подаче и обратке) | да (`ui-ref-climate2-heat-pipe`) | **да** |
+| Тёплые полы | Коллекторные узлы (группа меню) | `items` (`radiator_collector`, `ext_manifold_box`, `int_manifold_box` — multi) | нет (item_add не поддержан) | нет | **да** |
+
 ### 4.4 Отделка, размеры, подписи, развёртки
 
 | Лист | Инструмент UI (ключ) | Сущность и поля модели | MCP | Эталон | PRO |

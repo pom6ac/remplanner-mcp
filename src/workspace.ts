@@ -36,7 +36,7 @@ import {
   pipeConnectionMismatches,
   socketGroupSubsUserMismatches,
   stripVertexIdRoom,
-  WATER_PIPE_KEYS,
+  WATER_PIPE_TYPES,
   type CableLinkItem,
   type CableLinkLines,
   type ElecLinkItem,
@@ -451,7 +451,7 @@ export class Workspace {
         this.modelInternal!.items as Record<string, PipeLinkItem>,
         normPipes as Record<string, GasLineSig>,
         (norm.model as { items?: Record<string, PipeLinkItem> }).items ?? {},
-        { onlyKeys: WATER_PIPE_KEYS },
+        { onlyTypes: WATER_PIPE_TYPES },
       );
       if (lostPipesNorm.length > 0 || pipesGraphNorm.length > 0 || pipeConnNorm.length > 0) {
         throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил трубы водоснабжения — мутация отменена`, {

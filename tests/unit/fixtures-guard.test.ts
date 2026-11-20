@@ -48,6 +48,12 @@ const EDITOR_IDS_FORBIDDEN = new Set<string>([
   "ui-ref-finish2-ceiling-niche.json",
   "ui-ref-finish2-floor-molding.json",
   "ui-ref-finish2-wall-layers.json",
+  // Эталоны «Климат» ч.2 (этап 250): сняты в dev-проекте (пробы 250-connect*),
+  // внутренние ID предмета/контура/вершин заменены на id1–id8.
+  "ui-ref-climate2-heat-pipe.json",
+  "ui-ref-climate2-conditioner-drainage.json",
+  "ui-ref-climate2-warm-floor-pipe-contour.json",
+  "ui-ref-climate2-vent-pipe-fan.json",
 ]);
 
 // Внутренний ID сайта: подчёркивание + 5 символов, опционально суффикс _<число>.

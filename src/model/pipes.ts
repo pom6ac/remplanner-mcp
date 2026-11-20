@@ -26,8 +26,16 @@ import { dist } from "./geometry.ts";
  * воздуховоды (лист «Вентиляция» → ventpipe_out/ventpipe_in, model.pipes_ventilation —
  * у них дописывается spots {}). Формат — тот же граф GraphLines (пробы 122-dev-*:
  * serialize без plan, длина в метрах по рёбрам). Все виды — PRO-инструменты UI.
- * Подключения предметов (радиатор к магистрали, кондиционер к дренажу) — следующий PR:
- * в этом этапе у новых видов только узлы.
+ * Подключения предметов (климат ч.2, этап 250, пробы 250-connect*): вершина-предмет —
+ * {id: item.id, point: pc, type по классу линии PipeHeat/PipeConditioner/PipeWarnFloor/
+ * PipeVentilation (waterspot/multi/collector/warm_floor)}, обратная ссылка —
+ * props.<коллекция>.<ключ> (name_object_lines менеджера = имя коллекции;
+ * у водоснабжения box «pipes»), ключи — names_line_id_by_tool (см.
+ * PIPE_LINK_KEY_BY_TYPE). У магистралей тёплого пола вершина может быть водяным
+ * контуром (warm_floor_water, model.warm_floors): point = polygon[0], type
+ * "warm_floor", обратная ссылка в props контура. pp редактора ({i, d} — точка
+ * подключения на габарите предмета, проба 250-connect-heat) не воспроизводится:
+ * правило выбора грани зависит от точки захвата мышью при рисовании.
  */
 
 export type ClimatePipeKind = "warm_floor" | "conditioner_drainage" | "heat_hot" | "heat_cold" | "vent_out" | "vent_in";
@@ -41,6 +49,97 @@ export const CLIMATE_PIPE_KINDS: Record<ClimatePipeKind, { type: string; coll: s
   vent_out: { type: "ventpipe_out", coll: "pipes_ventilation" },
   vent_in: { type: "ventpipe_in", coll: "pipes_ventilation" },
 };
+
+/**
+ * Ключ обратной ссылки предмета по типу трубы — names_line_id_by_tool менеджеров
+ * редактора (бандл app.3.0, пробы 250-connect*): у водоснабжения props.pipes,
+ * у климата props.<коллекция>. Отсутствующий тип — прежнее правило `${type}_id`.
+ */
+export const PIPE_LINK_KEY_BY_TYPE: Record<string, string> = {
+  water_pipe: "water_pipe_id",
+  water_hot_pipe: "water_hot_pipe_id",
+  drainage_pipe: "drainage_pipe_id",
+  heat_pipe_hot: "heat_pipe_hot_id",
+  heat_pipe_cold: "heat_pipe_cold_id",
+  conditioner_drainage: "drainage_pipe_id",
+  warm_floor_pipe: "pipe_warm_floor_id",
+  ventpipe_out: "ventpipe_out_id",
+  ventpipe_in: "ventpipe_in_id",
+};
+
+/** Ключ обратной ссылки предмета на трубу (water_pipe_id, drainage_pipe_id, …). */
+export function pipeLinkKey(pipeType: string): string {
+  return PIPE_LINK_KEY_BY_TYPE[pipeType] ?? `${pipeType}_id`;
+}
+
+/** Имя бокса обратных ссылок предмета для коллекции труб (props.<box>): у
+ *  водоснабжения — «pipes», у климата — имя коллекции (name_object_lines). */
+export function pipeLinkBoxOfColl(coll: string): string {
+  return coll === "pipes" ? "pipes" : coll;
+}
+
+/** Коллекции-боксы обратных ссылок труб в props предмета (для сверок). */
+export const PIPE_LINK_BOXES = ["pipes", "pipes_heat", "pipes_conditioner", "pipes_warm_floor", "pipes_ventilation"] as const;
+
+/**
+ * Подключаемые предметы труб климата — source_items менеджеров (бандл app.3.0,
+ * пробы 250-connect*): у магистралей отопления — радиаторы и конвекторы
+ * (radiator_*), коллекторные узлы (multi), старый радиатор; у дренажа — блоки
+ * кондиционеров и канализационные выводы/стояки; у магистралей тёплого пола —
+ * коллекторные узлы (multi) и сам водяной контур (warm_floor_water,
+ * model.warm_floors); у воздуховодов — вентиляторы, установки, клапаны.
+ */
+export const CLIMATE_PIPE_CONNECTABLE: Record<ClimatePipeKind, Set<string>> = {
+  warm_floor: new Set(["radiator_collector", "ext_manifold_box", "int_manifold_box", "warm_floor_water"]),
+  conditioner_drainage: new Set([
+    "conditioner", "floor_conditioner", "duct_indoor_block", "cassette_indoor_block", "breezer",
+    "water", "drainage_column", "waterspot_drainage", "waterspot_drainage_cold",
+    "waterspot_drainage_hot", "waterspot_drainage_cold_hot", "waterspot_collector",
+  ]),
+  heat_hot: new Set([
+    "radiator_bimetal", "radiator_steel", "radiator_iron", "radiator_tubular_vert", "radiator_tubular_horizontal",
+    "vertical_radiator", "floor_convector", "convector_on_floor", "radiator_collector", "ext_manifold_box",
+    "int_manifold_box", "radiator_old",
+  ]),
+  heat_cold: new Set([
+    "radiator_bimetal", "radiator_steel", "radiator_iron", "radiator_tubular_vert", "radiator_tubular_horizontal",
+    "vertical_radiator", "floor_convector", "convector_on_floor", "radiator_collector", "ext_manifold_box",
+    "int_manifold_box", "radiator_old",
+  ]),
+  vent_out: new Set(["air", "duct_indoor_block", "inflow_valve", "ventilation_system", "fan", "fan_wall", "ventHole"]),
+  vent_in: new Set(["air", "duct_indoor_block", "inflow_valve", "ventilation_system", "fan", "fan_wall", "ventHole"]),
+};
+
+/** multi-предметы труб климата (is_multi менеджеров): ссылка-МАССИВ id труб. */
+export const CLIMATE_PIPE_MULTI_NAMES = new Set(["radiator_collector", "ext_manifold_box", "int_manifold_box", "ventilation_system"]);
+
+/**
+ * Сечение рёбер матрицы воздуховодов (ревью 251 №2): редактор пишет в каждое
+ * ребро сечение из defs.ventilation_pipe — {length, width: 20.4, type "flat",
+ * height: 6} (эталон ui-ref-climate2-vent-pipe-fan, проба 250-climate2-connect).
+ * MCP воспроизводит формат, чтобы воздуховод из MCP не отличался от нарисованного
+ * в UI и потеря сечения у воздуховода редактора ловилась сверкой.
+ */
+export const VENT_PIPE_EDGE_SECTION = { width: 20.4, type: "flat", height: 6 } as const;
+
+/** Все multi-предметы труб (вода + климат): массив vs скаляр в props. */
+export function isMultiPipeItem(itemName: string): boolean {
+  return PIPE_MULTI_SPOTS.has(itemName) || CLIMATE_PIPE_MULTI_NAMES.has(itemName);
+}
+
+/** Тип вершины трубы климата по классу линии редактора (getTypeItem):
+ *  warm_floor_pipe — "collector" у коллекторных узлов, "warm_floor" у контура,
+ *  иначе "waterspot"; heat/vent — multi-предмет "multi", иначе "waterspot";
+ *  дренаж — всегда "waterspot". */
+export function climatePipeVertexType(kind: ClimatePipeKind, itemName: string): string {
+  if (kind === "warm_floor") {
+    if (itemName === "warm_floor_water") return "warm_floor";
+    if (CLIMATE_PIPE_MULTI_NAMES.has(itemName)) return "collector";
+    return "waterspot";
+  }
+  if (kind === "conditioner_drainage") return "waterspot";
+  return CLIMATE_PIPE_MULTI_NAMES.has(itemName) ? "multi" : "waterspot";
+}
 
 /** Все коллекции-графы труб (порядок = порядок меток в компактном API). */
 export const PIPE_COLLECTIONS = ["pipes", "pipes_warm_floor", "pipes_conditioner", "pipes_heat", "pipes_ventilation"] as const;
@@ -200,11 +299,6 @@ export const PIPE_TYPE_BY_KIND: Record<PipeKind, "water_pipe" | "water_hot_pipe"
   drainage: "drainage_pipe",
 };
 
-/** Обратная ссылка предмета: props.pipes[`${type}_id`] = id трубы (multi — массив). */
-export function pipeLinkKey(pipeType: string): string {
-  return `${pipeType}_id`;
-}
-
 /**
  * Какие предметы подключаются к трубе (класс Piping редактора, бандл app.3.0,
  * source_items/waterspots): у water_pipe — холодные выводы, коллектор, стояк water,
@@ -283,13 +377,30 @@ function validatePipePath(path: PipePathElement[]): void {
 
 /** Тип вершины и точка предмета-вывода с проверкой подключаемости к трубе. */
 function itemVertex(model: Model, kind: PipeKind | ClimatePipeKind, itemId: string): GasLineVertex {
+  const isClimate = kind in CLIMATE_PIPE_KINDS;
+  // водяной контур тёплого пола — вершина магистрали warm_floor_pipe (проба
+  // 250-connect3-wfpipe): id контура, point = polygon[0], type "warm_floor"
+  if (!isClimate || kind !== "warm_floor") {
+    // обычный предмет ниже
+  } else {
+    const wf = model.warm_floors?.[itemId];
+    if (wf) {
+      if (wf.type !== "warm_floor_water") {
+        throw new McpError(
+          "INVALID_ARGUMENT",
+          `контур ${wf.id} (${wf.type}) не подключается к магистрали тёплого пола — в редакторе к ней подключается только водяной контур`,
+          { details: { kind: "not_connectable", item: wf.type, pipe: "warm_floor_pipe" } },
+        );
+      }
+      const p0 = wf.polygon[0] ?? { x: 0, y: 0 };
+      return { id: wf.id, point: { ...p0 }, type: "warm_floor" };
+    }
+  }
   const item = model.items?.[itemId] as ItemProps | undefined;
   if (!item) throw new McpError("NOT_FOUND", `предмет ${itemId} не найден`);
-  const connectable = kind in CLIMATE_PIPE_KINDS
-    ? new Set<string>()
-    : PIPE_CONNECTABLE[kind as PipeKind]!;
+  const connectable = isClimate ? CLIMATE_PIPE_CONNECTABLE[kind as ClimatePipeKind]! : PIPE_CONNECTABLE[kind as PipeKind]!;
   if (!connectable.has(item.name)) {
-    const pipeType = kind in CLIMATE_PIPE_KINDS
+    const pipeType = isClimate
       ? CLIMATE_PIPE_KINDS[kind as ClimatePipeKind]!.type
       : PIPE_TYPE_BY_KIND[kind as PipeKind]!;
     throw new McpError(
@@ -298,44 +409,69 @@ function itemVertex(model: Model, kind: PipeKind | ClimatePipeKind, itemId: stri
       { details: { kind: "not_connectable", item: item.name, pipe: pipeType } },
     );
   }
-  const pipeType = kind in CLIMATE_PIPE_KINDS
-    ? CLIMATE_PIPE_KINDS[kind as ClimatePipeKind]!.type
-    : PIPE_TYPE_BY_KIND[kind as PipeKind]!;
-  return { id: item.id, point: { ...item.pc }, type: pipeVertexType(item.name) };
+  return {
+    id: item.id,
+    point: { ...item.pc },
+    type: isClimate ? climatePipeVertexType(kind as ClimatePipeKind, item.name) : pipeVertexType(item.name),
+  };
 }
 
-/** Карта обратных ссылок items → pipes для трубы (запись). */
-function linkItems(model: Model, pipe: Pipe, kind: PipeKind): void {
-  const key = pipeLinkKey(PIPE_TYPE_BY_KIND[kind]);
+/** Холдер обратных ссылок вершины-предмета: предмет или водяной контур (props). */
+type PipeLinkHolder = { box: Record<string, unknown>; multi: boolean };
+
+function linkHolderOf(model: Model, vertex: GasLineVertex, coll: string): PipeLinkHolder | null {
+  const box = pipeLinkBoxOfColl(coll);
+  if (vertex.type === "warm_floor") {
+    const wf = model.warm_floors?.[vertex.id];
+    if (!wf) return null;
+    const props = (wf.props ??= { id: wf.id, name: wf.type });
+    props[box] ??= {};
+    return { box: props[box] as Record<string, unknown>, multi: false };
+  }
+  const item = model.items[vertex.id] as (ItemProps & Record<string, unknown>) | undefined;
+  if (!item) return null;
+  item[box] ??= {};
+  return { box: item[box] as Record<string, unknown>, multi: isMultiPipeItem(item.name) };
+}
+
+/** Записать обратные ссылки вершины-предметов трубы (props.<box>[ключ]). */
+function linkItems(model: Model, pipe: Pipe, kind: PipeKind | ClimatePipeKind, coll: string): void {
+  const key = pipeLinkKey(pipe.type);
   for (const v of pipe.vertexes) {
     if (v.type === "node") continue;
-    const item = model.items[v.id] as (ItemProps & { pipes?: Record<string, unknown> }) | undefined;
-    if (!item) continue;
-    item.pipes ??= {};
-    if (PIPE_MULTI_SPOTS.has(item.name)) {
-      const arr = Array.isArray(item.pipes[key]) ? (item.pipes[key] as string[]) : [];
+    const holder = linkHolderOf(model, v, coll);
+    if (!holder) continue;
+    if (holder.multi) {
+      const arr = Array.isArray(holder.box[key]) ? (holder.box[key] as string[]) : [];
       if (!arr.includes(pipe.id)) arr.push(pipe.id);
-      item.pipes[key] = arr;
+      holder.box[key] = arr;
     } else {
-      item.pipes[key] = pipe.id;
+      holder.box[key] = pipe.id;
     }
   }
 }
 
-/** Снять обратные ссылки items для трубы (удаление/переподключение). */
-export function unlinkItems(model: Model, pipe: Pipe): void {
+/** Снять обратные ссылки вершины-предметов трубы (удаление/переподключение). */
+export function unlinkItems(model: Model, pipe: Pipe, coll: string): void {
   const key = pipeLinkKey(pipe.type);
+  const box = pipeLinkBoxOfColl(coll);
   for (const v of pipe.vertexes) {
     if (v.type === "node") continue;
-    const item = model.items[v.id] as (ItemProps & { pipes?: Record<string, unknown> }) | undefined;
-    if (!item?.pipes) continue;
-    const cur = item.pipes[key];
+    if (v.type === "warm_floor") {
+      const wf = model.warm_floors?.[v.id];
+      const propsBox = wf?.props?.[box] as Record<string, unknown> | undefined;
+      if (propsBox && propsBox[key] === pipe.id) delete propsBox[key];
+      continue;
+    }
+    const item = model.items[v.id] as (ItemProps & Record<string, unknown>) | undefined;
+    if (!item) continue;
+    const cur = (item[box] as Record<string, unknown> | undefined)?.[key];
     if (Array.isArray(cur)) {
       const arr = cur.filter((x) => x !== pipe.id);
-      if (arr.length > 0) item.pipes[key] = arr;
-      else delete item.pipes[key];
+      if (arr.length > 0) (item[box] as Record<string, unknown>)[key] = arr;
+      else delete (item[box] as Record<string, unknown>)[key];
     } else if (cur === pipe.id) {
-      delete item.pipes[key];
+      delete (item[box] as Record<string, unknown>)[key];
     }
   }
 }
@@ -371,17 +507,21 @@ function chainVertices(model: Model, kind: PipeKind | ClimatePipeKind, path: Pip
 
 function pipeCandidate(id: string, kind: PipeKind | ClimatePipeKind, vertexes: GasLineVertex[]): Pipe {
   const n = vertexes.length;
-  const matrix: ({ length: number } | null)[][] = Array.from({ length: n }, () => Array.from({ length: n }, () => null));
-  for (let i = 0; i + 1 < n; i++) {
-    matrix[i]![i + 1] = { length: 1 };
-    matrix[i + 1]![i] = { length: 1 };
-  }
-  const items: Record<string, string> = {};
-  for (const v of vertexes) items[v.id] = v.type;
   const isClimate = kind in CLIMATE_PIPE_KINDS;
   const type = isClimate
     ? CLIMATE_PIPE_KINDS[kind as ClimatePipeKind]!.type
     : PIPE_TYPE_BY_KIND[kind as PipeKind]!;
+  // ревью 251 №2: у воздуховодов ребро несёт сечение из defs.ventilation_pipe
+  const edge: { length: number } & Record<string, unknown> = type === "ventpipe_out" || type === "ventpipe_in"
+    ? { length: 1, ...VENT_PIPE_EDGE_SECTION }
+    : { length: 1 };
+  const matrix: ({ length: number } | null)[][] = Array.from({ length: n }, () => Array.from({ length: n }, () => null));
+  for (let i = 0; i + 1 < n; i++) {
+    matrix[i]![i + 1] = { ...edge };
+    matrix[i + 1]![i] = { ...edge };
+  }
+  const items: Record<string, string> = {};
+  for (const v of vertexes) items[v.id] = v.type;
   const pipe: Pipe = {
     id,
     matrix,
@@ -421,17 +561,32 @@ export function findPipe(model: Model, pipeId: string): { coll: PipeCollKey; pip
 
 /**
  * Скалярное подключение занято? (ревью 79 №1): у обычного (не multi) вывода
- * props.pipes[`${type}_id`] — одна труба. Вторая труба того же вида не может
+ * props.<box>[ключ] — одна труба. Вторая труба того же вида не может
  * подключиться: обратная ссылка перезаписалась бы, а старая труба осталась бы
- * подключённой без ссылки. Проверка до любых мутаций.
+ * подключённой без ссылки. У водяного контура (warm_floor) ссылка тоже скалярная.
+ * Проверка до любых мутаций.
  */
-function assertScalarSlotsFree(model: Model, kind: PipeKind, vertexes: GasLineVertex[]): void {
-  const key = pipeLinkKey(PIPE_TYPE_BY_KIND[kind]);
+function assertScalarSlotsFree(model: Model, kind: PipeKind | ClimatePipeKind, coll: string, vertexes: GasLineVertex[]): void {
+  const isClimate = kind in CLIMATE_PIPE_KINDS;
+  const key = pipeLinkKey(isClimate ? CLIMATE_PIPE_KINDS[kind as ClimatePipeKind]!.type : PIPE_TYPE_BY_KIND[kind as PipeKind]!);
+  const box = pipeLinkBoxOfColl(coll);
   for (const v of vertexes) {
     if (v.type === "node") continue;
-    const item = model.items[v.id] as (ItemProps & { pipes?: Record<string, unknown> }) | undefined;
-    if (!item || PIPE_MULTI_SPOTS.has(item.name)) continue;
-    const cur = item.pipes?.[key];
+    if (v.type === "warm_floor") {
+      const wf = model.warm_floors?.[v.id];
+      const cur = (wf?.props?.[box] as Record<string, unknown> | undefined)?.[key];
+      if (typeof cur === "string" && cur !== "") {
+        throw new McpError(
+          "INVALID_ARGUMENT",
+          `водяной контур ${v.id} уже подключён к магистрали ${cur} — у контура одно подключение; сначала удалите её (pipe_delete)`,
+          { details: { kind: "already_connected", item: v.id, pipe: cur } },
+        );
+      }
+      continue;
+    }
+    const item = model.items[v.id] as (ItemProps & Record<string, unknown>) | undefined;
+    if (!item || isMultiPipeItem(item.name)) continue;
+    const cur = (item[box] as Record<string, unknown> | undefined)?.[key];
     if (typeof cur === "string" && cur !== "") {
       throw new McpError(
         "INVALID_ARGUMENT",
@@ -444,32 +599,39 @@ function assertScalarSlotsFree(model: Model, kind: PipeKind, vertexes: GasLineVe
 
 /**
  * pipe_add: труба по пути из узлов ({x, y}, мм) и предметов ({item_id}: выводы воды,
- * стояки, ввод водоснабжения — см. PIPE_CONNECTABLE). Виды: water/hot/drainage
- * (коллекция model.pipes) и climate-виды (warm_floor, conditioner_drainage, heat_hot,
- * heat_cold, vent_out, vent_in — свои коллекции CLIMATE_PIPE_KINDS; только узлы).
- * Цепочка: соседние элементы пути соединяются ребром. У предметов-вершин ставится
- * обратная ссылка props.pipes[`${type}_id`]. Повторное скалярное подключение того
- * же вида отклоняется (ревью 79 №1). Кандидат-копия до записи; при ошибке
- * модель не меняется.
+ * стояки, ввод водоснабжения — PIPE_CONNECTABLE; радиаторы/конвекторы у магистралей
+ * отопления, блоки кондиционеров у дренажа, коллекторные узлы и водяной контур
+ * ({item_id: "<id контура>"}) у магистралей тёплого пола, вентиляторы и установки
+ * у воздуховодов — CLIMATE_PIPE_CONNECTABLE). Виды: water/hot/drainage
+ * (коллекция model.pipes, box props.pipes) и climate-виды (свои коллекции
+ * CLIMATE_PIPE_KINDS, box props.<коллекция>). Цепочка: соседние элементы пути
+ * соединяются ребром. У вершин-предметов ставится обратная ссылка
+ * props.<box>[ключ вида]; повторное скалярное подключение того же вида
+ * отклоняется (ревью 79 №1). Кандидат-копия до записи; при ошибке модель не меняется.
  */
 export function addPipe(model: Model, params: { kind: PipeKind | ClimatePipeKind; path: PipePathElement[] }): Pipe {
   const kind = params.kind;
   const coll = pipeCollOfKind(kind);
   validatePipePath(params.path ?? []);
   const vertexes = chainVertices(model, kind, params.path ?? []);
-  if (coll === "pipes") assertScalarSlotsFree(model, kind as PipeKind, vertexes);
+  assertScalarSlotsFree(model, kind, coll, vertexes);
   const candidate = pipeCandidate(newId(10), kind, vertexes);
   const had = model[coll] !== undefined;
   const backupPipes = had ? structuredClone(model[coll]) : undefined;
   const backupItems = structuredClone(model.items);
+  const backupWarmFloors = structuredClone(model.warm_floors);
   (model as Record<string, unknown>)[coll] ??= {};
   try {
     (model[coll] as Record<string, Pipe>)[candidate.id] = candidate;
-    if (coll === "pipes") linkItems(model, candidate, kind as PipeKind);
+    linkItems(model, candidate, kind, coll);
   } catch (e) {
     if (backupPipes) (model as Record<string, unknown>)[coll] = backupPipes;
     else delete (model as Record<string, unknown>)[coll];
     model.items = backupItems;
+    if (backupWarmFloors !== undefined || model.warm_floors !== undefined) {
+      if (backupWarmFloors) model.warm_floors = backupWarmFloors;
+      else delete model.warm_floors;
+    }
     throw e;
   }
   return candidate;
@@ -526,15 +688,31 @@ export function pipesReferencingItem(model: Model, itemId: string): Pipe[] {
 }
 
 /**
- * pipe_delete: труба удаляется (из своей коллекции), обратные ссылки props.pipes
- * у её предметов снимаются. Сам предмет (вывод воды, стояк) не удаляется —
- * item_delete отклоняет предметы, подключённые к трубам (сначала pipe_delete,
- * затем item_delete).
+ * Держатели обратных ссылок труб для сверки: предметы (props.<box>) плюс водяные
+ * контуры тёплого пола (вершина-контур магистрали: name = type контура, боксы —
+ * из props контура). Проекция для pipeConnectionMismatches.
+ */
+export function pipeLinkHolders(model: Model): Record<string, Record<string, unknown>> {
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [id, item] of Object.entries(model.items ?? {})) {
+    out[id] = item as Record<string, unknown>;
+  }
+  for (const wf of Object.values(model.warm_floors ?? {})) {
+    out[wf.id] = { ...(wf.props ?? {}), name: wf.type };
+  }
+  return out;
+}
+
+/**
+ * pipe_delete: труба удаляется (из своей коллекции), обратные ссылки
+ * props.<box> у её предметов/контура снимаются. Сам предмет (вывод воды, стояк,
+ * радиатор) не удаляется — item_delete отклоняет предметы, подключённые к трубам
+ * (сначала pipe_delete, затем item_delete).
  */
 export function deletePipe(model: Model, pipeId: string): void {
   const found = findPipe(model, pipeId);
   if (!found) throw new McpError("NOT_FOUND", `труба ${pipeId} не найдена`);
-  unlinkItems(model, found.pipe);
+  unlinkItems(model, found.pipe, found.coll);
   const coll = found.coll as string;
   delete (model[coll] as Record<string, Pipe>)[pipeId];
 }
@@ -553,4 +731,28 @@ export function refreshPipeForItem(model: Model, itemId: string, itemPc: Point):
       if (changed) pipe.length = gasLineLengthM(pipe);
     }
   }
+}
+
+/**
+ * Пересчитать вершины-контуры магистралей тёплого пола после переноса водяного
+ * контура (warm_floor_update): point вершины = новый polygon[0] контура, длина
+ * пересчитывается по рёбрам. Вызывается из updateWarmFloor только при реальном
+ * изменении угла (пересчёт только затронутых привязок).
+ */
+export function refreshPipesForWarmFloor(model: Model, warmFloorId: string, polygon0: Point): boolean {
+  let any = false;
+  for (const pipe of Object.values(pipeColl(model, "pipes_warm_floor"))) {
+    let changed = false;
+    for (const v of pipe.vertexes) {
+      if (v.id === warmFloorId && v.type === "warm_floor") {
+        v.point = { ...polygon0 };
+        changed = true;
+      }
+    }
+    if (changed) {
+      pipe.length = gasLineLengthM(pipe);
+      any = true;
+    }
+  }
+  return any;
 }

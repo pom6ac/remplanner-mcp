@@ -1060,7 +1060,23 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
 - **MCP** (этап 122): warm_floor_add/warm_floor_update/warm_floor_delete (мм;
   один контур на комнату — INVALID_ARGUMENT при повторном), item_add для предметов
   раздела, pipe_add kind=warm_floor|conditioner_drainage|heat_hot|heat_cold|
-  vent_out|vent_in (только узлы; подключения предметов — следующий PR);
-  компактный API — метки WF/PW/PC/PH/PV. Сверки при нормализации и после save:
-  контуры — polygon/кольцо/узлы/площадь/шаг (climate_mismatches), трубы климата —
-  общий слой газовых графов.
+  vent_out|vent_in; компактный API — метки WF/PW/PC/PH/PV. Сверки при нормализации
+  и после save: контуры — polygon/кольцо/узлы/площадь/шаг (climate_mismatches),
+  трубы климата — общий слой газовых графов.
+- **MCP, климат ч.2** (этап 250; пробы 250-connect*): подключения предметов к трубам
+  климата — радиаторы/конвекторы → `heat_pipe_hot`/`heat_pipe_cold` (радиатор
+  подключается к подаче и обратке; повторное того же вида — INVALID_ARGUMENT),
+  блоки кондиционеров → `conditioner_drainage`, коллекторные узлы (multi,
+  тип вершины `collector`) и водяной контур → `warm_floor_pipe` (вершина
+  type "warm_floor", point = polygon[0], ссылка в props контура;
+  warm_floor_update пересчитывает вершины-контуры; warm_floor_delete с
+  магистралью — INVALID_ARGUMENT), вентиляторы/установка → воздуховоды.
+  Обратные ссылки — `props.<коллекция>` с ключами `names_line_id_by_tool`
+  (`heat_pipe_hot_id`, `drainage_pipe_id`, `pipe_warm_floor_id`,
+  `ventpipe_*_id`); multi-предметы — массив. pp вершин-предметов (точка
+  подключения на габарите, {i, d} по ребру полигона предмета) MCP не
+  воспроизводит — правило выбора грани зависит от точки захвата мышью; длина
+  магистралей редактор считает от точки подключения — сверка по допустимому
+  диапазону габаритов. Трасса кондиционера: `wiring_add kind=conditioner_wire`
+  подключает блоки кондиционера; ключ ссылки — `conditioner_cable_id`
+  (не `cable_conditioner_id` — поправлено в ч.2, эталон заменён живым).

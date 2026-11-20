@@ -1,10 +1,24 @@
 import type { Model, WarmFloor } from "../model/types.ts";
 import { warmFloorMismatches } from "../model/climate.ts";
-import { CLIMATE_PIPE_KINDS, pipeLinkKey } from "../model/pipes.ts";
+import { CLIMATE_PIPE_KINDS, PIPE_LINK_KEY_BY_TYPE } from "../model/pipes.ts";
 import { gasLineGraphMismatches, type GasLineSig } from "./graphs.ts";
 import { pipeConnectionMismatches, type PipeLinkItem } from "./pipes.ts";
 import { missingIds } from "./ids.ts";
 import type { VerificationMismatches } from "./types.ts";
+
+/** Геометрия предметов-вершин для мягкой сверки длины (pc/width/height/angle, см). */
+type ItemGeom = Record<string, { pc?: { x: number; y: number }; width?: number; height?: number; angle?: number }>;
+
+function itemGeomOf(items: Record<string, unknown> | undefined): ItemGeom {
+  const out: ItemGeom = {};
+  for (const [id, it] of Object.entries(items ?? {})) {
+    const rec = it as { pc?: { x: number; y: number }; width?: number; height?: number; angle?: number };
+    if (rec && typeof rec === "object" && rec.pc && typeof rec.width === "number" && typeof rec.height === "number") {
+      out[id] = { pc: rec.pc, width: rec.width, height: rec.height, angle: rec.angle };
+    }
+  }
+  return out;
+}
 
 /**
  * Сверка сущностей климата (этап 122): контуры тёплого пола (model.warm_floors —
@@ -39,11 +53,18 @@ export function climateGraphMismatches(
     out.push(`контуры тёплого пола: потеряны ${JSON.stringify(wfLost)}; расхождения ${JSON.stringify(wfMism)}`);
   }
   const climateColls = ["pipes_warm_floor", "pipes_conditioner", "pipes_heat", "pipes_ventilation"] as const;
+  // мягкая сверка вершин-предметов: редактор считает длину магистралей от точки
+  // подключения на габарите (пробы 250-connect-heat), поэтому локальная точка
+  // (центр предмета) отличается от расчётной длины. Но точка вершины-предмета
+  // ХРАНИТСЯ как pc предмета (эталоны ui-ref-climate2-*: point = pc, pp — отдельное
+  // производное поле) — ревью 251 №6: сверяем point с pc факта (itemPointMatchesPc),
+  // длину — допустимым диапазоном
+  const geom = itemGeomOf(opts.itemsGot ?? opts.itemsExpected);
   for (const coll of climateColls) {
     const ws = structuredClone((local as Record<string, unknown>)[coll] ?? {}) as Record<string, GasLineSig>;
     const normColl = ((norm as Record<string, unknown>)[coll] ?? {}) as Record<string, unknown>;
     const lost = missingIds(new Set(Object.keys(ws)), new Set(Object.keys(normColl)));
-    const graphNorm = gasLineGraphMismatches(structuredClone(ws), normColl, "труба климата");
+    const graphNorm = gasLineGraphMismatches(structuredClone(ws), normColl, "труба климата", true, geom, { itemPointMatchesPc: true });
     if (lost.length > 0 || graphNorm.length > 0) {
       out.push(`${coll}: потеряны ${JSON.stringify(lost)}; расхождения ${JSON.stringify(graphNorm)}`);
     }
@@ -54,13 +75,23 @@ export function climateGraphMismatches(
       for (const coll of climateColls) Object.assign(merged, (src[coll] ?? {}) as Record<string, GasLineSig>);
       return merged;
     };
-    const onlyKeys = new Set(Object.values(CLIMATE_PIPE_KINDS).map((c) => pipeLinkKey(c.type)));
+    const onlyTypes = new Set(Object.values(CLIMATE_PIPE_KINDS).map((c) => c.type));
+    // держатели ссылок: предметы плюс водяные контуры (вершина-контур магистрали
+    // хранит обратную ссылку в props контура — climate ч.2)
+    const holdersExpected = { ...opts.itemsExpected } as Record<string, PipeLinkItem>;
+    for (const wf of Object.values((local as Model).warm_floors ?? {})) {
+      holdersExpected[wf.id] = { ...(wf.props ?? {}), name: wf.type };
+    }
+    const holdersGot = { ...opts.itemsGot } as Record<string, PipeLinkItem>;
+    for (const wf of Object.values(((norm as Record<string, unknown>).warm_floors ?? {}) as Record<string, WarmFloor>)) {
+      holdersGot[wf.id] = { ...(wf.props ?? {}), name: wf.type };
+    }
     const conn = pipeConnectionMismatches(
       mergeColls(local as unknown as Record<string, unknown>),
-      opts.itemsExpected,
+      holdersExpected,
       mergeColls(norm),
-      opts.itemsGot,
-      { onlyKeys },
+      holdersGot,
+      { onlyTypes },
     );
     if (conn.length > 0) out.push(`подключения труб климата: ${JSON.stringify(conn)}`);
   }

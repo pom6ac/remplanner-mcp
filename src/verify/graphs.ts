@@ -142,7 +142,7 @@ export function gasLineGraphMismatches(
   entityLabel = "газовая линия",
   lenientItemVertices = false,
   itemGeom?: Record<string, { pc?: Point; width?: number; height?: number; angle?: number }>,
-  opts: { skipLength?: boolean } = {},
+  opts: { skipLength?: boolean; itemPointMatchesPc?: boolean } = {},
 ): VerificationMismatches {
   const out: string[] = [];
   const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
@@ -193,6 +193,16 @@ export function gasLineGraphMismatches(
       if (!loosePoint && (!near(s.point?.x, e.point?.x, GAS_VERTEX_TOL_CM) || !near(s.point?.y, e.point?.y, GAS_VERTEX_TOL_CM))) {
         out.push(`${id}: узел ${i} сместился (на сервере ${s.point?.x},${s.point?.y}; ожидалось ${e.point?.x},${e.point?.y})`);
       }
+      // ревью 251 №6: точка вершины-предмета на сервере обязана совпадать с pc
+      // предмета (эталоны редактора подтверждают point = pc, pp — отдельное поле
+      // точки подключения): мягкий режим снимает сравнение с ОЖИДАНИЕМ, но не
+      // подмену точки относительно геометрии факта
+      if (opts.itemPointMatchesPc && loosePoint) {
+        const g = typeof s.id === "string" ? itemGeom?.[s.id] : undefined;
+        if (g?.pc && (!near(s.point?.x, g.pc.x, GAS_VERTEX_TOL_CM) || !near(s.point?.y, g.pc.y, GAS_VERTEX_TOL_CM))) {
+          out.push(`${id}: точка вершины-предмета ${s.id} не совпадает с pc предмета (на сервере ${s.point?.x},${s.point?.y}; pc ${g.pc.x},${g.pc.y})`);
+        }
+      }
       for (const [k, v] of Object.entries(e)) {
         if (k === "id" || k === "point" || k === "type") continue;
         const sVal = (s as Record<string, unknown>)[k];
@@ -221,11 +231,22 @@ export function gasLineGraphMismatches(
         if ((e0 !== null) !== (e !== null)) {
           out.push(`${id}: ребро ${i}–${j} ${e0 !== null ? "потеряно" : "добавлено"} на сервере (matrix изменилась)`);
         } else if (e0 !== null && e !== null) {
-          const l0 = (e0 as { length?: number }).length;
-          const l = (e as { length?: number }).length;
-          // matrix length — константа-заглушка {length:1} формата редактора (реальная
-          // длина только в line.length), сверяется как раньше — строго
-          if (!near(l, l0, GAS_LENGTH_TOL_M)) out.push(`${id}: длина ребра ${i}–${j} изменилась (на сервере ${l}; ожидалось ${l0})`);
+          // ревью 251 №2: payload ребра сверяется ЦЕЛИКОМ, по ключам обеих сторон:
+          // у воздуховодов ребро несёт сечение из defs.ventilation_pipe
+          // ({length, width, type, height}) — потеря/искажение сечения у
+          // воздуховода редактора раньше проходило сверку (сравнивался только length).
+          const samePayload = deepEqualTol(e0, e, GAS_LENGTH_TOL_M) && deepEqualTol(e, e0, GAS_LENGTH_TOL_M);
+          if (!samePayload) {
+            const l0 = (e0 as { length?: number }).length;
+            const l = (e as { length?: number }).length;
+            if (!near(l, l0, GAS_LENGTH_TOL_M)) {
+              // matrix length — константа-заглушка {length:1} формата редактора (реальная
+              // длина только в line.length), сверяется как раньше — строго
+              out.push(`${id}: длина ребра ${i}–${j} изменилась (на сервере ${l}; ожидалось ${l0})`);
+            } else {
+              out.push(`${id}: payload ребра ${i}–${j} изменился (на сервере ${JSON.stringify(e)}; ожидалось ${JSON.stringify(e0)})`);
+            }
+          }
         }
       }
     }

@@ -1,0 +1,168 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, проба 250-climate2-connect3, КЛИК БЕЗ СОХРАНЕНИЯ): магистраль тёплого пола warm_floor_pipe, протянутая от угла водяного контура warm_floor_water; model project.copy(\"server\"); id контура/вершин обезличены (id1–id6), ID проекта/плана обезличены, координаты синтетические (габарит 79.1×79.1 и смещение узла сохранены). Вершина-контур: {id: id контура, point: polygon[0], type: \"warm_floor\"}, pp — точка подключения на ребре полигона контура ({i: индекс ребра, d: относительное расстояние}). Обратная ссылка хранится в props КОНТУРА (props.pipes_warm_floor.pipe_warm_floor_id), не у предмета. Длина магистрали — от polygon[0] до узла.",
+ "warm_floor_object": {
+  "id": "id1",
+  "polygon": [
+   {
+    "x": 100,
+    "y": 100
+   },
+   {
+    "x": 179.1,
+    "y": 100
+   },
+   {
+    "x": 179.1,
+    "y": 179.1
+   },
+   {
+    "x": 100,
+    "y": 179.1
+   }
+  ],
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    },
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null,
+    {
+     "length": 1
+    },
+    null
+   ],
+   [
+    null,
+    {
+     "length": 1
+    },
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null,
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "id4",
+    "point": {
+     "x": 100,
+     "y": 100
+    },
+    "type": "node"
+   },
+   {
+    "id": "id5",
+    "point": {
+     "x": 179.1,
+     "y": 100
+    },
+    "type": "node"
+   },
+   {
+    "id": "id6",
+    "point": {
+     "x": 179.1,
+     "y": 179.1
+    },
+    "type": "node"
+   },
+   {
+    "id": "id7",
+    "point": {
+     "x": 100,
+     "y": 179.1
+    },
+    "type": "node"
+   }
+  ],
+  "items": {
+   "id4": "node",
+   "id5": "node",
+   "id6": "node",
+   "id7": "node"
+  },
+  "type": "warm_floor_water",
+  "length": 3.16,
+  "id_room": "id8",
+  "props": {
+   "id": "id1",
+   "name": "warm_floor_water",
+   "pipes_warm_floor": {
+    "pipe_warm_floor_id": "id2"
+   }
+  },
+  "area": 0.63,
+  "step": 10,
+  "type_water": "spiral",
+  "direction": "right",
+  "length_pipes": 6.18
+ },
+ "model_object": {
+  "id": "id2",
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "id1",
+    "point": {
+     "x": 100,
+     "y": 100
+    },
+    "type": "warm_floor",
+    "pp": {
+     "id3": {
+      "i": 3,
+      "d": 1
+     }
+    }
+   },
+   {
+    "id": "id3",
+    "point": {
+     "x": 38.9,
+     "y": 59.25
+    },
+    "type": "node"
+   }
+  ],
+  "items": {
+   "id1": "warm_floor",
+   "id3": "node"
+  },
+  "type": "warm_floor_pipe",
+  "length": 0.73
+ }
+}

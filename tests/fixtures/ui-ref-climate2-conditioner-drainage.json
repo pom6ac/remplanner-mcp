@@ -1,0 +1,57 @@
+{
+ "_source": "клик по UI dev-проекта (headless Chromium, проба 250-climate2-connect4, КЛИК БЕЗ СОХРАНЕНИЯ): дренаж кондиционера conditioner_drainage от внутреннего блока conditioner; model project.copy(\"server\"); id предмета/вершин обезличены (id1–id3), ID проекта/плана обезличены, координаты синтетические (смещение 100.93 см сохранено). Обратная ссылка в props.pipes_conditioner с ключом drainage_pipe_id (names_line_id_by_tool менеджера) — тем же ключом, что у канализации водоснабжения, но в своём боксе. Длина дренажа — от центра предмета (pc) до узла.",
+ "model_object": {
+  "id": "id2",
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "id1",
+    "point": {
+     "x": 100.93,
+     "y": 100
+    },
+    "type": "waterspot"
+   },
+   {
+    "id": "id3",
+    "point": {
+     "x": 0,
+     "y": 100
+    },
+    "type": "node"
+   }
+  ],
+  "items": {
+   "id1": "waterspot",
+   "id3": "node"
+  },
+  "type": "conditioner_drainage",
+  "length": 1.01
+ },
+ "item_props": {
+  "name": "conditioner",
+  "pc": {
+   "x": 100.93,
+   "y": 100
+  },
+  "width": 75,
+  "height": 25,
+  "angle": -90,
+  "pipes_conditioner": {
+   "drainage_pipe_id": "id2"
+  }
+ }
+}

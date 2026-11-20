@@ -41,8 +41,13 @@ export const ELEC_CABLE_TOOLS: Record<ElecCableColl, readonly string[]> = {
   cables_conditioner: ["conditioner_wire"],
 };
 
-/** Ключ обратной ссылки предмета для кабеля (cable_wire_3_25_id / cable_warm_floor_id). */
+/**
+ * Ключ обратной ссылки предмета для кабеля (cable_wire_3_25_id / cable_warm_floor_id /
+ * conditioner_cable_id — names_line_id_by_tool менеджеров, проба 250-connect4:
+ * у трассы кондиционера редактор использует conditioner_cable_id, не cable_conditioner_id).
+ */
 export function elecLinkKey(coll: ElecCableColl, cableType: string): string {
+  if (coll === "cables_conditioner") return "conditioner_cable_id";
   return `cable_${coll === "cables_socket" ? cableType : coll.replace("cables_", "")}_id`;
 }
 
@@ -73,6 +78,18 @@ export const ELEC_WIRE_ITEMS = new Set([
 /** Под-розетка-терморегулятор (лист «Тёплые полы») — вершина кабеля warm_floor_wire. */
 export const ELEC_THERMO_SUBS = new Set(["socket_thermo"]);
 
+/**
+ * Предметы кондиционера, подключаемые кабелем conditioner_wire (source_items
+ * CablingConditioner, бандл app.3.0; проба 250-connect4): внутренние/внешние блоки,
+ * напольный кондиционер, канальные/кассетные блоки, клапан, бризер, рекуператор.
+ * Вершина — type "electrospot", point = pc предмета (у трассы кондиционера нет
+ * сдвига «7 см от грани» — get_point возвращает props.pc, проба 250-connect4).
+ */
+export const ELEC_CONDITIONER_ITEMS = new Set([
+  "conditioner", "conditioner_engine", "external_block_multisplit", "floor_conditioner",
+  "duct_indoor_block", "cassette_indoor_block", "inflow_valve", "breezer", "recuperator",
+]);
+
 /** Предметы, подключаемые к кабелю коллекции (электрощиток, коробки, розетки, выводы). */
 export function elecConnectable(coll: ElecCableColl, item: ItemProps): boolean {
   if (ELEC_MULTI_ITEMS.has(item.name)) return true;
@@ -87,14 +104,19 @@ export function elecConnectable(coll: ElecCableColl, item: ItemProps): boolean {
     return item.name === "socket_group" && Array.isArray(subs)
       && subs.some((s) => ELEC_THERMO_SUBS.has(s.name));
   }
-  // cables_conditioner: подключаемые предметы кондиционера в пробы не сняты —
-  // только узлы и multi-предметы (открытый вопрос отчёта)
-  return false;
+  // cables_conditioner: блоки кондиционера, клапан, бризер, рекуператор (проба 250-connect4)
+  return ELEC_CONDITIONER_ITEMS.has(item.name);
 }
 
-/** Точка вершины вывода/под-розетки: center под-розетки или 7 см от грани стены (пробы 239-elec2). */
-export function elecVertexPoint(model: Model, item: ItemProps, sub?: SocketGroupSub): Point {
+/**
+ * Точка вершины вывода/под-розетки (одно правило для создания связи и пересчёта
+ * после item_update): у под-розетки — её center; у трассы кондиционера — pc
+ * предмета (без сдвига); у вывода проводки — 7 см от грани стены
+ * (пробы 239-elec2, 250-connect4).
+ */
+export function elecVertexPoint(model: Model, item: ItemProps, sub?: SocketGroupSub, coll?: ElecCableColl): Point {
   if (sub?.center) return { ...sub.center };
+  if (coll === "cables_conditioner" && !sub) return { ...item.pc };
   if (!item.id_wall) return { ...item.pc };
   const wall = model.walls[item.id_wall];
   if (!wall) return { ...item.pc };
@@ -115,9 +137,15 @@ function itemVertex(model: Model, coll: ElecCableColl, itemId: string): ElecVert
   const item = model.items?.[itemId] as ItemProps | undefined;
   if (!item) throw new McpError("NOT_FOUND", `предмет ${itemId} не найден`);
   if (!elecConnectable(coll, item)) {
+    // ревью 253 Н2: текст зависит от коллекции — у conditioner_wire один набор
+    // выводов (блоки кондиционера, клапан, бризер, рекуператор, щиток),
+    // у остальных кабелей — щиток, коробки, розетки, выводы проводов
+    const outputs = coll === "cables_conditioner"
+      ? "блоки кондиционера, клапан, бризер, рекуператор, щиток"
+      : "щиток, коробки, розетки, выводы проводов";
     throw new McpError(
       "INVALID_ARGUMENT",
-      `предмет «${item.name}» не подключается к кабелю этой проводки (в редакторе у кабеля другие выводы: щиток, коробки, розетки, выводы проводов)`,
+      `предмет «${item.name}» не подключается к кабелю этой проводки (в редакторе у кабеля другие выводы: ${outputs})`,
       { details: { kind: "not_connectable", item: item.name } },
     );
   }
@@ -128,10 +156,10 @@ function itemVertex(model: Model, coll: ElecCableColl, itemId: string): ElecVert
   const sub = Array.isArray(subs) ? subs.find((s) => coll === "cables_socket" ? SOCKET_GROUP_SUBS.has(s.name) : ELEC_THERMO_SUBS.has(s.name)) : undefined;
   if (sub) {
     const type = coll === "cables_socket" ? "electrospot" : sub.name;
-    return { kind: "electrospot", itemId, subId: sub.id, vertex: { id: `${item.id}|s|${sub.id}`, point: elecVertexPoint(model, item, sub), type } };
+    return { kind: "electrospot", itemId, subId: sub.id, vertex: { id: `${item.id}|s|${sub.id}`, point: elecVertexPoint(model, item, sub, coll), type } };
   }
-  // самостоятельный вывод провода
-  return { kind: "electrospot", itemId, vertex: { id: item.id, point: elecVertexPoint(model, item), type: "electrospot" } };
+  // самостоятельный вывод провода / блок кондиционера
+  return { kind: "electrospot", itemId, vertex: { id: item.id, point: elecVertexPoint(model, item, undefined, coll), type: "electrospot" } };
 }
 
 /** Существующая ссылка предмета/под-розетки на кабели этого вида (скаляр или массив). */
@@ -442,7 +470,7 @@ export function refreshElecCablesForItem(model: Model, itemId: string): void {
         }
         const subs = item.socket_group as SocketGroupSub[] | undefined;
         const sub = subId && Array.isArray(subs) ? subs.find((s) => s.id === subId) : undefined;
-        const pt = sub ? elecVertexPoint(model, item, sub) : elecVertexPoint(model, item);
+        const pt = sub ? elecVertexPoint(model, item, sub, coll) : elecVertexPoint(model, item, undefined, coll);
         v.point = pt;
         changed = true;
       }

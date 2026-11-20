@@ -36,6 +36,33 @@ export function modelIsContentEmpty(model: Model): boolean {
   return true;
 }
 
+/**
+ * Ревью 251 №3 (регрессия против 58a382d): модели, записанные PR #36 (этап 239),
+ * хранят обратную ссылку трассы кондиционера под ключом cable_conditioner_id;
+ * редактор (проба 250-connect4, эталон ui-ref-elec2-conditioner) —
+ * conditioner_cable_id. Legacy-ключ при чтении мигрируется (скаляр и массив —
+ * по форме предмета, включая под-розетки групп), иначе модель PR #36 не проходит
+ * сверку подключений при каждом save.
+ */
+function migrateLegacyConditionerCable(model: Model): void {
+  const rename = (holder: Record<string, unknown> | undefined): void => {
+    const box = holder?.["cables_conditioner"] as Record<string, unknown> | undefined;
+    if (!box || typeof box !== "object") return;
+    if ("cable_conditioner_id" in box) {
+      if (box["conditioner_cable_id"] === undefined) box["conditioner_cable_id"] = box["cable_conditioner_id"];
+      delete box["cable_conditioner_id"];
+    }
+  };
+  for (const item of Object.values(model.items ?? {})) {
+    const rec = item as unknown as Record<string, unknown>;
+    rename(rec);
+    if (!Array.isArray(rec.socket_group)) continue;
+    for (const sub of rec.socket_group as unknown[]) {
+      if (sub && typeof sub === "object") rename(sub as Record<string, unknown>);
+    }
+  }
+}
+
 /** Сырая модель редактора/сервера → каноническая модель: гарантированные
  *  коллекции и holes: {} у стен без проёмов. */
 export function toModel(raw: Record<string, unknown>): Model {
@@ -50,6 +77,7 @@ export function toModel(raw: Record<string, unknown>): Model {
   for (const w of Object.values(model.walls)) {
     w.holes ??= {};
   }
+  migrateLegacyConditionerCable(model);
   return model;
 }
 

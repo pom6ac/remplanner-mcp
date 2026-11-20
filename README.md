@@ -203,12 +203,16 @@ item_add socket/light_switch + cable_add      # электрика: розетк
 item_add electric_shield/electric_box/wire     # электрика ч.2: щитки и коробки (у стены), выводы проводов,
                           #  узел electrospot_node (листы «Розетки»/«Электропроводка», PRO)
 wiring_add / wiring_update / wiring_delete     # кабели-проводка (лист «Электропроводка», PRO): path — узлы и
-                          #  предметы (щиток, коробки, розетки, выводы); kind: wire_2_05…wire_5_100,
+                          #  предметы (щиток, коробки, розетки, выводы; кондиционер и внешний блок —
+                          #  трасса conditioner_wire); kind: wire_2_05…wire_5_100,
                           #  wire_earth_*, wire_tv/utp/… (cables_socket), warm_floor_wire, conditioner_wire
 warm_floor_add            # тёплый пол (лист «Тёплые полы»): контур kind: cable|infrared|water (водяной — PRO)
 item_add conditioner/socket_thermo/fan/radiator_bimetal  # климат: кондиционеры (у стены), терморегулятор,
                           #  вентиляторы, радиаторы (листы «Кондиционеры»/«Вентиляция»/«Радиаторы»)
-pipe_add kind=warm_floor|conditioner_drainage|heat_hot|heat_cold|vent_out|vent_in  # трубы климата (PRO)
+pipe_add kind=warm_floor|conditioner_drainage|heat_hot|heat_cold|vent_out|vent_in  # трубы климата (PRO): path — узлы и предметы
+                          #  (радиаторы/конвекторы и коллекторные узлы → магистрали отопления,
+                          #  блоки кондиционера → дренаж, водяной контур → магистрали тёплого пола,
+                          #  вентиляторы/установка → воздуховоды)
 finish_floor_set / finish_wall_set / finish_ceiling_set  # отделка: покрытия пола, стен (по сторонам
                           #  комнат) и потолка (листы «Напольные покрытия»/«Отделка стен»/«Потолки»)
 finish_floor_molding_set / finish_ceiling_molding_set  # плинтусы (напольные 7 видов и потолочный, PRO)

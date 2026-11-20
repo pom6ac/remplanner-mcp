@@ -28,7 +28,7 @@ export type GoldenVerifiers = {
     expectedItems: Record<string, unknown>,
     gotPipes: Record<string, unknown>,
     gotItems: Record<string, unknown>,
-    opts?: { onlyKeys?: Set<string> },
+    opts?: { onlyTypes?: Set<string> },
   ): string[];
   cableConnectionMismatches(
     expectedCables: Record<string, unknown>,
@@ -203,7 +203,7 @@ export function runGoldenCases(V: GoldenVerifiers): Record<string, string[]> {
   (connExtra["i2"] as Record<string, unknown>)["pipes"] = { water_pipe_id: ["0"], water_hot_pipe_id: "0" };
   cases["pipe-conn/extra-links"] = V.pipeConnectionMismatches(clone(water), clone(connExpItems), clone(water), connExtra);
   const connWrongKind = clone(connExpItems);
-  (connWrongKind["i2"] as Record<string, unknown>)["pipes"] = { warm_floor_pipe_id: "0" };
+  (connWrongKind["i2"] as Record<string, unknown>)["pipes"] = { drainage_pipe_id: "0" };
   cases["pipe-conn/wrong-kind-link"] = V.pipeConnectionMismatches(clone(water), clone(connExpItems), clone(water), connWrongKind);
   const connMultiScalar = clone(connExpItems);
   (connMultiScalar["i1"] as Record<string, unknown>)["pipes"] = { water_pipe_id: "0" };
@@ -213,7 +213,7 @@ export function runGoldenCases(V: GoldenVerifiers): Record<string, string[]> {
   cases["pipe-conn/scalar-array-violation"] = V.pipeConnectionMismatches(clone(water), clone(connExpItems), clone(water), connScalarArray);
   cases["pipe-conn/climate-only-keys"] = V.pipeConnectionMismatches(
     clone(water), clone(connExpItems), clone(water), clone(connExpItems),
-    { onlyKeys: new Set(["warm_floor_pipe_id"]) },
+    { onlyTypes: new Set(["warm_floor_pipe"]) },
   );
 
   // --- под-розетки socket_group ---
@@ -380,14 +380,14 @@ export function runGoldenCases(V: GoldenVerifiers): Record<string, string[]> {
   const climatePipeLen = clone(climateLocal);
   ((climatePipeLen["pipes_warm_floor"] as Record<string, unknown>)["0"] as Record<string, unknown>)["length"] = 9;
   cases["climate/pipe-length-changed"] = V.climateGraphMismatches(clone(climateLocal), climatePipeLen);
-  const climateItemsExp = { n1: { name: "radiator", pipes: { warm_floor_pipe_id: "0" } } };
+  const climateItemsExp = { n1: { name: "radiator", pipes_warm_floor: { pipe_warm_floor_id: "0" } } };
   cases["climate/item-refs-identity"] = V.climateGraphMismatches(clone(climateLocal), clone(climateLocal), {
     itemsExpected: clone(climateItemsExp),
     itemsGot: clone(climateItemsExp),
   });
   cases["climate/item-refs-lost"] = V.climateGraphMismatches(clone(climateLocal), clone(climateLocal), {
     itemsExpected: clone(climateItemsExp),
-    itemsGot: { n1: { name: "radiator", pipes: {} } },
+    itemsGot: { n1: { name: "radiator", pipes_warm_floor: {} } },
   });
   // ревью 185 №3 + 223 №3: режим normalize (ревью 124 R1) — привязка контура к
   // комнате по геометрии, ID комнат штатно регенерируются. Кейс различает режимы:

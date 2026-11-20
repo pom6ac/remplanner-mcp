@@ -401,7 +401,8 @@ export type Cable = {
  *   или itemId (вывод), type: "electrospot"}, point = center под-розетки / точка на
  *   7 см от грани стены у вывода; у тёплого пола type = имя под-элемента
  *   ("socket_thermo"); обратная ссылка props.cables_socket.cable_<тип>_id
- *   (cables_warm_floor.cable_warm_floor_id, cables_conditioner.cable_conditioner_id) —
+ *   (cables_warm_floor.cable_warm_floor_id, cables_conditioner.conditioner_cable_id —
+ *   проба 250-connect4) —
  *   СКАЛЯР у electrospot, МАССИВ у multi.
  */
 export type ElecCableVertex = {
@@ -449,7 +450,9 @@ export type WarmFloor = {
   /** Периметр контура, м (2 знака). */
   length: number;
   id_room: string | null;
-  props: { id: string; name: string };
+  /** props {id, name: type}; у подключённого к магистрали водяного контура ещё
+   *  props.pipes_warm_floor.pipe_warm_floor_id (климат ч.2, проба 250-connect3). */
+  props: { id: string; name: string; [box: string]: unknown };
   /** Площадь контура, м² (2 знака). */
   area: number;
   /** Водяной тёплый пол: шаг укладки, см. */
