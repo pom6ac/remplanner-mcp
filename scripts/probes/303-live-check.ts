@@ -58,6 +58,7 @@ const snap = async (objectId: string, planId: string, tag: string): Promise<Load
 
 const created: Array<{ kind: "wall" | "rigel" | "delimiter" | "ceiling"; siteId?: string; roomRef?: string }> = [];
 let opened = false;
+let before: LoadedModel | null = null;
 const freshLabel = async (coll: "walls", siteId: string): Promise<string | null> => {
   const mg = await call("model_get", {});
   const list = (mg[coll] ?? []) as Array<{ id: string; site_id: string }>;
@@ -76,12 +77,18 @@ async function restoreByCaptured(): Promise<void> {
   // закладные и разделители — только захваченные site_id
   const crs = (mg["ceiling_rigels"] ?? []) as Array<{ id?: string; site_id?: string }>;
   for (const c of created.filter((x) => x.kind === "rigel" && x.siteId)) {
-    if (!crs.some((r) => r.site_id === c.siteId)) continue;
+    if (!crs.some((r) => r.site_id === c.siteId)) {
+      console.log(`restore: пропуск закладной ${c.siteId} — на сервере нет (уже удалена?)`);
+      continue;
+    }
     try { await call("ceiling_rigel_delete", { rigel_id: c.siteId! }); } catch { /* уже нет */ }
   }
   const zds = (mg["zone_delimiters"] ?? []) as Array<{ id?: string; site_id?: string }>;
   for (const c of created.filter((x) => x.kind === "delimiter" && x.siteId)) {
-    if (!zds.some((z) => z.site_id === c.siteId)) continue;
+    if (!zds.some((z) => z.site_id === c.siteId)) {
+      console.log(`restore: пропуск разделителя ${c.siteId} — на сервере нет`);
+      continue;
+    }
     try { await call("zone_ceiling_remove", { delimiter_id: c.siteId! }); } catch { /* уже нет */ }
   }
   const mg2 = await call("model_get", {});
@@ -239,7 +246,7 @@ try {
   const roBefore = await snap(READONLY_ID, READONLY_PLAN_ID, "readonly-before");
 
   // 1. бэкап dev-проекта
-  const before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+  before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const backupPath = `.orca-reports/backup-${OBJECT_ID}-303.json`;
   if (!existsSync(backupPath)) {
     writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
@@ -252,13 +259,19 @@ try {
   }
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
   opened = true;
-  // m7 ревью 304: явный гард «план в редакторе == серверу» до первой записи
-  // (compat.plan_id; как в 303-ceiling-rigel.ts)
-  const st = await call("editor_status", {}) as { plan_id?: string | null };
-  if (st.plan_id != null && String(st.plan_id) !== String(PLAN_ID)) {
-    throw new Error(`план в редакторе ${String(st.plan_id)} != серверу ${PLAN_ID}`);
+  // N2 ревью 306: plan_id в editor_status убран (публичный контракт без расширения);
+  // гард «план в редакторе == серверу» — in-process из compat открытого редактора
+  // (как 303-ceiling-rigel.ts:61); при ПУСТОМ plan_id — стоп (не молча)
+  const editor = ctx.workspaceOrNull?.editorOrNull() ?? null;
+  const compat = editor ? await editor.compatInfo() : null;
+  const planInEditor = compat?.plan_id == null ? "" : String(compat.plan_id);
+  if (!planInEditor) {
+    throw new Error("compat.plan_id пуст — не могу сверить план редактора с сервером — стоп");
   }
-  console.log("гард «план в редакторе == серверу»:", st.plan_id != null ? "OK" : "compat.plan_id пуст (гард адаптера неактивен)");
+  if (planInEditor !== String(PLAN_ID)) {
+    throw new Error(`план в редакторе ${planInEditor} != серверу ${PLAN_ID}`);
+  }
+  console.log("гард «план в редакторе == серверу» (compat, in-process): OK");
 
   // 2. пробная комната: правее всей геометрии, 4 стены 200×150 см, толщина 100 мм
   const rawWalls = (before.model["walls"] ?? {}) as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>;
@@ -418,6 +431,22 @@ try {
   } catch (ce) {
     console.error("RESTORE FAIL:", String((ce as Error).message ?? ce).slice(0, 400));
     process.exitCode = 1;
+  }
+  // N5 ревью 306: на аварийном пути после restore — семантическая сверка с бэкапом;
+  // расхождение после восстановления — громкая ошибка (exitCode 1), не молчание
+  if (before) {
+    try {
+      const final = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+      const same = sig(final.model) === sig(before.model);
+      if (same) console.log("finally: семантическая сверка с бэкапом — OK");
+      else {
+        console.error("РАСХОЖДЕНИЕ после restore: модель не совпала с бэкапом — требуется ручной разбор");
+        process.exitCode = 1;
+      }
+    } catch (ve) {
+      console.error("VERIFY FAIL:", String((ve as Error).message ?? ve).slice(0, 400));
+      process.exitCode = 1;
+    }
   }
   await closeBrowser();
 }
