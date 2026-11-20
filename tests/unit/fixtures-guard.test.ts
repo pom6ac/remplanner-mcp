@@ -54,6 +54,10 @@ const EDITOR_IDS_FORBIDDEN = new Set<string>([
   "ui-ref-climate2-conditioner-drainage.json",
   "ui-ref-climate2-warm-floor-pipe-contour.json",
   "ui-ref-climate2-vent-pipe-fan.json",
+  // Эталон «Электрощиток» (этап 255): снят в dev-проекте (проба 255-shield-scout),
+  // внутренние ID щитка/рейки/модуля/портов заменены на id1… (сквозное обезличивание).
+  "ui-ref-shield-empty.json",
+  "ui-ref-shield-module.json",
 ]);
 
 // Внутренний ID сайта: подчёркивание + 5 символов, опционально суффикс _<число>.

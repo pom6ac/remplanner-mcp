@@ -1,0 +1,51 @@
+{
+ "_source": "UI-проба scripts/probes/255-shield-scout.ts (dev-проект из env, без сохранения): лист «Электрощиток», щиток-предмет electric_shield (item_add у стены), клик по щитку открывает конструктор, инструмент «Провод фазный» создаёт щиток с DIN-рейкой и вводом (порты фаза/ноль/земля). Идентификаторы обезличены (scripts/anonymize.ts); привязка shield_id к предмету заменена на id-метку.",
+ "shields": {
+  "id1": {
+   "id": "id1",
+   "shield_id": "id2",
+   "on_auto_length_rails": 1,
+   "length_rails": 12,
+   "rails": {
+    "id3": {
+     "id": "id3",
+     "index": 0,
+     "modules": {}
+    }
+   },
+   "buses": {},
+   "collectors": {},
+   "inputs": {
+    "id4": {
+     "id": "id4",
+     "ports": [
+      {
+       "id": "id5",
+       "parent_type": "input",
+       "parent_id": "id4",
+       "type": "shield_wire_earth",
+       "connected": 0
+      },
+      {
+       "id": "id6",
+       "parent_type": "input",
+       "parent_id": "id4",
+       "type": "shield_wire_null",
+       "connected": 0
+      },
+      {
+       "id": "id7",
+       "parent_type": "input",
+       "parent_id": "id4",
+       "type": "shield_wire_phase",
+       "connected": 0
+      }
+     ],
+     "index": 0,
+     "phase": 1
+    }
+   },
+   "wires": {}
+  }
+ }
+}
