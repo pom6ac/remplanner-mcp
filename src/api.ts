@@ -24,17 +24,35 @@ export type ClientPageInfo = {
 
 const stripTags = (s: string): string => s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 
+/** Тексты старших тарифов у активного пункта ЛК (этап 255, «Расширенный тариф»). */
+const SENIOR_ITEM_RE = /расширенный тариф/i;
+/** Старые тексты страницы «PRO подключен» — вся страница, без блока pro_status_item. */
+const SENIOR_PAGE_RE = /Версия PRO:\s*подключена|PRO активен/i;
+const FREE_RE = /Версия PRO:\s*не\s+подключена|в бесплатной верси/i;
+/** Активный пункт блока pro_status: токен `active` внутри class того же элемента
+ *  (границы слова: inactive/notactive не совпадают), текст — до следующего тега. */
+const PRO_STATUS_ITEM_RE = /<[^>]*class="([^"]*\buser_cabinet_pro_status_item\b[^"]*)"[^>]*>([^<]*)/g;
+const ACTIVE_TOKEN_RE = /(^|\s)active(\s|$)/;
+
 /** Разбор HTML личного кабинета /client/ (только чтение). */
 export function parseClientPage(html: string): ClientPageInfo {
   const logged_in = /id="clientline"[^>]*is_logged/.test(html) || /id="user_cabinet_objects"/.test(html);
   const login_error = /class="pre_error"/.test(html);
+  // Этап 256 (ревью №2): тариф — по нескольким сигналам. Активный пункт блока
+  // pro_status — PRO только если его текст — старший тариф (текст активного
+  // бесплатного/незнакомого пункта, inactive/notactive и незнакомая разметка —
+  // unknown, безопасный отказ гейта, не ложное «pro»). Без активного пункта —
+  // старые тексты страницы: «PRO подключена» → pro, иначе free-маркеры → free.
   let tariff: ClientPageInfo["tariff"] = "unknown";
-  // Этап 255: ЛК показывает активный PRO блоком user_cabinet_pro_status_item active
-  // («Расширенный тариф» и другие старшие тарифы — прежние тексты «Версия PRO:
-  // подключена» больше не встречаются). Порядок: free-маркеры первыми, чтобы
-  // «бесплатная версия» рядом с блоком PRO не читалась как PRO.
-  if (/Версия PRO:\s*(Не\s*)?подключена|в бесплатной верси/i.test(html)) tariff = "free";
-  else if (/user_cabinet_pro_status_item[^>]*active|Версия PRO:\s*подключена|PRO активен/i.test(html)) tariff = "pro";
+  const items = [...html.matchAll(PRO_STATUS_ITEM_RE)].map((m) => ({ cls: m[1]!, text: m[2]!.trim() }));
+  const active = items.find((i) => ACTIVE_TOKEN_RE.test(i.cls));
+  if (active) {
+    if (SENIOR_ITEM_RE.test(active.text)) tariff = "pro";
+  } else if (SENIOR_PAGE_RE.test(html)) {
+    tariff = "pro";
+  } else if (FREE_RE.test(html)) {
+    tariff = "free";
+  }
   const projects: ClientProject[] = [];
   const rowRe = /<tr[^>]*\bid="object(\d+)"[^>]*>([\s\S]*?)<\/tr>/g;
   for (const match of html.matchAll(rowRe)) {

@@ -18,6 +18,44 @@ import { compactModel } from "../model/compact.ts";
 
 export type ServerMode = "account" | "anon" | "offline";
 
+export type AuthStatusInfo = {
+  logged_in: boolean;
+  tariff: "free" | "pro" | "unknown";
+  mode: string;
+  projects_limit: number | null;
+  account_email_masked: string | null;
+};
+
+/**
+ * Кеш статуса ЛК (ревью 256 №9): authStatus() делает GET страницы ЛК, а гейты
+ * shield_* и PRO-материалов зовут его на каждый вызов инструмента — серия из
+ * 30 модулей даёт +30 запросов при лимите 30/мин (AGENTS.md п.5). Статус
+ * кешируется на сессию (по ссылке объекта сессии) с TTL; ошибки не кешируются.
+ */
+export class AuthStatusCache {
+  private entry: { session: SessionState; at: number; value: AuthStatusInfo } | null = null;
+  private readonly ttlMs: number;
+
+  constructor(ttlMs = 5 * 60_000) {
+    this.ttlMs = ttlMs;
+  }
+
+  get(session: SessionState, now = Date.now()): AuthStatusInfo | null {
+    const e = this.entry;
+    if (!e || e.session !== session || now - e.at >= this.ttlMs) return null;
+    return e.value;
+  }
+
+  set(session: SessionState, value: AuthStatusInfo, now = Date.now()): void {
+    this.entry = { session, at: now, value };
+  }
+
+  /** Сброс (новый вход, явная проверка статуса). */
+  clear(): void {
+    this.entry = null;
+  }
+}
+
 export class ServerContext {
   mode: ServerMode;
   private sessionState: SessionState | null = null;
@@ -27,6 +65,8 @@ export class ServerContext {
   /** Последний открытый проект — target по умолчанию для чтения/рендера. */
   fixturePath: string | null;
   private depsOverride: Partial<WorkspaceDeps> | null = null;
+  /** Кеш статуса ЛК (ревью 256 №9): тариф на сессию с TTL. */
+  private authStatusCache = new AuthStatusCache();
 
   constructor(options: { offlineFixture?: string; deps?: Partial<WorkspaceDeps> } = {}) {
     this.depsOverride = options.deps ?? null;
@@ -176,26 +216,27 @@ export class ServerContext {
     }));
   }
 
-  async authStatus() {
+  async authStatus(): Promise<AuthStatusInfo> {
     if (this.mode === "offline") {
       return { logged_in: false, tariff: "unknown", mode: "offline", projects_limit: null, account_email_masked: null };
     }
     if (process.env["REMPLANNER_ANON"] || this.mode !== "account") {
       return { logged_in: false, tariff: "unknown", mode: "anon", projects_limit: null, account_email_masked: null };
     }
-    try {
-      const info = await checkStatus(this.session());
-      return {
-        logged_in: info.logged_in,
-        tariff: info.tariff,
-        mode: "account",
-        projects_limit: info.tariff === "free" ? 1 : null,
-        account_email_masked: null,
-      };
-    } catch (e) {
-      if (e instanceof McpError && (e.code === "CAPTCHA_REQUIRED" || e.code === "SESSION_EXPIRED")) throw e;
-      throw e;
-    }
+    const session = this.session();
+    // ревью 256 №9: один GET ЛК на TTL, а не на каждый вызов shield_*/PRO-гейта
+    const cached = this.authStatusCache.get(session);
+    if (cached) return cached;
+    const info = await checkStatus(session);
+    const value: AuthStatusInfo = {
+      logged_in: info.logged_in,
+      tariff: info.tariff,
+      mode: "account",
+      projects_limit: info.tariff === "free" ? 1 : null,
+      account_email_masked: null,
+    };
+    this.authStatusCache.set(session, value);
+    return value;
   }
 
   async rename(objectId: string, title: string): Promise<void> {
