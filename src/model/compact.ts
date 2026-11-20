@@ -6,6 +6,7 @@ import { wallFaces } from "./wall-geometry.ts";
 import { projectionLength, type Segment } from "./geometry.ts";
 import { parseSwitchVertexId } from "./electric.ts";
 import { zoneDelimiterList } from "./zone.ts";
+import { ceilingRigelList } from "./ceiling-rigels.ts";
 
 // Компактное представление модели для агента (< 5 КБ): метки W/R/O/I, мм.
 
@@ -299,6 +300,17 @@ export type CompactBorder = {
   to: [number, number];
 };
 
+/** Потолочная закладная (ceiling_rigel, этап 303). */
+export type CompactCeilingRigel = {
+  id: string;
+  site_id: string;
+  room_id: string;
+  from: [number, number];
+  to: [number, number];
+  width_mm: number;
+  ceiling_type: string;
+};
+
 /** Модуль щитка в компактном виде (этап 255). */
 export type CompactShieldModule = {
   /** id модуля (id сайта) — для shield_module_update/delete. */
@@ -390,6 +402,7 @@ export type CompactModel = {
   territory_borders: CompactBorder[];
   level_holes: CompactFloorHole[];
   zone_delimiters: CompactZoneDelimiter[];
+  ceiling_rigels: CompactCeilingRigel[];
   led_strips: CompactLightStrip[];
   stripes_light: CompactLightStrip[];
   line_strips: CompactLightStrip[];
@@ -685,6 +698,21 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       length_mm: round0(Number(d["length_mm"] ?? 0)),
     };
   });
+  // потолочные закладные (этап 303): метки CR<n> — тот же источник, что
+  // finish_get/ceilingRigelList
+  const ceilingRigels: CompactCeilingRigel[] = ceilingRigelList(model).map((r) => {
+    const from = r["from_mm"] as [number, number];
+    const to = r["to_mm"] as [number, number];
+    return {
+      id: String(r["id"] ?? ""),
+      site_id: String(r["site_id"] ?? ""),
+      room_id: String(r["room_id"] ?? ""),
+      from,
+      to,
+      width_mm: round0(Number(r["width_mm"] ?? 0)),
+      ceiling_type: String(r["ceiling_type"] ?? ""),
+    };
+  });
 
   // световые линии листа «Освещение» (этап 84): метки LS/SL/LL
   const compactLightStrips = (
@@ -895,6 +923,7 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     territory_borders: territoryBorders,
     level_holes: levelHoles,
     zone_delimiters: zoneDelimiters,
+    ceiling_rigels: ceilingRigels,
     led_strips: compactLightStrips(model.led_strips, "LS"),
     stripes_light: compactLightStrips(model.stripes_light, "SL"),
     line_strips: compactLightStrips(model.line_strips, "LL"),

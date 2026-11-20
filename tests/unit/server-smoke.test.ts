@@ -62,6 +62,8 @@ const EXPECTED_TOOLS = [
   "zone_floor_add", "zone_floor_remove",
   "zone_hydroisolation_add", "zone_hydroisolation_remove",
   "zone_floor_cap_add", "zone_floor_cap_remove",
+  // §7.4g — потолочные закладные (этап 303)
+  "ceiling_rigel_add", "ceiling_rigel_update", "ceiling_rigel_delete",
   // §7.4h — размеры и комментарии (нижняя панель, этап 113)
   "dim_add", "dim_update", "dim_delete", "dims_list",
   "comment_add", "comment_update", "comment_delete", "comments_list",

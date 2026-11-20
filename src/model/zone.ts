@@ -585,6 +585,21 @@ export function zoneDelimiterList(model: Model, roomRef?: string): Array<Record<
   return out;
 }
 
+/** Все zone_ceiling разделители модели (верхнеуровневые + legacy per-room,
+ *  линия p1→p2): для проверки пересечения при создании потолочной закладной
+ *  (mouseup редактора перебирает ZONE_DELIMITERS типа zone_ceiling). */
+export function zoneCeilingDelimiterLines(model: Model): Array<{ id: string; p1: Point; p2: Point }> {
+  const out: Array<{ id: string; p1: Point; p2: Point }> = [];
+  for (const [id, entry] of Object.entries(delimiterMapOf(model))) {
+    const rec = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
+    if (String(rec["type"] ?? "") !== "zone_ceiling") continue;
+    const v = (rec["vertexes"] ?? []) as Array<{ point?: Point }>;
+    const q1 = v[0]?.point, q2 = v[v.length - 1]?.point;
+    if (v.length >= 2 && q1 && q2) out.push({ id, p1: q1, p2: q2 });
+  }
+  return out;
+}
+
 // ---------- Семантическая сверка ----------
 
 export type ZoneDelimiterSig = {

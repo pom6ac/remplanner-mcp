@@ -47,6 +47,7 @@ import {
   addCeilingNiche, removeCeilingNiche,
 } from "../model/finish.ts";
 import { addZoneDelimiter, removeZoneDelimiter, zoneDelimiterList, ZONE_DELIMITER_PLANS, type ZoneDelimiterType } from "../model/zone.ts";
+import { addCeilingRigel, updateCeilingRigel, deleteCeilingRigel, ceilingRigelList, type CeilingRigelRec } from "../model/ceiling-rigels.ts";
 import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
 } from "../model/terraces.ts";
@@ -230,8 +231,90 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     );
   }
 
+  // Потолочные закладные (класс CeilingRigel, rooms2[rid].rigels, этап 303, PRO):
+  // полоса «от стены до стены» внутри комнаты; концы магнитятся к боковым граням
+  // стен/граням колонн; ось не пересекает разделители зон потолка и ригели.
+  // Метки CR<n> сквозные (ceilingRigelList).
+  const resolveCeilingRigel = (model: Model, ref: string): { rec: CeilingRigelRec; roomId: string } => {
+    const rooms = (model.rooms2 ?? model.rooms1 ?? {}) as Record<string, Record<string, unknown>>;
+    for (const [rid, room] of Object.entries(rooms)) {
+      const rigels = room.rigels as Record<string, CeilingRigelRec> | undefined;
+      if (rigels && rigels[ref]) return { rec: rigels[ref]!, roomId: rid };
+    }
+    const m = /^CR(\d+)$/.exec(ref);
+    if (m) {
+      const entry = ceilingRigelList(model)[Number(m[1]) - 1];
+      if (entry) return resolveCeilingRigel(model, String(entry["site_id"]));
+    }
+    return throwNotFound(`закладная ${ref} не найдена (id сайта или метка CR<n> из model_get/finish_get)`);
+  };
+
+  const ceilingRigelTools: Record<string, ToolDefLike> = {
+    ceiling_rigel_add: tool(
+      "Поставить потолочную закладную (лист «Потолки», инструмент «Потолочная закладная»; PRO). " +
+        "Полоса от стены до стены внутри комнаты: start_mm/end_mm — концы оси (мм); каждый конец " +
+        "магнитится к боковой грани стены или грани колонны (в 30 мм; в редакторе магнит — до 100 см), " +
+        "угол оси к грани 45–135°, как в редакторе. Ось не пересекает разделители зон потолка и ригели. " +
+        "width_mm — толщина полосы (по умолчанию 100, панель 100..1000 мм). ceiling_type — отделка " +
+        "потолка на закладной. id — метка CR<n> для ceiling_rigel_update/delete. " +
+        "После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        start: mmPoint.describe("начало оси (на стене), мм"),
+        end: mmPoint.describe("конец оси (на другой стене), мм"),
+        width_mm: mmInt.optional().describe("толщина полосы, мм (по умолчанию 100)"),
+        ceiling_type: ceilingType,
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("ceiling_rigel_add", (m) => addCeilingRigel(m, a["room_id"] as string, {
+          start: a["start"] as MmPoint,
+          end: a["end"] as MmPoint,
+          widthMm: a["width_mm"] as number | undefined,
+          ceilingType: a["ceiling_type"] as string | undefined,
+        }));
+        const n = ceilingRigelList(ws.model).findIndex((r) => r["site_id"] === res.id);
+        return ok({ room_id: a["room_id"], id: `CR${n + 1}`, site_id: res.id, hint: SCENARIO_HINT });
+      },
+    ),
+    ceiling_rigel_update: tool(
+      "Изменить потолочную закладную: толщину полосы и/или отделку потолка (контекстное меню закладной " +
+        "в редакторе). Перенос закладной редактором не поддержан — чтобы передвинуть, удалите закладную " +
+        "и создайте новую (ceiling_rigel_delete + ceiling_rigel_add). " +
+        "rigel_id — метка CR<n> из finish_get/model_get или id сайта.",
+      {
+        rigel_id: z.string().min(1).describe("метка CR<n> из finish_get/model_get или id закладной"),
+        width_mm: mmInt.optional().describe("толщина полосы, мм (100..1000)"),
+        ceiling_type: ceilingType,
+      },
+      async (a) => {
+        const ws = wsOf();
+        const { rec } = resolveCeilingRigel(ws.model, a["rigel_id"] as string);
+        const res = ws.apply("ceiling_rigel_update", (m) => updateCeilingRigel(m, rec.id, {
+          widthMm: a["width_mm"] as number | undefined,
+          ceilingType: a["ceiling_type"] as string | undefined,
+        }));
+        return ok({ rigel_id: a["rigel_id"], site_id: res.id, width_mm: Math.round(res.width * 10), ceiling_type: res.ceiling_type ?? "", hint: SCENARIO_HINT });
+      },
+    ),
+    ceiling_rigel_delete: tool(
+      "Удалить потолочную закладную (контекстное меню закладной). Разделители зон потолка, чьи концы " +
+        "стояли на её грани, не удаляются — как в редакторе (привязка узлов зон пересчитывается " +
+        "редактором при открытии). rigel_id — метка CR<n> из finish_get/model_get или id сайта.",
+      {
+        rigel_id: z.string().min(1).describe("метка CR<n> из finish_get/model_get или id закладной"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const { rec } = resolveCeilingRigel(ws.model, a["rigel_id"] as string);
+        const res = ws.apply("ceiling_rigel_delete", (m) => deleteCeilingRigel(m, rec.id));
+        return ok({ rigel_id: a["rigel_id"], site_id: rec.id, room_id: res.room_id, removed: true, hint: SCENARIO_HINT });
+      },
+    ),
+  };
 
   return {
+    ...ceilingRigelTools,
     // ---------- Стены и помещения (§7.2) ----------
     wall_add: tool(
       "Добавить стену по осевой линии (координаты в мм; X вправо, Y вниз; толщина по умолчанию 200). " +

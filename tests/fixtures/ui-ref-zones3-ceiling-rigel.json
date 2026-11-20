@@ -1,0 +1,74 @@
+{
+ "_source": "Эталон потолочной закладной (ceiling_rigel, этап 303, 2026-11-20): закладная создана drag'ом UI в dev-проекте (инструмент ceiling_rigel листа «Потолки», от стены до стены, ширина по умолчанию), затем zone_ceiling с концом на грани закладной; проба scripts/probes/303-ceiling-rigel.ts, записи на сервер не было (откат перезагрузкой, контрольный GET не изменился). Формат записи CeilingRigel.serialize: {id, p1/p2 (link к боковым граням стен l/r), width (см, умолчание 10, панель 10..100), ceiling_type, polygon [l1,l2,r2,r1]}; id_room добавляет редактор (updateZones/restore — каноничная форма после restore). Привязка узлов zone ({rigel_id, edge, edge_side, type rigel_ceiling}) — производное редактора (calc() при restore), в записи MCP не пишется. Координаты перенесены на синтетическую комнату 10..390 × 10..310 (пропорции НЕ сохранены, концы притянуты к рёбрам/грани синтетической комнаты), ID — rg1/zd1/v1/v2/room1/wall1..4.",
+ "room": {
+  "polygon": [
+   { "x": 390, "y": 10 },
+   { "x": 390, "y": 310 },
+   { "x": 10, "y": 310 },
+   { "x": 10, "y": 10 }
+  ],
+  "edges": [
+   { "p1": { "x": 390, "y": 10 }, "p2": { "x": 390, "y": 310 }, "c": { "x": 390, "y": 160 }, "length": 300, "side": "r", "pid": "wall1", "pids": { "wall1": "r" }, "parent": "wall", "room_side": "l", "inRoom": 0 },
+   { "p1": { "x": 390, "y": 310 }, "p2": { "x": 10, "y": 310 }, "c": { "x": 200, "y": 310 }, "length": 380, "side": "t", "pid": "wall2", "pids": { "wall2": "t" }, "parent": "wall", "room_side": "b", "inRoom": 0 },
+   { "p1": { "x": 10, "y": 310 }, "p2": { "x": 10, "y": 10 }, "c": { "x": 10, "y": 160 }, "length": 300, "side": "l", "pid": "wall3", "pids": { "wall3": "l" }, "parent": "wall", "room_side": "r", "inRoom": 0 },
+   { "p1": { "x": 10, "y": 10 }, "p2": { "x": 390, "y": 10 }, "c": { "x": 200, "y": 10 }, "length": 380, "side": "b", "pid": "wall4", "pids": { "wall4": "b" }, "parent": "wall", "room_side": "t", "inRoom": 0 }
+  ]
+ },
+ "rigels": {
+  "rg1": {
+   "id": "rg1",
+   "id_room": "room1",
+   "p1": { "x": 200, "y": 10, "link": { "ot": "wall", "id": "wall4", "z1": "r" } },
+   "p2": { "x": 200, "y": 310, "link": { "ot": "wall", "id": "wall2", "z1": "l" } },
+   "width": 10,
+   "ceiling_type": "",
+   "polygon": [
+    { "x": 205, "y": 10 },
+    { "x": 205, "y": 310 },
+    { "x": 195, "y": 310 },
+    { "x": 195, "y": 10 }
+   ]
+  }
+ },
+ "zone_delimiters": {
+  "zd1": {
+   "id": "zd1",
+   "matrix": [ [ null, { "length": 1 } ], [ { "length": 1 }, null ] ],
+   "vertexes": [
+    {
+     "id": "v1",
+     "point": { "x": 390, "y": 160 },
+     "type": "node",
+     "zone": {
+      "room_id": "room1",
+      "edge": { "p1": { "x": 390, "y": 10 }, "p2": { "x": 390, "y": 310 } },
+      "edge_index": 0,
+      "edge_side": "r",
+      "edge_pid": "wall1",
+      "edge_pids": { "wall1": "r" },
+      "type": "room"
+     }
+    },
+    {
+     "id": "v2",
+     "point": { "x": 205, "y": 160 },
+     "type": "node",
+     "zone": {
+      "room_id": "room1",
+      "rigel_id": "rg1",
+      "edge": { "p1": { "x": 205, "y": 10 }, "p2": { "x": 205, "y": 310 } },
+      "edge_index": 0,
+      "edge_side": "l",
+      "type": "rigel_ceiling"
+     }
+    }
+   ],
+   "items": { "v1": "node", "v2": "node" },
+   "type": "zone_ceiling",
+   "length": 1.85,
+   "id_room": "room1",
+   "plan": "ceiling",
+   "on_size": 1
+  }
+ }
+}
