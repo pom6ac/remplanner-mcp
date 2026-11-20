@@ -8,6 +8,7 @@ import {
   MAX_IMPORT_HOLES_PER_WALL,
   MAX_IMPORT_JSON_DEPTH,
   MAX_SERVICE_COMMENT_CHARS,
+  SHIELD_MAX_WIRES,
   MODEL_COORD_LIMIT_CM,
   MODEL_SIZE_LIMIT_CM,
 } from "../limits.ts";
@@ -179,6 +180,18 @@ const shieldPort = z.looseObject({
   type: shortStr.optional(),
 });
 
+/** Провод щитка (этап 284, эталон ui-ref-shield-wires): связь портов.
+ *  Ревью 285 №7: id_source/id_target/type обязательны — их требует тип ShieldWire,
+ *  необязательные поля пропускали мусор, который падал позже TypeError. */
+const shieldWire = z.looseObject({
+  id: idStr,
+  id_source: idStr,
+  id_target: idStr,
+  type: shortStr,
+  thickness: z.number().finite().min(0).max(100).optional(),
+  is_broken: z.number().finite().min(0).max(1).optional(),
+});
+
 /** Модуль на DIN-рейке щитка. */
 const shieldModule = z.looseObject({
   id: idStr,
@@ -206,7 +219,16 @@ const shield = z.looseObject({
     }),
     MAX_IMPORT_GRAPH_NODES,
   ).optional(),
-  buses: collection(z.looseObject({ id: idStr }), MAX_IMPORT_GRAPH_NODES).optional(),
+  // ревью 285 №7: у шины проверяются ports (массив портов) и connection (строка) —
+  // раньше looseObject({id}) пропускал ports: 5, на котором падали операции с модулями
+  buses: collection(
+    z.looseObject({
+      id: idStr,
+      ports: z.array(shieldPort).max(MAX_IMPORT_GRAPH_NODES).optional(),
+      connection: shortStr.optional(),
+    }),
+    MAX_IMPORT_GRAPH_NODES,
+  ).optional(),
   collectors: collection(z.looseObject({ id: idStr }), MAX_IMPORT_GRAPH_NODES).optional(),
   inputs: collection(
     z.looseObject({
@@ -217,7 +239,7 @@ const shield = z.looseObject({
     }),
     MAX_IMPORT_GRAPH_NODES,
   ).optional(),
-  wires: collection(z.looseObject({ id: idStr }), MAX_IMPORT_GRAPH_NODES).optional(),
+  wires: collection(shieldWire, SHIELD_MAX_WIRES).optional(),
 });
 
 /**

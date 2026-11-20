@@ -19,7 +19,7 @@ import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.t
 import { addElecCable, updateElecCable, deleteElecCable, MAX_ELEC_PATH_NODES, SOCKET_CABLE_TOOLS, type ElecPathElement } from "../model/electric2.ts";
 import {
   addShieldRail, deleteShieldRail, addShieldModule, updateShieldModule, deleteShieldModule,
-  SHIELD_MODULE_TYPES,
+  addShieldWire, deleteShieldWire, SHIELD_MODULE_TYPES, SHIELD_WIRE_TYPES, SHIELD_RAIL_MAX_DIN, type ShieldPortRef,
 } from "../model/shield.ts";
 import {
   addRuler, updateRuler, deleteRuler, addComment, updateComment, deleteComment,
@@ -75,6 +75,13 @@ import { rawEditorPayload } from "../dto/model-payload.ts";
 // swing и аргументы проёмов; items.ts — позиции/каталог; structures.ts —
 // колонны/ригели/трубы/свет/проёмы пола; borders.ts — терраса и участок;
 // dims.ts — размеры/комментарии; model-payload.ts — сырой payload редактора.
+
+// Ревью 285 №1: index у shield_module_update — позиция в DIN на сетке 0.5, не мм
+// (mmInt): перенос вправо требует позицию «конец соседа − 0.5», для соседа
+// шириной ≥ 1 DIN это всегда дробное число, и mmInt делал перенос вправо
+// невозможным.
+const shieldIndexDin = z.number().finite().min(0).max(SHIELD_RAIL_MAX_DIN).multipleOf(0.5)
+  .describe("DIN-позиция на рейке, сетка 0.5 (0..48)");
 
 export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   const wsOf = () => ctx.workspace();
@@ -1543,7 +1550,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     shield_rail_delete: tool(
       "Удалить DIN-рейку электрощитка с модулями на ней (PRO). rail — индекс рейки (0-based, из " +
         "model_get shields[].modules[].rail). Последнюю рейку удалить нельзя (как в редакторе). " +
-        "Индексы последующих рейк и позиции модулей пересчитываются автоматически.",
+        "Индексы последующих рейк и позиции модулей пересчитываются автоматически; провода к портам " +
+        "модулей рейки и коллекторы с числом модулей меньше двух удаляются каскадом (как в редакторе). " +
+        "В ответе — deleted_modules/deleted_wires/deleted_collectors (ненулевые списки id).",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
         rail: mmInt.describe("индекс рейки (0-based)"),
@@ -1551,9 +1560,14 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         await assertShieldAllowed();
         const ws = wsOf();
-        const shield = ws.apply("shield_rail_delete", (m) =>
-          deleteShieldRail(m, resolveItem(m, a["item_id"] as string).id, a["rail"] as number)).shield;
-        return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
+        const res = ws.apply("shield_rail_delete", (m) =>
+          deleteShieldRail(m, resolveItem(m, a["item_id"] as string).id, a["rail"] as number));
+        return ok({
+          ...(res.deleted_modules.length ? { deleted_modules: res.deleted_modules } : {}),
+          ...(res.deleted_wires.length ? { deleted_wires: res.deleted_wires } : {}),
+          ...(res.deleted_collectors.length ? { deleted_collectors: res.deleted_collectors } : {}),
+          ...compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === res.shield.id) ?? null),
+        });
       },
     ),
 
@@ -1570,8 +1584,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "shield_module_uvr (ввод резерва), shield_custom_module (произвольный, умолчания " +
         "микроконструктора). subtype — номинал из списка типа («16A», «16A/30mA», …); " +
         "group_number — номер группы (только у автоматов/УЗО/дифавтоматов); rail — индекс рейки " +
-        "(по умолчанию 0). Модуль ставится в конец рейки; лимит рейки — 48 DIN. Провода между " +
-        "модулями и шины пока не поддерживаются (следующий этап).",
+        "(по умолчанию 0). Модуль ставится в конец рейки; лимит рейки — 48 DIN. Провода между портами " +
+        "ставятся shield_wire_add; совместимость типа провода и типа порта не проверяется — как в " +
+        "редакторе (add_wire_end); петля (провод на тот же порт) — MCP строже редактора. Шины и " +
+        "коллекторы не редактируются MCP (следующий этап).",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
         type: z.enum(Object.keys(SHIELD_MODULE_TYPES) as [string, ...string[]]),
@@ -1595,15 +1611,21 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     shield_module_update: tool(
-      "Изменить модуль щитка: номинал (subtype), номер группы, подпись (comment). module_id — id " +
-        "модуля из model_get shields[].modules[].module_id. Перенос модуля между рейками и " +
-        "изменение порядка пока не поддерживаются (следующий этап).",
+      "Изменить модуль щитка: номинал (subtype), номер группы, подпись (comment), перенос между " +
+        "рейками (rail — индекс 0-based, модуль ставится в конец рейки, как drag в редакторе) и " +
+        "изменение порядка (index — целевая DIN-позиция на сетке 0.5, как drag; модуль шире 0.5 DIN " +
+        "ставится только к началу соседа, а вправо — index = конец соседа − 0.5, модуль встанет " +
+        "сразу за соседом; в bad_slot ошибка подсказывает expected_index). module_id — id модуля " +
+        "из model_get shields[].modules[].module_id. " +
+        "Провода модуля сохраняются (порты переезжают вместе с модулем).",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
         module_id: z.string().min(1).describe("id модуля из model_get"),
         subtype: z.string().max(32).optional(),
         group_number: mmInt.optional(),
         comment: z.string().max(MAX_SERVICE_COMMENT_CHARS).optional(),
+        rail: mmInt.optional().describe("перенос: индекс рейки 0-based (модуль встанет в конец рейки)"),
+        index: shieldIndexDin.optional().describe("изменение порядка: целевая DIN-позиция на рейке (в DIN, сетка 0.5)"),
       },
       async (a) => {
         await assertShieldAllowed();
@@ -1613,6 +1635,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             subtype: a["subtype"] as string | undefined,
             group_number: a["group_number"] as number | undefined,
             comment: a["comment"] as string | undefined,
+            rail: a["rail"] as number | undefined,
+            index: a["index"] as number | undefined,
           })).shield;
         return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
       },
@@ -1620,7 +1644,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     shield_module_delete: tool(
       "Удалить модуль щитка (module_id из model_get). Позиции модулей правее и длина щитка " +
-        "пересчитываются автоматически.",
+        "пересчитываются автоматически. Провода к портам модуля удаляются каскадом (как в редакторе), " +
+        "коллекторы с числом модулей меньше двух — тоже; в ответе deleted_wires/deleted_collectors.",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
         module_id: z.string().min(1).describe("id модуля из model_get"),
@@ -1628,11 +1653,70 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         await assertShieldAllowed();
         const ws = wsOf();
-        ws.apply("shield_module_delete", (m) => {
-          deleteShieldModule(m, resolveItem(m, a["item_id"] as string).id, a["module_id"] as string);
+        const res = ws.apply("shield_module_delete", (m) =>
+          deleteShieldModule(m, resolveItem(m, a["item_id"] as string).id, a["module_id"] as string));
+        return ok({
+          deleted: a["module_id"],
+          ...(res.deleted_wires.length ? { deleted_wires: res.deleted_wires } : {}),
+          ...(res.deleted_collectors.length ? { deleted_collectors: res.deleted_collectors } : {}),
+          hint: SCENARIO_HINT,
+        });
+      },
+    ),
+
+    shield_wire_add: tool(
+      "Соединить порты щитка проводом (лист «Электрощиток», PRO; в редакторе — инструмент " +
+        "shield_wire_* и клик по двум портам). type — shield_wire_phase|shield_wire_phase2|" +
+        "shield_wire_phase3 (фаза/фаза 2/фаза 3), shield_wire_null (ноль), shield_wire_earth (земля). " +
+        "source/target — порт: {module_id, port} (port обязателен; номер порта модуля 0-based из full-модели " +
+        "shields[].rails[].modules[].ports) или {input: \"phase\"|\"null\"|\"earth\"} (порт ввода). " +
+        "Несколько разных проводов на один порт разрешено (как в редакторе); повторный идентичный " +
+        "провод (те же порты и тип) — INVALID_ARGUMENT, разорванный провод (is_broken) тоже считается " +
+        "дублем — сначала shield_wire_delete; тип провода и тип порта не проверяются (как " +
+        "в редакторе). Шины (buses) не редактируются MCP — порт шины указать нельзя (следующий этап). " +
+        "После добавления пересчитываются connected портов и connection шин (validate_ports/validate_buses " +
+        "редактора); висячие провода/коллекторы чистятся только при операциях с модулями и рейками.",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        type: z.enum(SHIELD_WIRE_TYPES),
+        source: z.object({
+          module_id: z.string().min(1).optional().describe("id модуля из model_get"),
+          port: mmInt.optional().describe("номер порта модуля 0-based"),
+          input: z.enum(["phase", "null", "earth"]).optional().describe("порт ввода щитка"),
+        }).describe("исходный порт: {module_id, port} или {input}"),
+        target: z.object({
+          module_id: z.string().min(1).optional().describe("id модуля из model_get"),
+          port: mmInt.optional().describe("номер порта модуля 0-based"),
+          input: z.enum(["phase", "null", "earth"]).optional().describe("порт ввода щитка"),
+        }).describe("целевой порт: {module_id, port} или {input}"),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        const { shield } = ws.apply("shield_wire_add", (m) => addShieldWire(m, resolveItem(m, a["item_id"] as string).id, {
+          type: a["type"] as string,
+          source: a["source"] as ShieldPortRef,
+          target: a["target"] as ShieldPortRef,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
+      },
+    ),
+
+    shield_wire_delete: tool(
+      "Удалить провод щитка (wire_id из model_get shields[].wires[].wire_id). connected портов и " +
+        "connection шин пересчитываются автоматически (validate_ports/validate_buses редактора).",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        wire_id: z.string().min(1).describe("id провода из model_get"),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        ws.apply("shield_wire_delete", (m) => {
+          deleteShieldWire(m, resolveItem(m, a["item_id"] as string).id, a["wire_id"] as string);
           return true;
         });
-        return ok({ deleted: a["module_id"], hint: SCENARIO_HINT });
+        return ok({ deleted: a["wire_id"], hint: SCENARIO_HINT });
       },
     ),
 

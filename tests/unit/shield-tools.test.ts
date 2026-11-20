@@ -1,0 +1,212 @@
+// Ревью 285 №1/№2: публичная схема shield_module_update (index — сетка 0.5 DIN,
+// перенос вправо) и ответ shield_rail_delete (каскад deleted_modules/
+// deleted_wires/deleted_collectors). Тесты через server.callTool
+// (InMemoryTransport) в офлайне: гейт тарифа (assertShieldAllowed) открыт
+// подменой authStatus на PRO и снятием флага anon у офлайн-проекта; предмет-
+// щиток кладётся в модель напрямую (item_add в офлайне недоступен без каталога).
+import test from "node:test";
+import assert from "node:assert/strict";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { buildServer } from "../../src/server.ts";
+import { ServerContext } from "../../src/server/context.ts";
+import type { Model } from "../../src/model/types.ts";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const FIXTURE = join(here, "../fixtures/anon-rect-4000x3000.json");
+
+type ToolCallResult = { isError?: boolean; content?: { type: string; text?: string }[] };
+const text = (r: unknown): string => ((r as ToolCallResult).content as { text: string }[])[0]!.text;
+
+async function start(): Promise<Client> {
+  const ctx = new ServerContext({ offlineFixture: FIXTURE });
+  const server = buildServer(ctx);
+  const client = new Client({ name: "shield-tools", version: "0.0.0" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(b), client.connect(a)]);
+  // гейт тарифа: офлайн-проект помечен anon, unknown-тариф — имитируем PRO-проект
+  ctx.workspace().project!.anon = false;
+  (ctx as unknown as { authStatus: () => Promise<unknown> }).authStatus = async () => ({
+    logged_in: true, tariff: "pro", mode: "account", projects_limit: null, account_email_masked: null,
+  });
+  // предмет-щиток прямо в модель (как после item_add; resolveItem берёт по id)
+  (ctx.workspace().model as Model).items = {
+    sh1: { id: "sh1", name: "electric_shield", pc: { x: 100, y: 100 }, width: 30, height: 11 } as never,
+  };
+  return client;
+}
+
+async function call(client: Client, name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  const res = await client.callTool({ name, arguments: args });
+  if ((res as ToolCallResult).isError) throw new Error(`${name}: ${text(res).slice(0, 400)}`);
+  return JSON.parse(text(res)) as Record<string, unknown>;
+}
+
+const errPayload = (r: unknown): { code?: string; details?: Record<string, unknown> } => {
+  const t = text(r);
+  try {
+    return JSON.parse(t) as { code?: string; details?: Record<string, unknown> };
+  } catch {
+    // схема SDK отклоняет аргументы до zod-обработчика (текст «MCP error -32602…»)
+    return { code: t.includes("Invalid") ? "INVALID_ARGUMENT" : undefined };
+  }
+};
+
+/** Три модуля по 1 DIN на рейке 0 → их module_id. */
+async function threeModules(client: Client): Promise<string[]> {
+  const ids: string[] = [];
+  for (const subtype of ["16A", "25A", "32A"]) {
+    const res = await call(client, "shield_module_add", { item_id: "sh1", type: "shield_module", subtype });
+    const mods = (res["entity"] as { modules: { module_id: string; type: string }[] }).modules;
+    ids.push(mods[mods.length - 1]!.module_id);
+  }
+  return ids;
+}
+
+test("ревью 285 №1: shield_module_update index — сетка 0.5 DIN, 1.5 переносит модуль вправо", async () => {
+  const client = await start();
+  try {
+    const [idA, idB, idC] = await threeModules(client);
+    // перенос вправо: позиция drag «конец соседа − 0.5» = 1.5 — schema должна пустить;
+    // модуль 1 DIN встаёт после соседа (хранится index = 1.5 − (1 − 0.5) = 1), сосед сдвигается влево
+    const mv = await call(client, "shield_module_update", { item_id: "sh1", module_id: idA, index: 1.5 });
+    const mods = (mv["entity"] as { modules: { module_id: string; index: number }[] }).modules;
+    assert.equal(mods.find((m) => m.module_id === idA)!.index, 1, "модуль A после соседа (слот 1.5)");
+    assert.equal(mods.find((m) => m.module_id === idB)!.index, 0, "модуль B сдвинулся влево");
+    assert.equal(mods.find((m) => m.module_id === idC)!.index, 2, "модуль C на месте");
+  } finally {
+    await client.close();
+  }
+});
+
+test("ревью 285 №1: shield_module_update index 1 и 2 — bad_slot (сосед 1 DIN), как в редакторе", async () => {
+  const client = await start();
+  try {
+    const [idA] = await threeModules(client);
+    for (const index of [1, 2]) {
+      const res = await client.callTool({ name: "shield_module_update", arguments: { item_id: "sh1", module_id: idA, index } });
+      assert.equal(res.isError, true, `index ${index} — ошибка`);
+      const payload = errPayload(res);
+      assert.equal(payload.code, "INVALID_ARGUMENT", `index ${index}`);
+      assert.equal((payload.details as { kind?: string } | undefined)?.kind, "bad_slot", `index ${index}`);
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+test("ревью 285 №1: shield_module_update index — дробные не кратные 0.5 и за лимитом рейки отвергаются схемой", async () => {
+  const client = await start();
+  try {
+    const [idA] = await threeModules(client);
+    for (const index of [0.3, 49, -1]) {
+      const res = await client.callTool({ name: "shield_module_update", arguments: { item_id: "sh1", module_id: idA, index } });
+      assert.equal(res.isError, true, `index ${index} — ошибка`);
+      assert.equal(errPayload(res).code, "INVALID_ARGUMENT", `index ${index}`);
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+test("ревью 287 N1: 3×1 DIN — index 2.5 переносит модуль на последнее место рейки (как get_module_slot)", async () => {
+  const client = await start();
+  try {
+    const [idA, idB, idC] = await threeModules(client);
+    // слот курсора клэмпится к «ширина рейки − 0.5» (get_module_slot редактора),
+    // поэтому перенос вправо на последнее место — index = заполнено − 0.5
+    const mv = await call(client, "shield_module_update", { item_id: "sh1", module_id: idA, index: 2.5 });
+    const mods = (mv["entity"] as { modules: { module_id: string; index: number }[] }).modules;
+    assert.equal(mods.find((m) => m.module_id === idA)!.index, 2, "модуль A последним (слот 2.5 → index 2)");
+    assert.equal(mods.find((m) => m.module_id === idB)!.index, 0, "модуль B на месте");
+    assert.equal(mods.find((m) => m.module_id === idC)!.index, 1, "модуль C на месте");
+  } finally {
+    await client.close();
+  }
+});
+
+test("ревью 287 N1: позиция за концом рейки — по-прежнему index_out_of_rail", async () => {
+  const client = await start();
+  try {
+    const [idA] = await threeModules(client);
+    for (const index of [3, 3.5]) {
+      const res = await client.callTool({ name: "shield_module_update", arguments: { item_id: "sh1", module_id: idA, index } });
+      assert.equal(res.isError, true, `index ${index} — ошибка`);
+      const payload = errPayload(res);
+      assert.equal(payload.code, "INVALID_ARGUMENT", `index ${index}`);
+      assert.equal((payload.details as { kind?: string } | undefined)?.kind, "index_out_of_rail", `index ${index}`);
+    }
+  } finally {
+    await client.close();
+  }
+});
+
+test("ревью 287 N2: bad_slot при переносе вправо подсказывает expected_index (конец соседа − 0.5)", async () => {
+  const client = await start();
+  try {
+    // A (2 DIN) на 0, B (1 DIN) на 2; перенос A на начало соседа B (index 2) —
+    // ожидаемая позиция drag: 2 + 1 − 0.5 = 2.5
+    const add = await call(client, "shield_module_add", { item_id: "sh1", type: "shield_module_uzo", subtype: "16A/30mA" });
+    const idA = (add["entity"] as { modules: { module_id: string; index: number }[] }).modules.find((m) => m.index === 0)!.module_id;
+    await threeModules(client);
+    const res = await client.callTool({ name: "shield_module_update", arguments: { item_id: "sh1", module_id: idA, index: 2 } });
+    assert.equal(res.isError, true, "index 2 — ошибка (начало соседа, не конец − 0.5)");
+    const payload = errPayload(res);
+    assert.equal(payload.code, "INVALID_ARGUMENT");
+    const details = payload.details as { kind?: string; expected_index?: number } | undefined;
+    assert.equal(details?.kind, "bad_slot");
+    assert.equal(details?.expected_index, 2.5, "подсказка: конец соседа − 0.5");
+  } finally {
+    await client.close();
+  }
+});
+
+test("ревью 285 №2: shield_rail_delete — ответ с deleted_modules/deleted_wires (каскад проводов)", async () => {
+  const client = await start();
+  try {
+    await call(client, "shield_rail_add", { item_id: "sh1" });
+    // 2 модуля на рейке 1 + провод между ними
+    const add1 = await call(client, "shield_module_add", { item_id: "sh1", type: "shield_module", subtype: "16A", rail: 1 });
+    const idA = (add1["entity"] as { modules: { module_id: string; rail: number }[] }).modules.filter((m) => m.rail === 1)[0]!.module_id;
+    const add2 = await call(client, "shield_module_add", { item_id: "sh1", type: "shield_module", subtype: "25A", rail: 1 });
+    const modsRail1 = (add2["entity"] as { modules: { module_id: string; rail: number }[] }).modules.filter((m) => m.rail === 1);
+    const idB = modsRail1[1]!.module_id;
+    const wireRes = await call(client, "shield_wire_add", {
+      item_id: "sh1", type: "shield_wire_phase",
+      source: { module_id: idA, port: 0 }, target: { module_id: idB, port: 0 },
+    });
+    const wireId = (wireRes["entity"] as { wires: { wire_id: string }[] }).wires[0]!.wire_id;
+
+    const del = await call(client, "shield_rail_delete", { item_id: "sh1", rail: 1 });
+    assert.deepEqual(del["deleted_modules"], [idA, idB], "удалённые модули рейки");
+    assert.deepEqual(del["deleted_wires"], [wireId], "каскад: провод модулей рейки");
+    assert.equal(del["deleted_collectors"], undefined, "коллекторов не было — ключа нет");
+
+    // рейка без модулей/проводов: ключи absent (как у shield_module_delete)
+    await call(client, "shield_rail_add", { item_id: "sh1" });
+    const delEmpty = await call(client, "shield_rail_delete", { item_id: "sh1", rail: 1 });
+    assert.equal(delEmpty["deleted_modules"], undefined);
+    assert.equal(delEmpty["deleted_wires"], undefined);
+    const left = (delEmpty["entity"] as { rails: number }).rails;
+    assert.equal(left, 1, "осталась одна рейка");
+  } finally {
+    await client.close();
+  }
+});
+
+test("ревью 285 №2: shield_module_delete — ответ с deleted_wires (регрессия на форму ответа)", async () => {
+  const client = await start();
+  try {
+    const [idA, idB] = await threeModules(client);
+    await call(client, "shield_wire_add", {
+      item_id: "sh1", type: "shield_wire_phase",
+      source: { module_id: idA, port: 0 }, target: { module_id: idB, port: 0 },
+    });
+    const del = await call(client, "shield_module_delete", { item_id: "sh1", module_id: idA });
+    assert.equal((del["deleted_wires"] as string[]).length, 1, "каскад провода в ответе");
+  } finally {
+    await client.close();
+  }
+});

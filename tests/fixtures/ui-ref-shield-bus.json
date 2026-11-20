@@ -1,0 +1,156 @@
+{
+ "_source": "Живая проба scripts/probes/284-bus2.ts (dev-проект из env, без сохранения): шина через обработчики слотов шин (bus_slot_mouseover → add_bus_start, bus_slot_mousemove → add_bus_move, bus_slot_mousedown → add_bus_end — те же обработчики, что клики UI), провод shield_wire_phase модуль→порт шины. ShieldBus {id, type (позиция T/B + L/C/R), connection, distance, ports[6 {id, parent_id, parent_type: \"bus\", connected}]}. Идентификаторы обезличены (scripts/anonymize.ts). Эталон для следующего PR (шины/коллекторы); в этом PR MCP их не пишет.",
+ "shields": {
+  "id1": {
+   "id": "id1",
+   "shield_id": "id2",
+   "on_auto_length_rails": 1,
+   "length_rails": 12,
+   "rails": {
+    "id3": {
+     "id": "id3",
+     "index": 0,
+     "modules": {
+      "id4": {
+       "id": "id4",
+       "rail_id": "id3",
+       "index": 0,
+       "width": 1,
+       "type": "shield_module",
+       "group_number": 0,
+       "subtype": "16A",
+       "comment": "",
+       "ports": [
+        {
+         "id": "id5",
+         "parent_id": "id4",
+         "parent_type": "module",
+         "connected": 1
+        },
+        {
+         "id": "id6",
+         "parent_id": "id4",
+         "parent_type": "module",
+         "connected": 0
+        }
+       ],
+       "custom": {}
+      },
+      "id7": {
+       "id": "id7",
+       "rail_id": "id3",
+       "index": 1,
+       "width": 1,
+       "type": "shield_module",
+       "group_number": 0,
+       "subtype": "16A",
+       "comment": "",
+       "ports": [
+        {
+         "id": "id8",
+         "parent_id": "id7",
+         "parent_type": "module",
+         "connected": 0
+        },
+        {
+         "id": "id9",
+         "parent_id": "id7",
+         "parent_type": "module",
+         "connected": 0
+        }
+       ],
+       "custom": {}
+      }
+     }
+    }
+   },
+   "buses": {
+    "id10": {
+     "id": "id10",
+     "type": "TL",
+     "ports": [
+      {
+       "id": "id11",
+       "parent_id": "id10",
+       "parent_type": "bus",
+       "connected": 1
+      },
+      {
+       "id": "id12",
+       "parent_id": "id10",
+       "parent_type": "bus",
+       "connected": 0
+      },
+      {
+       "id": "id13",
+       "parent_id": "id10",
+       "parent_type": "bus",
+       "connected": 0
+      },
+      {
+       "id": "id14",
+       "parent_id": "id10",
+       "parent_type": "bus",
+       "connected": 0
+      },
+      {
+       "id": "id15",
+       "parent_id": "id10",
+       "parent_type": "bus",
+       "connected": 0
+      },
+      {
+       "id": "id16",
+       "parent_id": "id10",
+       "parent_type": "bus",
+       "connected": 0
+      }
+     ],
+     "connection": "shield_wire_phase",
+     "distance": 0
+    }
+   },
+   "collectors": {},
+   "inputs": {
+    "id17": {
+     "id": "id17",
+     "ports": [
+      {
+       "id": "id18",
+       "parent_type": "input",
+       "parent_id": "id17",
+       "type": "shield_wire_earth",
+       "connected": 0
+      },
+      {
+       "id": "id19",
+       "parent_type": "input",
+       "parent_id": "id17",
+       "type": "shield_wire_null",
+       "connected": 0
+      },
+      {
+       "id": "id20",
+       "parent_type": "input",
+       "parent_id": "id17",
+       "type": "shield_wire_phase",
+       "connected": 0
+      }
+     ],
+     "index": 0,
+     "phase": 1
+    }
+   },
+   "wires": {
+    "id21": {
+     "id": "id21",
+     "id_source": "id5",
+     "id_target": "id11",
+     "type": "shield_wire_phase",
+     "thickness": 0,
+     "is_broken": 0
+    }
+   }
+  }
+ }
+}

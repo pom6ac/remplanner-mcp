@@ -1,4 +1,4 @@
-import type { Cable, ElecCable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip, WarmFloor, Shield } from "./types.ts";
+import type { Cable, ElecCable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip, WarmFloor, Shield, ShieldPort } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
 import { roomPolygons, type RoomPolygon } from "./rooms.ts";
 import { holeOffsetFromStart } from "./openings.ts";
@@ -315,6 +315,18 @@ export type CompactShieldModule = {
   comment?: string;
 };
 
+/** Провод щитка в компактном виде (этап 284). */
+export type CompactShieldWire = {
+  /** id провода (id сайта) — для shield_wire_delete. */
+  wire_id: string;
+  /** shield_wire_phase|phase2|phase3|null|earth. */
+  type: string;
+  // ревью 285 №10: порт шины виден агенту — {bus: <bus_id>, port: n}
+  from: { module_id?: string; port?: number; input?: "phase" | "null" | "earth"; bus?: string };
+  to: { module_id?: string; port?: number; input?: "phase" | "null" | "earth"; bus?: string };
+  is_broken?: number;
+};
+
 /** Конструктор электрощитка (лист «Электрощиток», этап 255). */
 export type CompactShield = {
   id: string;
@@ -327,6 +339,11 @@ export type CompactShield = {
   rails: number;
   /** Модули по рейкам (порядок: рейка, позиция). */
   modules: CompactShieldModule[];
+  /** Провода (этап 284; порядок по id). */
+  wires?: CompactShieldWire[];
+  /** Число шин/коллекторов (формат — следующий PR, значения не изменяются MCP). */
+  buses?: number;
+  collectors?: number;
 };
 
 export type CompactModel = {
@@ -724,6 +741,44 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
           });
         }
       }
+      // провода (этап 284): адрес порта — {module_id, port} или {input}
+      const inputPortByKey = new Map<string, "phase" | "null" | "earth">();
+      for (const input of Object.values(shield.inputs ?? {})) {
+        for (const p of input.ports ?? []) {
+          if (p.type === "shield_wire_phase") inputPortByKey.set(p.id, "phase");
+          else if (p.type === "shield_wire_null") inputPortByKey.set(p.id, "null");
+          else if (p.type === "shield_wire_earth") inputPortByKey.set(p.id, "earth");
+        }
+      }
+      const moduleByPort = new Map<string, { module_id: string; port: number }>();
+      for (const rail of rails) {
+        for (const mod of Object.values(rail.modules ?? {})) {
+          (mod.ports ?? []).forEach((p, idx) => moduleByPort.set(p.id, { module_id: mod.id, port: idx }));
+        }
+      }
+      // ревью 285 №10: порт шины — {bus: <bus_id>, port: n} вместо пустого {}
+      const busByPort = new Map<string, { bus: string; port: number }>();
+      for (const bus of Object.values(shield.buses ?? {}) as Array<{ id: string; ports?: ShieldPort[] }>) {
+        (bus.ports ?? []).forEach((p, idx) => busByPort.set(p.id, { bus: bus.id, port: idx }));
+      }
+      const portRef = (portId: string): CompactShieldWire["from"] => {
+        const m = moduleByPort.get(portId);
+        if (m) return { module_id: m.module_id, port: m.port };
+        const inp = inputPortByKey.get(portId);
+        if (inp) return { input: inp };
+        const bus = busByPort.get(portId);
+        if (bus) return { bus: bus.bus, port: bus.port };
+        return {};
+      };
+      const wires = Object.values(shield.wires ?? {})
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((w) => ({
+          wire_id: w.id,
+          type: w.type,
+          from: portRef(w.id_source),
+          to: portRef(w.id_target),
+          ...(w.is_broken ? { is_broken: w.is_broken } : {}),
+        }));
       return {
         id: `SH${i + 1}`,
         site_id: shield.id,
@@ -731,6 +786,9 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
         length_rails_din: shield.length_rails ?? 12,
         rails: rails.length,
         modules,
+        ...(wires.length ? { wires } : {}),
+        ...(Object.keys(shield.buses ?? {}).length ? { buses: Object.keys(shield.buses).length } : {}),
+        ...(Object.keys(shield.collectors ?? {}).length ? { collectors: Object.keys(shield.collectors).length } : {}),
       };
     });
 

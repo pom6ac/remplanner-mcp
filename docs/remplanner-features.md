@@ -851,6 +851,41 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
   wire_lowcurrent, floor_wire, ceiling_wire) — предметы-группы того же формата
   на листе «Розетки» — следующий PR.
 
+### 7.6b. Конструктор электрощитка ч.2: провода, шины, перенос модулей [код + пробы 284-wire-*/284-bus2, 2026-11-20]
+
+Этап 284 (живые эталоны — copy("server") после действий обработчиков портов
+редактора в dev-проекте, без сохранения). Провода: `shields[].wires {wireId:
+{id, id_source, id_target, type, thickness, thickness_data?, is_broken}}`;
+`type` — активный инструмент `shield_wire_phase|phase2|phase3|null|earth`
+(add_wire_end: `new ShieldWire({id, id_source, id_target, type: tool})`);
+`thickness_data` появляется только после drag «сечение» в UI. Постановка в UI —
+клик по порту (module_port_click: !new_wire → add_wire_start, иначе add_wire_end);
+порт — элемент `[data-id] circle` листа. Несколько проводов с одного порта
+разрешены (проба 284-wire-cases); провод модуль↔ввод и модуль↔порт шины — тот же
+формат (parent_type порта любой). Удаление провода (delete_wire) пересчитывает
+connected портов и connection шин.
+
+Шины: `shields[].buses {busId: {id, type, connection, distance, ports[6 {id,
+parent_id, parent_type:"bus", connected}]}}` (проба 284-bus2: слоты `.bus-slot`
+над/под щитком; type — позиция T/B + L/C/R от точки постановки, «TL» — верх-лево;
+connection — тип провода первого подключённого порта, validate_buses). Порты
+шины — цели проводов наравне с модулями/вводом. Коллектор: `collectors
+{collectorId: {id, rail_id, module_width, modules {moduleId: moduleId},
+position: "T"|"B"}}` (проба 284-wire-matrix; validate_collectors удаляет
+коллектор с <2 модулями).
+
+Каскады при удалении (как редактор, молча): delete_module/delete_rail/
+delete_input вызывают validate_wires (провода с исчезнувшими портами удаляются),
+validate_ports (connected), validate_buses (connection), validate_collectors
+(<2 модулей → коллектор удаляется). Перенос модуля между рейками
+(move_module_to_rail: в конец целевой, индексы старой сдвигаются; не влезает —
+редактор молча пропускает) и порядок (reorder_modules: слоты по DIN, модуль
+шире slot=1 DIN ставится только к началу соседа; позиция внутри самого модуля —
+no-op); in_transition — флаг только на время drag, в сериализации не остаётся.
+Провода при переносе сохраняются (порты переезжают с модулем). MCP строже
+редактора в двух местах: переполнение рейки при переносе и позиция за концом
+рейки — INVALID_ARGUMENT вместо молчаливого пропуска/падения.
+
 ### 7.7. Отделка: покрытия пола, стен и потолка [код + пробы 94-finish-*/94-live-check, 2026-11-17]
 
 Отделка хранится не отдельными коллекциями, а в комнатах (`rooms2`, на листе init —
