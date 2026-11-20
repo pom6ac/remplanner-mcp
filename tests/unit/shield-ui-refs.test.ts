@@ -362,11 +362,14 @@ test("284: провода не запрещают операции с модул
   assert.equal(Object.values(s.rails).length, 2);
   // удаление модуля — провода к его портам каскадно, чужие остаются
   const { module: m2 } = addShieldModule(m, shield.id, { type: "shield_module_x2" });
-  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: m2.id, port: 0 }, target: { module_id: mod.id, port: 0 } });
+  const wDel = addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: m2.id, port: 0 }, target: { module_id: mod.id, port: 0 } });
   const wKeep = addShieldWire(m, shield.id, { type: "shield_wire_null", source: { module_id: mod.id, port: 1 }, target: { input: "earth" } });
   const res = deleteShieldModule(m, shield.id, m2.id);
   const sh = findShieldByItem(m, shield.id)!;
-  assert.equal(res.deleted_wires.length, 1);
+  // каскад validate_wires: провод удалённого модуля + висячий w1 (портов x/y нет);
+  // ревью 285 №6: висячие провода больше не удаляются молча при add/delete провода —
+  // их чистит validate_wires при операциях с модулями/рейками, id попадают в deleted_wires
+  assert.deepEqual([...res.deleted_wires].sort(), ["w1", wDel.wire.id].sort());
   assert.ok(!sh.wires[res.deleted_wires[0]!]);
   assert.ok(sh.wires[wKeep.wire.id], "провод без отношения к удалённому остался");
   // connected портов пересчитан
@@ -1229,4 +1232,122 @@ test("284: импорт — лимит проводов щитка (мусор �
     () => parseModelImport({ ...baseModel(), shields: { [s.id]: { ...structuredClone(s), wires } } }),
     (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
   );
+});
+
+// ---------- ревью 285 №4–№9 ----------
+
+test("ревью 285 №4: повторный идентичный провод (в обе стороны, тот же тип) — INVALID_ARGUMENT", () => {
+  const { m, shield, mA, mB } = wiresScenario();
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } });
+  // прямой дубль
+  assert.throws(
+    () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // обратный дубль
+  assert.throws(
+    () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mB!.id, port: 0 }, target: { module_id: mA.id, port: 0 } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  const s = findShieldByItem(m, shield.id)!;
+  assert.equal(Object.keys(s.wires).length, 1, "дубль не добавлен");
+});
+
+test("ревью 285 №5: разорванный провод (is_broken 1) не считается в connected и connection шины (как get_wire_by_port редактора)", () => {
+  const { m, shield, mA, mB } = wiresScenario();
+  const s = findShieldByItem(m, shield.id)!;
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } });
+  Object.values(s.wires)[0]!.is_broken = 1;
+  validateShieldDerived(s);
+  assert.equal(mA.ports[0]!.connected, 0, "разорванный провод — порт источника не connected");
+  assert.equal(mB!.ports[0]!.connected, 0, "разорванный провод — порт цели не connected");
+  // шина: connection по живому проводу, разорванный пропускается
+  const busPortId = "busPort1";
+  const bus = { id: "b1", type: "T_L", connection: "", distance: 0, ports: [{ id: busPortId, parent_id: "b1", parent_type: "bus", connected: 0 }] } as never;
+  s.buses = { b1: bus };
+  addShieldWire(m, shield.id, { type: "shield_wire_null", source: { module_id: mA.id, port: 1 }, target: { module_id: mB!.id, port: 1 } });
+  const second = Object.values(s.wires).find((w) => w.type === "shield_wire_null")!;
+  second.id_target = busPortId;
+  validateShieldDerived(s);
+  const busAfter = s.buses.b1 as unknown as { connection: string; ports: Array<{ connected: number }> };
+  assert.equal(busAfter.connection, "shield_wire_null", "живой провод задаёт connection шины");
+  second.is_broken = 1;
+  validateShieldDerived(s);
+  assert.equal(busAfter.connection, "", "разорванный провод не задаёт connection");
+  assert.equal(busAfter.ports[0]!.connected, 0);
+});
+
+test("ревью 285 №6: add/delete провода пересчитывает только connected/connection — висячие провода и коллекторы не удаляются молча", () => {
+  const { m, shield, mA, mB } = wiresScenario();
+  const s = findShieldByItem(m, shield.id)!;
+  // висячий провод (порт не существует) и «коллектор из одного модуля» — как из UI/импорта
+  (s.wires ??= {})["dangling"] = { id: "dangling", id_source: "no_such_port", id_target: mA.ports[0]!.id, type: "shield_wire_phase", thickness: 0, is_broken: 0 } as never;
+  s.collectors = { c1: { id: "c1", rail_id: Object.values(s.rails)[0]!.id, module_width: 1, modules: { [mA.id]: mA.id }, position: "T" } as never };
+  addShieldWire(m, shield.id, { type: "shield_wire_null", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } });
+  assert.equal("dangling" in s.wires, true, "висячий провод не удалён молча при добавлении провода");
+  assert.equal("c1" in s.collectors, true, "коллектор не удалён молча при добавлении провода");
+  const wireId = Object.values(s.wires).find((w) => w.type === "shield_wire_null")!.id;
+  deleteShieldWire(m, shield.id, wireId);
+  assert.equal("dangling" in s.wires, true, "висячий провод не удалён молча при удалении провода");
+  assert.equal("c1" in s.collectors, true, "коллектор не удалён молча при удалении провода");
+  // connected при этом пересчитан как в редакторе
+  assert.equal(mA.ports[0]!.connected, 1, "dangling указывает на порт mA — connected 1");
+  assert.equal(mB!.ports[0]!.connected, 0);
+});
+
+test("ревью 285 №7: схема импорта — id_source/id_target/type провода и ports шины обязательны", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  const s = findShieldByItem(m, shield.id)!;
+  // провод без id_source/id_target/type — отказ
+  for (const key of ["id_source", "id_target", "type"] as const) {
+    const wire = { id: "w1", id_source: "a", id_target: "b", type: "shield_wire_phase", thickness: 0, is_broken: 0 };
+    delete wire[key];
+    assert.throws(
+      () => parseModelImport({ ...baseModel(), shields: { [s.id]: { ...structuredClone(s), wires: { w1: wire } } } }),
+      (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+      `провод без ${key} — отказ`,
+    );
+  }
+  // шина: ports не число (garbage) и connection не строка — отказ
+  const badPorts = { ...structuredClone(s), buses: { b1: { id: "b1", ports: 5 } } };
+  assert.throws(
+    () => parseModelImport({ ...baseModel(), shields: { [s.id]: badPorts } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+    "шина с ports=5 — отказ",
+  );
+  const badConnection = { ...structuredClone(s), buses: { b1: { id: "b1", ports: [], connection: 5 } } };
+  assert.throws(
+    () => parseModelImport({ ...baseModel(), shields: { [s.id]: badConnection } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+    "шина с connection=5 — отказ",
+  );
+});
+
+test("ревью 285 №8: перенос модуля между рейками пересчитывает авто-длину щитка (refreshAutoLength)", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldRail(m, shield.id);
+  // 14 DIN модулей на рейке 0 → length_rails 14
+  addShieldModule(m, shield.id, { type: "shield_module_x4", rail: 0 });
+  addShieldModule(m, shield.id, { type: "shield_module_x4", rail: 0 });
+  addShieldModule(m, shield.id, { type: "shield_module_x4", rail: 0 });
+  addShieldModule(m, shield.id, { type: "shield_module_x2", rail: 0 });
+  const s = findShieldByItem(m, shield.id)!;
+  assert.equal(s.length_rails, 14);
+  // перенести 4-полюсный модуль на рейку 1 → рейки 10/4, авто-длина 12 (минимум), не 14
+  const mod = Object.values(Object.values(s.rails)[0]!.modules)[0]!;
+  updateShieldModule(m, shield.id, mod.id, { rail: 1 });
+  assert.equal(findShieldByItem(m, shield.id)!.length_rails, 12, "авто-длина пересчитана после переноса");
+});
+
+test("ревью 285 №9: port обязателен при module_id — без него INVALID_ARGUMENT, а не молчаливый порт 0", () => {
+  const { m, shield, mA, mB } = wiresScenario();
+  assert.throws(
+    () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id }, target: { module_id: mB!.id, port: 0 } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  const s = findShieldByItem(m, shield.id)!;
+  assert.equal(Object.keys(s.wires).length, 0, "провод без порта не создан");
 });

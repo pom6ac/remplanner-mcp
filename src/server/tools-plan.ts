@@ -1664,10 +1664,13 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       "Соединить порты щитка проводом (лист «Электрощиток», PRO; в редакторе — инструмент " +
         "shield_wire_* и клик по двум портам). type — shield_wire_phase|shield_wire_phase2|" +
         "shield_wire_phase3 (фаза/фаза 2/фаза 3), shield_wire_null (ноль), shield_wire_earth (земля). " +
-        "source/target — порт: {module_id, port} (port — номер порта модуля 0-based из full-модели " +
+        "source/target — порт: {module_id, port} (port обязателен; номер порта модуля 0-based из full-модели " +
         "shields[].rails[].modules[].ports) или {input: \"phase\"|\"null\"|\"earth\"} (порт ввода). " +
-        "Несколько проводов на один порт разрешено (как в редакторе); шины (buses) пока не " +
-        "поддерживаются — порт шины указать нельзя (следующий этап).",
+        "Несколько разных проводов на один порт разрешено (как в редакторе); повторный идентичный " +
+        "провод (те же порты и тип) — INVALID_ARGUMENT; тип провода и тип порта не проверяются (как " +
+        "в редакторе). Шины (buses) не редактируются MCP — порт шины указать нельзя (следующий этап). " +
+        "После добавления пересчитываются connected портов и connection шин (validate_ports/validate_buses " +
+        "редактора); висячие провода/коллекторы чистятся только при операциях с модулями и рейками.",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
         type: z.enum(SHIELD_WIRE_TYPES),
@@ -1696,7 +1699,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     shield_wire_delete: tool(
       "Удалить провод щитка (wire_id из model_get shields[].wires[].wire_id). connected портов и " +
-        "connection шин пересчитываются автоматически (как в редакторе).",
+        "connection шин пересчитываются автоматически (validate_ports/validate_buses редактора).",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
         wire_id: z.string().min(1).describe("id провода из model_get"),

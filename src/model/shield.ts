@@ -422,6 +422,9 @@ export function updateShieldModule(model: Model, itemId: string, moduleId: strin
   const railChanged = params.rail !== undefined && railIndexOf(shield, mod.rail_id) !== params.rail;
   if (railChanged) moveShieldModuleToRail(shield, mod, params.rail!);
   if (params.index !== undefined) reorderShieldModule(shield, mod, params.index, railChanged);
+  // ревью 285 №8: перенос/порядок меняют распределение модулей по рейкам —
+  // авто-длина щитка пересчитывается (delete/add её обновляют, update — нет)
+  if (railChanged || params.index !== undefined) refreshAutoLength(shield);
   return { shield, module: mod };
 }
 
@@ -632,9 +635,32 @@ export function validateShieldDerived(shield: Shield): { deleted_wires: string[]
       deletedWires.push(id);
     }
   }
-  // validate_ports: connected по всем проводам (модули, вводы, шины)
+  refreshShieldConnections(shield, ports);
+  // validate_collectors: коллектор с <2 модулями или потерянным модулем удаляется
+  const deletedCollectors: string[] = [];
+  for (const [id, col] of Object.entries(shield.collectors ?? {})) {
+    const mods = (col as { modules?: Record<string, unknown> }).modules ?? {};
+    const known = Object.keys(mods).filter((mid) => findShieldModule(shield, mid));
+    if (known.length < 2) {
+      delete shield.collectors![id];
+      deletedCollectors.push(id);
+    }
+  }
+  return { deleted_wires: deletedWires, deleted_collectors: deletedCollectors };
+}
+
+/**
+ * validate_ports + validate_buses редактора (ревью 285 №6): connected портов по
+ * живым проводам и connection шины — без удаления висячих проводов и коллекторов
+ * (их пересчитывает только validate_wires/validate_collectors при операциях с
+ * модулями/рейками). Разорванные провода (is_broken 1) не считаются — как
+ * get_wire_by_port/get_count_wires_by_port_id редактора (ревью 285 №5).
+ */
+function refreshShieldConnections(shield: Shield, ports: Map<string, { parent_type: string; parent_id: string }>): void {
+  // validate_ports: connected по живым (не разорванным) проводам
   const connectedIds = new Set<string>();
   for (const wire of Object.values(shield.wires ?? {})) {
+    if (wire.is_broken) continue;
     connectedIds.add(wire.id_source);
     connectedIds.add(wire.id_target);
   }
@@ -661,20 +687,9 @@ export function validateShieldDerived(shield: Shield): { deleted_wires: string[]
       bus.connection = "";
       continue;
     }
-    const wire = Object.values(shield.wires ?? {}).find((w) => w.id_source === first.id || w.id_target === first.id);
+    const wire = Object.values(shield.wires ?? {}).find((w) => !w.is_broken && (w.id_source === first.id || w.id_target === first.id));
     bus.connection = wire ? wire.type : "";
   }
-  // validate_collectors: коллектор с <2 модулями или потерянным модулем удаляется
-  const deletedCollectors: string[] = [];
-  for (const [id, col] of Object.entries(shield.collectors ?? {})) {
-    const mods = (col as { modules?: Record<string, unknown> }).modules ?? {};
-    const known = Object.keys(mods).filter((mid) => findShieldModule(shield, mid));
-    if (known.length < 2) {
-      delete shield.collectors![id];
-      deletedCollectors.push(id);
-    }
-  }
-  return { deleted_wires: deletedWires, deleted_collectors: deletedCollectors };
 }
 
 /** Разрешение ссылки на порт (shield_wire_add): id порта или отказ. */
@@ -691,7 +706,15 @@ function resolveShieldPort(shield: Shield, ref: ShieldPortRef, side: string): { 
   if (hasModule) {
     const mod = findShieldModule(shield, ref.module_id!);
     if (!mod) throw new McpError("NOT_FOUND", `${side}: модуль ${ref.module_id} не найден в щитке`);
-    const idx = ref.port ?? 0;
+    // ревью 285 №9: без port агенты молча попадали в порт 0 — обязательный
+    if (ref.port === undefined) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `${side}: не указан port модуля ${mod.id} (${mod.type}, портов ${mod.ports?.length ?? 0}) — укажите {module_id, port}`,
+        { details: { kind: "no_port_specified", side, module: mod.id } },
+      );
+    }
+    const idx = ref.port;
     const port = mod.ports?.[idx];
     if (!port) {
       throw new McpError(
@@ -721,9 +744,10 @@ export type ShieldWireAddParams = {
  * shield_wire_add: провод между портами (module_port_click ×2 → add_wire_end
  * редактора: new ShieldWire({id, id_source, id_target, type: tool})).
  * Порты любых родителей (модуль, ввод, шина). same source==target отклоняем
- * (петля); повторный идентичный провод — INVALID_ARGUMENT (MCP строже редактора:
- * редактор нарисует дубль, хранить дубли в модели незачем). Больше одного
- * провода с одного порта разрешено (эталон 284-wire-cases).
+ * (петля); повторный идентичный провод (те же порты в любом направлении и тот же
+ * тип) — INVALID_ARGUMENT (ревью 285 №4). Больше одного провода с одного порта
+ * разрешено (эталон 284-wire-cases). После добавления пересчитываются только
+ * connected/connection (validate_ports/validate_buses редактора, ревью 285 №6).
  */
 export function addShieldWire(model: Model, itemId: string, params: ShieldWireAddParams): { shield: Shield; wire: ShieldWire } {
   if (!SHIELD_WIRE_TYPES.includes(params.type as never)) {
@@ -739,24 +763,36 @@ export function addShieldWire(model: Model, itemId: string, params: ShieldWireAd
   if (source.portId === target.portId) {
     throw new McpError("INVALID_ARGUMENT", "source и target — один порт (петля)", { details: { kind: "self_wire" } });
   }
+  const duplicate = Object.values(shield.wires ?? {}).some(
+    (w) => w.type === params.type
+      && ((w.id_source === source.portId && w.id_target === target.portId) || (w.id_source === target.portId && w.id_target === source.portId)),
+  );
+  if (duplicate) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `провод ${params.type} между этими портами уже есть (повторный идентичный провод — отказ; несколько разных проводов на порт разрешено)`,
+      { details: { kind: "duplicate_wire" } },
+    );
+  }
   if (Object.keys(shield.wires ?? {}).length >= SHIELD_MAX_WIRES_LIMIT) {
     throw new McpError("INVALID_ARGUMENT", `проводов в щитке уже ${SHIELD_MAX_WIRES_LIMIT} (лимит)`, { details: { kind: "wires_limit" } });
   }
   const wire: ShieldWire = { id: newId(10), id_source: source.portId, id_target: target.portId, type: params.type, thickness: 0, is_broken: 0 };
   (shield.wires ??= {})[wire.id] = wire;
-  validateShieldDerived(shield);
+  refreshShieldConnections(shield, shieldPorts(shield));
   return { shield, wire };
 }
 
 /**
  * shield_wire_delete: удалить провод (delete_wire редактора); connected портов
- * и connection шин пересчитываются (validate_ports/validate_buses).
+ * и connection шин пересчитываются (validate_ports/validate_buses редактора,
+ * ревью 285 №6 — висячие провода/коллекторы при этом не трогаются).
  */
 export function deleteShieldWire(model: Model, itemId: string, wireId: string): { shield: Shield } {
   const { shield } = shieldOfItem(model, itemId);
   if (!shield.wires?.[wireId]) throw new McpError("NOT_FOUND", `провод ${wireId} не найден в щитке предмета ${itemId}`);
   delete shield.wires[wireId];
-  validateShieldDerived(shield);
+  refreshShieldConnections(shield, shieldPorts(shield));
   return { shield };
 }
 
