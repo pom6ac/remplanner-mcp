@@ -649,8 +649,8 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
     ),
 
     editor_status: tool(
-      "Статус связки с редактором: версия сайта (global_version), совместимость адаптера, запущен ли headless-браузер, " +
-        "dirty (есть несохранённые правки), save_id. При EDITOR_INCOMPATIBLE сайт обновился и адаптер надо сверить с новой версией.",
+      "Статус связки с редактором: версия сайта (global_version), совместимость адаптера, plan_id открытого в редакторе проекта, " +
+        "запущен ли headless-браузер, dirty (есть несохранённые правки), save_id. При EDITOR_INCOMPATIBLE сайт обновился и адаптер надо сверить с новой версией.",
       {},
       async () => {
         const ws = ctx.workspaceOrNull;
@@ -662,6 +662,9 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
           dirty: ws?.project?.dirty ?? null,
           save_id: ws?.project?.saveId ?? null,
           object_id: ws?.project?.objectId ?? null,
+          // план, реально открытый в редакторе (compat, ревью 304 m7: явный гард
+          // «план в редакторе == серверу» до первой записи в живых пробах)
+          plan_id: compat?.plan_id ?? null,
           global_version: compat?.global_version ?? null,
           bundles: compat?.bundles?.slice(0, 10) ?? [],
           compatible: compat ? Object.values(compat.present).every(Boolean) : null,

@@ -64,6 +64,46 @@ const freshLabel = async (coll: "walls", siteId: string): Promise<string | null>
   return list.find((w) => w.site_id === siteId)?.id ?? null;
 };
 
+// M7 ревью 304: восстановление ТОЛЬКО по захваченным site_id (метки резолвятся
+// из свежего model_get) — не по метке R<n> и не «всё в комнате»: после wall_delete
+// метка R<n> может указывать на комнату пользователя. Вызывается и из основного
+// потока, и из finally (раньше восстановление было только в catch).
+let restored = false;
+async function restoreByCaptured(): Promise<void> {
+  if (restored || !opened) return;
+  restored = true;
+  const mg = await call("model_get", {});
+  // закладные и разделители — только захваченные site_id
+  const crs = (mg["ceiling_rigels"] ?? []) as Array<{ id?: string; site_id?: string }>;
+  for (const c of created.filter((x) => x.kind === "rigel" && x.siteId)) {
+    if (!crs.some((r) => r.site_id === c.siteId)) continue;
+    try { await call("ceiling_rigel_delete", { rigel_id: c.siteId! }); } catch { /* уже нет */ }
+  }
+  const zds = (mg["zone_delimiters"] ?? []) as Array<{ id?: string; site_id?: string }>;
+  for (const c of created.filter((x) => x.kind === "delimiter" && x.siteId)) {
+    if (!zds.some((z) => z.site_id === c.siteId)) continue;
+    try { await call("zone_ceiling_remove", { delimiter_id: c.siteId! }); } catch { /* уже нет */ }
+  }
+  const mg2 = await call("model_get", {});
+  const walls = (mg2["walls"] ?? []) as Array<{ id: string; site_id: string }>;
+  const want = new Set(created.filter((x) => x.kind === "wall" && x.siteId).map((x) => x.siteId!));
+  for (let guard = 0; guard < 40 && want.size > 0; guard++) {
+    const hit = walls.find((wl) => want.has(wl.site_id));
+    if (!hit) break;
+    want.delete(hit.site_id);
+    try { await call("wall_delete", { wall_id: hit.id }); } catch { /* уже нет */ }
+    const fresh = await call("model_get", {});
+    const fw = (fresh["walls"] ?? []) as Array<{ id: string; site_id: string }>;
+    walls.length = 0;
+    walls.push(...fw);
+  }
+  const saveRes = await call("project_save", {});
+  console.log("restore save:", JSON.stringify({ verified: saveRes["verified"], rounds: saveRes["rounds"] }));
+  if (!saveRes["verified"]) throw new Error("restore save не verified");
+  created.length = 0; // восстановлено
+  opened = false;
+}
+
 /** Семантическая сигнатура модели (как в 260): служебные поля исключены,
  *  регенерируемые id — в канонические формы; закладные — по геометрии+width. */
 function sig(m: unknown): string {
@@ -212,6 +252,13 @@ try {
   }
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
   opened = true;
+  // m7 ревью 304: явный гард «план в редакторе == серверу» до первой записи
+  // (compat.plan_id; как в 303-ceiling-rigel.ts)
+  const st = await call("editor_status", {}) as { plan_id?: string | null };
+  if (st.plan_id != null && String(st.plan_id) !== String(PLAN_ID)) {
+    throw new Error(`план в редакторе ${String(st.plan_id)} != серверу ${PLAN_ID}`);
+  }
+  console.log("гард «план в редакторе == серверу»:", st.plan_id != null ? "OK" : "compat.plan_id пуст (гард адаптера неактивен)");
 
   // 2. пробная комната: правее всей геометрии, 4 стены 200×150 см, толщина 100 мм
   const rawWalls = (before.model["walls"] ?? {}) as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>;
@@ -219,7 +266,8 @@ try {
   const ox = Math.ceil(maxX) + 300;
   const oy = 0;
   const w = 200, h = 150;
-  const rect = [
+  type Pt = { x: number; y: number };
+  const rect: [Pt, Pt][] = [
     [{ x: ox, y: oy }, { x: ox + w, y: oy }],
     [{ x: ox + w, y: oy }, { x: ox + w, y: oy + h }],
     [{ x: ox + w, y: oy + h }, { x: ox, y: oy + h }],
@@ -339,29 +387,8 @@ try {
     }
   }
 
-  // 7. восстановление (по захваченным site_id, метки из свежего model_get)
-  const finRestore = await call("finish_get", { room_id: roomRef });
-  const finRestoreArr = finRestore as unknown as Array<Record<string, unknown>>;
-  for (const d of (finRestoreArr[0]?.["zone_delimiters"] ?? []) as Array<Record<string, unknown>>) {
-    try { await call("zone_ceiling_remove", { delimiter_id: String(d["site_id"] ?? d["id"]) }); } catch { /* уже нет */ }
-  }
-  const finRestore2 = await call("finish_get", { room_id: roomRef });
-  for (const r of (((finRestore2 as unknown as Array<Record<string, unknown>>)[0]?.["ceiling_rigels"] ?? []) as Array<Record<string, unknown>>)) {
-    try { await call("ceiling_rigel_delete", { rigel_id: String(r["site_id"] ?? r["id"]) }); } catch { /* уже нет */ }
-  }
-  const wallSites = created.filter((c) => c.kind === "wall" && c.siteId).map((c) => c.siteId!);
-  let left = [...wallSites];
-  for (let guard = 0; guard < 40 && left.length > 0; guard++) {
-    const label = await freshLabel("walls", left[0]!);
-    if (!label) { left.shift(); continue; }
-    await call("wall_delete", { wall_id: label });
-    left.shift();
-  }
-  const saveRes2 = await call("project_save", {});
-  console.log("restore save:", JSON.stringify({ verified: saveRes2["verified"], rounds: saveRes2["rounds"] }));
-  if (!saveRes2["verified"]) throw new Error("restore save не verified");
-  created.length = 0; // восстановлено
-  opened = false;
+  // 7. восстановление — ТОЛЬКО по захваченным site_id (M7 ревью 304)
+  await restoreByCaptured();
 
   // 8. полная семантическая сверка data с бэкапом
   const finalModel = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
@@ -383,31 +410,15 @@ try {
 } catch (e) {
   console.error("FAIL:", String((e as Error).message ?? e).slice(0, 900));
   process.exitCode = 1;
-  // восстановление по захваченным site_id (метки из свежего model_get)
-  try {
-    if (opened) {
-      const mg = await call("model_get", {});
-      const walls = (mg["walls"] ?? []) as Array<{ id: string; site_id: string }>;
-      const want = new Set(created.filter((c) => c.kind === "wall" && c.siteId).map((c) => c.siteId!));
-      for (let guard = 0; guard < 40 && want.size > 0; guard++) {
-        const hit = walls.find((wl) => want.has(wl.site_id));
-        if (!hit) break;
-        want.delete(hit.site_id);
-        try { await call("wall_delete", { wall_id: hit.id }); } catch { /* уже нет */ }
-        const fresh = await call("model_get", {});
-        const fw = (fresh["walls"] ?? []) as Array<{ id: string; site_id: string }>;
-        walls.length = 0;
-        walls.push(...fw);
-      }
-      const fin = await call("model_get", {});
-      void fin;
-      await call("project_save", {});
-      console.log("cleanup save: выполнен");
-    }
-  } catch (ce) {
-    console.error("CLEANUP FAIL:", String((ce as Error).message ?? ce).slice(0, 300));
-  }
 } finally {
+  // M7 ревью 304: восстановление в finally (раньше — только в catch; аварийная
+  // ветка не удаляла закладную и делитель по ID) — и по захваченным site_id
+  try {
+    await restoreByCaptured();
+  } catch (ce) {
+    console.error("RESTORE FAIL:", String((ce as Error).message ?? ce).slice(0, 400));
+    process.exitCode = 1;
+  }
   await closeBrowser();
 }
 process.exit(process.exitCode ?? 0);
