@@ -79,14 +79,23 @@ function axisEdgeAngleDeg(axis: Segment, edge: Segment): number {
   return d > 90 ? 180 - d : d;
 }
 
-/** Боковые грани стен в формате связей: только l/r (CeilingRigel.calc связывает
- *  концы закладной с боковыми гранями стен; торцы s/e — не боковые). */
+/** ГКЛ-пятна (gypsum_sm) редактор пропускает в магните и связях закладной
+ *  (бандл mouseup: "gypsum_sm"!==E.role_ — m3 ревью 304). */
+function isGypsumSm(rec: unknown): boolean {
+  const o = rec as { role_?: unknown; role?: unknown };
+  return o["role_"] === "gypsum_sm" || o["role"] === "gypsum_sm";
+}
+
+/** Боковые грани стен в формате связей: l/r (боковые) и s/e (торцы — редактор
+ *  связывает с ними концы закладной, бандл mouseup: z1:"s"/"e" — m3 ревью 304). */
 function wallSideSegments(wall: Model["walls"][string]): [string, Segment][] {
   try {
     const f = wallFaces(wall, {});
     return [
       ["l", { p1: f.l1, p2: f.l2 }],
       ["r", { p1: f.r1, p2: f.r2 }],
+      ["s", { p1: f.l1, p2: f.r1 }],
+      ["e", { p1: f.l2, p2: f.r2 }],
     ];
   } catch {
     return [];
@@ -108,9 +117,11 @@ function pillarSegments(pillar: Model["pillars"][string]): [string, Segment][] {
 function candidateEdges(model: Model): { ot: RigelLink["ot"]; id: string; z1: string; edge: Segment }[] {
   const out: { ot: RigelLink["ot"]; id: string; z1: string; edge: Segment }[] = [];
   for (const wall of Object.values(model.walls ?? {})) {
+    if (isGypsumSm(wall)) continue;
     for (const [z1, edge] of wallSideSegments(wall)) out.push({ ot: "wall", id: wall.id, z1, edge });
   }
   for (const pillar of Object.values(model.pillars ?? {})) {
+    if (isGypsumSm(pillar)) continue;
     for (const [z1, edge] of pillarSegments(pillar)) out.push({ ot: "pillar", id: pillar.id, z1, edge });
   }
   return out;
@@ -162,9 +173,11 @@ function ceilingRigelLink(endpoint: Point, axis: Segment, model: Model): RigelLi
     link = { ot, id, z1 };
   };
   for (const wall of Object.values(model.walls ?? {})) {
+    if (isGypsumSm(wall)) continue;
     for (const [z1, edge] of wallSideSegments(wall)) match("wall", wall.id, z1, edge);
   }
   for (const pillar of Object.values(model.pillars ?? {})) {
+    if (isGypsumSm(pillar)) continue;
     for (const [z1, edge] of pillarSegments(pillar)) match("pillar", pillar.id, z1, edge);
   }
   return link;
@@ -269,8 +282,10 @@ function assertAxisChecks(model: Model, roomId: string, p1: Point, p2: Point, li
       "концы закладной должны лежать на боковых гранях стен или гранях колонн (закладная строится «от стены до стены»; магнит MCP 30 мм)",
     );
   }
-  if (links.p1 && links.p2 && links.p1.ot === links.p2.ot && links.p1.id === links.p2.id && links.p1.z1 === links.p2.z1) {
-    throw new McpError("INVALID_ARGUMENT", "оба конца на одной грани одного объекта — проведите закладную от одной стены до другой");
+  // m4 ревью 304: редактор отвергает оба конца на ОДНОМ объекте (ot+id, грань
+  // не важна — l10n ceiling_rigel_wall_in_room)
+  if (links.p1 && links.p2 && links.p1.ot === links.p2.ot && links.p1.id === links.p2.id) {
+    throw new McpError("INVALID_ARGUMENT", "оба конца на одном объекте — проведите закладную от одной стены до другой");
   }
   const room = ((model.rooms2 ?? model.rooms1 ?? {}) as Record<string, Record<string, unknown>>)[roomId];
   if (!room) throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomId} нет контура`);
@@ -435,24 +450,24 @@ export function deleteCeilingRigel(model: Model, rigelId: string): { room_id: st
     const rigels = room.rigels as Record<string, CeilingRigelRec> | undefined;
     if (rigels && rigels[rigelId]) {
       delete rigels[rigelId];
-      if (Object.keys(rigels).length === 0) delete room.rigels;
+      // m10 ревью 304: редактор оставляет пустой rigels: {} (живой дамп
+      // 303-after-delete.json) — форма записи как в редакторе
+      room.rigels = rigels;
       return { room_id: rid };
     }
   }
   throw new McpError("NOT_FOUND", `закладная ${rigelId} не найдена`);
 }
 
-/** Список закладных для finish_get/compact (мм; метки CR<n> сквозные по комнатам). */
-export function ceilingRigelList(model: Model, roomRef?: string): Array<Record<string, unknown>> {
+/** Список закладных для finish_get/compact (мм; метки CR<n> сквозные по комнатам).
+ *  Ревью 304 m2: параметр фильтра убран — нумерация CR<n> всегда по полному
+ *  списку (метки по полному списку во всех путях), фильтрация — на вызывающей
+ *  стороне (как finishList). */
+export function ceilingRigelList(model: Model): Array<Record<string, unknown>> {
   const rooms = (model.rooms2 ?? model.rooms1 ?? {}) as Record<string, Record<string, unknown>>;
-  const allKeys = Object.keys(rooms);
-  const wanted = roomRef
-    ? new Set(allKeys.filter((rid) => rid === roomRef || `R${allKeys.indexOf(rid) + 1}` === roomRef))
-    : null;
   const out: Array<Record<string, unknown>> = [];
   let n = 0;
   for (const [rid, room] of Object.entries(rooms)) {
-    if (wanted && !wanted.has(rid)) continue;
     const rigels = (room.rigels ?? {}) as Record<string, CeilingRigelRec>;
     for (const rec of Object.values(rigels)) {
       n += 1;
@@ -700,10 +715,10 @@ export function ceilingRigelCompare(
       continue;
     }
     if (affected && mode === "normalize") {
-      warnings.push(`room ${e.roomId}: закладная ${e.id} не найдена после нормализации у затронутой комнаты`);
+      warnings.push(`room ${e.roomId}: закладная ${e.id} не найдена после нормализации у затронутой комнаты — если стена срезает закладную, удалите её (ceiling_rigel_delete) перед правкой`);
       continue;
     }
-    problems.push(`room ${e.roomId}: закладная ${e.id} потеряна (width ${e.width}, ceiling_type ${e.ceilingType || '""'})`);
+    problems.push(`room ${e.roomId}: закладная ${e.id} потеряна (width ${e.width}, ceiling_type ${e.ceilingType || '""'})${affected ? " — если стена срезает закладную, удалите её (ceiling_rigel_delete) перед правкой" : ""}`);
   }
   // лишние закладные
   for (const g of got) {

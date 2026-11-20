@@ -64,16 +64,15 @@ test("303: эталон UI — ceiling_rigel_add совпадает с закл�
   const { m, room } = modelWithRefRoom();
   const res = addCeilingRigel(m, room, { start: START_MM, end: END_MM });
   const written = Object.values((roomsOf(m)[room]!["rigels"] ?? {}) as Record<string, Record<string, unknown>>)[0]!;
-  assert.equal(written["width"], RG.width, "ширина по умолчанию 10 см (панель редактора)");
-  assert.equal(written["ceiling_type"], "");
-  assert.equal(written["id_room"], room);
-  const p1 = written["p1"] as { x: number; y: number; link: Record<string, string> };
-  const p2 = written["p2"] as { x: number; y: number; link: Record<string, string> };
-  assert.deepEqual({ x: p1.x, y: p1.y }, { x: RG.p1.x, y: RG.p1.y }, "конец на грани стены (магнит)");
-  assert.deepEqual({ x: p2.x, y: p2.y }, { x: RG.p2.x, y: RG.p2.y });
-  assert.deepEqual(p1.link, RG.p1.link, "связь конца с гранью стены — как CeilingRigel.calc");
-  assert.deepEqual(p2.link, RG.p2.link);
-  assert.deepEqual(written["polygon"], RG.polygon, "полигон ±width/2 — как CeilingRigel.calc");
+  // m1 ревью 304: запись ≅ эталон целиком — маскированный deepEqual (лишний или
+  // потерянный ключ заметен); маскируются только id и id_room
+  const mask = (r: Record<string, unknown>): Record<string, unknown> => {
+    const c = structuredClone(r);
+    c["id"] = "<id>";
+    delete c["id_room"];
+    return c;
+  };
+  assert.deepEqual(mask(written), mask(RG as unknown as Record<string, unknown>), "запись MCP ≅ эталон UI (маскированы id/id_room)");
   void res;
   // сверка в обе стороны (эталон как сервер, запись как ожидание — и наоборот)
   const exp = modelLike({ room1: { polygon: structuredClone(REF.room.polygon), rigels: structuredClone(REF.rigels) } });
@@ -105,9 +104,10 @@ test("303: finish_get и compact — закладные с метками CR<n>;
   const rec2 = Object.values((roomsOf(m)[room]!["rigels"] ?? {}) as Record<string, { width: number; polygon: { x: number; y: number }[] }>)[0]!;
   assert.equal(rec2.width, 30);
   assert.equal(rec2.polygon[0]!.x, 205 + 10, "полигон ±width/2 (30 см → 215)");
-  // удаление: комната без закладных — ключ rigels не остаётся (канонический вид)
+  // удаление: комната без закладных — ключ rigels остаётся пустым ({}, как в
+  // редакторе — живой дамп 303-after-delete.json, m10 ревью 304)
   assert.equal(deleteCeilingRigel(m, res.id).room_id, room);
-  assert.equal(roomsOf(m)[room]!["rigels"], undefined);
+  assert.deepEqual(roomsOf(m)[room]!["rigels"], {});
   assert.throws(() => deleteCeilingRigel(m, res.id), /не найден/);
   assert.throws(() => deleteCeilingRigel(m, "CR5"), /не найден/);
 });
@@ -285,7 +285,15 @@ test("303: mock save — нормализация потеряла заклад�
     for (const r of Object.values(rooms)) delete r["rigels"];
   });
   await ws.open("0", "1");
-  await assert.rejects(() => ws.save(), (e: unknown) => e instanceof Error && /NORMALIZATION_DROPPED|потерял объекты/.test(e.message));
+  // m9 ревью 304: сверяется details.ceiling_rigel_mismatches (не только текст ошибки),
+  // иначе тест зелёный, даже если сработала другая сверка (rooms/finish)
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const err = e as Error & { details?: Record<string, unknown> };
+    assert.match(err.message, /NORMALIZATION_DROPPED|потерял объекты/);
+    const cm = err.details?.["ceiling_rigel_mismatches"] as string[] | undefined;
+    assert.ok(Array.isArray(cm) && cm.some((p) => p.includes("потеряна")), `details.ceiling_rigel_mismatches: ${JSON.stringify(err.details)?.slice(0, 400)}`);
+    return true;
+  });
   assert.equal(wrote, false, "модель с потерянной закладной не записывается");
 });
 
