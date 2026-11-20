@@ -206,6 +206,10 @@ wiring_add / wiring_update / wiring_delete     # кабели-проводка (
                           #  предметы (щиток, коробки, розетки, выводы; кондиционер и внешний блок —
                           #  трасса conditioner_wire); kind: wire_2_05…wire_5_100,
                           #  wire_earth_*, wire_tv/utp/… (cables_socket), warm_floor_wire, conditioner_wire
+shield_rail_add / shield_module_add (+ update/delete)  # конструктор электрощитка (лист «Электрощиток»,
+                          #  старшие тарифы PRO): DIN-рейки и модули (автоматы, УЗО, дифавтоматы и др.,
+                          #  35 типов; номинал subtype, номер группы, подпись); item_delete щитка
+                          #  удаляет конструктор каскадно; провода/шины в щитке — следующий этап
 warm_floor_add            # тёплый пол (лист «Тёплые полы»): контур kind: cable|infrared|water (водяной — PRO)
 item_add conditioner/socket_thermo/fan/radiator_bimetal  # климат: кондиционеры (у стены), терморегулятор,
                           #  вентиляторы, радиаторы (листы «Кондиционеры»/«Вентиляция»/«Радиаторы»)
