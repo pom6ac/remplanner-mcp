@@ -4,6 +4,26 @@ import { mmToCm, cmToMm } from "./units.ts";
 import { McpError } from "../errors.ts";
 import { roomPolygonOf, matchRoomsByContour, overlapShare, roomHeirs, pointInPolygon, roomsMapOf } from "./room-geo.ts";
 import { collinearOverlapCm } from "./geometry.ts";
+import { rebuildCeilingZones } from "./ceiling-zones.ts";
+import {
+  ZONE_DELIMITER_PLANS,
+  delimiterMapOf,
+  migrateLegacyDelimiter,
+  planOfDelimiterType,
+  zoneCeilingDelimiterLines,
+  type ZoneDelimiterType,
+} from "./zone-delimiters.ts";
+
+// Общий слой разделителей (типы/планы, legacy-миграция, реестр, рёбра графов)
+// живёт в zone-delimiters.ts — общий с ceiling-zones.ts без runtime-цикла
+// (сторож 181-c3b); публичные имена переэкспортируются.
+export {
+  ZONE_DELIMITER_PLANS,
+  migrateLegacyDelimiter,
+  planOfDelimiterType,
+  zoneCeilingDelimiterLines,
+  type ZoneDelimiterType,
+} from "./zone-delimiters.ts";
 
 // Зонирование потолка (лист «Потолки», инструмент «Зонировать потолок», zone_ceiling;
 // PRO; этап 260, 2026-11-20). Разделители зон — линии-графы ZoneDelimiter extends
@@ -17,9 +37,13 @@ import { collinearOverlapCm } from "./geometry.ts";
 //   {id, matrix ([[null,{length:1}],[{length:1},null]]), vertexes [{id, point (см), type:"node"}],
 //    items {vertexId:"node"}, type "zone_ceiling", length (м, 2 знака), id_room,
 //    plan "ceiling", on_size 1}
-// Привязка узлов (zone: ребро комнаты type "room" или ригель type "rigel") — производное
-// редактора: calc() при restore пересчитывает её по геометрии (isPointOnLine), в MCP-запись
-// не пишется. В API — мм; формат редактора в публичный слой не протекает.
+// Привязка узлов (zone: ребро комнаты type "room" или ригель type "rigel_ceiling") —
+// хранимое поле вершины: редактор ставит её в mouseup при создании и пересчитывает
+// по геометрии в calc() при restore. MCP пишет привязку rigel_ceiling при создании
+// (конец на грани закладной — ревью 311 №3, формат — живой эталон
+// ui-ref-zones4-ceiling-zones); для конца на ребре комнаты поле не пишется —
+// редактор восстановит его в calc(). В API — мм; формат редактора в публичный
+// слой не протекает.
 //
 // Стандарт редактора (пробы 260-zone-ui*): линия строится внутри одной комнаты
 // от одной внешней стены до другой (обе точки — на рёбрах комнаты в 15 см магнитом
@@ -40,80 +64,6 @@ export type ZoneDelimiterRec = {
   [key: string]: unknown;
 };
 
-/**
- * Типы разделителей зон одного класса ZoneDelimitering (бандл app.3.0: tools
- * zone_c/zone_ceiling/zone_floor/zone_hydroisolation/zone_floor_cap) и план
- * записи = лист, на котором линия нарисована (эталоны 296, проба 296-zone-ui:
- * кнопка на листах отделки одна — plannertool_zone_floor, тип записи задаёт
- * активный лист): zone_ceiling → plan "ceiling" («Потолки»), zone_floor →
- * "floor" («Напольные покрытия»), zone_hydroisolation → "hydroisolation"
- * («Гидроизоляция»), zone_floor_cap → "floor_cap" («Стяжка»). zone_c (лист
- * «Перегородки», getNameZone "c" → zones) имеет собственную семантику
- * зонирования перегородками — вынесен в следующий PR (этап 296, отчёт).
- */
-export const ZONE_DELIMITER_PLANS = {
-  zone_ceiling: "ceiling",
-  zone_floor: "floor",
-  zone_hydroisolation: "hydroisolation",
-  zone_floor_cap: "floor_cap",
-} as const satisfies Record<string, string>;
-
-export type ZoneDelimiterType = keyof typeof ZONE_DELIMITER_PLANS;
-
-/** План записи по типу (ревью 298 №1): редактор восстанавливает legacy-делитель
- *  по типу (restoreTotal: updateZones("ceiling","zone_ceiling")), то есть plan
- *  выводится из type; zone_c (лист «Перегородки») — план "c". */
-export function planOfDelimiterType(type: string): string {
-  if (type in ZONE_DELIMITER_PLANS) return ZONE_DELIMITER_PLANS[type as ZoneDelimiterType];
-  return type === "zone_c" ? "c" : "";
-}
-
-/**
- * Legacy-миграция (convertOld ZoneDelimiter, бандл): типы «d_zone»→«zone_c»,
- * «d_*»→«zone_*»; старая форма points:[p1,p2] без vertexes разворачивается в
- * граф из двух узлов (restore 260). Возвращает каноническую запись или исходную.
- * Поля on_size/length дописываются только legacy-записям (points-форма, per-room
- * storage, старый тип d_*) — ревью 263 N3: дописывание верхнеуровневой записи
- * сервера маскирует потерю полей (сверка перестаёт видеть, что сервер потерял
- * on_size или обнулил/удалил length).
- */
-export function migrateLegacyDelimiter(
-  rec: Record<string, unknown>,
-  opts: { legacy?: boolean } = {},
-): Record<string, unknown> {
-  const out = structuredClone(rec);
-  const t = String(out["type"] ?? "");
-  const legacyType = t === "d_zone" || t.startsWith("d_");
-  if (t === "d_zone") out["type"] = "zone_c";
-  else if (t.startsWith("d_")) out["type"] = `zone_${t.slice(2)}`;
-  let builtFromPoints = false;
-  if (!Array.isArray(out["vertexes"]) || (out["vertexes"] as unknown[]).length === 0) {
-    const points = out["points"] as Array<Point> | undefined;
-    if (Array.isArray(points) && points.length >= 2) {
-      out["vertexes"] = points.slice(0, 2).map((p, i) => ({ id: `p${i}`, point: p, type: "node" }));
-      out["items"] = { ...((out["items"] ?? {}) as Record<string, string>), v0: "node", v1: "node" };
-      out["matrix"] = [[null, { length: 1 }], [{ length: 1 }, null]];
-      builtFromPoints = true;
-    }
-  }
-  // ревью 261 №6: restore редактора дополняет записи полей on_size 1 и length
-  // (м, по геометрии линии) — дописываем их миграции, чтобы старая модель (points-
-  // форма, per-room без length/on_size) сверялась с нормализованной в обе стороны
-  // и не блокировала save. ревью 263 N3: только legacy-записям.
-  if (builtFromPoints || legacyType || opts.legacy) {
-    const v = (out["vertexes"] ?? []) as Array<{ point?: Point }>;
-    if (v.length >= 2 && v[0]?.point && v[v.length - 1]?.point) {
-      if (out["on_size"] === undefined) out["on_size"] = 1;
-      const len = Number(out["length"] ?? 0);
-      if (!(len > 0)) {
-        const p1 = v[0]!.point!, p2 = v[v.length - 1]!.point!;
-        out["length"] = Math.round((Math.hypot(p2.x - p1.x, p2.y - p1.y) / 100) * 100) / 100;
-      }
-    }
-  }
-  return out;
-}
-
 type RoomRec = {
   polygon?: Point[];
   edges?: Array<{ p1?: Point; p2?: Point; length?: number; pid?: string; side?: string; room_side?: string; material?: string }>;
@@ -127,24 +77,6 @@ type RoomsMap = Record<string, RoomRec>;
 
 function roomsOf(model: Model): RoomsMap {
   return (model.rooms2 ?? model.rooms1 ?? {}) as RoomsMap;
-}
-
-/** Все разделители модели: верхнеуровневое zone_delimiters (серверный формат) +
- *  legacy per-room delimiters (старые модели; редактор мигрирует их при restore).
- *  Ключ — id записи; при коллизии top-level приоритетен. legacy — запись пришла
- *  из per-room хранилища (ревью 263 N3: ей можно дописывать on_size/length). */
-function delimiterMapOf(model: Model): Record<string, { rec: Record<string, unknown>; roomKey: string | null; legacy: boolean }> {
-  const out: Record<string, { rec: Record<string, unknown>; roomKey: string | null; legacy: boolean }> = {};
-  const rooms = roomsOf(model);
-  for (const [rid, room] of Object.entries(rooms)) {
-    for (const [key, raw] of Object.entries((room.delimiters ?? {}) as Record<string, Record<string, unknown>>)) {
-      out[key] = { rec: raw, roomKey: rid, legacy: true };
-    }
-  }
-  for (const [key, raw] of Object.entries((model.zone_delimiters ?? {}) as Record<string, Record<string, unknown>>)) {
-    out[key] = { rec: raw, roomKey: String(raw["id_room"] ?? "") || null, legacy: false };
-  }
-  return out;
 }
 
 function roomByRef(model: Model, ref: string): { id: string; room: RoomRec } {
@@ -206,34 +138,47 @@ export const ZONE_LIMITS = {
 } as const;
 
 /** Потолочные ригели, чьи грани проходят внутри комнаты: глобальные (model.rigels,
- *  центр полигона в комнате) + закладные комнаты (rooms2[rid].rigels). */
-function roomRigels(model: Model, roomId: string, room: RoomRec): Array<{ id: string; edges: Array<{ p1: Point; p2: Point }>; polygon: Point[] }> {
-  const out: Array<{ id: string; edges: Array<{ p1: Point; p2: Point }>; polygon: Point[] }> = [];
-  const push = (id: string, rec: { polygon?: Point[]; edges?: Record<string, Array<{ p1?: Point; p2?: Point }>> }) => {
+ *  центр полигона в комнате) + закладные комнаты (rooms2[rid].rigels). Рёбра —
+ *  с привязкой к стороне (side: l/r/s/e и индексом в стороне), как в редакторе:
+ *  у закладной без сохранённых рёбер — боковые грани l/r полигона
+ *  [l1,l2,r2,r1] ( CeilingRigel.calc). global — глобальный ригель (ревью 313 D:
+ *  mouseup RIGELS пишет zone.type "rigel", закладные комнаты — "rigel_ceiling"). */
+function roomRigels(model: Model, roomId: string, room: RoomRec): Array<{ id: string; global: boolean; edges: Array<{ p1: Point; p2: Point; side?: string; edgeIndex?: number }>; polygon: Point[] }> {
+  const out: Array<{ id: string; global: boolean; edges: Array<{ p1: Point; p2: Point; side?: string; edgeIndex?: number }>; polygon: Point[] }> = [];
+  const push = (id: string, rec: { polygon?: Point[]; edges?: Record<string, Array<{ p1?: Point; p2?: Point }>> }, isGlobal: boolean) => {
     const poly = rec.polygon;
     if (!poly || poly.length < 3) return;
-    const edges: Array<{ p1: Point; p2: Point }> = [];
+    const edges: Array<{ p1: Point; p2: Point; side?: string; edgeIndex?: number }> = [];
     const eds = rec.edges ?? {};
     for (const side of Object.keys(eds)) {
-      for (const e of eds[side] ?? []) {
-        if (e.p1 && e.p2) edges.push({ p1: e.p1, p2: e.p2 });
-      }
+      (eds[side] ?? []).forEach((e, i) => {
+        if (e.p1 && e.p2) edges.push({ p1: e.p1, p2: e.p2, side, edgeIndex: i });
+      });
     }
     if (edges.length === 0) {
-      for (let i = 0; i < poly.length; i++) edges.push({ p1: poly[i]!, p2: poly[(i + 1) % poly.length]! });
+      // рёбра полигона: боковые грани l/r (poly[0]-poly[1], poly[2]-poly[3]) —
+      // с привязкой к стороне (zone_ceiling магнитится к ним), торцы — без
+      if (poly.length === 4) {
+        edges.push({ p1: poly[0]!, p2: poly[1]!, side: "l", edgeIndex: 0 });
+        edges.push({ p1: poly[1]!, p2: poly[2]! });
+        edges.push({ p1: poly[2]!, p2: poly[3]!, side: "r", edgeIndex: 0 });
+        edges.push({ p1: poly[3]!, p2: poly[0]! });
+      } else {
+        for (let i = 0; i < poly.length; i++) edges.push({ p1: poly[i]!, p2: poly[(i + 1) % poly.length]! });
+      }
     }
-    out.push({ id, edges, polygon: poly });
+    out.push({ id, global: isGlobal, edges, polygon: poly });
   };
   for (const [id, r] of Object.entries((model.rigels ?? {}) as Record<string, { polygon?: Point[]; edges?: Record<string, Array<{ p1?: Point; p2?: Point }>> }>)) {
     const c = r.polygon ? { x: r.polygon.reduce((s, p) => s + p.x, 0) / r.polygon.length, y: r.polygon.reduce((s, p) => s + p.y, 0) / r.polygon.length } : null;
     const poly = room.polygon;
-    if (c && poly && pointInPolygon(c, poly)) push(id, r);
+    if (c && poly && pointInPolygon(c, poly)) push(id, r, true);
   }
-  for (const [id, r] of Object.entries(room.rigels ?? {})) push(id, r as { polygon?: Point[]; edges?: Record<string, Array<{ p1?: Point; p2?: Point }>> });
+  for (const [id, r] of Object.entries(room.rigels ?? {})) push(id, r as { polygon?: Point[]; edges?: Record<string, Array<{ p1?: Point; p2?: Point }>> }, false);
   return out;
 }
 
-type Snap = { point: Point; kind: "room" | "rigel"; edgeIndex: number; pid?: string; side?: string; rigelId?: string };
+type Snap = { point: Point; kind: "room" | "rigel"; edgeIndex: number; pid?: string; side?: string; roomEdge?: { p1: Point; p2: Point }; rigelId?: string; rigelGlobal?: boolean; rigelSide?: string; rigelEdgeIndex?: number; rigelEdge?: { p1: Point; p2: Point } };
 
 /** Магнит конца линии: ближайшее ребро комнаты (≤15 см); ригель/закладная
  *  (≤10 см) — только у zone_ceiling и только когда ребро рядом НЕ нашлось:
@@ -252,7 +197,7 @@ function snapEndpoint(model: Model, roomId: string, room: RoomRec, p: Point, pla
     if (!q) continue;
     const d = dist(p, q);
     if (d <= ZONE_LIMITS.edgeSnapCm && (!best || d < best.d)) {
-      best = { snap: { point: q, kind: "room", edgeIndex: i, pid: e.pid, side: e.side }, d };
+      best = { snap: { point: q, kind: "room", edgeIndex: i, pid: e.pid, side: e.side, roomEdge: { p1: e.p1, p2: e.p2 } }, d };
     }
   }
   if (best) return best.snap;
@@ -263,7 +208,12 @@ function snapEndpoint(model: Model, roomId: string, room: RoomRec, p: Point, pla
         if (!q) continue;
         const d = dist(p, q);
         if (d <= ZONE_LIMITS.rigelSnapCm && (!best || d < best.d)) {
-          best = { snap: { point: q, kind: "rigel", edgeIndex: -1, rigelId: rg.id }, d };
+          best = {
+            snap: {
+              point: q, kind: "rigel", edgeIndex: -1, rigelId: rg.id, rigelGlobal: rg.global,
+              rigelSide: e.side, rigelEdgeIndex: e.edgeIndex ?? 0, rigelEdge: { p1: e.p1, p2: e.p2 },
+            }, d,
+          };
         }
       }
     }
@@ -447,12 +397,41 @@ export function addZoneDelimiter(
   // (как project.copy("server"))
   const vid1 = newId(), vid2 = newId();
   const id = newId();
+  // zone-привязка конца — как mouseup редактора (бандл 268, ревью 313 D):
+  // грань глобального ригеля (RIGELS) — type "rigel", грань закладной комнаты —
+  // "rigel_ceiling", ребро комнаты — "room" {room_id, edge, edge_index,
+  // edge_side, edge_pid, edge_pids} (формат по фикстуре
+  // ui-ref-zones4-ceiling-zones, vertexes[0].zone). От привязки зависит
+  // restoreDelimiters при изменении ширины закладной (ревью 311 №3).
+  const zoneOf = (s: Snap): Record<string, unknown> | undefined => {
+    if (s.kind === "rigel" && s.rigelSide && s.rigelEdge) {
+      return {
+        room_id: roomId,
+        rigel_id: s.rigelId!,
+        edge: { p1: { ...s.rigelEdge.p1 }, p2: { ...s.rigelEdge.p2 } },
+        edge_index: s.rigelEdgeIndex ?? 0,
+        edge_side: s.rigelSide,
+        type: s.rigelGlobal ? "rigel" : "rigel_ceiling",
+      };
+    }
+    if (s.kind === "room" && s.roomEdge) {
+      return {
+        room_id: roomId,
+        edge: { p1: { ...s.roomEdge.p1 }, p2: { ...s.roomEdge.p2 } },
+        edge_index: s.edgeIndex,
+        ...(s.side ? { edge_side: s.side } : {}),
+        ...(s.pid ? { edge_pid: s.pid, edge_pids: { [s.pid]: s.side ?? "" } } : {}),
+        type: "room",
+      };
+    }
+    return undefined;
+  };
   const rec: ZoneDelimiterRec = {
     id,
     matrix: [[null, { length: 1 }], [{ length: 1 }, null]],
     vertexes: [
-      { id: vid1, point: { x: Math.round(p1.x * 100) / 100, y: Math.round(p1.y * 100) / 100 }, type: "node" },
-      { id: vid2, point: { x: Math.round(p2.x * 100) / 100, y: Math.round(p2.y * 100) / 100 }, type: "node" },
+      { id: vid1, point: { x: Math.round(p1.x * 100) / 100, y: Math.round(p1.y * 100) / 100 }, type: "node", ...(zoneOf(s1) ? { zone: zoneOf(s1) } : {}) },
+      { id: vid2, point: { x: Math.round(p2.x * 100) / 100, y: Math.round(p2.y * 100) / 100 }, type: "node", ...(zoneOf(s2) ? { zone: zoneOf(s2) } : {}) },
     ],
     items: { [vid1]: "node", [vid2]: "node" },
     type,
@@ -463,6 +442,9 @@ export function addZoneDelimiter(
   };
   model.zone_delimiters ??= {};
   model.zone_delimiters[id] = rec;
+  // этап 310 (m11): делитель зон потолка тоже режет контейнер ceilings —
+  // пересчёт зон, как updateZones("ceiling") редактора
+  if (plan === "ceiling") rebuildCeilingZones(model, roomId);
   return { id, length_mm: cmToMm(rec.length * 100) };
 }
 
@@ -496,8 +478,9 @@ export function removeZoneDelimiter(
   const hit = Object.entries(map).find(([k, e]) => k === delimiterRef || String(e.rec["id"] ?? "") === delimiterRef);
   if (hit) {
     const [key, entry] = hit;
+    const migrated = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
     if (opts.expectedType) {
-      const actual = String(migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy })["type"] ?? "");
+      const actual = String(migrated["type"] ?? "");
       if (actual !== opts.expectedType) {
         // подсказка инструмента — только для типов, у которых инструмент есть
         // (мелочь 299: у legacy zone_c инструмента zone_c_remove нет)
@@ -518,6 +501,11 @@ export function removeZoneDelimiter(
         if (Object.keys(room.delimiters).length === 0) delete room.delimiters;
       }
     }
+    // этап 310 (m11): удаление делителя зон потолка схлопывает зоны ceilings
+    // (ревью 311 №6: у legacy-записи plan может отсутствовать — выводим по типу,
+    // как restoreTotal редактора)
+    const delPlan = String(migrated["plan"] ?? "") || planOfDelimiterType(String(migrated["type"] ?? ""));
+    if (delPlan === "ceiling" && roomKey) rebuildCeilingZones(model, roomKey);
     return { room_id: roomKey, removed: true };
   }
   // метка ZD<n>: единый источник меток — zoneDelimiterList (ревью 261 №7:
@@ -586,37 +574,22 @@ export function zoneDelimiterList(model: Model, roomRef?: string): Array<Record<
   return out;
 }
 
-/** Все zone_ceiling разделители модели (верхнеуровневые + legacy per-room):
- *  для проверки пересечения при создании потолочной закладной. Ревью 304 M2:
- *  mouseup редактора перебирает ВСЕ отрезки M.lines каждого zone_ceiling,
- *  поэтому возвращаются все рёбра графа по matrix (не хорда «первая → последняя
- *  вершина», которая у Г-/П-образного разделителя лежит на стене и прячет
- *  пересечения со средними отрезками). */
-export function zoneCeilingDelimiterLines(model: Model): Array<{ id: string; p1: Point; p2: Point }> {
-  const out: Array<{ id: string; p1: Point; p2: Point }> = [];
-  for (const [id, entry] of Object.entries(delimiterMapOf(model))) {
-    const rec = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
-    if (String(rec["type"] ?? "") !== "zone_ceiling") continue;
-    const v = (rec["vertexes"] ?? []) as Array<{ point?: Point }>;
-    const n = v.length;
-    if (n < 2) continue;
-    // рёбра графа по матрице (i<j, длина > 0) — как перебор M.lines в mouseup
-    const matrix = (rec["matrix"] ?? []) as Array<Array<{ length?: number } | null>>;
-    let edges = 0;
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const cell = matrix[i]?.[j] ?? matrix[j]?.[i];
-        if (cell && Number(cell.length) > 0 && v[i]?.point && v[j]?.point) {
-          out.push({ id, p1: v[i]!.point!, p2: v[j]!.point! });
-          edges += 1;
-        }
-      }
-    }
-    // legacy/деградировавшая запись без матрицы — хорда «первая → последняя»
-    if (edges === 0) {
-      const q1 = v[0]?.point, q2 = v[n - 1]?.point;
-      if (q1 && q2) out.push({ id, p1: q1, p2: q2 });
-    }
+/**
+ * zone_ceiling записи комнаты — ПРЯМЫЕ ссылки на хранимые записи
+ * (верхнеуровневые zone_delimiters + legacy per-room delimiters): для порта
+ * restoreDelimiters редактора (ревью 311 №3) — правка vertexes[].point
+ * на месте. Записи без vertexes (points-форма legacy) не возвращаются.
+ */
+export function zoneCeilingRecordsOfRoom(model: Model, roomId: string): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const entry of Object.values(delimiterMapOf(model))) {
+    if (entry.roomKey !== roomId && String(entry.rec["id_room"] ?? "") !== roomId) continue;
+    const migrated = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
+    const type = String(migrated["type"] ?? "");
+    const plan = String(migrated["plan"] ?? "") || planOfDelimiterType(type);
+    if (type !== "zone_ceiling" && plan !== "ceiling") continue;
+    if (!Array.isArray(entry.rec["vertexes"])) continue;
+    out.push(entry.rec);
   }
   return out;
 }

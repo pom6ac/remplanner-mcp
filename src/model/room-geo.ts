@@ -239,3 +239,19 @@ export function roomHeirs(
   }
   return heirOf;
 }
+
+/** Рёбра полигона в формате записей редактора (p1/p2/середина/длина, 0.01 см) —
+ *  общий помощник зон потолка (ревью 313 C: используется и setCeilingFinish). */
+export function polygonEdgesOf(poly: Point[]): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < poly.length; i++) {
+    const p1 = poly[i]!, p2 = poly[(i + 1) % poly.length]!;
+    out.push({
+      p1: { x: Math.round(p1.x * 100) / 100, y: Math.round(p1.y * 100) / 100 },
+      p2: { x: Math.round(p2.x * 100) / 100, y: Math.round(p2.y * 100) / 100 },
+      c: { x: Math.round(((p1.x + p2.x) / 2) * 100) / 100, y: Math.round(((p1.y + p2.y) / 2) * 100) / 100 },
+      length: Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) * 100) / 100,
+    });
+  }
+  return out;
+}

@@ -6,8 +6,9 @@ import { wallFaces } from "./wall-geometry.ts";
 import { McpError } from "../errors.ts";
 import { dist, lineIntersection, offsetSegment, pointOnSegment, type Segment } from "./geometry.ts";
 import { RIGEL_CEILING_TYPES } from "./rigels.ts";
-import { zoneCeilingDelimiterLines, segmentInsidePolygon } from "./zone.ts";
+import { zoneCeilingDelimiterLines, segmentInsidePolygon, zoneDelimiterList, zoneCeilingRecordsOfRoom } from "./zone.ts";
 import { roomPolygonOf, roomsMapOf, matchRoomsByContour, roomHeirs, overlapShare, pointInPolygon, distToSeg } from "./room-geo.ts";
+import { rebuildCeilingZones } from "./ceiling-zones.ts";
 
 /**
  * Потолочные закладные (ceiling_rigel, лист «Потолки», инструмент «Потолочная
@@ -418,14 +419,82 @@ export function addCeilingRigel(
   const room = roomByRef(model, roomRef).room as { rigels?: Record<string, CeilingRigelRec> };
   room.rigels ??= {};
   room.rigels[id] = rec;
+  // этап 310 (m11 ревью 304): пересчёт зон потолка комнаты, как updateZones("ceiling")
+  // редактора после действия с закладной — иначе контейнер ceilings устаревает и
+  // отделка зон теряется при первом визите на лист «Потолки»
+  rebuildCeilingZones(model, roomId);
   return rec;
+}
+
+/** Боковая грань закладной по стороне (полигон [l1,l2,r2,r1]; как CeilingRigel.calc). */
+function rigelSideSegment(polygon: Point[], side: string): Segment | null {
+  if (!polygon || polygon.length < 4) return null;
+  if (side === "l") return { p1: polygon[0]!, p2: polygon[1]! };
+  if (side === "r") return { p1: polygon[2]!, p2: polygon[3]! };
+  return null;
+}
+
+/** Проекция точки на отрезок (с прижимом к концам), округление до 0.01 см — как
+ *  вершинные точки zone_ceiling-записи. */
+function projectOnSegment(p: Point, s: Segment): Point {
+  const vx = s.p2.x - s.p1.x, vy = s.p2.y - s.p1.y;
+  const l2 = vx * vx + vy * vy;
+  if (l2 < 1e-12) return { x: Math.round(s.p1.x * 100) / 100, y: Math.round(s.p1.y * 100) / 100 };
+  const t = Math.max(0, Math.min(1, ((p.x - s.p1.x) * vx + (p.y - s.p1.y) * vy) / l2));
+  return { x: Math.round((s.p1.x + vx * t) * 100) / 100, y: Math.round((s.p1.y + vy * t) * 100) / 100 };
+}
+
+/**
+ * Порт restoreDelimiters редактора (ревью 311 №3, бандл 268
+ * Restorer.restoreDelimiters → restoreCeilingsAfterChangeRigel): после изменения
+ * ширины закладной узлы zone_ceiling-делителей, стоявшие на грани l/r этой
+ * закладной, проецируются на НОВУЮ грань — по хранимой привязке вершины
+ * (zone.type "rigel_ceiling", zone.rigel_id + edge_side; её пишет mouseup
+ * редактора и zone_ceiling_add MCP) или геометрически (узел на старой грани
+ * закладной с допуском). После этого пересчёт зон ставит делитель концом на
+ * новую грань — то же сочетание поддерживает сам редактор. Узел, лежащий
+ * одновременно на ребре комнаты (привязка типа room в редакторе), не трогается.
+ */
+function restoreDelimitersAfterWidthChange(model: Model, roomId: string, rigelId: string, oldPolygon: Point[], newPolygon: Point[]): void {
+  const oldL = rigelSideSegment(oldPolygon, "l"), oldR = rigelSideSegment(oldPolygon, "r");
+  if (!oldL || !oldR) return;
+  const newL = rigelSideSegment(newPolygon, "l"), newR = rigelSideSegment(newPolygon, "r");
+  if (!newL || !newR) return;
+  const onSeg = (p: Point, s: Segment): boolean => distToSeg(p, s.p1, s.p2) <= 0.05;
+  const onRoomEdge = (p: Point): boolean => {
+    const room = ((model.rooms2 ?? model.rooms1 ?? {}) as Record<string, Record<string, unknown>>)[roomId];
+    const edges = Array.isArray(room?.["edges"]) ? room!["edges"] as Array<{ p1?: Point; p2?: Point }> : [];
+    return edges.some((e) => e.p1 && e.p2 && distToSeg(p, e.p1, e.p2) <= 0.05);
+  };
+  for (const rec of zoneCeilingRecordsOfRoom(model, roomId)) {
+    const vertexes = rec["vertexes"] as Array<{ point?: Point; zone?: Record<string, unknown> }>;
+    for (const v of vertexes ?? []) {
+      if (!v?.point) continue;
+      const z = v.zone;
+      let target: Segment | null = null;
+      if (z && z["type"] === "rigel_ceiling" && String(z["rigel_id"] ?? "") === rigelId) {
+        const side = String(z["edge_side"] ?? "");
+        target = rigelSideSegment(newPolygon, side) ?? (onSeg(v.point, oldL) ? newL : onSeg(v.point, oldR) ? newR : null);
+      } else if (!z || z["type"] !== "rigel_ceiling") {
+        // геометрический запасной путь (старые записи без zone-привязки)
+        if (onRoomEdge(v.point)) continue;
+        if (onSeg(v.point, oldL)) target = newL;
+        else if (onSeg(v.point, oldR)) target = newR;
+      }
+      if (target) v.point = projectOnSegment(v.point, target);
+    }
+  }
 }
 
 /**
  * ceiling_rigel_update: ширина и отделка закладной (как контекстное меню
  * редактора). Перенос закладной редактором не поддержан — ось не меняем
  * (перенос = удалить и создать заново). При изменении ширины полигон
- * пересчитывается (как в редакторе после #cm-ceiling-rigel--width).
+ * пересчитывается, узлы zone_ceiling-делителей на грани закладной
+ * перепривязываются к новой грани (restoreDelimiters) и зоны потолка
+ * пересчитываются (restoreCeilingsAfterChangeRigel редактора). Делитель с концом
+ * на грани закладной не блокирует изменение ширины: редактор это сочетание
+ * поддерживает (ревью 311 №3; прежний консервативный отказ убран).
  */
 export function updateCeilingRigel(
   model: Model,
@@ -433,24 +502,29 @@ export function updateCeilingRigel(
   params: { widthMm?: number; ceilingType?: string },
 ): CeilingRigelRec {
   validateParams(params);
-  for (const room of Object.values((model.rooms2 ?? model.rooms1 ?? {}) as Record<string, Record<string, unknown>>)) {
+  for (const [rid, room] of Object.entries((model.rooms2 ?? model.rooms1 ?? {}) as Record<string, Record<string, unknown>>)) {
     const rigels = room.rigels as Record<string, CeilingRigelRec> | undefined;
     const rec = rigels?.[rigelId];
     if (!rec) continue;
     const backup = structuredClone(rigels!);
     try {
       if (params.widthMm !== undefined) {
+        const oldPolygon = rec.polygon.map((p) => ({ x: p.x, y: p.y }));
         rec.width = r2(mmToCm(params.widthMm));
         rec.polygon = buildPolygon({ x: rec.p1.x, y: rec.p1.y }, { x: rec.p2.x, y: rec.p2.y }, rec.width, model, {
           p1: rec.p1.link ?? 0,
           p2: rec.p2.link ?? 0,
         });
+        restoreDelimitersAfterWidthChange(model, rid, rigelId, oldPolygon, rec.polygon);
       }
       if (params.ceilingType !== undefined) rec.ceiling_type = params.ceilingType;
     } catch (e) {
       room.rigels = backup;
       throw e;
     }
+    // этап 310: зоны потолка пересчитываются под новую ширину (как в редакторе
+    // после #cm-ceiling-rigel--width)
+    rebuildCeilingZones(model, rid);
     return rec;
   }
   throw new McpError("NOT_FOUND", `закладная ${rigelId} не найдена`);
@@ -469,6 +543,9 @@ export function deleteCeilingRigel(model: Model, rigelId: string): { room_id: st
       // m10 ревью 304: редактор оставляет пустой rigels: {} (живой дамп
       // 303-after-delete.json) — форма записи как в редакторе
       room.rigels = rigels;
+      // этап 310: зоны потолка схлопываются обратно в одну (updateZones +
+      // restoreCeiling обработчика #cm-ceiling-rigel--remove)
+      rebuildCeilingZones(model, rid);
       return { room_id: rid };
     }
   }
