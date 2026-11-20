@@ -2,6 +2,7 @@
 // ПОЛНОМУ списку), №2 (тёплая стена — «контур» в правиле кабеля), №3 (рёбра
 // комнаты в мм и метки R<n>), №5 (полная проекция сверкой), №6 (формула
 // distance по get_distance бандла), №9/№10/№11. Форматы — эталоны 273.
+import "./helpers/tmp-home.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -254,4 +255,68 @@ test("274 №11: импорт — слишком много частей warms_w
   const room2 = (ok2.rooms2 as Record<string, Record<string, unknown>>)[Object.keys(ok2.rooms2 as Record<string, unknown>)[0]!]!;
   room2.warms_walls = [{ exist: true, parts: { p1: { id: "p1", type: "warm_wall_cable", layer: 1, line: { p1: { x: 0, y: 5 }, p2: { x: 100, y: 5 } }, line_wall: { p1: { x: 0, y: 5 }, p2: { x: 400, y: 5 } }, height: 135, height_from_floor: 15, props: { id: "p1", name: "warm_wall_cable" } } } }];
   assert.doesNotThrow(() => parseModelImport(ok2));
+});
+
+// ---------- ревью 276 N6: метки R<n> с тем же фильтром, что у rooms_list ----------
+
+test("ревью 276 N6: комнаты без полигона не сдвигают метки R<n> (единый фильтр с rooms_list)", () => {
+  const m = baseModel();
+  // r1 — с контуром, rEmpty — запись rooms2 без полигона, r2 — с контуром
+  // (порядок ключей: rEmpty между контурными комнатами)
+  m.rooms2 = {
+    r1: { polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }], area: 12 } as never,
+    rEmpty: { polygon: [] } as never,
+    r2: { polygon: [{ x: 500, y: 0 }, { x: 900, y: 0 }, { x: 900, y: 300 }, { x: 500, y: 300 }], area: 12 } as never,
+  };
+  // rooms_list нумерует только комнаты с полигоном: r1 → R1, r2 → R2
+  const c = compactModel(m);
+  assert.deepEqual(c.rooms.map((r) => r.id), ["R1", "R2"]);
+  // тёплые стены — те же метки (раньше r2 была бы R3, rEmpty — R2)
+  const a = warmWallAdd(m, { roomRef: "r2", edge: 0, startMm: 500, endMm: 1500 });
+  assert.equal(a.room_id, "R2", `room_id ответа warm_wall_add: ${a.room_id}`);
+  assert.equal(warmWallList(m)[0]!.room_id, "R2");
+  const del = warmWallDelete(m, "WW1");
+  assert.equal(del.room, "R2");
+});
+
+// ---------- ревью 276 N4: ответ warm_wall_delete на уровне инструмента ----------
+
+async function startOffline(): Promise<{ client: import("@modelcontextprotocol/sdk/client/index.js").Client; close: () => Promise<void> }> {
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const { buildServer } = await import("../../src/server.ts");
+  const { ServerContext } = await import("../../src/server/context.ts");
+  const ctx = new ServerContext({ offlineFixture: join(here, "../fixtures/anon-rect-4000x3000.json") });
+  const server = buildServer(ctx);
+  const client = new Client({ name: "warmwall-fixes", version: "0.0.0" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(b), client.connect(a)]);
+  return { client, close: () => client.close() };
+}
+
+type ToolRes = { isError?: boolean; content?: Array<{ type: string; text?: string }> };
+
+const toolJson = (res: ToolRes): Record<string, unknown> =>
+  JSON.parse((res.content ?? []).find((c) => typeof c.text === "string")?.text ?? "{}") as Record<string, unknown>;
+
+test("ревью 276 N4: warm_wall_delete (инструмент) — deleted = id части, room = R<n>, edge (мутация на a.warm_wall_id красная)", async () => {
+  const { client, close } = await startOffline();
+  try {
+    await client.callTool({ name: "room_add_rect", arguments: { origin: { x: 0, y: 0 }, width: 4000, depth: 3000, wall_thickness: 200 } });
+    const add1 = toolJson(await client.callTool({ name: "warm_wall_add", arguments: { room_id: "R1", edge: 0, start_mm: 500, end_mm: 1500 } })) as { id?: string };
+    assert.ok(typeof add1.id === "string" && add1.id !== "", JSON.stringify(add1));
+    const add2 = toolJson(await client.callTool({ name: "warm_wall_add", arguments: { room_id: "R1", edge: 0, start_mm: 2000, end_mm: 3000 } })) as { id?: string };
+    assert.ok(typeof add2.id === "string" && add2.id !== "", JSON.stringify(add2));
+    // удаление по метке WW2: deleted — id ЧАСТИ, а не переданная метка
+    // (мутация обратно на deleted: a["warm_wall_id"] даёт "WW2" — красная)
+    const del = toolJson(await client.callTool({ name: "warm_wall_delete", arguments: { warm_wall_id: "WW2" } })) as { deleted?: string; room?: string; edge?: number };
+    assert.equal(del.deleted, add2.id, JSON.stringify(del));
+    assert.equal(del.room, "R1");
+    assert.equal(del.edge, 0);
+    // первая часть не задета, метки сместились: WW1 — часть add1
+    const list = toolJson(await client.callTool({ name: "warm_wall_list", arguments: {} })) as { warm_walls?: Array<{ label: string; id: string }> };
+    assert.deepEqual((list.warm_walls ?? []).map((w) => [w.label, w.id]), [["WW1", add1.id]]);
+  } finally {
+    await close();
+  }
 });

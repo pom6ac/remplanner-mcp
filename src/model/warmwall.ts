@@ -61,13 +61,23 @@ function roomsOf(model: Model): Record<string, RoomRec> {
   return roomsMapOf(model as unknown as Record<string, unknown>) as Record<string, RoomRec> ?? {};
 }
 
+/**
+ * Комнаты модели с контуром (полигон ≥ 3 вершин) — тот же фильтр и порядок,
+ * что у rooms_list (roomPolygons): метки R<n> тёплых стен и резолв room_id
+ * не расходятся с rooms_list, если в rooms2 есть запись без полигона
+ * (ревью 276 N6).
+ */
+function labeledRooms(model: Model): Array<[string, RoomRec]> {
+  return Object.entries(roomsOf(model)).filter(([, room]) => (roomPolygonOf(room) ?? []).length >= 3);
+}
+
 function roomByRef(model: Model, ref: string): { id: string; room: RoomRec } {
   const rooms = roomsOf(model);
   if (rooms[ref]) return { id: ref, room: rooms[ref]! };
   const m = /^R(\d+)$/.exec(ref);
   if (m) {
-    const found = Object.entries(rooms)[Number(m[1]) - 1];
-    if (found) return { id: found[0], room: found[1] as RoomRec };
+    const found = labeledRooms(model)[Number(m[1]) - 1];
+    if (found) return { id: found[0], room: found[1] };
   }
   throw new McpError("NOT_FOUND", `комната ${ref} не найдена`);
 }
@@ -135,9 +145,10 @@ export function resolveWarmWallEntry(model: Model, ref: string): WarmWallEntry {
   throw new McpError("NOT_FOUND", `тёплая стена ${ref} не найдена (id сайта или метка WW<n> из warm_wall_list)`);
 }
 
-/** Метка комнаты R<n> — позиция в словаре rooms2 (один порядок с roomByRef и rooms_list). */
+/** Метка комнаты R<n> — позиция среди комнат с контуром (тот же фильтр и
+ *  порядок, что у rooms_list; ревью 276 N6). */
 export function roomLabelOf(model: Model, roomId: string): string {
-  const idx = Object.keys(roomsOf(model)).indexOf(roomId);
+  const idx = labeledRooms(model).findIndex(([id]) => id === roomId);
   return idx >= 0 ? `R${idx + 1}` : roomId;
 }
 
