@@ -5,8 +5,10 @@
 // модели в комнате с изменённым набором zone_c-делителей, save НЕ verified
 // (SITE_ERROR), это не штатное «деление зон».
 // N2: resurrectedZoneCDividers в комнатах, затронутых изменёнными стенами, —
-// воскрешённый делитель, который был в базе (roomSaveBase), — предупреждение,
-// а придуманный (в базе его не было) — отказ.
+// делитель с НОВЫМ id (перепривязка редактором при переносе стены) —
+// предупреждение; вне затронутых комнат — отказ. Делитель с id, который ЕСТЬ
+// в базе (удалён через MCP и возвращён нормализацией), — воскрешение, отказ
+// даже в затронутой комнате (ревью 323 N7).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -113,4 +115,16 @@ test("321 N2: воскрешённый zone_c в затронутой комна
   const res = resurrectedZoneCDividers(expected, got, { baseModel: base, affectedRooms: new Set(["R1"]) });
   assert.deepEqual(res.problems, [], JSON.stringify(res.problems));
   assert.ok(res.warnings.length === 1 && res.warnings[0]!.includes("в базе (roomSaveBase) его не было"), JSON.stringify(res.warnings));
+});
+
+// 323 N7: тот же id из базы, удалённый через MCP (zone_c_remove) и возвращённый
+// нормализацией, — воскрешение, а не перепривязка (перепривязка редактором даёт
+// новый id): отказ даже в затронутой стенами комнате
+test("323 N7: zone_c с id из базы, отсутствующий в ожидании, в затронутой комнате — отказ", () => {
+  const base = modelWith([delimEntry("D1", "R1", 0, 0, 0, 100), delimEntry("D2", "R1", 50, 0, 50, 100)]);
+  const expected = modelWith([delimEntry("D2", "R1", 50, 0, 50, 100)]);
+  const got = modelWith([delimEntry("D1", "R1", 0, 0, 0, 100), delimEntry("D2", "R1", 50, 0, 50, 100)]);
+  const res = resurrectedZoneCDividers(expected, got, { baseModel: base, affectedRooms: new Set(["R1"]) });
+  assert.deepEqual(res.warnings, [], JSON.stringify(res.warnings));
+  assert.ok(res.problems.length === 1 && res.problems[0]!.includes("D1"), JSON.stringify(res.problems));
 });

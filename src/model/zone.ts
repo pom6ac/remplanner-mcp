@@ -1010,6 +1010,10 @@ export function roomsWithChangedZoneCDividers(
  * перепривязать делитель с новым id и сдвинутыми концами (живого эталона
  * split/merge с zone_c при переносе стены нет); делителя не было и в базе
  * (roomSaveBase) — в сообщении помечается. Вне затронутых комнат — отказ.
+ * ревью 323 N7: понижение до предупреждения — только для делителя с id,
+ * которого НЕТ в базе: перепривязка редактором по определению даёт новый id,
+ * а тот же id из базы (удалён через MCP, нормализация вернула) — воскрешение,
+ * отказ даже в затронутой комнате.
  */
 export function resurrectedZoneCDividers(
   expectedModel: Record<string, unknown> | undefined,
@@ -1021,14 +1025,17 @@ export function resurrectedZoneCDividers(
   const exp = zoneCOf(expectedModel);
   const expIds = new Set(exp.map((s) => s.id));
   const base = opts?.baseModel ? zoneCOf(opts.baseModel) : [];
+  const baseIds = new Set(base.map((b) => b.id));
   const problems: string[] = [];
   const warnings: string[] = [];
   for (const g of zoneCOf(gotModel)) {
     if (expIds.has(g.id)) continue;
     if (exp.some((e) => e.idRoom === g.idRoom && sameSig(e, g))) continue;
     const inBase = base.some((b) => b.idRoom === g.idRoom && sameSig(b, g));
-    const msg = `room ${g.idRoom}: нормализация вернула zone_c-делитель, которого не было в рабочей копии (id ${g.id}, ${Math.round(g.length * 100)} см) — удалённые через MCP делители не воскрешаются${inBase ? "; делитель был в базе (roomSaveBase)" : "; в базе (roomSaveBase) его не было"}`;
-    if (opts?.affectedRooms?.has(g.idRoom)) {
+    const msg = `room ${g.idRoom}: нормализация вернула zone_c-делитель, которого не было в рабочей копии (id ${g.id}, ${Math.round(g.length * 100)} см) — удалённые через MCP делители не воскрешаются${inBase ? "; делитель был в базе (roomSaveBase)" : "; в базе (roomSaveBase) его не было"}${baseIds.has(g.id) ? "; id есть в базе (roomSaveBase) — это воскрешение удалённого делителя, не перепривязка (323 N7)" : ""}`;
+    // ревью 323 N7: в затронутой комнате — предупреждение только для id,
+    // которого нет в базе (перепривязка даёт новый id); тот же id из базы — отказ
+    if (opts?.affectedRooms?.has(g.idRoom) && !baseIds.has(g.id)) {
       warnings.push(`${msg} — комната затронута изменением стен: перепривязка делителя редактором при переносе стены допускается с предупреждением (ревью 321 N2, живой эталон отсутствует)`);
     } else {
       problems.push(msg);
