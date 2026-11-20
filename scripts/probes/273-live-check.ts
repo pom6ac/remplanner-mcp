@@ -87,12 +87,21 @@ const writeCreated = (): void => {
 const roBefore = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN);
 writeFileSync(`${OUT}/273-get-readonly-before.json`, JSON.stringify(roBefore, null, 1) + "\n");
 
+/** Миграция id части (id_old): обновить захваченный site_id, иначе зачистка и
+ *  контроль остатков пропустят часть с новым id (ревью 274 №7). */
+const refreshCapturedPart = (oldId: string, part: { id: string }): void => {
+  if (part.id === oldId) return;
+  const hit = created.warm_walls.find((w) => w.site_id === oldId);
+  if (hit) { console.log(`миграция id части: ${oldId} → ${part.id}`); hit.site_id = part.id; writeCreated(); }
+};
+
 const cleanupCreated = async (): Promise<void> => {
   await deleteBySite(created.wiring, "wiring_delete", "wiring_id");
-  // тёплые стены: метка резолвится из свежей рабочей модели по site_id (warm_wall_list)
+  // тёплые стены (ревью 274 №7): удаление ТОЛЬКО по захваченному site_id —
+  // запасной путь «любая тёплая стена комнаты» удалён (урок 240)
   for (const w of [...created.warm_walls].reverse()) {
-    const listRes = (await call("warm_wall_list", {})) as unknown as { warm_walls?: Array<{ id: string; label: string; room_id: string }> };
-    const found = (listRes.warm_walls ?? []).find((x) => x.id === w.site_id || x.room_id === w.room_id);
+    const listRes = (await call("warm_wall_list", {})) as unknown as { warm_walls?: Array<{ id: string; label: string }> };
+    const found = (listRes.warm_walls ?? []).find((x) => x.id === w.site_id);
     if (!found) { console.log(`пропуск: тёплая стена ${w.site_id} не найдена — ничего не удалено`); continue; }
     await call("warm_wall_delete", { warm_wall_id: found.label });
   }
@@ -210,6 +219,7 @@ try {
   const partEntry = Object.entries(foundParts).find(([, p]) => String((p as { props?: { id?: string } }).props?.id ?? "") === wwId || String(p.id ?? "") === wwId);
   if (!partEntry) throw new Error(`тёплая стена ${wwId} не найдена в rooms2 после save#2: ${JSON.stringify(Object.keys(foundParts))}`);
   const part = partEntry[1] as { id: string; type: string; line: { p1: { x: number; y: number }; p2: { x: number; y: number } }; height: number; height_from_floor: number; props?: { cables_warm_floor?: { cable_warm_floor_id?: string } } };
+  refreshCapturedPart(wwId, part);
   console.log("part после save#2:", JSON.stringify({ id: part.id, type: part.type, line: part.line, height: part.height, hff: part.height_from_floor, props: part.props }));
   if (part.id !== wwId) throw new Error(`id части изменился: ${part.id} != ${wwId}`);
   if (part.props?.cables_warm_floor?.cable_warm_floor_id !== wireSite) throw new Error(`часть потеряла ссылку на кабель: ${JSON.stringify(part.props ?? null)}`);
@@ -282,6 +292,7 @@ try {
   if (s4["verified"] !== true) throw new Error("save#4 (split) не verified");
   const after4 = await rawGet("after-split");
   const part4 = findPartIn(after4.model, wwId) ?? findPartByGeometry(after4.model, part3);
+  if (part4) refreshCapturedPart(wwId, part4);
   if (!part4) throw new Error("тёплая стена потеряна после split (ни по id, ни по геометрии)");
   if (part4.props?.cables_warm_floor?.cable_warm_floor_id !== wireSite) throw new Error(`после split часть потеряла ссылку на кабель: ${JSON.stringify(part4.props ?? null)}`);
   const wire4 = ((after4.model.cables_warm_floor ?? {})[wireSite] ?? {}) as { vertexes?: { id: string; type: string }[] };
@@ -299,6 +310,7 @@ try {
   if (s5["verified"] !== true) throw new Error("save#5 (перенос) не verified");
   const after5 = await rawGet("after-wall-move");
   const part5 = findPartIn(after5.model, wwId) ?? findPartIn(after5.model, part4.id);
+  if (part5) refreshCapturedPart(part4.id, part5);
   if (!part5) throw new Error("тёплая стена потеряна после переноса стены");
   if (part5.props?.cables_warm_floor?.cable_warm_floor_id !== wireSite) throw new Error("после переноса стены часть потеряла ссылку на кабель");
   console.log("после переноса стены: тёплая стена и ссылка целы");
@@ -312,6 +324,7 @@ try {
   if (s6["verified"] !== true) throw new Error("save#6 (merge) не verified");
   const after6 = await rawGet("after-merge");
   const part6 = findPartIn(after6.model, wwId) ?? findPartIn(after6.model, part4.id) ?? findPartByGeometry(after6.model, part5);
+  if (part6) refreshCapturedPart(part4.id, part6);
   if (!part6) throw new Error("тёплая стена потеряна после merge");
   if (part6.props?.cables_warm_floor?.cable_warm_floor_id !== wireSite) throw new Error("после merge часть потеряла ссылку на кабель");
   console.log("после merge: тёплая стена и ссылка целы");
