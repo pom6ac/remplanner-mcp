@@ -19,7 +19,7 @@ import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.t
 import { addElecCable, updateElecCable, deleteElecCable, MAX_ELEC_PATH_NODES, SOCKET_CABLE_TOOLS, type ElecPathElement } from "../model/electric2.ts";
 import {
   addShieldRail, deleteShieldRail, addShieldModule, updateShieldModule, deleteShieldModule,
-  addShieldWire, deleteShieldWire, SHIELD_MODULE_TYPES, SHIELD_WIRE_TYPES, type ShieldPortRef,
+  addShieldWire, deleteShieldWire, SHIELD_MODULE_TYPES, SHIELD_WIRE_TYPES, SHIELD_RAIL_MAX_DIN, type ShieldPortRef,
 } from "../model/shield.ts";
 import {
   addRuler, updateRuler, deleteRuler, addComment, updateComment, deleteComment,
@@ -75,6 +75,13 @@ import { rawEditorPayload } from "../dto/model-payload.ts";
 // swing и аргументы проёмов; items.ts — позиции/каталог; structures.ts —
 // колонны/ригели/трубы/свет/проёмы пола; borders.ts — терраса и участок;
 // dims.ts — размеры/комментарии; model-payload.ts — сырой payload редактора.
+
+// Ревью 285 №1: index у shield_module_update — позиция в DIN на сетке 0.5, не мм
+// (mmInt): перенос вправо требует позицию «конец соседа − 0.5», для соседа
+// шириной ≥ 1 DIN это всегда дробное число, и mmInt делал перенос вправо
+// невозможным.
+const shieldIndexDin = z.number().finite().min(0).max(SHIELD_RAIL_MAX_DIN).multipleOf(0.5)
+  .describe("DIN-позиция на рейке, сетка 0.5 (0..48)");
 
 export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   const wsOf = () => ctx.workspace();
@@ -1543,7 +1550,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     shield_rail_delete: tool(
       "Удалить DIN-рейку электрощитка с модулями на ней (PRO). rail — индекс рейки (0-based, из " +
         "model_get shields[].modules[].rail). Последнюю рейку удалить нельзя (как в редакторе). " +
-        "Индексы последующих рейк и позиции модулей пересчитываются автоматически.",
+        "Индексы последующих рейк и позиции модулей пересчитываются автоматически; провода к портам " +
+        "модулей рейки и коллекторы с числом модулей меньше двух удаляются каскадом (как в редакторе). " +
+        "В ответе — deleted_modules/deleted_wires/deleted_collectors (ненулевые списки id).",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
         rail: mmInt.describe("индекс рейки (0-based)"),
@@ -1551,9 +1560,14 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         await assertShieldAllowed();
         const ws = wsOf();
-        const shield = ws.apply("shield_rail_delete", (m) =>
-          deleteShieldRail(m, resolveItem(m, a["item_id"] as string).id, a["rail"] as number)).shield;
-        return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
+        const res = ws.apply("shield_rail_delete", (m) =>
+          deleteShieldRail(m, resolveItem(m, a["item_id"] as string).id, a["rail"] as number));
+        return ok({
+          ...(res.deleted_modules.length ? { deleted_modules: res.deleted_modules } : {}),
+          ...(res.deleted_wires.length ? { deleted_wires: res.deleted_wires } : {}),
+          ...(res.deleted_collectors.length ? { deleted_collectors: res.deleted_collectors } : {}),
+          ...compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === res.shield.id) ?? null),
+        });
       },
     ),
 
@@ -1607,7 +1621,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         group_number: mmInt.optional(),
         comment: z.string().max(MAX_SERVICE_COMMENT_CHARS).optional(),
         rail: mmInt.optional().describe("перенос: индекс рейки 0-based (модуль встанет в конец рейки)"),
-        index: mmInt.optional().describe("изменение порядка: целевая DIN-позиция на рейке"),
+        index: shieldIndexDin.optional().describe("изменение порядка: целевая DIN-позиция на рейке (в DIN, сетка 0.5)"),
       },
       async (a) => {
         await assertShieldAllowed();
