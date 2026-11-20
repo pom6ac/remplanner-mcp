@@ -1249,7 +1249,7 @@ test("284: импорт — лимит проводов щитка (мусор �
 
 test("ревью 285 №4: повторный идентичный провод (в обе стороны, тот же тип) — INVALID_ARGUMENT", () => {
   const { m, shield, mA, mB } = wiresScenario();
-  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } });
+  const { wire } = addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } });
   // прямой дубль
   assert.throws(
     () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } }),
@@ -1258,6 +1258,12 @@ test("ревью 285 №4: повторный идентичный провод 
   // обратный дубль
   assert.throws(
     () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mB!.id, port: 0 }, target: { module_id: mA.id, port: 0 } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // разорванный провод (is_broken) тоже считается дублем
+  wire.is_broken = 1;
+  assert.throws(
+    () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } }),
     (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
   );
   const s = findShieldByItem(m, shield.id)!;
