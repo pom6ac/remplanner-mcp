@@ -141,10 +141,11 @@ export const ZONE_LIMITS = {
  *  центр полигона в комнате) + закладные комнаты (rooms2[rid].rigels). Рёбра —
  *  с привязкой к стороне (side: l/r/s/e и индексом в стороне), как в редакторе:
  *  у закладной без сохранённых рёбер — боковые грани l/r полигона
- *  [l1,l2,r2,r1] ( CeilingRigel.calc). */
-function roomRigels(model: Model, roomId: string, room: RoomRec): Array<{ id: string; edges: Array<{ p1: Point; p2: Point; side?: string; edgeIndex?: number }>; polygon: Point[] }> {
-  const out: Array<{ id: string; edges: Array<{ p1: Point; p2: Point; side?: string; edgeIndex?: number }>; polygon: Point[] }> = [];
-  const push = (id: string, rec: { polygon?: Point[]; edges?: Record<string, Array<{ p1?: Point; p2?: Point }>> }) => {
+ *  [l1,l2,r2,r1] ( CeilingRigel.calc). global — глобальный ригель (ревью 313 D:
+ *  mouseup RIGELS пишет zone.type "rigel", закладные комнаты — "rigel_ceiling"). */
+function roomRigels(model: Model, roomId: string, room: RoomRec): Array<{ id: string; global: boolean; edges: Array<{ p1: Point; p2: Point; side?: string; edgeIndex?: number }>; polygon: Point[] }> {
+  const out: Array<{ id: string; global: boolean; edges: Array<{ p1: Point; p2: Point; side?: string; edgeIndex?: number }>; polygon: Point[] }> = [];
+  const push = (id: string, rec: { polygon?: Point[]; edges?: Record<string, Array<{ p1?: Point; p2?: Point }>> }, isGlobal: boolean) => {
     const poly = rec.polygon;
     if (!poly || poly.length < 3) return;
     const edges: Array<{ p1: Point; p2: Point; side?: string; edgeIndex?: number }> = [];
@@ -166,18 +167,18 @@ function roomRigels(model: Model, roomId: string, room: RoomRec): Array<{ id: st
         for (let i = 0; i < poly.length; i++) edges.push({ p1: poly[i]!, p2: poly[(i + 1) % poly.length]! });
       }
     }
-    out.push({ id, edges, polygon: poly });
+    out.push({ id, global: isGlobal, edges, polygon: poly });
   };
   for (const [id, r] of Object.entries((model.rigels ?? {}) as Record<string, { polygon?: Point[]; edges?: Record<string, Array<{ p1?: Point; p2?: Point }>> }>)) {
     const c = r.polygon ? { x: r.polygon.reduce((s, p) => s + p.x, 0) / r.polygon.length, y: r.polygon.reduce((s, p) => s + p.y, 0) / r.polygon.length } : null;
     const poly = room.polygon;
-    if (c && poly && pointInPolygon(c, poly)) push(id, r);
+    if (c && poly && pointInPolygon(c, poly)) push(id, r, true);
   }
-  for (const [id, r] of Object.entries(room.rigels ?? {})) push(id, r as { polygon?: Point[]; edges?: Record<string, Array<{ p1?: Point; p2?: Point }>> });
+  for (const [id, r] of Object.entries(room.rigels ?? {})) push(id, r as { polygon?: Point[]; edges?: Record<string, Array<{ p1?: Point; p2?: Point }>> }, false);
   return out;
 }
 
-type Snap = { point: Point; kind: "room" | "rigel"; edgeIndex: number; pid?: string; side?: string; rigelId?: string; rigelSide?: string; rigelEdgeIndex?: number; rigelEdge?: { p1: Point; p2: Point } };
+type Snap = { point: Point; kind: "room" | "rigel"; edgeIndex: number; pid?: string; side?: string; roomEdge?: { p1: Point; p2: Point }; rigelId?: string; rigelGlobal?: boolean; rigelSide?: string; rigelEdgeIndex?: number; rigelEdge?: { p1: Point; p2: Point } };
 
 /** Магнит конца линии: ближайшее ребро комнаты (≤15 см); ригель/закладная
  *  (≤10 см) — только у zone_ceiling и только когда ребро рядом НЕ нашлось:
@@ -196,7 +197,7 @@ function snapEndpoint(model: Model, roomId: string, room: RoomRec, p: Point, pla
     if (!q) continue;
     const d = dist(p, q);
     if (d <= ZONE_LIMITS.edgeSnapCm && (!best || d < best.d)) {
-      best = { snap: { point: q, kind: "room", edgeIndex: i, pid: e.pid, side: e.side }, d };
+      best = { snap: { point: q, kind: "room", edgeIndex: i, pid: e.pid, side: e.side, roomEdge: { p1: e.p1, p2: e.p2 } }, d };
     }
   }
   if (best) return best.snap;
@@ -209,7 +210,7 @@ function snapEndpoint(model: Model, roomId: string, room: RoomRec, p: Point, pla
         if (d <= ZONE_LIMITS.rigelSnapCm && (!best || d < best.d)) {
           best = {
             snap: {
-              point: q, kind: "rigel", edgeIndex: -1, rigelId: rg.id,
+              point: q, kind: "rigel", edgeIndex: -1, rigelId: rg.id, rigelGlobal: rg.global,
               rigelSide: e.side, rigelEdgeIndex: e.edgeIndex ?? 0, rigelEdge: { p1: e.p1, p2: e.p2 },
             }, d,
           };
@@ -396,21 +397,35 @@ export function addZoneDelimiter(
   // (как project.copy("server"))
   const vid1 = newId(), vid2 = newId();
   const id = newId();
-  // zone-привязка конца на грани закладной — как mouseup редактора (живой эталон
-  // ui-ref-zones4-ceiling-zones, узел на грани: {room_id, rigel_id, edge, edge_index,
-  // edge_side, type: "rigel_ceiling"}); от неё зависит restoreDelimiters при
-  // изменении ширины закладной (ревью 311 №3)
-  const zoneOf = (s: Snap): Record<string, unknown> | undefined =>
-    s.kind === "rigel" && s.rigelSide && s.rigelEdge
-      ? {
-          room_id: roomId,
-          rigel_id: s.rigelId!,
-          edge: { p1: { ...s.rigelEdge.p1 }, p2: { ...s.rigelEdge.p2 } },
-          edge_index: s.rigelEdgeIndex ?? 0,
-          edge_side: s.rigelSide,
-          type: "rigel_ceiling",
-        }
-      : undefined;
+  // zone-привязка конца — как mouseup редактора (бандл 268, ревью 313 D):
+  // грань глобального ригеля (RIGELS) — type "rigel", грань закладной комнаты —
+  // "rigel_ceiling", ребро комнаты — "room" {room_id, edge, edge_index,
+  // edge_side, edge_pid, edge_pids} (формат по фикстуре
+  // ui-ref-zones4-ceiling-zones, vertexes[0].zone). От привязки зависит
+  // restoreDelimiters при изменении ширины закладной (ревью 311 №3).
+  const zoneOf = (s: Snap): Record<string, unknown> | undefined => {
+    if (s.kind === "rigel" && s.rigelSide && s.rigelEdge) {
+      return {
+        room_id: roomId,
+        rigel_id: s.rigelId!,
+        edge: { p1: { ...s.rigelEdge.p1 }, p2: { ...s.rigelEdge.p2 } },
+        edge_index: s.rigelEdgeIndex ?? 0,
+        edge_side: s.rigelSide,
+        type: s.rigelGlobal ? "rigel" : "rigel_ceiling",
+      };
+    }
+    if (s.kind === "room" && s.roomEdge) {
+      return {
+        room_id: roomId,
+        edge: { p1: { ...s.roomEdge.p1 }, p2: { ...s.roomEdge.p2 } },
+        edge_index: s.edgeIndex,
+        ...(s.side ? { edge_side: s.side } : {}),
+        ...(s.pid ? { edge_pid: s.pid, edge_pids: { [s.pid]: s.side ?? "" } } : {}),
+        type: "room",
+      };
+    }
+    return undefined;
+  };
   const rec: ZoneDelimiterRec = {
     id,
     matrix: [[null, { length: 1 }], [{ length: 1 }, null]],

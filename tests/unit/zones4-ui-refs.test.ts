@@ -158,7 +158,14 @@ test("312 №3: update ширины при zone_ceiling-делителе из zo
     },
     `zone-привязка конца на грани закладной: ${JSON.stringify(delim.vertexes[1]!.zone)}`,
   );
-  assert.equal(delim.vertexes[0]!.zone, undefined, "конец на ребре комнаты — без zone-привязки");
+  // конец на ребре комнаты — zone-привязка type "room" (формат по фикстуре,
+  // vertexes[0].zone; ревью 313 D)
+  assert.deepEqual(delim.vertexes[0]!.zone, {
+    room_id: "room1",
+    edge: { p1: { x: 100, y: 300 }, p2: { x: 100, y: 100 } },
+    edge_index: 2,
+    type: "room",
+  });
   // прежний консервативный отказ убран (ревью 311 №3): редактор (restoreDelimiters)
   // перепривязывает узел делителя к новой грани
   const upd = updateCeilingRigel(model, rec.id, { widthMm: 300 });
@@ -446,6 +453,58 @@ test("314 A: после закладной model_get показывает отд
   const room = (compact.rooms as Array<Record<string, unknown>>)[0]!;
   assert.equal(room["ceiling"], "gypsum_ceiling", `model_get.ceiling по первой зоне с отделкой: ${JSON.stringify(room)}`);
   assert.equal(room["floor"], null);
+});
+
+// ---------- ревью 313 C: remove сохраняет edges зон, set строит при отсутствии ----------
+
+test("314 C: remove→set в зонированной комнате сохраняет рёбра зон — ниша ставится (313-exp4)", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  withEdgePids(model, "room1");
+  setCeilingFinish(model, "room1", "stretch_ceiling", {});
+  addCeilingRigel(model, "room1", { start: { x: 2500, y: 1005 }, end: { x: 2500, y: 2995 } });
+  removeCeilingFinish(model, "room1");
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  assert.equal(ceilings.length, 2, "зоны сохранены");
+  for (const c of ceilings) {
+    assert.ok(Array.isArray(c["edges"]) && (c["edges"] as unknown[]).length > 0, `remove сохранил edges записи: ${Object.keys(c).join(",")}`);
+  }
+  setCeilingFinish(model, "room1", "stretch_ceiling", {});
+  for (const c of ceilings) {
+    assert.ok(Array.isArray(c["edges"]) && (c["edges"] as unknown[]).length > 0, `set построил/сохранил edges записи: ${Object.keys(c).join(",")}`);
+  }
+  const res = addCeilingNiche(model, "room1", "wallL");
+  assert.ok(res.id, "ниша ставится после remove→set (не «у зон нет ребра на стене»)");
+});
+
+// ---------- ревью 313 D: zone-привязки type rigel / rigel_ceiling / room ----------
+
+test("314 D: конец делителя на грани глобального ригеля — zone.type rigel; на грани закладной — rigel_ceiling", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  // глобальный (несущий) ригель поперёк комнаты, грань l на x=195
+  model.rigels = {
+    gR: { id: "gR", polygon: [{ x: 195, y: 50 }, { x: 195, y: 350 }, { x: 205, y: 350 }, { x: 205, y: 50 }] },
+  } as never;
+  const zd = addZoneCeiling(model, "room1", { fromMm: { x: 1005, y: 2000 }, toMm: { x: 1950, y: 2000 } });
+  const delim = ((model.zone_delimiters ?? {}) as Record<string, { vertexes: Array<{ point: Pt; zone?: Record<string, unknown> }> }>)[zd.id]!;
+  const zg = delim.vertexes[1]!.zone;
+  assert.ok(zg, `zone-привязка на грани глобального ригеля: ${JSON.stringify(delim.vertexes[1])}`);
+  assert.equal(zg!["type"], "rigel", `глобальный ригель — type rigel (как mouseup RIGELS в бандле): ${JSON.stringify(zg)}`);
+  assert.equal(zg!["rigel_id"], "gR");
+  assert.equal(zg!["edge_side"], "l");
+});
+
+// ---------- ревью 313 E: метка wall ниш по линии ниши в любой зоне ----------
+
+test("314 E: finish_get.niches[].wall определяется линией ниши в любой зоне (N3b)", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  withEdgePids(model, "room1");
+  setCeilingFinish(model, "room1", "stretch_ceiling", {});
+  addCeilingRigel(model, "room1", { start: { x: 2500, y: 1005 }, end: { x: 2500, y: 2995 } });
+  addCeilingNiche(model, "room1", "wallL");
+  addCeilingNiche(model, "room1", "wallT");
+  const fl = finishList(model, "room1")[0] as Record<string, unknown>;
+  const walls = ((fl["niches"] ?? []) as Array<{ wall: string | null }>).map((n) => n.wall).sort();
+  assert.deepEqual(walls, ["W3", "W4"], `метки стен ниш в обеих зонах: ${JSON.stringify(fl["niches"])}`);
 });
 
 // ---------- ревью 313 №4: ниши переносятся только в зону-наследника отделки ----------

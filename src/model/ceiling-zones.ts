@@ -1,6 +1,6 @@
 import type { Model, Point } from "./types.ts";
 import { newId } from "./types.ts";
-import { roomPolygonOf, pointInPolygon, distToSeg, overlapShare } from "./room-geo.ts";
+import { roomPolygonOf, pointInPolygon, distToSeg, overlapShare, polygonEdgesOf } from "./room-geo.ts";
 import { collinearOverlapCm } from "./geometry.ts";
 import { zoneCeilingDelimiterLines } from "./zone-delimiters.ts";
 import { McpError } from "../errors.ts";
@@ -251,20 +251,6 @@ function interiorPoint(poly: Point[]): Point | null {
     }
   }
   return null;
-}
-
-function polygonEdgesOf(poly: Point[]): Array<Rec> {
-  const out: Array<Rec> = [];
-  for (let i = 0; i < poly.length; i++) {
-    const p1 = poly[i]!, p2 = poly[(i + 1) % poly.length]!;
-    out.push({
-      p1: { x: Math.round(p1.x * 100) / 100, y: Math.round(p1.y * 100) / 100 },
-      p2: { x: Math.round(p2.x * 100) / 100, y: Math.round(p2.y * 100) / 100 },
-      c: { x: Math.round(((p1.x + p2.x) / 2) * 100) / 100, y: Math.round(((p1.y + p2.y) / 2) * 100) / 100 },
-      length: Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) * 100) / 100,
-    });
-  }
-  return out;
 }
 
 /** Правило «good» updateZones: запись совпадает с новой зоной целиком (упрощённые

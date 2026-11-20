@@ -6,7 +6,7 @@ import { zoneDelimiterList } from "./zone.ts";
 import { ceilingRigelList } from "./ceiling-rigels.ts";
 import {
   canonicalPolygon, polygonsEqual, roomPolygonOf, matchRoomsByContour,
-  signedArea, distToChord, removeCollinear, polygonArea,
+  signedArea, distToChord, removeCollinear, polygonArea, polygonEdgesOf,
 } from "./room-geo.ts";
 export {
   canonicalPolygon, polygonsEqual, roomPolygonOf, matchRoomsByContour,
@@ -686,7 +686,13 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
       const prevPoly = prev?.["polygon"];
       if (Array.isArray(prevPoly) && prevPoly.length >= 3) entry["polygon"] = structuredClone(prevPoly);
       const prevEdges = prev?.["edges"];
-      if (Array.isArray(prevEdges) && prevEdges.length > 0) entry["edges"] = structuredClone(prevEdges);
+      if (Array.isArray(prevEdges) && prevEdges.length > 0) {
+        entry["edges"] = structuredClone(prevEdges);
+      } else if (Array.isArray(prevPoly) && prevPoly.length >= 3) {
+        // ревью 313 C: записи без edges (созданные до пересчёта зон) — строим по полигону,
+        // иначе finish_ceiling_niche_add после remove→set ложно отказывает
+        entry["edges"] = polygonEdgesOf(prevPoly as Point[]);
+      }
       const prevNiches = prev && Array.isArray(prev["niches"]) ? prev["niches"] as Array<Record<string, unknown>> : [];
       if (prevNiches.some((n) => n?.exist === true)) {
         entry["niches"] = structuredClone(prevNiches).map((n) => {
@@ -743,13 +749,17 @@ export function removeCeilingFinish(model: Model, roomRef: string): void {
   const list = Array.isArray(room.ceilings) ? [...room.ceilings] : [];
   while (list.length < 1) list.push({ exist: false });
   if (list.length > 1) {
-    // зоны: у каждой записи свой полигон — не переписываем полигоном комнаты
+    // зоны: у каждой записи свой полигон — не переписываем полигоном комнаты;
+    // edges сохраняем (ревью 313 C): без них следующий set не восстановит рёбра,
+    // и finish_ceiling_niche_add ложно отказывает «у зон потолка нет ребра»
     for (let i = 0; i < list.length; i++) {
       const prev = list[i] as Record<string, unknown> | undefined;
       const prevPoly = prev?.["polygon"];
-      list[i] = Array.isArray(prevPoly) && prevPoly.length >= 3
-        ? { exist: false, polygon: structuredClone(prevPoly) }
-        : { exist: false };
+      const prevEdges = prev?.["edges"];
+      const entry: Record<string, unknown> = { exist: false };
+      if (Array.isArray(prevPoly) && prevPoly.length >= 3) entry["polygon"] = structuredClone(prevPoly);
+      if (Array.isArray(prevEdges) && prevEdges.length > 0) entry["edges"] = structuredClone(prevEdges);
+      list[i] = entry;
     }
     room.ceilings = list;
     return;
@@ -1012,6 +1022,18 @@ function moldingSigs(room: RoomRec, key: "floorMoldings" | "ceilingMoldings", ed
   return out;
 }
 
+/** Ребро комнаты, на котором целиком лежит линия (допуск UI-магнита 0.05 см):
+ *  pid ребра или undefined — общий помощник ниш (ревью 313 E, «Что упростить» 2:
+ *  nichesSig и finishList определяют стену ниши геометрически, не по индексу). */
+function edgePidByLine(edges: Array<{ p1?: Point; p2?: Point; pid?: string }>, line: { p1: Point; p2: Point }): string | undefined {
+  for (const e of edges) {
+    if (e?.p1 && e?.p2 && projD(line.p1, e.p1, e.p2) <= 0.05 && projD(line.p2, e.p1, e.p2) <= 0.05) {
+      return e.pid;
+    }
+  }
+  return undefined;
+}
+
 /** Закарнизные ниши (niches по записям ceilings) в виде сигнатур (полная проекция —
  *  ревью 246 №10). Зонированный потолок (ревью 311 №1): ниши могут стоять в любой
  *  записи — обходятся все; pid — ребро комнаты, на котором лежит линия ниши
@@ -1020,14 +1042,7 @@ function nichesSig(room: RoomRec): NonNullable<FinishSig["niches"]> {
   const out: NonNullable<FinishSig["niches"]> = [];
   const edges = Array.isArray(room.edges) ? room.edges : [];
   const ceilings = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
-  const pidByLine = (line: { p1: Point; p2: Point }): string | undefined => {
-    for (const e of edges) {
-      if (e?.p1 && e?.p2 && projD(line.p1, e.p1, e.p2) <= 0.05 && projD(line.p2, e.p1, e.p2) <= 0.05) {
-        return e.pid;
-      }
-    }
-    return undefined;
-  };
+  const pidByLine = (line: { p1: Point; p2: Point }): string | undefined => edgePidByLine(edges, line);
   ceilings.forEach((rec, ci) => {
     if (!rec) return;
     const selfCeiling = typeof rec["id"] === "string" ? rec["id"] as string : undefined;
@@ -1679,9 +1694,19 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
         if (!c0) return;
         const arr = Array.isArray(c0["niches"]) ? c0["niches"] as Array<Record<string, unknown>> : [];
         for (let i = 0; i < arr.length; i++) {
-          const rec = arr[i] as { exist?: unknown } | undefined;
+          const rec = arr[i] as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined;
           if (rec?.exist !== true) continue;
-          const pid = ci === 0 ? edgesArr[i]?.pid as string | undefined : undefined;
+          // ревью 313 E: стена ниши — по линии части (геометрически, в любой зоне);
+          // запасной путь — индексная привязка для одиночной записи
+          let pid: string | undefined;
+          for (const part of Object.values(rec.parts ?? {})) {
+            const line = part["line"] as { p1?: Point; p2?: Point } | undefined;
+            if (line?.p1 && line?.p2) {
+              pid = edgePidByLine(edgesArr, line as { p1: Point; p2: Point });
+              if (pid) break;
+            }
+          }
+          pid ??= ci === 0 ? edgesArr[i]?.pid as string | undefined : undefined;
           niches.push({ wall: wallLabel(pid, model) });
         }
       });
