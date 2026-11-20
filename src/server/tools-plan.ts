@@ -20,6 +20,8 @@ import { addElecCable, updateElecCable, deleteElecCable, MAX_ELEC_PATH_NODES, SO
 import {
   addShieldRail, deleteShieldRail, addShieldModule, updateShieldModule, deleteShieldModule,
   addShieldWire, deleteShieldWire, SHIELD_MODULE_TYPES, SHIELD_WIRE_TYPES, SHIELD_RAIL_MAX_DIN, type ShieldPortRef,
+  addShieldBus, updateShieldBus, deleteShieldBus, SHIELD_BUS_MIN_SOCKETS, SHIELD_BUS_MAX_SOCKETS,
+  addShieldCollector, updateShieldCollector, deleteShieldCollector,
 } from "../model/shield.ts";
 import {
   addRuler, updateRuler, deleteRuler, addComment, updateComment, deleteComment,
@@ -1586,8 +1588,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "group_number — номер группы (только у автоматов/УЗО/дифавтоматов); rail — индекс рейки " +
         "(по умолчанию 0). Модуль ставится в конец рейки; лимит рейки — 48 DIN. Провода между портами " +
         "ставятся shield_wire_add; совместимость типа провода и типа порта не проверяется — как в " +
-        "редакторе (add_wire_end); петля (провод на тот же порт) — MCP строже редактора. Шины и " +
-        "коллекторы не редактируются MCP (следующий этап).",
+        "редакторе (add_wire_end); петля (провод на тот же порт) — MCP строже редактора. Шины " +
+        "(shield_bus_add) и коллекторы (shield_collector_add) — отдельные инструменты.",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
         type: z.enum(Object.keys(SHIELD_MODULE_TYPES) as [string, ...string[]]),
@@ -1669,11 +1671,15 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "shield_wire_* и клик по двум портам). type — shield_wire_phase|shield_wire_phase2|" +
         "shield_wire_phase3 (фаза/фаза 2/фаза 3), shield_wire_null (ноль), shield_wire_earth (земля). " +
         "source/target — порт: {module_id, port} (port обязателен; номер порта модуля 0-based из full-модели " +
-        "shields[].rails[].modules[].ports) или {input: \"phase\"|\"null\"|\"earth\"} (порт ввода). " +
+        "shields[].rails[].modules[].ports), {input: \"phase\"|\"null\"|\"earth\"} (порт ввода) или " +
+        "{bus, port} (гнездо шины 0-based из bus_list; bus.connection = тип провода — как в редакторе, " +
+        "к шине с другим connection провод не ставится). " +
+        "Провод между двумя гнёздами шин (шина→шина, в том числе два гнезда одной шины) — " +
+        "INVALID_ARGUMENT: в редакторе нельзя завершить на гнезде шины провод, начатый с шины. " +
         "Несколько разных проводов на один порт разрешено (как в редакторе); повторный идентичный " +
         "провод (те же порты и тип) — INVALID_ARGUMENT, разорванный провод (is_broken) тоже считается " +
         "дублем — сначала shield_wire_delete; тип провода и тип порта не проверяются (как " +
-        "в редакторе). Шины (buses) не редактируются MCP — порт шины указать нельзя (следующий этап). " +
+        "в редакторе). " +
         "После добавления пересчитываются connected портов и connection шин (validate_ports/validate_buses " +
         "редактора); висячие провода/коллекторы чистятся только при операциях с модулями и рейками.",
       {
@@ -1683,12 +1689,14 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           module_id: z.string().min(1).optional().describe("id модуля из model_get"),
           port: mmInt.optional().describe("номер порта модуля 0-based"),
           input: z.enum(["phase", "null", "earth"]).optional().describe("порт ввода щитка"),
-        }).describe("исходный порт: {module_id, port} или {input}"),
+          bus: z.string().min(1).optional().describe("id шины из model_get bus_list"),
+        }).describe("исходный порт: {module_id, port}, {input} или {bus, port}"),
         target: z.object({
           module_id: z.string().min(1).optional().describe("id модуля из model_get"),
           port: mmInt.optional().describe("номер порта модуля 0-based"),
           input: z.enum(["phase", "null", "earth"]).optional().describe("порт ввода щитка"),
-        }).describe("целевой порт: {module_id, port} или {input}"),
+          bus: z.string().min(1).optional().describe("id шины из model_get bus_list"),
+        }).describe("целевой порт: {module_id, port}, {input} или {bus, port}"),
       },
       async (a) => {
         await assertShieldAllowed();
@@ -1717,6 +1725,138 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           return true;
         });
         return ok({ deleted: a["wire_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    shield_bus_add: tool(
+      "Добавить шину (нулевую шину-бар, инструмент shield_busbar в редакторе) над или под щитком (PRO). " +
+        "position — T (над) | B (под); align — привязка по горизонтали: L (левый край, distance 0), " +
+        "C (центр, по умолчанию), R (правый край). Гнёзд по умолчанию 6 (ShieldDimensions.bus.default_sockets), " +
+        "sockets — 4..25. connection шины пуст, тип запомнится первым проводом (shield_wire_add на {bus, port}); " +
+        "к шине с connection можно ставить только провод того же типа — как в редакторе. " +
+        "После добавления вызывайте model_validate и project_save.",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        position: z.enum(["T", "B"]).describe("ряд: T (над щитком) | B (под)"),
+        align: z.enum(["L", "C", "R"]).optional().describe("привязка: L (лево), C (центр, по умолчанию), R (право)"),
+        sockets: mmInt.optional().describe("число гнёзд 4..25 (по умолчанию 6)"),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        const { shield } = ws.apply("shield_bus_add", (m) => addShieldBus(m, resolveItem(m, a["item_id"] as string).id, {
+          position: a["position"] as "T" | "B",
+          align: a["align"] as "L" | "C" | "R" | undefined,
+          sockets: a["sockets"] as number | undefined,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
+      },
+    ),
+
+    shield_bus_update: tool(
+      "Изменить шину щитка (bus_id из model_get bus_list): привязка (align/position, distance " +
+        "пересчитывается как в редакторе) и число гнёзд (sockets 4..25; добавление в конец, удаление " +
+        "с конца — bus_enter_ports редактора; провода удалённых гнёзд удаляются каскадом, в ответе " +
+        "deleted_wires).",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        bus_id: z.string().min(1).describe("id шины из model_get bus_list"),
+        position: z.enum(["T", "B"]).optional(),
+        align: z.enum(["L", "C", "R"]).optional(),
+        sockets: mmInt.optional().describe("число гнёзд 4..25"),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        const res = ws.apply("shield_bus_update", (m) =>
+          updateShieldBus(m, resolveItem(m, a["item_id"] as string).id, a["bus_id"] as string, {
+            position: a["position"] as "T" | "B" | undefined,
+            align: a["align"] as "L" | "C" | "R" | undefined,
+            sockets: a["sockets"] as number | undefined,
+          }));
+        return ok({
+          ...(res.deleted_wires.length ? { deleted_wires: res.deleted_wires } : {}),
+          ...compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === res.shield.id) ?? null),
+        });
+      },
+    ),
+
+    shield_bus_delete: tool(
+      "Удалить шину щитка (bus_id из model_get bus_list). Провода к её гнёздам удаляются каскадом " +
+        "(как в редакторе, delete_bus) — в ответе deleted_wires.",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        bus_id: z.string().min(1).describe("id шины из model_get bus_list"),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        const res = ws.apply("shield_bus_delete", (m) =>
+          deleteShieldBus(m, resolveItem(m, a["item_id"] as string).id, a["bus_id"] as string));
+        return ok({
+          deleted: a["bus_id"],
+          ...(res.deleted_wires.length ? { deleted_wires: res.deleted_wires } : {}),
+          hint: SCENARIO_HINT,
+        });
+      },
+    ),
+
+    shield_collector_add: tool(
+      "Добавить коллектор (гребёнку, инструмент shield_collector в редакторе) на модули одной DIN-рейки (PRO). " +
+        "modules — список id модулей (из model_get shields[].modules[].module_id) в порядке следования: " +
+        "минимум два модуля (коллектор на одном модуле редактор удаляет — validate_collectors), " +
+        "все на одной рейке, одной ширины, без чужих модулей внутри диапазона; type модуля — из списка " +
+        "коллекторных (автоматы, УЗО, выключатели нагрузки). position в ответе всегда «T» (верхний ряд): " +
+        "нижний ряд портов (B) не поддержан. После добавления вызывайте model_validate " +
+        "и project_save.",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        modules: z.array(z.string().min(1)).min(2).max(48).describe("id модулей коллектора в порядке следования"),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        const { shield } = ws.apply("shield_collector_add", (m) => addShieldCollector(m, resolveItem(m, a["item_id"] as string).id, {
+          modules: a["modules"] as string[],
+        }));
+        return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
+      },
+    ),
+
+    shield_collector_update: tool(
+      "Изменить коллектор щитка (collector_id из model_get collector_list): заменить набор модулей " +
+        "(modules — подряд, одна рейка, одна ширина, ≥2 — тот же путь, что переснятие drag).",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        collector_id: z.string().min(1).describe("id коллектора из model_get collector_list"),
+        modules: z.array(z.string().min(1)).min(2).max(48).optional().describe("новый набор модулей"),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        const { shield } = ws.apply("shield_collector_update", (m) =>
+          updateShieldCollector(m, resolveItem(m, a["item_id"] as string).id, a["collector_id"] as string, {
+            modules: a["modules"] as string[] | undefined,
+          }));
+        return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
+      },
+    ),
+
+    shield_collector_delete: tool(
+      "Удалить коллектор щитка (collector_id из model_get collector_list): модули и провода не трогаются " +
+        "(как в редакторе, delete_collector).",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        collector_id: z.string().min(1).describe("id коллектора из model_get collector_list"),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        ws.apply("shield_collector_delete", (m) => {
+          deleteShieldCollector(m, resolveItem(m, a["item_id"] as string).id, a["collector_id"] as string);
+          return true;
+        });
+        return ok({ deleted: a["collector_id"], hint: SCENARIO_HINT });
       },
     ),
 

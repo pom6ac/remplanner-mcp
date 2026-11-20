@@ -42,6 +42,8 @@ const EXPECTED_TOOLS = [
   "shield_rail_add", "shield_rail_delete",
   "shield_module_add", "shield_module_update", "shield_module_delete",
   "shield_wire_add", "shield_wire_delete",
+  "shield_bus_add", "shield_bus_update", "shield_bus_delete",
+  "shield_collector_add", "shield_collector_update", "shield_collector_delete",
   // §7.4e — проем в полу, терраса и участок (этап 64)
   "floor_hole_add", "floor_hole_update", "floor_hole_delete",
   "terrace_add", "terrace_border_update", "terrace_border_delete",

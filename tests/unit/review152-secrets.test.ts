@@ -159,24 +159,58 @@ const REDOS_CASES = [
   ["mixed kv junk", "a.b-c_d=e.f:g; ".repeat(7_000)],
 ] as const;
 
-test("ревью 152 M4: ReDoS — 100 КБ быстрее 200 мс (медиана 5 прогонов после прогрева)", () => {
-  // устойчивость к шуму параллельных тестов (169-b5b6): прогрев JIT, медиана
-  // 5 прогонов и порог с запасом против квадратичного случая — тот занимал
-  // секунды на этих же входах, линейный вариант проходит за единицы мс
-  const t = (str: string): number => {
+test("ревью 152 M4: ReDoS — maskSecrets не отстаёт от эталонной линейной регулярки на тех же входах", () => {
+  // ревью 293 №8: абсолютный порог (200 мс, медиана 5) флакает под нагрузкой
+  // параллельных тестов (295 мс > 200 на зелёном коде), относительное удвоение —
+  // от GC-пауз (0.5 → 3 мс = 6× на зелёном коде). Критерий ОТНОСИТЕЛЬНЫЙ и
+  // нагрузко-устойчивый: в том же прогоне меряется эталонная линейная регулярка
+  // того же класса (скан + массовые замены + аллокация); у реального maskSecrets
+  // отношение к ней единицы–десятки, у катастрофического regex — на порядки
+  // выше, мутация краснеет (самотест ниже).
+  const tmin = (fn: (s: string) => unknown, str: string, k = 3): number => {
     const times: number[] = [];
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < k; i++) {
       const t0 = performance.now();
-      maskSecrets(str);
+      fn(str);
       times.push(performance.now() - t0);
     }
-    times.sort((a, b) => a - b);
-    return (times[2]! + times[3]!) / 2;
+    return Math.min(...times);
   };
-  // прогрев на первом (самом дешёвом) входе
-  t(REDOS_CASES[0]![1].slice(0, 1000));
+  const baseline = (s: string): string => s.replace(/[a-z0-9_= :;."\/]/g, "0");
   for (const [nm, str] of REDOS_CASES) {
-    const ms = t(str);
-    assert.ok(ms < 200, `${nm}: maskSecrets на ${str.length} байтах занял ${ms.toFixed(1)} мс`);
+    tmin(baseline, str.slice(0, 1000)); // прогрев JIT на дешёвом префиксе
+    tmin(maskSecrets, str.slice(0, 1000));
+    const tBase = tmin(baseline, str);
+    const tMask = tmin(maskSecrets, str);
+    assert.ok(
+      tMask <= tBase * 100 + 1,
+      `${nm}: maskSecrets (${tMask.toFixed(1)} мс) отстаёт от эталонной линейной регулярки (${tBase.toFixed(1)} мс) больше чем в 100 раз`,
+    );
   }
+});
+
+// ревью 293 №8: самотест критерия — «мутация» maskSecrets катастрофическим
+// regex (экспоненциальный откат) краснеет, настоящий маскировщик — нет.
+test("самотест 293 №8: катастрофический regex краснеет по относительному критерию", () => {
+  const tmin = (fn: (s: string) => unknown, str: string, k = 3): number => {
+    const times: number[] = [];
+    for (let i = 0; i < k; i++) {
+      const t0 = performance.now();
+      fn(str);
+      times.push(performance.now() - t0);
+    }
+    return Math.min(...times);
+  };
+  const baseline = (s: string): string => s.replace(/[a-z0-9_= :;."\/]/g, "0");
+  // /(.*)*!z/ — экспоненциальный откат на входе без «!z»
+  const mutant = (s: string): string => {
+    /(.*)*!z/.test(s);
+    return s;
+  };
+  const str = "a".repeat(19) + "!q";
+  tmin(baseline, str.slice(0, 10));
+  const tBase = tmin(baseline, str);
+  const tMut = tmin(mutant, str);
+  assert.ok(tMut > tBase * 100 + 1, `мутация должна краснеть: мутант ${tMut.toFixed(1)} мс vs эталон ${tBase.toFixed(2)} мс`);
+  assert.ok(tmin(maskSecrets, str) <= tBase * 100 + 1, "настоящий maskSecrets критерий не красит");
 });

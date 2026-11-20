@@ -869,10 +869,17 @@ connected портов и connection шин.
 parent_id, parent_type:"bus", connected}]}}` (проба 284-bus2: слоты `.bus-slot`
 над/под щитком; type — позиция T/B + L/C/R от точки постановки, «TL» — верх-лево;
 connection — тип провода первого подключённого порта, validate_buses). Порты
-шины — цели проводов наравне с модулями/вводом. Коллектор: `collectors
-{collectorId: {id, rail_id, module_width, modules {moduleId: moduleId},
-position: "T"|"B"}}` (проба 284-wire-matrix; validate_collectors удаляет
-коллектор с <2 модулями).
+шины — цели проводов наравне с модулями/вводом (проба 291-shield3-ui3: к шине с
+`connection` другого типа провод не ставится — bus port_mousedown; `bus_add_port`
+/`bus_remove_port`/`bus_enter_ports` — добавление гнёзд в конец и удаление с
+конца; ShieldDimensions.bus: default_sockets 6, min 4, max 25; width_bus =
+6×гнёзд + 12 px, проба 291-shield3-ui3, дамп .orca-reports/tmp/294-busfactory.json). Коллектор: `collectors {collectorId:
+{id, rail_id, module_width, modules {moduleId: 1}, position: "T"|"B"}}` (живая
+проба 291-shield3-ui3 — drag по портам модулей: module_port_click_collector, карту
+модулей строит port_mouseover — подряд идущие модули одной ширины на рейке;
+в эталоне 284 карта была снята вручную с id-значениями — исправлено;
+validate_collectors пересчитывает карту по геометрии (calc) и удаляет коллектор
+с <2 модулями).
 
 Каскады при удалении (как редактор, молча): delete_module/delete_rail/
 delete_input вызывают validate_wires (провода с исчезнувшими портами удаляются),
@@ -885,6 +892,26 @@ no-op); in_transition — флаг только на время drag, в сер�
 Провода при переносе сохраняются (порты переезжают с модулем). MCP строже
 редактора в двух местах: переполнение рейки при переносе и позиция за концом
 рейки — INVALID_ARGUMENT вместо молчаливого пропуска/падения.
+
+### 7.6c. Конструктор электрощитка ч.3: шины и коллекторы (MCP) [код + пробы 291-shield3-ui3/ui6/ui7, 291-live-check, 2026-11-20]
+
+Этап 291. MCP пишет шины и коллекторы: `shield_bus_add` (position T|B + align
+L|C|R, по умолчанию центр; sockets 4..25, по умолчанию 6) — type «TL»/«TC»/…,
+distance по формулам drag редактора (add_bus_move/dragmove: L → 0, C →
+shield_width/2 − width_bus/2 − bus_bar_margin_x, R → максимум; проверено вживую:
+TC 157.5, TR 315 при щитке 12 DIN, shield_width 393 px = module.width 21 px ×
+(length_rails+1) + rail.margin_x 120 px, проба 291-shield3-ui3); distance — px
+схемы щитка (формат редактора), не мм. `shield_bus_update` — привязка и число
+гнёзд (bus_enter_ports); `shield_bus_delete` — каскад проводов к гнёздам
+(delete_bus → validate_wires/validate_ports). `shield_collector_add/update` —
+карта модулей (подряд, одна ширина, ≥2; типы из ShieldDimensions.collector.types:
+shield_module, x2_simple, x2, uzo, uzo_fire, x3, off_switch_x3);
+`shield_collector_delete` — модули/провода живы. Провода к гнезду шины —
+`shield_wire_add {bus, port}`; `bus.connection` = тип провода. compact:
+аддитивные `bus_list`/`collector_list` (счётчики `buses`/`collectors` сохранены).
+Не эмулируются: drag шины с произвольным distance (bare-типы «T»/«B» без
+привязки), позиция «B» коллектора (живой эталон нижнего ряда не снят — MCP
+ставит «T»), «сечение»/«разорвать» провода, «Построить автоматически».
 
 ### 7.7. Отделка: покрытия пола, стен и потолка [код + пробы 94-finish-*/94-live-check, 2026-11-17]
 

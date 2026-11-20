@@ -1,6 +1,6 @@
 // Конструктор электрощитка (лист «Электрощиток», план shield, часть 3, 2026-11-20).
-// Модель model.shields[shield.id] — рейки с модулями, ввод, шины/провода (провода
-// и шины — следующий PR: MCP их не пишет, операции с ними отклоняет). Формат —
+// Модель model.shields[shield.id] — рейки с модулями, ввод, провода (284), шины
+// и коллекторы (291, живые эталоны ui-ref-shield-bus/collector). Формат —
 // эталоны tests/fixtures/ui-ref-shield-*.json; исходники классов Shield/Rail/
 // RailModule/ShieldInput — дампы разведки 255 (.orca-reports/tmp/255-*.json,
 // вне git: 255-shield-scout/255-live-check в репозитории, 255-shield-classes —
@@ -8,10 +8,10 @@
 // Связь с предметом-щитком — shields[].shield_id = items[].id; предмет без записи
 // редактор дополняет записью по умолчанию при restore (SHIELDS.restore) — модельный
 // слой делает то же (ensureShield), чтобы сверка save не видела ложную потерю.
-import type { Model, ItemProps, Shield, ShieldRail, ShieldModule, ShieldInput, ShieldPort, ShieldWire } from "./types.ts";
+import type { Model, ItemProps, Shield, ShieldRail, ShieldModule, ShieldInput, ShieldPort, ShieldWire, ShieldBus, ShieldCollector } from "./types.ts";
 import { newId } from "./types.ts";
 import { McpError } from "../errors.ts";
-import { MAX_SERVICE_COMMENT_CHARS, SHIELD_MAX_WIRES as SHIELD_MAX_WIRES_LIMIT } from "../limits.ts";
+import { MAX_SERVICE_COMMENT_CHARS, SHIELD_MAX_WIRES as SHIELD_MAX_WIRES_LIMIT, SHIELD_MAX_BUSES, SHIELD_MAX_COLLECTORS } from "../limits.ts";
 
 /**
  * Предметы-щитки, к которым привязан конструктор (Item.isElectricShield("power"),
@@ -203,6 +203,13 @@ function commentClean(comment: string | undefined): string {
 /** Умолчание номинала без списка (RailModule ctor: e.subtype || dims.module.default_subtype,
  *  бандл app.3.0) — ревью 256 №1. */
 export const SHIELD_MODULE_DEFAULT_SUBTYPE = "5A";
+
+/** Типы модулей, из которых редактор собирает коллектор (ShieldDimensions.collector.types,
+ *  живая проба 291-shield3-ui3, дампы .orca-reports/tmp/291-dims-defs.json, 293-classes.json). */
+export const SHIELD_COLLECTOR_MODULE_TYPES: ReadonlySet<string> = new Set([
+  "shield_module", "shield_module_x2_simple", "shield_module_x2", "shield_module_uzo",
+  "shield_module_uzo_fire", "shield_module_x3", "shield_module_off_switch_x3",
+]);
 
 /** Номинал по правилам редактора (add_new_module + RailModule ctor):
  *  default_subtype ?? subtypes[0] ?? "5A". */
@@ -430,13 +437,10 @@ function railIndexOf(shield: Shield, railId: string): number {
   return Object.values(shield.rails).find((r) => r.id === railId)?.index ?? -1;
 }
 
-/** Принадлежит ли модуль коллектору (формат коллектора — следующий PR;
- *  drag модулей внутри коллектора не поддерживаем). */
+/** Принадлежит ли модуль коллектору (формат — живой эталон ui-ref-shield-collector,
+ *  проба 291-shield3-ui3: modules — {moduleId: 1} на одной рейке). */
 function moduleInCollector(shield: Shield, moduleId: string): boolean {
-  return Object.values(shield.collectors ?? {}).some((c) => {
-    const mods = (c as { modules?: Record<string, unknown> }).modules ?? {};
-    return moduleId in mods;
-  });
+  return Object.values(shield.collectors ?? {}).some((c) => moduleId in (c.modules ?? {}));
 }
 
 /**
@@ -449,7 +453,7 @@ export function moveShieldModuleToRail(shield: Shield, mod: ShieldModule, railIn
   if (moduleInCollector(shield, mod.id)) {
     throw new McpError(
       "INVALID_ARGUMENT",
-      "модуль входит в коллектор — перенос модулей коллектора пока не поддерживается (следующий этап)",
+      "модуль входит в коллектор — сначала shield_collector_delete (перенос модулей коллектора редактором не поддержан)",
       { details: { kind: "module_in_collector" } },
     );
   }
@@ -488,7 +492,7 @@ export function reorderShieldModule(shield: Shield, mod: ShieldModule, index: nu
   if (moduleInCollector(shield, mod.id)) {
     throw new McpError(
       "INVALID_ARGUMENT",
-      "модуль входит в коллектор — изменение порядка модулей коллектора пока не поддерживается (следующий этап)",
+      "модуль входит в коллектор — сначала shield_collector_delete (порядок внутри коллектора редактор не меняет)",
       { details: { kind: "module_in_collector" } },
     );
   }
@@ -518,7 +522,7 @@ export function reorderShieldModule(shield: Shield, mod: ShieldModule, index: nu
   if (moduleInCollector(shield, neighbor.id)) {
     throw new McpError(
       "INVALID_ARGUMENT",
-      "целевая позиция занята модулем из коллектора — изменение порядка внутри коллектора пока не поддерживается (следующий этап)",
+      "целевая позиция занята модулем из коллектора — сначала shield_collector_delete",
       { details: { kind: "module_in_collector" } },
     );
   }
@@ -591,6 +595,8 @@ export type ShieldPortRef = {
   port?: number;
   /** Порт ввода: phase | null | earth. */
   input?: "phase" | "null" | "earth";
+  /** Порт шины: id шины + номер порта (0-based, порядок ports шины). */
+  bus?: string;
 };
 
 const INPUT_PORT_TYPE_BY_KEY: Record<string, string> = {
@@ -636,8 +642,7 @@ export function validateShieldDerived(shield: Shield): { deleted_wires: string[]
   // validate_collectors: коллектор с <2 модулями или потерянным модулем удаляется
   const deletedCollectors: string[] = [];
   for (const [id, col] of Object.entries(shield.collectors ?? {})) {
-    const mods = (col as { modules?: Record<string, unknown> }).modules ?? {};
-    const known = Object.keys(mods).filter((mid) => findShieldModule(shield, mid));
+    const known = Object.keys(col.modules ?? {}).filter((mid) => findShieldModule(shield, mid));
     if (known.length < 2) {
       delete shield.collectors![id];
       deletedCollectors.push(id);
@@ -690,17 +695,15 @@ function refreshShieldConnections(shield: Shield, ports: Map<string, { parent_ty
 }
 
 /** Разрешение ссылки на порт (shield_wire_add): id порта или отказ. */
-function resolveShieldPort(shield: Shield, ref: ShieldPortRef, side: string): { portId: string; parentType: string } {
-  const hasModule = ref.module_id !== undefined;
-  const hasInput = ref.input !== undefined;
-  if (hasModule === hasInput) {
+function resolveShieldPort(shield: Shield, ref: ShieldPortRef, side: string): { portId: string; parentType: string; parentId: string } {
+  if (hasCount(ref) !== 1) {
     throw new McpError(
       "INVALID_ARGUMENT",
-      `${side}: укажите либо {module_id, port}, либо {input: "phase"|"null"|"earth"}`,
+      `${side}: укажите ровно один порт — {module_id, port}, {input: "phase"|"null"|"earth"} или {bus, port}`,
       { details: { kind: "bad_port_ref", side } },
     );
   }
-  if (hasModule) {
+  if (ref.module_id !== undefined) {
     const mod = findShieldModule(shield, ref.module_id!);
     if (!mod) throw new McpError("NOT_FOUND", `${side}: модуль ${ref.module_id} не найден в щитке`);
     // ревью 285 №9: без port агенты молча попадали в порт 0 — обязательный
@@ -720,14 +723,38 @@ function resolveShieldPort(shield: Shield, ref: ShieldPortRef, side: string): { 
         { details: { kind: "no_port", module: mod.id, port: idx, ports: mod.ports?.length ?? 0 } },
       );
     }
-    return { portId: port.id, parentType: "module" };
+    return { portId: port.id, parentType: "module", parentId: mod.id };
+  }
+  if (ref.bus !== undefined) {
+    const bus = (shield.buses ?? {})[ref.bus];
+    if (!bus) throw new McpError("NOT_FOUND", `${side}: шина ${ref.bus} не найдена в щитке`);
+    if (ref.port === undefined) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `${side}: не указан port шины ${bus.id} (гнёзд ${bus.ports?.length ?? 0}) — укажите {bus, port}`,
+        { details: { kind: "no_port_specified", side, bus: bus.id } },
+      );
+    }
+    const port = bus.ports?.[ref.port];
+    if (!port) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `${side}: у шины ${bus.id} нет гнезда ${ref.port} (гнёзд ${bus.ports?.length ?? 0})`,
+        { details: { kind: "no_port", bus: bus.id, port: ref.port, ports: bus.ports?.length ?? 0 } },
+      );
+    }
+    return { portId: port.id, parentType: "bus", parentId: bus.id };
   }
   const wantType = INPUT_PORT_TYPE_BY_KEY[ref.input!];
   for (const input of Object.values(shield.inputs)) {
     const port = (input.ports ?? []).find((p) => p.type === wantType);
-    if (port) return { portId: port.id, parentType: "input" };
+    if (port) return { portId: port.id, parentType: "input", parentId: input.id };
   }
   throw new McpError("NOT_FOUND", `${side}: порт ввода «${ref.input}» не найден`);
+}
+
+function hasCount(ref: ShieldPortRef): number {
+  return (ref.module_id !== undefined ? 1 : 0) + (ref.input !== undefined ? 1 : 0) + (ref.bus !== undefined ? 1 : 0);
 }
 
 export type ShieldWireAddParams = {
@@ -757,6 +784,30 @@ export function addShieldWire(model: Model, itemId: string, params: ShieldWireAd
   const { shield } = shieldOfItem(model, itemId);
   const source = resolveShieldPort(shield, params.source, "source");
   const target = resolveShieldPort(shield, params.target, "target");
+  // ревью 293 №1: провод между гнёздами шин (разных и одной) редактор не даёт
+  // начать — ShieldBus.port_mousedown/port_mouseover отклоняют клик, если
+  // temp_wire_source_type === "bus"
+  if (source.parentType === "bus" && target.parentType === "bus") {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "провод между гнёздами шин не ставится (шина→шина, в том числе два гнезда одной шины) — в редакторе нельзя завершить на гнезде шины провод, начатый с шины (ShieldBus.port_mousedown)",
+      { details: { kind: "bus_to_bus" } },
+    );
+  }
+  // шина: как в редакторе (ShieldBus.port_mousedown/port_mouseover) — к шине с
+  // connection можно подключать только провод того же типа; голая шина ("")
+  // принимает любой тип и запоминает его (connection = тип провода)
+  for (const end of [source, target]) {
+    if (end.parentType !== "bus") continue;
+    const bus = shield.buses[end.parentId];
+    if (bus && bus.connection && bus.connection !== params.type) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `шина ${bus.id} уже соединена проводом «${bus.connection}» — провод «${params.type}» не ставится (как в редакторе), сначала shield_wire_delete`,
+        { details: { kind: "bus_connection_conflict", bus: bus.id, connection: bus.connection, type: params.type } },
+      );
+    }
+  }
   if (source.portId === target.portId) {
     throw new McpError("INVALID_ARGUMENT", "source и target — один порт (петля)", { details: { kind: "self_wire" } });
   }
@@ -808,6 +859,333 @@ export function deleteShieldsForItem(model: Model, itemId: string): string[] {
   }
   return deleted;
 }
+
+// ---------- Шины (этап 291, живой эталон ui-ref-shield-bus) ----------
+
+/** Умолчания шины (ShieldDimensions.bus, живая проба 291-shield3-ui3,
+ *  дампы .orca-reports/tmp/291-dims-defs.json, 294-busfactory.json). */
+export const SHIELD_BUS_DEFAULT_SOCKETS = 6;
+export const SHIELD_BUS_MIN_SOCKETS = 4;
+export const SHIELD_BUS_MAX_SOCKETS = 25;
+
+/** Геометрия схемы щитка (ShieldDimensions, проба 291-shield3-ui3, дампы
+ *  .orca-reports/tmp/291-dims-defs.json, 294-busfactory.json):
+ *  module.width 21 px на 1 DIN, rail.margin_x() 120 px, шинная полоса —
+ *  bus_bar_margin_x 15 px. Все значения в px svg листа щитка (не мм). */
+const SHIELD_MODULE_WIDTH_PX = 21;
+const SHIELD_RAIL_MARGIN_X_PX = 120;
+const SHIELD_BUS_BAR_MARGIN_X_PX = 15;
+
+/** Ширина шины в px (ShieldBusFactory: проба 291-shield3-ui3, дамп
+ *  .orca-reports/tmp/294-busfactory.json —
+ *  width_bus = 6×гнёзд + 12, проверено для 4..25 гнёзд). */
+export function shieldBusWidthPx(sockets: number): number {
+  return 6 * sockets + 12;
+}
+
+/** Ширина щитка в px (Shield.get_shield_width редактора; авто-режим:
+ *  module.width × (min_length | max ширина рейки + 1) + rail.margin_x). */
+export function shieldWidthPx(shield: Shield): number {
+  if (shield.on_auto_length_rails === 1) {
+    const widths = Object.values(shield.rails).map((r) => railWidthDin(r));
+    const max = Math.max(...widths, 0);
+    return max <= SHIELD_RAIL_MIN_DIN
+      ? SHIELD_MODULE_WIDTH_PX * SHIELD_RAIL_MIN_DIN + SHIELD_MODULE_WIDTH_PX + SHIELD_RAIL_MARGIN_X_PX
+      : SHIELD_MODULE_WIDTH_PX * (max + 1) + SHIELD_RAIL_MARGIN_X_PX;
+  }
+  return SHIELD_MODULE_WIDTH_PX * ((shield.length_rails ?? SHIELD_RAIL_MIN_DIN) + 1) + SHIELD_RAIL_MARGIN_X_PX;
+}
+
+export type ShieldBusAddParams = {
+  /** Ряд щитка: T (над) | B (под). */
+  position: "T" | "B";
+  /** Привязка по горизонтали: L (левый край, distance 0) | C (центр, по
+   *  умолчанию) | R (правый край). */
+  align?: "L" | "C" | "R";
+  /** Число гнёзд шины (по умолчанию 6, ShieldDimensions.bus.default_sockets). */
+  sockets?: number;
+};
+
+/**
+ * shield_bus_add: шина над/под щитком (init_bus_slots → bus_slot_mouseover/
+ * mousemove/mousedown → add_bus_start/add_bus_move/add_bus_end редактора):
+ * 6 портов {parent_type: "bus", connected: 0}, connection "", type —
+ * позиция + привязка («TL», «BC», …), distance по привязке (L → 0, C →
+ * центр, R → правый край) — формулы add_bus_move, проверены вживую
+ * (291-shield3-ui3: TC distance 157.5, TL 0; дампы .orca-reports/tmp/293-*,
+ * 294-busfactory.json).
+ */
+export function addShieldBus(model: Model, itemId: string, params: ShieldBusAddParams): { shield: Shield; bus: ShieldBus } {
+  if (params.position !== "T" && params.position !== "B") {
+    throw new McpError("INVALID_ARGUMENT", `position — «T» (над щитком) или «B» (под), получено «${params.position}»`, { details: { kind: "bad_position" } });
+  }
+  const sockets = params.sockets ?? SHIELD_BUS_DEFAULT_SOCKETS;
+  if (!Number.isInteger(sockets) || sockets < SHIELD_BUS_MIN_SOCKETS || sockets > SHIELD_BUS_MAX_SOCKETS) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `sockets — целое ${SHIELD_BUS_MIN_SOCKETS}..${SHIELD_BUS_MAX_SOCKETS} (ShieldDimensions.bus), получено ${sockets}`,
+      { details: { kind: "bad_sockets", min: SHIELD_BUS_MIN_SOCKETS, max: SHIELD_BUS_MAX_SOCKETS } },
+    );
+  }
+  const align = params.align ?? "C";
+  const { shield } = shieldOfItem(model, itemId);
+  if (Object.keys(shield.buses ?? {}).length >= SHIELD_MAX_BUSES) {
+    throw new McpError("INVALID_ARGUMENT", `шин в щитке уже ${SHIELD_MAX_BUSES} (лимит)`, { details: { kind: "buses_limit" } });
+  }
+  const width = shieldBusWidthPx(sockets);
+  const maxDistance = shieldWidthPx(shield) - 2 * SHIELD_BUS_BAR_MARGIN_X_PX - width;
+  let distance: number;
+  if (align === "L") distance = 0;
+  else if (align === "R") distance = maxDistance;
+  else distance = shieldWidthPx(shield) / 2 - width / 2 - SHIELD_BUS_BAR_MARGIN_X_PX;
+  const bus: ShieldBus = {
+    id: newId(10),
+    type: `${params.position}${align}`,
+    ports: Array.from({ length: sockets }, () => ({
+      id: newId(10),
+      parent_id: "",
+      parent_type: "bus",
+      connected: 0,
+    })),
+    connection: "",
+    distance,
+  };
+  for (const p of bus.ports) p.parent_id = bus.id;
+  (shield.buses ??= {})[bus.id] = bus;
+  return { shield, bus };
+}
+
+export type ShieldBusUpdateParams = {
+  /** Ряд щитка: T | B. */
+  position?: "T" | "B";
+  /** Привязка: L | C | R (distance пересчитывается). */
+  align?: "L" | "C" | "R";
+  /** Число гнёзд (bus_enter_ports редактора: добавление в конец,
+   *  удаление с конца; провода удалённых гнёзд чистятся каскадом). */
+  sockets?: number;
+};
+
+/**
+ * shield_bus_update: привязка/ряд и число гнёзд. Смена гнёзд — bus_enter_ports
+ * редактора: добавить в конец, удалить с конца; провода к удалённым гнёздам
+ * удаляются (bus_remove_port → validate_wires/validate_ports/validate_buses).
+ * Ревью 293 №10: гнёзда меняются ПЕРЕД пересчётом distance, чтобы align в том
+ * же вызове считался по новому числу гнёзд (как формула drag редактора).
+ */
+export function updateShieldBus(model: Model, itemId: string, busId: string, params: ShieldBusUpdateParams): { shield: Shield; bus: ShieldBus; deleted_wires: string[] } {
+  const { shield } = shieldOfItem(model, itemId);
+  const bus = shield.buses?.[busId];
+  if (!bus) throw new McpError("NOT_FOUND", `шина ${busId} не найдена в щитке предмета ${itemId}`);
+  let deletedWires: string[] = [];
+  if (params.sockets !== undefined && params.sockets !== bus.ports.length) {
+    if (!Number.isInteger(params.sockets) || params.sockets < SHIELD_BUS_MIN_SOCKETS || params.sockets > SHIELD_BUS_MAX_SOCKETS) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `sockets — целое ${SHIELD_BUS_MIN_SOCKETS}..${SHIELD_BUS_MAX_SOCKETS} (ShieldDimensions.bus)`,
+        { details: { kind: "bad_sockets", min: SHIELD_BUS_MIN_SOCKETS, max: SHIELD_BUS_MAX_SOCKETS } },
+      );
+    }
+    if (params.sockets > bus.ports.length) {
+      const add = params.sockets - bus.ports.length;
+      for (let i = 0; i < add; i++) {
+        bus.ports.push({ id: newId(10), parent_id: bus.id, parent_type: "bus", connected: 0 });
+      }
+    } else {
+      const removed = bus.ports.splice(params.sockets);
+      const gone = new Set(removed.map((p) => p.id));
+      for (const [id, wire] of Object.entries(shield.wires ?? {})) {
+        if (gone.has(wire.id_source) || gone.has(wire.id_target)) {
+          delete shield.wires![id];
+          deletedWires.push(id);
+        }
+      }
+      refreshShieldConnections(shield, shieldPorts(shield));
+    }
+  }
+  if (params.position !== undefined || params.align !== undefined) {
+    const position = params.position ?? (bus.type.startsWith("B") ? "B" : "T");
+    const align = params.align ?? (bus.type.slice(1) as "L" | "C" | "R");
+    bus.type = `${position}${align}`;
+    const sockets = bus.ports.length;
+    const maxDistance = shieldWidthPx(shield) - 2 * SHIELD_BUS_BAR_MARGIN_X_PX - shieldBusWidthPx(sockets);
+    bus.distance = align === "L" ? 0 : align === "R" ? maxDistance : shieldWidthPx(shield) / 2 - shieldBusWidthPx(sockets) / 2 - SHIELD_BUS_BAR_MARGIN_X_PX;
+  }
+  return { shield, bus, deleted_wires: deletedWires };
+}
+
+/**
+ * shield_bus_delete: удалить шину (delete_bus редактора: провода к её гнёздам
+ * чистятся каскадом — validate_wires/validate_ports). Ревью 293 №7: коллекторы
+ * (в том числе битые) delete_bus не трогает — как в редакторе, их пересчитывает
+ * только validate_collectors при операциях с модулями и рейками.
+ */
+export function deleteShieldBus(model: Model, itemId: string, busId: string): { shield: Shield; deleted_wires: string[] } {
+  const { shield } = shieldOfItem(model, itemId);
+  const bus = shield.buses?.[busId];
+  if (!bus) throw new McpError("NOT_FOUND", `шина ${busId} не найдена в щитке предмета ${itemId}`);
+  const gone = new Set(bus.ports.map((p) => p.id));
+  delete shield.buses[busId];
+  const deletedWires: string[] = [];
+  for (const [id, wire] of Object.entries(shield.wires ?? {})) {
+    if (gone.has(wire.id_source) || gone.has(wire.id_target)) {
+      delete shield.wires![id];
+      deletedWires.push(id);
+    }
+  }
+  refreshShieldConnections(shield, shieldPorts(shield));
+  return { shield, deleted_wires: deletedWires };
+}
+
+// ---------- Коллекторы (этап 291, живой эталон ui-ref-shield-collector) ----------
+
+export type ShieldCollectorAddParams = {
+  /** Модули коллектора (id из model_get) в порядке следования на рейке. */
+  modules: string[];
+};
+
+/**
+ * Общая валидация набора модулей коллектора (ревью 293 №2 — одно правило для
+ * add и update): дубликаты, существование, коллекторный тип, одна рейка, одна
+ * ширина, чужой коллектор; «модули подряд» — диапазон по min/max ВСЕХ модулей
+ * (Math.min(...mods.map(m=>m.index))), а не по первому и последнему элементу
+ * списка: иначе неупорядоченный список проходит с разрывом, а calc() редактора
+ * забрал бы в коллектор все модули диапазона, включая чужие.
+ */
+function validateCollectorModules(shield: Shield, ids: string[], itemId: string, exceptCollectorId?: string): ShieldModule[] {
+  if (new Set(ids).size !== ids.length) {
+    throw new McpError("INVALID_ARGUMENT", "в списке модулей коллектора есть дубликаты", { details: { kind: "collector_duplicate_module" } });
+  }
+  const mods = ids.map((mid) => {
+    const mod = findShieldModule(shield, mid);
+    if (!mod) throw new McpError("NOT_FOUND", `модуль ${mid} не найден в щитке`);
+    return mod;
+  });
+  const railId = mods[0]!.rail_id;
+  for (const mod of mods) {
+    if (!SHIELD_COLLECTOR_MODULE_TYPES.has(mod.type)) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `модуль ${mod.id} (${mod.type}) не коллекторный (в редакторе коллектор ставится на модули типов: ${[...SHIELD_COLLECTOR_MODULE_TYPES].join(", ")})`,
+        { details: { kind: "not_collector_module", module: mod.id, type: mod.type, allowed: [...SHIELD_COLLECTOR_MODULE_TYPES] } },
+      );
+    }
+    if (mod.rail_id !== railId) {
+      throw new McpError("INVALID_ARGUMENT", "модули коллектора должны быть на одной рейке", { details: { kind: "collector_rail_mismatch" } });
+    }
+    if (mod.width !== mods[0]!.width) {
+      throw new McpError("INVALID_ARGUMENT", "модули коллектора должны быть одной ширины", { details: { kind: "collector_width_mismatch", module_width: mods[0]!.width } });
+    }
+    const inAnother = Object.entries(shield.collectors ?? {}).some(([cid, c]) => cid !== exceptCollectorId && mod.id in (c.modules ?? {}));
+    if (inAnother) {
+      throw new McpError("INVALID_ARGUMENT", `модуль ${mod.id} уже входит в другой коллектор`, { details: { kind: "module_in_collector" } });
+    }
+  }
+  const min = Math.min(...mods.map((m) => m.index));
+  const max = Math.max(...mods.map((m) => m.index));
+  const rail = shield.rails[railId]!;
+  // в диапазоне [min..max] не должно быть чужих модулей (calc() редактора
+  // собирает только подряд идущие модули одной ширины)
+  const wanted = new Set(mods.map((m) => m.id));
+  for (const m of Object.values(rail.modules)) {
+    if (m.index >= min && m.index <= max && !wanted.has(m.id)) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `модули коллектора должны идти подряд: в диапазоне ${min}..${max} DIN есть чужой модуль ${m.id}`,
+        { details: { kind: "collector_gap", module: m.id } },
+      );
+    }
+  }
+  return mods;
+}
+
+/**
+ * shield_collector_add: коллектор через карту модулей (add_collector_start +
+ * add_collector_end редактора — тот же путь, что drag по портам; проба
+ * 291-shield3-ui3): модули — подряд на одной рейке, одной ширины; position —
+ * ряд щитка первого модуля (is_lower_row). Коллектор на одном модуле
+ * редактор удаляет (validate_collectors) — MCP отказывает. Разрыв (чужой
+ * модуль внутри диапазона) и разные ширины — отказ (calc() редактора не дал
+ * бы такую карту).
+ */
+export function addShieldCollector(model: Model, itemId: string, params: ShieldCollectorAddParams): { shield: Shield; collector: ShieldCollector } {
+  const ids = params.modules;
+  if (!Array.isArray(ids) || ids.length < 2) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "коллектор — минимум два модуля (коллектор на одном модуле редактор удаляет: validate_collectors)",
+      { details: { kind: "collector_too_small", modules: ids?.length ?? 0 } },
+    );
+  }
+  const { shield } = shieldOfItem(model, itemId);
+  if (Object.keys(shield.collectors ?? {}).length >= SHIELD_MAX_COLLECTORS) {
+    throw new McpError("INVALID_ARGUMENT", `коллекторов в щитке уже ${SHIELD_MAX_COLLECTORS} (лимит)`, { details: { kind: "collectors_limit" } });
+  }
+  const mods = validateCollectorModules(shield, ids, itemId);
+  const first = mods[0]!;
+  const collector: ShieldCollector = {
+    id: newId(10),
+    rail_id: first.rail_id,
+    module_width: first.width,
+    modules: Object.fromEntries(mods.map((m) => [m.id, 1])),
+    position: railIsLowerRow(shield, first) ? "B" : "T",
+  };
+  (shield.collectors ??= {})[collector.id] = collector;
+  return { shield, collector };
+}
+
+/**
+ * Ряд коллектора (Shield.is_lower_row редактора): is_lower_row — ряд ПОРТОВ
+ * модуля (y порта внутри модуля), а не «половина щитка». MCP всегда ставит
+ * «T» (верхний ряд); ряд B не поддержан, пока живой эталон B-коллектора
+ * не снят (docs/CHANGELOG — «не сделанное»).
+ */
+function railIsLowerRow(_shield: Shield, _mod: ShieldModule): boolean {
+  return false;
+}
+
+export type ShieldCollectorUpdateParams = {
+  /** Новый набор модулей (подряд, одна рейка, одна ширина, ≥2). */
+  modules?: string[];
+};
+
+/**
+ * shield_collector_update: замена набора модулей (переснятие drag — тот же
+ * путь, что add). position не меняется (перенос коллектора между рядами
+ * редактором не поддержан; живого эталона нет).
+ */
+export function updateShieldCollector(model: Model, itemId: string, collectorId: string, params: ShieldCollectorUpdateParams): { shield: Shield; collector: ShieldCollector } {
+  const { shield } = shieldOfItem(model, itemId);
+  const collector = shield.collectors?.[collectorId];
+  if (!collector) throw new McpError("NOT_FOUND", `коллектор ${collectorId} не найден в щитке предмета ${itemId}`);
+  if (params.modules !== undefined) {
+    const ids = params.modules;
+    if (!Array.isArray(ids) || ids.length < 2) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        "коллектор — минимум два модуля (validate_collectors редактора удаляет коллектор на одном модуле)",
+        { details: { kind: "collector_too_small", modules: ids?.length ?? 0 } },
+      );
+    }
+    const mods = validateCollectorModules(shield, ids, itemId, collectorId);
+    const width = mods[0]!.width;
+    collector.rail_id = mods[0]!.rail_id;
+    collector.module_width = width;
+    collector.modules = Object.fromEntries(mods.map((m) => [m.id, 1]));
+  }
+  return { shield, collector };
+}
+
+/**
+ * shield_collector_delete: удалить коллектор (delete_collector редактора) —
+ * провода и модули не трогаются.
+ */
+export function deleteShieldCollector(model: Model, itemId: string, collectorId: string): { shield: Shield } {
+  const { shield } = shieldOfItem(model, itemId);
+  if (!shield.collectors?.[collectorId]) throw new McpError("NOT_FOUND", `коллектор ${collectorId} не найден в щитке предмета ${itemId}`);
+  delete shield.collectors[collectorId];
+  return { shield };
+}
+
 
 /** Каноническая форма значения с сортировкой ключей на всех уровнях — сверка
  *  словарей (wires/buses/collectors), порядок ключей которых после нормализации
@@ -863,8 +1241,8 @@ export function shieldProjection(shield: Shield): Record<string, unknown> {
     ...(shield.on_auto_length_rails !== 1 ? { length_rails: shield.length_rails } : {}),
     rails,
     inputs,
-    // buses/collectors вне ядра этапа 284 (следующий PR), wires — с 284: сверка
-    // канонической формы целиком (потеря чужого содержимого не проходит молча)
+    // buses/collectors — с 291, wires — с 284: сверка канонической формы
+    // целиком (потеря чужого содержимого не проходит молча)
     buses: sortedDeep(shield.buses ?? {}),
     collectors: sortedDeep(shield.collectors ?? {}),
     wires: sortedDeep(shield.wires ?? {}),

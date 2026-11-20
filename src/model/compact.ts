@@ -341,9 +341,41 @@ export type CompactShield = {
   modules: CompactShieldModule[];
   /** Провода (этап 284; порядок по id). */
   wires?: CompactShieldWire[];
-  /** Число шин/коллекторов (формат — следующий PR, значения не изменяются MCP). */
+  /** Число шин/коллекторов (детали — bus_list/collector_list, этап 291). */
   buses?: number;
   collectors?: number;
+  /** Шины (этап 291; порядок по id): гнёзда, connection, привязка. */
+  bus_list?: CompactShieldBus[];
+  /** Коллекторы (этап 291; порядок по id). */
+  collector_list?: CompactShieldCollector[];
+};
+
+/** Шина конструктора щитка (этап 291). */
+export type CompactShieldBus = {
+  bus_id: string;
+  /** T|B + L|C|R: «TL», «BC», … (ряд + привязка). */
+  type: string;
+  /** Число гнёзд (default 6, ShieldDimensions.bus). */
+  sockets: number;
+  /** Отступ от левого края схемы щитка, px svg (формат редактора, не мм). */
+  distance: number;
+  /** Тип провода первого подключённого гнезда ("": нет). */
+  connection: string;
+  /** Подключённые гнёзда: {port, ...адрес} по порядку ports. */
+  sockets_list: { port: number; connected: 0 | 1 }[];
+};
+
+/** Коллектор (гребёнка) конструктора щитка (этап 291). */
+export type CompactShieldCollector = {
+  collector_id: string;
+  /** Рейка (индекс из modules[].rail). */
+  rail: number;
+  /** Ширина модулей, DIN. */
+  module_width: number;
+  /** Модули (id из modules[]). */
+  module_ids: string[];
+  /** Ряд щитка: T | B. */
+  position: string;
 };
 
 export type CompactModel = {
@@ -779,6 +811,27 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
           to: portRef(w.id_target),
           ...(w.is_broken ? { is_broken: w.is_broken } : {}),
         }));
+      // шины/коллекторы (этап 291): адрес гнезда шины — {bus, port} в portRef
+      const railIndexById = new Map(rails.map((r, idx) => [r.id, idx]));
+      const busList = Object.values(shield.buses ?? {})
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((b) => ({
+          bus_id: b.id,
+          type: b.type,
+          sockets: b.ports.length,
+          distance: b.distance,
+          connection: b.connection,
+          sockets_list: b.ports.map((p, idx) => ({ port: idx, connected: (p.connected ? 1 : 0) as 0 | 1 })),
+        }));
+      const collectorList = Object.values(shield.collectors ?? {})
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((c) => ({
+          collector_id: c.id,
+          rail: railIndexById.get(c.rail_id) ?? -1,
+          module_width: c.module_width,
+          module_ids: Object.keys(c.modules ?? {}),
+          position: c.position,
+        }));
       return {
         id: `SH${i + 1}`,
         site_id: shield.id,
@@ -787,8 +840,8 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
         rails: rails.length,
         modules,
         ...(wires.length ? { wires } : {}),
-        ...(Object.keys(shield.buses ?? {}).length ? { buses: Object.keys(shield.buses).length } : {}),
-        ...(Object.keys(shield.collectors ?? {}).length ? { collectors: Object.keys(shield.collectors).length } : {}),
+        ...(busList.length ? { buses: busList.length, bus_list: busList } : {}),
+        ...(collectorList.length ? { collectors: collectorList.length, collector_list: collectorList } : {}),
       };
     });
 

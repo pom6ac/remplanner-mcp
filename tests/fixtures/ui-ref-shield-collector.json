@@ -1,5 +1,5 @@
 {
- "_source": "Живая проба scripts/probes/284-wire-matrix.ts (dev-проект из env, без сохранения): коллектор через обработчики портов (add_collector_start + add_collector_end с картой модулей — код пути UI). ShieldCollector {id, rail_id, module_width, modules {moduleId: moduleId}, position: \"T\"|\"B\"}. Внимание: в пробе коллектор с одним модулем (редактор удаляет такой в validate_collectors при следующей операции) — эталон ФОРМАТА, не валидного состояния. Идентификаторы обезличены (scripts/anonymize.ts). Эталон для следующего PR (шины/коллекторы).",
+ "_source": "Живая проба scripts/probes/291-shield3-ui3.ts (dev-проект из env, без сохранения): коллектор через module_port_click_collector (клик порта модуля-источника → hover портами модулей 2..4 → клик порта последнего — те же обработчики, что drag UI), шина через bus_slot_mouseover/mousemove/mousedown (инструмент shield_busbar, слоты над щитком). ShieldCollector {id, rail_id, module_width, modules {moduleId: 1}, position: \"T\"|\"B\"} — в живой форме значения карты равны 1 (в эталоне 284 карта была собрана вручную с id-значениями — исправлено). ShieldBus {id, type (T/B + L/C/R), ports[6], connection, distance} — width_bus = 6×гнёзд+12 (дамп .orca-reports/tmp/294-busfactory.json), TC distance 157.5. Идентификаторы обезличены (scripts/anonymize.ts).",
  "shields": {
   "id1": {
    "id": "id1",
@@ -25,7 +25,7 @@
          "id": "id5",
          "parent_id": "id4",
          "parent_type": "module",
-         "connected": 1
+         "connected": 0
         },
         {
          "id": "id6",
@@ -40,32 +40,20 @@
        "id": "id7",
        "rail_id": "id3",
        "index": 1,
-       "width": 2,
-       "type": "shield_module_x2",
+       "width": 1,
+       "type": "shield_module",
        "group_number": 0,
-       "subtype": "16A/30mA",
+       "subtype": "16A",
        "comment": "",
        "ports": [
         {
          "id": "id8",
          "parent_id": "id7",
          "parent_type": "module",
-         "connected": 1
-        },
-        {
-         "id": "id9",
-         "parent_id": "id7",
-         "parent_type": "module",
          "connected": 0
         },
         {
-         "id": "id10",
-         "parent_id": "id7",
-         "parent_type": "module",
-         "connected": 1
-        },
-        {
-         "id": "id11",
+         "id": "id9",
          "parent_id": "id7",
          "parent_type": "module",
          "connected": 0
@@ -73,8 +61,33 @@
        ],
        "custom": {}
       },
-      "id12": {
-       "id": "id12",
+      "id10": {
+       "id": "id10",
+       "rail_id": "id3",
+       "index": 2,
+       "width": 1,
+       "type": "shield_module",
+       "group_number": 0,
+       "subtype": "16A",
+       "comment": "",
+       "ports": [
+        {
+         "id": "id11",
+         "parent_id": "id10",
+         "parent_type": "module",
+         "connected": 0
+        },
+        {
+         "id": "id12",
+         "parent_id": "id10",
+         "parent_type": "module",
+         "connected": 0
+        }
+       ],
+       "custom": {}
+      },
+      "id13": {
+       "id": "id13",
        "rail_id": "id3",
        "index": 3,
        "width": 1,
@@ -84,16 +97,41 @@
        "comment": "",
        "ports": [
         {
-         "id": "id13",
-         "parent_id": "id12",
+         "id": "id14",
+         "parent_id": "id13",
          "parent_type": "module",
-         "connected": 1
+         "connected": 0
         },
         {
-         "id": "id14",
-         "parent_id": "id12",
+         "id": "id15",
+         "parent_id": "id13",
          "parent_type": "module",
-         "connected": 1
+         "connected": 0
+        }
+       ],
+       "custom": {}
+      },
+      "id16": {
+       "id": "id16",
+       "rail_id": "id3",
+       "index": 4,
+       "width": 1,
+       "type": "shield_module",
+       "group_number": 0,
+       "subtype": "16A",
+       "comment": "",
+       "ports": [
+        {
+         "id": "id17",
+         "parent_id": "id16",
+         "parent_type": "module",
+         "connected": 0
+        },
+        {
+         "id": "id18",
+         "parent_id": "id16",
+         "parent_type": "module",
+         "connected": 0
         }
        ],
        "custom": {}
@@ -101,40 +139,88 @@
      }
     }
    },
-   "buses": {},
+   "buses": {
+    "id19": {
+     "id": "id19",
+     "type": "TC",
+     "ports": [
+      {
+       "id": "id20",
+       "parent_id": "id19",
+       "parent_type": "bus",
+       "connected": 0
+      },
+      {
+       "id": "id21",
+       "parent_id": "id19",
+       "parent_type": "bus",
+       "connected": 0
+      },
+      {
+       "id": "id22",
+       "parent_id": "id19",
+       "parent_type": "bus",
+       "connected": 0
+      },
+      {
+       "id": "id23",
+       "parent_id": "id19",
+       "parent_type": "bus",
+       "connected": 0
+      },
+      {
+       "id": "id24",
+       "parent_id": "id19",
+       "parent_type": "bus",
+       "connected": 0
+      },
+      {
+       "id": "id25",
+       "parent_id": "id19",
+       "parent_type": "bus",
+       "connected": 0
+      }
+     ],
+     "connection": "",
+     "distance": 157.5
+    }
+   },
    "collectors": {
-    "id15": {
-     "id": "id15",
+    "id26": {
+     "id": "id26",
      "rail_id": "id3",
      "module_width": 1,
      "modules": {
-      "id7": "id7"
+      "id4": 1,
+      "id7": 1,
+      "id10": 1,
+      "id13": 1
      },
      "position": "T"
     }
    },
    "inputs": {
-    "id16": {
-     "id": "id16",
+    "id27": {
+     "id": "id27",
      "ports": [
       {
-       "id": "id17",
+       "id": "id28",
        "parent_type": "input",
-       "parent_id": "id16",
+       "parent_id": "id27",
        "type": "shield_wire_earth",
-       "connected": 1
+       "connected": 0
       },
       {
-       "id": "id18",
+       "id": "id29",
        "parent_type": "input",
-       "parent_id": "id16",
+       "parent_id": "id27",
        "type": "shield_wire_null",
        "connected": 0
       },
       {
-       "id": "id19",
+       "id": "id30",
        "parent_type": "input",
-       "parent_id": "id16",
+       "parent_id": "id27",
        "type": "shield_wire_phase",
        "connected": 0
       }
@@ -143,32 +229,7 @@
      "phase": 1
     }
    },
-   "wires": {
-    "id20": {
-     "id": "id20",
-     "id_source": "id5",
-     "id_target": "id8",
-     "type": "shield_wire_phase",
-     "thickness": 0,
-     "is_broken": 0
-    },
-    "id21": {
-     "id": "id21",
-     "id_source": "id10",
-     "id_target": "id13",
-     "type": "shield_wire_null",
-     "thickness": 0,
-     "is_broken": 0
-    },
-    "id22": {
-     "id": "id22",
-     "id_source": "id14",
-     "id_target": "id17",
-     "type": "shield_wire_earth",
-     "thickness": 0,
-     "is_broken": 0
-    }
-   }
+   "wires": {}
   }
  }
 }

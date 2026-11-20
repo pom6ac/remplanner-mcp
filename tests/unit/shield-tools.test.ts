@@ -210,3 +210,158 @@ test("ревью 285 №2: shield_module_delete — ответ с deleted_wires 
     await client.close();
   }
 });
+
+// ---------- 291: шины и коллекторы через публичные инструменты ----------
+
+test("291: shield_bus_add/update/delete — формат ответа (bus_list) и каскад deleted_wires", async () => {
+  const client = await start();
+  try {
+    const [idA, idB] = await threeModules(client);
+    const add = await call(client, "shield_bus_add", { item_id: "sh1", position: "T" });
+    const sh = add["entity"] as { bus_list?: { bus_id: string; type: string; sockets: number; distance: number; connection: string }[]; buses: number };
+    assert.equal(sh.buses, 1);
+    assert.equal(sh.bus_list!.length, 1);
+    const bus = sh.bus_list![0]!;
+    assert.equal(bus.type, "TC");
+    assert.equal(bus.sockets, 6);
+    assert.equal(bus.distance, 157.5);
+    assert.equal(bus.connection, "");
+    // обновление: гнёзда 6 → 4, align R — distance по новому числу гнёзд
+    // (ревью 293 №10): 393 − 2×15 − (6×4+12=36) = 327
+    const u = await call(client, "shield_bus_update", { item_id: "sh1", bus_id: bus.bus_id, sockets: 4, align: "R" });
+    const sh2 = u["entity"] as { bus_list: { bus_id: string; type: string; sockets: number; distance: number }[] };
+    assert.equal(sh2.bus_list![0]!.sockets, 4);
+    assert.equal(sh2.bus_list![0]!.type, "TR");
+    assert.equal(sh2.bus_list![0]!.distance, 327);
+    // провод к гнезду шины + удаление шины → deleted_wires
+    await call(client, "shield_wire_add", { item_id: "sh1", type: "shield_wire_phase", source: { module_id: idA, port: 0 }, target: { bus: bus.bus_id, port: 0 } });
+    const del = await call(client, "shield_bus_delete", { item_id: "sh1", bus_id: bus.bus_id });
+    assert.equal((del as { deleted_wires?: string[] }).deleted_wires?.length, 1);
+    void idB;
+  } finally {
+    await client.close();
+  }
+});
+
+test("291: shield_bus_add — sockets вне 4..25 и position не T/B отвергаются схемой", async () => {
+  const client = await start();
+  try {
+    for (const sockets of [3, 26]) {
+      const res = await client.callTool({ name: "shield_bus_add", arguments: { item_id: "sh1", position: "T", sockets } });
+      assert.equal(res.isError, true, `sockets ${sockets}`);
+      assert.equal(errPayload(res).code, "INVALID_ARGUMENT");
+    }
+    const res = await client.callTool({ name: "shield_bus_add", arguments: { item_id: "sh1", position: "X" } });
+    assert.equal(res.isError, true, "position X");
+    assert.equal(errPayload(res).code, "INVALID_ARGUMENT");
+  } finally {
+    await client.close();
+  }
+});
+
+test("291: shield_wire_add к шине с другим connection — bus_connection_conflict (как в редакторе)", async () => {
+  const client = await start();
+  try {
+    const [idA] = await threeModules(client);
+    const add = await call(client, "shield_bus_add", { item_id: "sh1", position: "T" });
+    const busId = ((add["entity"] as { bus_list: { bus_id: string }[] }).bus_list![0]!).bus_id;
+    await call(client, "shield_wire_add", { item_id: "sh1", type: "shield_wire_phase", source: { module_id: idA, port: 0 }, target: { bus: busId, port: 0 } });
+    const [idB] = await threeModules(client);
+    const res = await client.callTool({ name: "shield_wire_add", arguments: { item_id: "sh1", type: "shield_wire_null", source: { module_id: idB, port: 0 }, target: { bus: busId, port: 1 } } });
+    assert.equal(res.isError, true, "конфликт connection");
+    const payload = errPayload(res);
+    assert.equal(payload.code, "INVALID_ARGUMENT");
+    assert.equal((payload.details as { kind?: string } | undefined)?.kind, "bus_connection_conflict");
+    // провод того же типа на другое гнездо — можно
+    const ok2 = await call(client, "shield_wire_add", { item_id: "sh1", type: "shield_wire_phase", source: { module_id: idB, port: 0 }, target: { bus: busId, port: 2 } });
+    assert.ok(ok2["entity"]);
+  } finally {
+    await client.close();
+  }
+});
+
+// 293 ревью №1: провод между гнёздами шин (разных и одной шины) редактор не даёт
+// начать (ShieldBus.port_mousedown) — через публичный инструмент тоже отказ.
+test("293 №1: shield_wire_add шина→шина и гнездо той же шины — bus_to_bus (server.callTool)", async () => {
+  const client = await start();
+  try {
+    const b1 = ((await call(client, "shield_bus_add", { item_id: "sh1", position: "T", align: "L" }))["entity"] as { bus_list: { bus_id: string }[] }).bus_list![0]!.bus_id;
+    const b2 = ((await call(client, "shield_bus_add", { item_id: "sh1", position: "T", align: "R" }))["entity"] as { bus_list: { bus_id: string }[] }).bus_list![0]!.bus_id;
+    const cases: Array<[Record<string, unknown>, Record<string, unknown>, string]> = [
+      [{ bus: b1, port: 0 }, { bus: b2, port: 0 }, "шина→шина"],
+      [{ bus: b1, port: 0 }, { bus: b1, port: 1 }, "гнездо→гнездо той же шины"],
+    ];
+    for (const [source, target, name] of cases) {
+      const res = await client.callTool({ name: "shield_wire_add", arguments: { item_id: "sh1", type: "shield_wire_phase", source, target } });
+      assert.equal(res.isError, true, name);
+      const payload = errPayload(res);
+      assert.equal(payload.code, "INVALID_ARGUMENT", name);
+      assert.equal((payload.details as { kind?: string } | undefined)?.kind, "bus_to_bus", name);
+    }
+    // атомарность: шины без проводов, connection пуст
+    const sh = ((await call(client, "model_get", {})) as unknown as { shields: { wires?: unknown[]; bus_list: { connection: string }[] }[] }).shields[0]!;
+    assert.equal(sh.wires?.length ?? 0, 0, "проводов нет");
+    assert.ok(sh.bus_list!.every((b) => b.connection === ""));
+    // ревью 294 N2: шина→модуль разрешена (нельзя только шина→шина)
+    const [modId] = await threeModules(client);
+    const okBusToModule = await call(client, "shield_wire_add", { item_id: "sh1", type: "shield_wire_phase", source: { bus: b1, port: 1 }, target: { module_id: modId, port: 0 } });
+    assert.ok(okBusToModule["entity"], "шина→модуль");
+  } finally {
+    await client.close();
+  }
+});
+
+test("291: shield_collector_add/update/delete — collector_list и валидация", async () => {
+  const client = await start();
+  try {
+    const [idA, idB, idC] = await threeModules(client);
+    const add = await call(client, "shield_collector_add", { item_id: "sh1", modules: [idA, idB] });
+    const sh = add["entity"] as { collectors: number; collector_list: { collector_id: string; rail: number; module_width: number; module_ids: string[]; position: string }[] };
+    assert.equal(sh.collectors, 1);
+    const col = sh.collector_list![0]!;
+    assert.equal(col.rail, 0);
+    assert.equal(col.module_width, 1);
+    assert.deepEqual(col.module_ids, [idA, idB]);
+    assert.equal(col.position, "T");
+    // update: заменить набор
+    const u = await call(client, "shield_collector_update", { item_id: "sh1", collector_id: col.collector_id, modules: [idB, idC] });
+    const sh2 = u["entity"] as { collector_list: { module_ids: string[] }[] };
+    assert.deepEqual(sh2.collector_list![0]!.module_ids, [idB, idC]);
+    // один модуль — отказ
+    const res = await client.callTool({ name: "shield_collector_update", arguments: { item_id: "sh1", collector_id: col.collector_id, modules: [idA] } });
+    assert.equal(res.isError, true);
+    assert.equal(errPayload(res).code, "INVALID_ARGUMENT");
+    // удаление
+    const del = await call(client, "shield_collector_delete", { item_id: "sh1", collector_id: col.collector_id });
+    assert.equal(del["deleted"], col.collector_id);
+    // повторное удаление — NOT_FOUND
+    const res2 = await client.callTool({ name: "shield_collector_delete", arguments: { item_id: "sh1", collector_id: col.collector_id } });
+    assert.equal(res2.isError, true);
+    assert.equal(errPayload(res2).code, "NOT_FOUND");
+  } finally {
+    await client.close();
+  }
+});
+
+test("291: shield_collector_add — неколлекторный модуль и разрыв отвергаются", async () => {
+  const client = await start();
+  try {
+    // неколлекторный модуль (uvr) на рейке
+    await call(client, "shield_module_add", { item_id: "sh1", type: "shield_module_uvr", subtype: "63A" });
+    await call(client, "shield_module_add", { item_id: "sh1", type: "shield_module_uvr", subtype: "63A" });
+    const sh = ((await call(client, "model_get", {})) as unknown as { shields: { modules: { module_id: string }[] }[] }).shields[0]!;
+    const mods = sh.modules.map((m) => m.module_id);
+    const res = await client.callTool({ name: "shield_collector_add", arguments: { item_id: "sh1", modules: [mods[0], mods[1]] } });
+    assert.equal(res.isError, true, "uvr — не коллекторный");
+    const payload = errPayload(res);
+    assert.equal(payload.code, "INVALID_ARGUMENT");
+    assert.equal((payload.details as { kind?: string } | undefined)?.kind, "not_collector_module");
+    // разрыв: модули 0 и 2 — между ними чужой модуль 1
+    const [idA, , idC] = await threeModules(client);
+    const res2 = await client.callTool({ name: "shield_collector_add", arguments: { item_id: "sh1", modules: [idA, idC] } });
+    assert.equal(res2.isError, true, "разрыв");
+    assert.equal((errPayload(res2).details as { kind?: string } | undefined)?.kind, "collector_gap");
+  } finally {
+    await client.close();
+  }
+});

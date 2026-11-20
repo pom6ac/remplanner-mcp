@@ -569,9 +569,8 @@ export type CommentEntity = {
  *   автоматически (Shield.init_inputs).
  * Связей с группами розеток/линиями в модели нет — только номер группы
  * (group_number); мастер «Построить автоматически» вычисляет их на клиенте и в
- * модель не пишет. Провода между модулями (wires), шины (buses) и коллекторы
- * (collectors) — следующий PR этапа 255; в этом PR MCP их не пишет и операции с
- * модулями/рейками при непустых проводах/шинах отклоняет (атомарный отказ).
+ * модель не пишет. Провода (wires) — этап 284, шины (buses) и коллекторы
+ * (collectors) — этап 291 (типы ниже).
  * Щиток-предмет без записи в shields редактор дополняет записью по умолчанию
  * (рейка + ввод) при restore — SHIELDS.restore, бандл app.3.0.
  */
@@ -644,6 +643,46 @@ export type ShieldWire = {
   [key: string]: unknown;
 };
 
+/**
+ * Шина конструктора щитка (этап 291, живой эталон ui-ref-shield-bus: проба
+ * 284-bus2 + 291-shield3-ui3): ShieldBus.serialize —
+ * {id, type (T|B + L|C|R, «TL»/«TC»/…), ports, connection, distance}.
+ * ports — default_sockets = 6 (ShieldDimensions.bus, min 4 / max 25), порт
+ * {id, parent_id, parent_type: "bus", connected}; connection — тип провода
+ * первого подключённого порта (validate_buses редактора); distance — отступ
+ * от левого края шинной полосы (px svg, L → 0, R → правый край, C → центр).
+ */
+export type ShieldBus = {
+  id: string;
+  /** T|B + L|C|R: «TL», «BC», … (позиция слота над/под щитком). */
+  type: string;
+  ports: ShieldPort[];
+  /** Тип провода первого подключённого порта ("" — нет). */
+  connection: string;
+  /** Отступ от левого края шинной полосы (px svg; для TL/BL — 0). */
+  distance: number;
+  [key: string]: unknown;
+};
+
+/**
+ * Коллектор (гребёнка) конструктора щитка (этап 291, живой эталон
+ * ui-ref-shield-collector: проба 291-shield3-ui3, drag по портам модулей):
+ * ShieldCollector.serialize — {id, rail_id, module_width, modules,
+ * position}. modules — карта {moduleId: 1} подряд идущих модулей одной
+ * ширины на одной рейке; position — ряд щитка «T»|«B».
+ */
+export type ShieldCollector = {
+  id: string;
+  rail_id: string;
+  /** Ширина (DIN) модулей коллектора — у всех одинаковая. */
+  module_width: number;
+  /** {moduleId: 1} — модули коллектора (подряд на рейке). */
+  modules: Record<string, number>;
+  /** Ряд щитка: «T» (над) | «B» (под). */
+  position: string;
+  [key: string]: unknown;
+};
+
 export type Shield = {
   id: string;
   /** id предмета-щитка (items[].id). */
@@ -653,8 +692,8 @@ export type Shield = {
   /** Длина щитка в DIN (умолчание 12; при on_auto_length_rails=1 пересчитывается). */
   length_rails?: number;
   rails: Record<string, ShieldRail>;
-  buses: Record<string, unknown>;
-  collectors: Record<string, unknown>;
+  buses: Record<string, ShieldBus>;
+  collectors: Record<string, ShieldCollector>;
   inputs: Record<string, ShieldInput>;
   wires: Record<string, ShieldWire>;
   [key: string]: unknown;

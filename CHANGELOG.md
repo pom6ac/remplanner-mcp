@@ -2,6 +2,65 @@
 
 ## Unreleased
 
+### Исправлено (ревью 293, PR #45)
+
+- **shield_wire_add**: провод между двумя гнёздами шин (шина→шина, в том числе
+  два гнезда одной шины) — `INVALID_ARGUMENT bus_to_bus`, как в редакторе
+  (`ShieldBus.port_mousedown` не даёт завершить на гнезде шины провод,
+  начатый с шины).
+- **shield_collector_add / shield_collector_update**: «модули подряд» —
+  диапазон по min/max всех модулей (неупорядоченный список с разрывом —
+  `collector_gap`); правило одно для add и update.
+- **model_import**: у шины в схеме импорта обязательны `ports` и `type`
+  (раньше проходила шина без них, на которой падал `model_get`/compact);
+  лимит импорта шин и коллекторов — MAX_IMPORT_GRAPH_NODES (лимит
+  SHIELD_MAX_* действует только на add, как в редакторе).
+- **shield_bus_delete**: чистит только провода к гнёздам
+  (validate_wires/validate_ports, как `delete_bus` редактора) — коллекторы
+  не трогаются.
+- **shield_bus_update**: при одновременной смене align и sockets distance
+  считается по новому числу гнёзд (формула drag редактора).
+- Описание `shield_collector_add`: position всегда «T» (нижний ряд B не
+  поддержан). ReDoS-канарейки переведены с абсолютного порога на
+  относительный (отношение к эталонной линейной регулярке в том же прогоне).
+
+### Добавлено (электрика, часть 5 — конструктор щитка ч.3: шины и коллекторы)
+
+- **shield_bus_add / shield_bus_update / shield_bus_delete** — шины (нулевые
+  шины-бары, инструмент `shield_busbar`) над/под щитком: `position` T|B +
+  `align` L|C|R (по умолчанию центр), гнёзд по умолчанию 6
+  (ShieldDimensions.bus.default_sockets, `sockets` 4..25), провода
+  к гнёздам — `shield_wire_add` с портом `{bus, port}`; `bus.connection` =
+  тип провода первого подключённого гнезда (как в редакторе: к шине с другим
+  `connection` провод не ставится). update: привязка (distance пересчитывается
+  формулами drag редактора) и число гнёзд (`bus_enter_ports`: добавление в
+  конец, удаление с конца; провода удалённых гнёзд — каскад, в ответе
+  `deleted_wires`). delete: провода к гнёздам шины удаляются каскадом
+  (как `delete_bus` редактора), в ответе `deleted_wires`.
+- **shield_collector_add / shield_collector_update / shield_collector_delete** —
+  коллекторы (гребёнки, инструмент `shield_collector`) на модулях одной
+  DIN-рейки: `modules` — подряд, одна ширина, минимум два модуля (коллектор на
+  одном модуле редактор удаляет — `validate_collectors`), типы модулей — из
+  списка `ShieldDimensions.collector.types`. update — замена набора модулей;
+  delete — модули и провода не трогаются. Удаление/перенос модуля коллектора
+  каскадно удаляет или сокращает коллектор как в редакторе (в ответах
+  `deleted_collectors`).
+- **model_get (shields[])**: аддитивно `bus_list` (bus_id, type, sockets,
+  distance — px схемы щитка, формат редактора; не мм — физической длины не
+  означает, connection, sockets_list с connected) и `collector_list`
+  (collector_id, rail, module_width, module_ids, position); прежние счётчики
+  `buses`/`collectors` сохранены. Эталон `ui-ref-shield-collector` переснят
+  вживую: в `collectors[].modules` значения — числа 1 (в эталоне 284 карта была
+  снята вручную с id-значениями — исправлено).
+- **shield_wire_add**: source/target принимают `{bus, port}` (гнездо шины
+  0-based); отказ `bus_connection_conflict` при несовпадении типа провода с
+  `connection` шины — как в редакторе.
+- «Построить автоматически» (клиентский мастер), «сечение» провода
+  (thickness/thickness_data) и «разорвать» (is_broken) — по-прежнему не
+  эмулируются/не выставляются (эталоны drag-действий не сняты).
+- Тарифный гейт как в ч.1: конструктор — старшие тарифы PRO; поведение на
+  бесплатном тарифе не проверялось (открытый вопрос с 255).
+
 ### Изменено (хвосты ревью 278/279, PR #41/#42)
 
 - **item_add/item_update against_wall у коллекторных узлов** (ревью 278 P1):
