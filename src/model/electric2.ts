@@ -383,9 +383,16 @@ export function addElecCable(model: Model, params: { tool: string; path: ElecPat
     // редактора (в редакторе стена—node—стена допустима)
     const contours = specs.filter((s) => s.kind === "warm_floor" || s.kind === "warm_wall");
     if (contours.length > 1) {
+      // текст по составу пути (ревью 276 N2): без тёплой стены — правило
+      // прямого штриха контур–контур (not_connect_two_floor), с тёплой
+      // стеной — прямой штрих тёплая стена—контур и стена—стена (source_items)
+      const walls = contours.filter((s) => s.kind === "warm_wall").length;
+      const rule = walls > 0
+        ? "в редакторе запрещён прямой штрих тёплая стена—контур и стена—стена"
+        : "в редакторе запрещён прямой штрих контур–контур";
       throw new McpError(
         "INVALID_ARGUMENT",
-        `в пути кабеля тёплого пола ${contours.length} контура/тёплой стены — MCP строже редактора: в редакторе запрещён прямой штрих тёплая стена—контур и стена—стена, а у кабеля MCP строит не более одной тёплой стены или контура — подключите каждую отдельным кабелем`,
+        `в пути кабеля тёплого пола ${contours.length} контура/тёплой стены — MCP строже редактора: ${rule}, а у кабеля MCP строит не более одной тёплой стены или контура — подключите каждую отдельным кабелем`,
         { details: { kind: "two_contours", items: contours.map((s) => s.itemId) } },
       );
     }
