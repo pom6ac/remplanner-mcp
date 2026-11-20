@@ -150,6 +150,9 @@ export type LoadedModel = {
   model: Record<string, unknown>;
   /** true — сервер вернул пустую строку data (проект без сохранений). */
   data_empty?: boolean;
+  /** Сырой floors из ответа GET (этажи/планировки объекта) — для гардов проб
+   *  «PLAN_ID принадлежит объекту» (ревью 319 №3); форма не нормализуется. */
+  floors?: unknown;
 };
 
 /** Разбор ответа GET /setup/api/planner/: data — строка JSON модели. */
@@ -171,6 +174,7 @@ export function parseLoadResponse(body: RawLoadResponse): LoadedModel {
     units: body.units ?? "cm",
     model,
     data_empty: body.data.trim() === "",
+    floors: body.floors,
   };
 }
 
