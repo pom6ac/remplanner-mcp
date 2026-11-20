@@ -6,7 +6,9 @@
 // shield_module_update (rail/index) → save → shield_wire_delete → save →
 // shield_module_delete модуля с проводом (deleted_wires) → save →
 // item_delete щитка (каскад конструктора) → save → счётчики как до прогона.
-// GET рабочего проекта (env) — только чтение до/после.
+// GET рабочего проекта (env) — только чтение до/после; ревью 285 №3: план_id
+// РЕАЛЬНЫЙ из env (REMPLANNER_PROBE_READONLY_PLAN_ID, не «1»), пустой ответ
+// (data_empty) — отказ пробы; сверка каноническая, как в гарде записи.
 // Гарды (уроки 240/256/258): бэкап до прогона, «план в редакторе == сервер»,
 // удаление только по захваченному site_id, восстановление в finally.
 // Запуск: node --experimental-strip-types scripts/probes/284-live-check.ts run
@@ -24,15 +26,20 @@ import { toModel } from "../../src/model/canonical.ts";
 import { resolveItem } from "../../src/dto/items.ts";
 
 if (process.argv[2] !== "run") {
-  console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
+  console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID, REMPLANNER_PROBE_READONLY_PLAN_ID из env)");
   process.exit(0);
 }
 
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
 const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"];
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
-if (!OBJECT_ID || !PLAN_ID || !READONLY_ID) {
-  console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID и REMPLANNER_PROBE_READONLY_ID");
+const READONLY_PLAN_ID = process.env["REMPLANNER_PROBE_READONLY_PLAN_ID"];
+if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
+  console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID и REMPLANNER_PROBE_READONLY_PLAN_ID (реальный plan_id, не «1»)");
+  process.exit(1);
+}
+if (READONLY_PLAN_ID === "1") {
+  console.error("REMPLANNER_PROBE_READONLY_PLAN_ID = «1» — контрольный GET должен идти по реальному plan_id рабочего проекта");
   process.exit(1);
 }
 if (OBJECT_ID === READONLY_ID) {
@@ -113,7 +120,13 @@ const entityId = (res: Record<string, unknown>): string => {
 };
 
 const snap = async (objectId: string, tag: string): Promise<LoadedModel> => {
-  const m = await loadModel(ctx.session(), objectId, "1");
+  // ревью 285 №3: контрольный GET рабочего проекта — по реальному plan_id из env;
+  // пустой ответ (data_empty) — отказ: сверка пустого с пустым ничего не доказывает
+  const planId = objectId === READONLY_ID ? READONLY_PLAN_ID : PLAN_ID;
+  const m = await loadModel(ctx.session(), objectId, planId);
+  if (objectId === READONLY_ID && m.data_empty === true) {
+    throw new Error("контрольный GET рабочего проекта пуст (data_empty) — сверка неизменности недостоверна, стоп");
+  }
   writeFileSync(`${OUT}/get-${objectId}-${tag}.json`, JSON.stringify(m, null, 1));
   return m;
 };
@@ -209,7 +222,8 @@ try {
     // запись по умолчанию уже содержит 1 рейку + 2 shield_rail_add
     ["щиток: 3 рейки (умолчание + 2), 4 модуля", !!sh && sh.rails === 3 && sh.modules.length === 4],
     ["провода: 3 (phase/null/earth)", !!sh && sh.wires?.length === 3],
-    ["фаза A.p0→B.p0", (() => { const w = wireByType("shield_wire_phase"); return !!w && w.from === null || (w?.from as { module_id?: string })?.module_id === idA && (w?.from as { port?: number })?.port === 0; })()],
+    // ревью 285 №12: скобки — без них приоритет &&/|| пропускает w.from === null
+    ["фаза A.p0→B.p0", (() => { const w = wireByType("shield_wire_phase"); return !!w && (w.from === null || (w.from as { module_id?: string })?.module_id === idA && (w.from as { port?: number })?.port === 0); })()],
     ["ноль B.p2→C.p0", (() => { const w = wireByType("shield_wire_null"); return (w?.from as { module_id?: string })?.module_id === idB && (w?.from as { port?: number })?.port === 2 && (w?.to as { module_id?: string })?.module_id === idC; })()],
     ["земля C.p1→ввод", (() => { const w = wireByType("shield_wire_earth"); return (w?.from as { module_id?: string })?.module_id === idC && (w?.to as { input?: string })?.input === "earth"; })()],
   ];
@@ -261,7 +275,7 @@ try {
 
   // 9. GET рабочего проекта (env) после прогона — не изменился
   const readonlyAfter = await snap(READONLY_ID, "after");
-  const sameReadonly = JSON.stringify(readonlyBefore.model) === JSON.stringify(readonlyAfter.model);
+  const sameReadonly = sameData(readonlyBefore.model, readonlyAfter.model);
   console.log(sameReadonly ? "READONLY OK" : "READONLY CHANGED — СТОП");
 
   // 10. очистка: щиток-предмет по site_id + save + сверка сигнатуры
