@@ -367,7 +367,7 @@ test("ревью 159 m1: ключи вида p1_floor в пяти эталона
 
 test("ревью 299 m3: внутренний ID сайта внутри строки свободного текста ловится", () => {
   assertCaught(
-    JSON.stringify({ _source: `живой дамп, записи из 296-ui-etalons-raw.json (_0yvvy/_kqcce)` }),
+    JSON.stringify({ _source: `живой дамп, записи из 296-ui-etalons-raw.json (_abcde/_fghij)` }),
     "ID в скобках внутри _source",
     "ui-ref-ceilzone-delimiter-rigel.json",
   );
