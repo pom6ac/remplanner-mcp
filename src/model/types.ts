@@ -623,6 +623,27 @@ export type ShieldInput = {
   [key: string]: unknown;
 };
 
+/**
+ * Провод конструктора щитка (этап 284): связь двух портов (модулей, ввода, шины).
+ * Формат — живой эталон 284 (пробы 284-wire-matrix/284-bus2, copy("server") после
+ * действий обработчиков портов редактора): ShieldWire.serialize —
+ * {id, id_source, id_target, type, thickness, thickness_data, is_broken};
+ * thickness_data появляется только после drag «сечение» в UI (в нашей модели нет).
+ * type — активный инструмент провода: shield_wire_phase|phase2|phase3|null|earth.
+ */
+export type ShieldWire = {
+  id: string;
+  id_source: string;
+  id_target: string;
+  type: string;
+  /** Толщина линии на схеме (редактор: 0 — умолчание). */
+  thickness?: number;
+  /** Данные drag «сечение» в UI (не создаётся без drag — в модели MCP отсутствует). */
+  thickness_data?: unknown;
+  is_broken: number;
+  [key: string]: unknown;
+};
+
 export type Shield = {
   id: string;
   /** id предмета-щитка (items[].id). */
@@ -635,7 +656,7 @@ export type Shield = {
   buses: Record<string, unknown>;
   collectors: Record<string, unknown>;
   inputs: Record<string, ShieldInput>;
-  wires: Record<string, unknown>;
+  wires: Record<string, ShieldWire>;
   [key: string]: unknown;
 };
 

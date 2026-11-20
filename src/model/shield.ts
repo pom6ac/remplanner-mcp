@@ -8,10 +8,10 @@
 // Связь с предметом-щитком — shields[].shield_id = items[].id; предмет без записи
 // редактор дополняет записью по умолчанию при restore (SHIELDS.restore) — модельный
 // слой делает то же (ensureShield), чтобы сверка save не видела ложную потерю.
-import type { Model, ItemProps, Shield, ShieldRail, ShieldModule, ShieldInput, ShieldPort } from "./types.ts";
+import type { Model, ItemProps, Shield, ShieldRail, ShieldModule, ShieldInput, ShieldPort, ShieldWire } from "./types.ts";
 import { newId } from "./types.ts";
 import { McpError } from "../errors.ts";
-import { MAX_SERVICE_COMMENT_CHARS } from "../limits.ts";
+import { MAX_SERVICE_COMMENT_CHARS, SHIELD_MAX_WIRES as SHIELD_MAX_WIRES_LIMIT } from "../limits.ts";
 
 /**
  * Предметы-щитки, к которым привязан конструктор (Item.isElectricShield("power"),
@@ -22,6 +22,22 @@ export const SHIELD_ITEM_NAMES = new Set(["electric_shield", "electric_shield_in
 /** Умолчания конструктора (ShieldDimensions.rail, бандл app.3.0). */
 export const SHIELD_RAIL_MIN_DIN = 12;
 export const SHIELD_RAIL_MAX_DIN = 48;
+
+/**
+ * Минимальный слот модуля в DIN (ShieldDimensions.module.slot, бандл app.3.0):
+ * порог reorder_modules — модуль шире слота ставится только к началу соседа.
+ * Проверяется живой пробой 284 (shield dims).
+ */
+export const SHIELD_MODULE_SLOT_DIN = 1;
+
+/**
+ * Типы проводов (инструменты shield_wire_* каталога UI; эталон 284):
+ * тип провода = активный инструмент при add_wire_end.
+ */
+export const SHIELD_WIRE_TYPES = ["shield_wire_phase", "shield_wire_phase2", "shield_wire_phase3", "shield_wire_null", "shield_wire_earth"] as const;
+
+/** Лимит проводов щитка (limits.ts; в редакторе лимита нет — защита модели MCP). */
+export const SHIELD_MAX_WIRES = 200;
 
 /**
  * Типы модулей (ShieldDimensions.module_types, проба 255-shield-classes):
@@ -96,6 +112,10 @@ function newShieldInput(index = 0): ShieldInput {
 /** Запись щитка по умолчанию для предмета (SHIELDS.restore: new Shield({shield_id})). */
 export function defaultShieldForItem(itemId: string): Shield {
   const rail: ShieldRail = { id: newId(10), index: 0, modules: {} };
+  // 284: ключ словаря inputs = id записи ввода (как сериализует редактор — эталон
+  // ui-ref-shield-*: ключ == id); прежний код 255 создавал ключ новым newId,
+  // из-за чего lookup порта по parent_id не находил ввод
+  const input = newShieldInput();
   return {
     id: newId(10),
     shield_id: itemId,
@@ -104,7 +124,7 @@ export function defaultShieldForItem(itemId: string): Shield {
     rails: { [rail.id]: rail },
     buses: {},
     collectors: {},
-    inputs: { [newId(10)]: newShieldInput() },
+    inputs: { [input.id]: input },
     wires: {},
   };
 }
@@ -174,23 +194,6 @@ function railMaxLength(shield: Shield): number {
   return shield.on_auto_length_rails === 1 ? SHIELD_RAIL_MAX_DIN : (shield.length_rails ?? SHIELD_RAIL_MIN_DIN);
 }
 
-/** Есть ли у щитка провода/шины/коллекторы — их формат вне ядра этапа 255
- *  (следующий PR), операции с рейками/модулями при них отклоняются. */
-function hasWiresOrBuses(shield: Shield): boolean {
-  return Object.keys(shield.wires ?? {}).length > 0 || Object.keys(shield.buses ?? {}).length > 0
-    || Object.keys(shield.collectors ?? {}).length > 0;
-}
-
-function assertNoWiresOrBuses(shield: Shield): void {
-  if (hasWiresOrBuses(shield)) {
-    throw new McpError(
-      "INVALID_ARGUMENT",
-      "в щитке есть провода или шины — их изменение пока не поддерживается (следующий этап); сначала удалите их в редакторе",
-      { details: { kind: "wires_not_supported", shield_id: shield.id } },
-    );
-  }
-}
-
 function commentClean(comment: string | undefined): string {
   if (comment === undefined) return "";
   const s = comment.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
@@ -253,7 +256,6 @@ function railByIndex(shield: Shield, railIndex: number): ShieldRail {
  */
 export function addShieldRail(model: Model, itemId: string): Shield {
   const { shield } = shieldOfItem(model, itemId);
-  assertNoWiresOrBuses(shield);
   const rail: ShieldRail = { id: newId(10), index: Object.keys(shield.rails).length, modules: {} };
   shield.rails[rail.id] = rail;
   return shield;
@@ -264,9 +266,8 @@ export function addShieldRail(model: Model, itemId: string): Shield {
  * индексы последующих рейк уменьшаются). Последнюю рейку удалить нельзя
  * (редактор игнорирует удаление единственной рейки — get_count_rails() === 1).
  */
-export function deleteShieldRail(model: Model, itemId: string, railRef: number | string): { shield: Shield; deleted_modules: string[] } {
+export function deleteShieldRail(model: Model, itemId: string, railRef: number | string): { shield: Shield; deleted_modules: string[]; deleted_wires: string[]; deleted_collectors: string[] } {
   const { shield } = shieldOfItem(model, itemId);
-  assertNoWiresOrBuses(shield);
   const rail = typeof railRef === "number"
     ? railByIndex(shield, railRef)
     : (Object.values(shield.rails).find((r) => r.id === railRef) ?? (() => {
@@ -283,8 +284,9 @@ export function deleteShieldRail(model: Model, itemId: string, railRef: number |
   delete shield.rails[rail.id];
   let i = 0;
   for (const r of Object.values(shield.rails).sort((a, b) => a.index - b.index)) r.index = i++;
+  const cascade = validateShieldDerived(shield);
   refreshAutoLength(shield);
-  return { shield, deleted_modules: deletedModules };
+  return { shield, deleted_modules: deletedModules, deleted_wires: cascade.deleted_wires, deleted_collectors: cascade.deleted_collectors };
 }
 
 export type ShieldModuleAddParams = {
@@ -317,7 +319,6 @@ export function addShieldModule(model: Model, itemId: string, params: ShieldModu
     );
   }
   const { shield } = shieldOfItem(model, itemId);
-  assertNoWiresOrBuses(shield);
   const railIndex = params.rail ?? 0;
   const rail = railByIndex(shield, railIndex);
   const width = railWidthDin(rail);
@@ -372,16 +373,22 @@ export type ShieldModuleUpdateParams = {
   subtype?: string;
   group_number?: number;
   comment?: string;
+  /** Перенос модуля на другую рейку (индекс 0-based; модуль ставится в конец
+   *  рейки, как move_module_to_rail редактора). */
+  rail?: number;
+  /** Изменение порядка на рейке: целевая DIN-позиция (reorder_modules редактора). */
+  index?: number;
 };
 
 /**
  * shield_module_update: номинал, номер группы, подпись (контекстное меню модуля
- * «#cm-rail-module»). Перенос между рейками — следующий этап (в редакторе это
- * drag модуля; формат переходного состояния in_transition вне ядра).
+ * «#cm-rail-module»), перенос между рейками и изменение порядка (drag модуля:
+ * move_module_to_rail / reorder_modules). Провода модуля не трогаются — порты
+ * переезжают вместе с модулем (как в редакторе), in_transition в модели не
+ * остаётся (флаг только на время drag).
  */
 export function updateShieldModule(model: Model, itemId: string, moduleId: string, params: ShieldModuleUpdateParams): { shield: Shield; module: ShieldModule } {
   const { shield } = shieldOfItem(model, itemId);
-  assertNoWiresOrBuses(shield);
   const mod = findShieldModule(shield, moduleId);
   if (!mod) throw new McpError("NOT_FOUND", `модуль ${moduleId} не найден в щитке предмета ${itemId}`);
   const def = SHIELD_MODULE_TYPES[mod.type];
@@ -412,7 +419,135 @@ export function updateShieldModule(model: Model, itemId: string, moduleId: strin
     mod.group_number = params.group_number;
   }
   if (params.comment !== undefined) mod.comment = commentClean(params.comment);
+  const railChanged = params.rail !== undefined && railIndexOf(shield, mod.rail_id) !== params.rail;
+  if (railChanged) moveShieldModuleToRail(shield, mod, params.rail!);
+  if (params.index !== undefined) reorderShieldModule(shield, mod, params.index, railChanged);
   return { shield, module: mod };
+}
+
+/** Индекс рейки по её id (-1, если рейки нет — модуль без рейки). */
+function railIndexOf(shield: Shield, railId: string): number {
+  return Object.values(shield.rails).find((r) => r.id === railId)?.index ?? -1;
+}
+
+/** Принадлежит ли модуль коллектору (формат коллектора — следующий PR;
+ *  drag модулей внутри коллектора не поддерживаем). */
+function moduleInCollector(shield: Shield, moduleId: string): boolean {
+  return Object.values(shield.collectors ?? {}).some((c) => {
+    const mods = (c as { modules?: Record<string, unknown> }).modules ?? {};
+    return moduleId in mods;
+  });
+}
+
+/**
+ * Перенос модуля на другую рейку (move_module_to_rail редактора): модуль ставится
+ * в конец целевой рейки, позиции модулей старой рейки правее сдвигаются. MCP
+ * строже редактора: редактор молча пропускает перенос, если модуль не влезает,
+ * здесь — INVALID_ARGUMENT. Провода сохраняются (порты переезжают с модулем).
+ */
+export function moveShieldModuleToRail(shield: Shield, mod: ShieldModule, railIndex: number): void {
+  if (moduleInCollector(shield, mod.id)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "модуль входит в коллектор — перенос модулей коллектора пока не поддерживается (следующий этап)",
+      { details: { kind: "module_in_collector" } },
+    );
+  }
+  const target = railByIndex(shield, railIndex);
+  const source = shield.rails[mod.rail_id];
+  if (!source) throw new McpError("NOT_FOUND", `рейка модуля ${mod.rail_id} не найдена`);
+  if (target.id === source.id) return;
+  if (railWidthDin(target) + mod.width > railMaxLength(shield)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `рейка ${railIndex} заполнена: ${railWidthDin(target)} + ${mod.width} DIN больше лимита ${railMaxLength(shield)}`,
+      { details: { kind: "rail_full", rail: railIndex } },
+    );
+  }
+  const oldIndex = mod.index;
+  delete source.modules[mod.id];
+  for (const other of Object.values(source.modules)) {
+    if (other.index > oldIndex) other.index -= mod.width;
+  }
+  mod.rail_id = target.id;
+  mod.index = railWidthDin(target);
+  target.modules[mod.id] = mod;
+}
+
+/**
+ * Изменение порядка модуля на рейке (reorder_modules редактора): модуль ставится
+ * в DIN-позицию index, модули между старой и новой позицией сдвигаются. MCP
+ * строже редактора в двух случаях (редактор молча прерывает drag): позиция не
+ * совпадает с началом модуля-соседа при ширине > 1 DIN и позиция за концом рейки.
+ */
+export function reorderShieldModule(shield: Shield, mod: ShieldModule, index: number, skipRailCheck = false): void {
+  if (!Number.isFinite(index) || index < 0 || !Number.isInteger(index)) {
+    throw new McpError("INVALID_ARGUMENT", `index — целое число DIN ≥ 0, получено ${index}`);
+  }
+  if (moduleInCollector(shield, mod.id)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "модуль входит в коллектор — изменение порядка модулей коллектора пока не поддерживается (следующий этап)",
+      { details: { kind: "module_in_collector" } },
+    );
+  }
+  const rail = shield.rails[mod.rail_id];
+  if (!rail) throw new McpError("NOT_FOUND", `рейка модуля ${mod.rail_id} не найдена`);
+  if (index === mod.index) return;
+  if (!skipRailCheck && index + mod.width > railWidthDin(rail)) {
+    // как get_module_in_slot редактора: позиция за заполненной частью рейки —
+    // модуля-соседа нет, drag в пустой слот правее конца недоступен
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `позиция ${index} за концом рейки (заполнено ${railWidthDin(rail)} DIN); для переноса в конец используйте rail`,
+      { details: { kind: "index_out_of_rail", index, rail_width: railWidthDin(rail) } },
+    );
+  }
+  const neighbor = Object.values(rail.modules).find((m) => index >= m.index && index < m.index + m.width);
+  if (!neighbor) {
+    // редактор ставит модуль только к началу другого модуля (слоты по DIN);
+    // позиция «внутри» соседа недоступна
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `позиция ${index} не начало модуля на рейке (перетаскивание в редакторе ставит модуль в слот соседа)`,
+      { details: { kind: "no_module_at_slot", index } },
+    );
+  }
+  if (neighbor.id === mod.id) return; // позиция внутри самого модуля — no-op (как reorder_modules редактора)
+  if (moduleInCollector(shield, neighbor.id)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "целевая позиция занята модулем из коллектора — изменение порядка внутри коллектора пока не поддерживается (следующий этап)",
+      { details: { kind: "module_in_collector" } },
+    );
+  }
+  const e = neighbor.index;
+  const w = neighbor.width;
+  if (index < mod.index) {
+    if (w > SHIELD_MODULE_SLOT_DIN && e !== index) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `модуль шире ${SHIELD_MODULE_SLOT_DIN} DIN нельзя поставить в позицию ${index} (начало соседа в ${e}) — как в редакторе`,
+        { details: { kind: "bad_slot", index, neighbor_index: e } },
+      );
+    }
+    for (const other of Object.values(rail.modules)) {
+      if (other.id !== mod.id && other.index >= index && other.index <= mod.index) other.index += mod.width;
+    }
+  } else {
+    if (w > SHIELD_MODULE_SLOT_DIN && e + w - SHIELD_MODULE_SLOT_DIN !== index) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `модуль шире ${SHIELD_MODULE_SLOT_DIN} DIN нельзя поставить в позицию ${index} (сосед занимает ${e}..${e + w}) — как в редакторе`,
+        { details: { kind: "bad_slot", index, neighbor_index: e, neighbor_width: w } },
+      );
+    }
+    for (const other of Object.values(rail.modules)) {
+      if (other.id !== mod.id && other.index <= index && other.index >= mod.index) other.index -= mod.width;
+    }
+    if (mod.width > SHIELD_MODULE_SLOT_DIN) index -= mod.width - SHIELD_MODULE_SLOT_DIN;
+  }
+  mod.index = index;
 }
 
 /** Модуль щитка по id (по всем рейкам). */
@@ -427,12 +562,11 @@ export function findShieldModule(shield: Shield, moduleId: string): ShieldModule
 /**
  * shield_module_delete: удалить модуль (Shield.delete_module): индексы модулей
  * правее уменьшаются на ширину удалённого, длина щитка при авто-режиме
- * пересчитывается. Провода/шины, привязанные к портам модуля, запрещают удаление
- * (validate_wires редактора; формат проводов — следующий этап).
+ * пересчитывается. Провода к портам модуля и коллекторы с <2 модулями удаляются
+ * каскадом (validate_wires/validate_collectors редактора — удаление молча).
  */
-export function deleteShieldModule(model: Model, itemId: string, moduleId: string): void {
+export function deleteShieldModule(model: Model, itemId: string, moduleId: string): { shield: Shield; deleted_wires: string[]; deleted_collectors: string[] } {
   const { shield } = shieldOfItem(model, itemId);
-  assertNoWiresOrBuses(shield);
   const mod = findShieldModule(shield, moduleId);
   if (!mod) throw new McpError("NOT_FOUND", `модуль ${moduleId} не найден в щитке предмета ${itemId}`);
   const rail = shield.rails[mod.rail_id];
@@ -442,7 +576,187 @@ export function deleteShieldModule(model: Model, itemId: string, moduleId: strin
       if (other.index > mod.index) other.index -= mod.width;
     }
   }
+  const cascade = validateShieldDerived(shield);
   refreshAutoLength(shield);
+  return { shield, deleted_wires: cascade.deleted_wires, deleted_collectors: cascade.deleted_collectors };
+}
+
+// ---------- Провода (этап 284) ----------
+
+export type ShieldPortRef = {
+  /** Модуль: id модуля + номер порта (0-based, порядок ports модуля). */
+  module_id?: string;
+  /** Номер порта модуля. */
+  port?: number;
+  /** Порт ввода: phase | null | earth. */
+  input?: "phase" | "null" | "earth";
+};
+
+const INPUT_PORT_TYPE_BY_KEY: Record<string, string> = {
+  phase: "shield_wire_phase",
+  null: "shield_wire_null",
+  earth: "shield_wire_earth",
+};
+
+/** Все порты щитка (модули, вводы, шины) → карта id → {parent_type, parent_id}. */
+function shieldPorts(shield: Shield): Map<string, { parent_type: string; parent_id: string }> {
+  const out = new Map<string, { parent_type: string; parent_id: string }>();
+  for (const rail of Object.values(shield.rails)) {
+    for (const mod of Object.values(rail.modules)) {
+      for (const p of mod.ports ?? []) out.set(p.id, { parent_type: "module", parent_id: mod.id });
+    }
+  }
+  for (const input of Object.values(shield.inputs)) {
+    for (const p of input.ports ?? []) out.set(p.id, { parent_type: "input", parent_id: input.id });
+  }
+  for (const bus of Object.values(shield.buses ?? {}) as Array<{ id: string; ports?: ShieldPort[] }>) {
+    for (const p of bus.ports ?? []) out.set(p.id, { parent_type: "bus", parent_id: bus.id });
+  }
+  return out;
+}
+
+/**
+ * Пересчёт производных щитка после операций с модулями/рейками/вводами — как
+ * validate_wires/validate_ports/validate_buses/validate_collectors редактора:
+ * провода с исчезнувшими портами удаляются молча, connected портов
+ * пересчитывается по проводам, connection шины — по первому подключённому
+ * порту, коллекторы с <2 модулями или потерянным модулем удаляются.
+ */
+export function validateShieldDerived(shield: Shield): { deleted_wires: string[]; deleted_collectors: string[] } {
+  const ports = shieldPorts(shield);
+  const deletedWires: string[] = [];
+  for (const [id, wire] of Object.entries(shield.wires ?? {})) {
+    if (!ports.has(wire.id_source) || !ports.has(wire.id_target)) {
+      delete shield.wires![id];
+      deletedWires.push(id);
+    }
+  }
+  // validate_ports: connected по всем проводам (модули, вводы, шины)
+  const connectedIds = new Set<string>();
+  for (const wire of Object.values(shield.wires ?? {})) {
+    connectedIds.add(wire.id_source);
+    connectedIds.add(wire.id_target);
+  }
+  for (const [portId, info] of ports) {
+    const connected = connectedIds.has(portId) ? 1 : 0;
+    if (info.parent_type === "module") {
+      const mod = findShieldModule(shield, info.parent_id);
+      const p = mod?.ports?.find((x) => x.id === portId);
+      if (p) p.connected = connected;
+    } else if (info.parent_type === "input") {
+      const inp = shield.inputs[info.parent_id];
+      const p = inp?.ports?.find((x) => x.id === portId);
+      if (p) p.connected = connected;
+    } else {
+      const bus = (shield.buses ?? {})[info.parent_id] as { ports?: ShieldPort[] } | undefined;
+      const p = bus?.ports?.find((x) => x.id === portId);
+      if (p) p.connected = connected;
+    }
+  }
+  // validate_buses: connection шины — тип провода первого подключённого порта
+  for (const bus of Object.values(shield.buses ?? {}) as Array<{ id: string; ports?: ShieldPort[]; connection?: string }>) {
+    const first = (bus.ports ?? []).find((p) => connectedIds.has(p.id));
+    if (!first) {
+      bus.connection = "";
+      continue;
+    }
+    const wire = Object.values(shield.wires ?? {}).find((w) => w.id_source === first.id || w.id_target === first.id);
+    bus.connection = wire ? wire.type : "";
+  }
+  // validate_collectors: коллектор с <2 модулями или потерянным модулем удаляется
+  const deletedCollectors: string[] = [];
+  for (const [id, col] of Object.entries(shield.collectors ?? {})) {
+    const mods = (col as { modules?: Record<string, unknown> }).modules ?? {};
+    const known = Object.keys(mods).filter((mid) => findShieldModule(shield, mid));
+    if (known.length < 2) {
+      delete shield.collectors![id];
+      deletedCollectors.push(id);
+    }
+  }
+  return { deleted_wires: deletedWires, deleted_collectors: deletedCollectors };
+}
+
+/** Разрешение ссылки на порт (shield_wire_add): id порта или отказ. */
+function resolveShieldPort(shield: Shield, ref: ShieldPortRef, side: string): { portId: string; parentType: string } {
+  const hasModule = ref.module_id !== undefined;
+  const hasInput = ref.input !== undefined;
+  if (hasModule === hasInput) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `${side}: укажите либо {module_id, port}, либо {input: "phase"|"null"|"earth"}`,
+      { details: { kind: "bad_port_ref", side } },
+    );
+  }
+  if (hasModule) {
+    const mod = findShieldModule(shield, ref.module_id!);
+    if (!mod) throw new McpError("NOT_FOUND", `${side}: модуль ${ref.module_id} не найден в щитке`);
+    const idx = ref.port ?? 0;
+    const port = mod.ports?.[idx];
+    if (!port) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `${side}: у модуля ${mod.id} (${mod.type}) нет порта ${idx} (портов ${mod.ports?.length ?? 0})`,
+        { details: { kind: "no_port", module: mod.id, port: idx, ports: mod.ports?.length ?? 0 } },
+      );
+    }
+    return { portId: port.id, parentType: "module" };
+  }
+  const wantType = INPUT_PORT_TYPE_BY_KEY[ref.input!];
+  for (const input of Object.values(shield.inputs)) {
+    const port = (input.ports ?? []).find((p) => p.type === wantType);
+    if (port) return { portId: port.id, parentType: "input" };
+  }
+  throw new McpError("NOT_FOUND", `${side}: порт ввода «${ref.input}» не найден`);
+}
+
+export type ShieldWireAddParams = {
+  /** Тип провода = инструмент shield_wire_* (фаза/фаза2/фаза3/ноль/земля). */
+  type: string;
+  source: ShieldPortRef;
+  target: ShieldPortRef;
+};
+
+/**
+ * shield_wire_add: провод между портами (module_port_click ×2 → add_wire_end
+ * редактора: new ShieldWire({id, id_source, id_target, type: tool})).
+ * Порты любых родителей (модуль, ввод, шина). same source==target отклоняем
+ * (петля); повторный идентичный провод — INVALID_ARGUMENT (MCP строже редактора:
+ * редактор нарисует дубль, хранить дубли в модели незачем). Больше одного
+ * провода с одного порта разрешено (эталон 284-wire-cases).
+ */
+export function addShieldWire(model: Model, itemId: string, params: ShieldWireAddParams): { shield: Shield; wire: ShieldWire } {
+  if (!SHIELD_WIRE_TYPES.includes(params.type as never)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `неизвестный тип провода «${params.type}» (инструменты редактора: ${SHIELD_WIRE_TYPES.join(", ")})`,
+      { details: { kind: "bad_wire_type", allowed: SHIELD_WIRE_TYPES } },
+    );
+  }
+  const { shield } = shieldOfItem(model, itemId);
+  const source = resolveShieldPort(shield, params.source, "source");
+  const target = resolveShieldPort(shield, params.target, "target");
+  if (source.portId === target.portId) {
+    throw new McpError("INVALID_ARGUMENT", "source и target — один порт (петля)", { details: { kind: "self_wire" } });
+  }
+  if (Object.keys(shield.wires ?? {}).length >= SHIELD_MAX_WIRES_LIMIT) {
+    throw new McpError("INVALID_ARGUMENT", `проводов в щитке уже ${SHIELD_MAX_WIRES_LIMIT} (лимит)`, { details: { kind: "wires_limit" } });
+  }
+  const wire: ShieldWire = { id: newId(10), id_source: source.portId, id_target: target.portId, type: params.type, thickness: 0, is_broken: 0 };
+  (shield.wires ??= {})[wire.id] = wire;
+  validateShieldDerived(shield);
+  return { shield, wire };
+}
+
+/**
+ * shield_wire_delete: удалить провод (delete_wire редактора); connected портов
+ * и connection шин пересчитываются (validate_ports/validate_buses).
+ */
+export function deleteShieldWire(model: Model, itemId: string, wireId: string): { shield: Shield } {
+  const { shield } = shieldOfItem(model, itemId);
+  if (!shield.wires?.[wireId]) throw new McpError("NOT_FOUND", `провод ${wireId} не найден в щитке предмета ${itemId}`);
+  delete shield.wires[wireId];
+  validateShieldDerived(shield);
+  return { shield };
 }
 
 /**
@@ -459,6 +773,21 @@ export function deleteShieldsForItem(model: Model, itemId: string): string[] {
     }
   }
   return deleted;
+}
+
+/** Каноническая форма значения с сортировкой ключей на всех уровнях — сверка
+ *  словарей (wires/buses/collectors), порядок ключей которых после нормализации
+ *  редактора не гарантирован. */
+function sortedDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortedDeep);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+      out[k] = sortedDeep((value as Record<string, unknown>)[k]);
+    }
+    return out;
+  }
+  return value;
 }
 
 /** Семантическая проекция щитка для сверок (полная, а не по выбранным полям). */
@@ -500,10 +829,10 @@ export function shieldProjection(shield: Shield): Record<string, unknown> {
     ...(shield.on_auto_length_rails !== 1 ? { length_rails: shield.length_rails } : {}),
     rails,
     inputs,
-    // buses/collectors/wires вне ядра этапа 255 — сверка целиком (потеря чужого
-    // содержимого не должна проходить молча)
-    buses: shield.buses ?? {},
-    collectors: shield.collectors ?? {},
-    wires: shield.wires ?? {},
+    // buses/collectors вне ядра этапа 284 (следующий PR), wires — с 284: сверка
+    // канонической формы целиком (потеря чужого содержимого не проходит молча)
+    buses: sortedDeep(shield.buses ?? {}),
+    collectors: sortedDeep(shield.collectors ?? {}),
+    wires: sortedDeep(shield.wires ?? {}),
   };
 }

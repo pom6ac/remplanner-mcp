@@ -1,0 +1,164 @@
+{
+ "_source": "Живая проба scripts/probes/284-wire-matrix.ts (dev-проект из env, без сохранения): лист «Электрощиток», щиток с DIN-рейкой и 3 модулями (Shield.add_module — код постановки UI), провода через обработчик клика портов (module_port_click, тот же код, что клик UI): фаза модуль→модуль, ноль модуль→модуль, земля модуль→ввод. Формат ShieldWire {id, id_source, id_target, type, thickness, is_broken} (ShieldWire.serialize бандла app.3.0). Идентификаторы обезличены (scripts/anonymize.ts); привязка shield_id к предмету заменена на id-метку.",
+ "shields": {
+  "id1": {
+   "id": "id1",
+   "shield_id": "id2",
+   "on_auto_length_rails": 1,
+   "length_rails": 12,
+   "rails": {
+    "id3": {
+     "id": "id3",
+     "index": 0,
+     "modules": {
+      "id4": {
+       "id": "id4",
+       "rail_id": "id3",
+       "index": 0,
+       "width": 1,
+       "type": "shield_module",
+       "group_number": 0,
+       "subtype": "16A",
+       "comment": "",
+       "ports": [
+        {
+         "id": "id5",
+         "parent_id": "id4",
+         "parent_type": "module",
+         "connected": 1
+        },
+        {
+         "id": "id6",
+         "parent_id": "id4",
+         "parent_type": "module",
+         "connected": 0
+        }
+       ],
+       "custom": {}
+      },
+      "id7": {
+       "id": "id7",
+       "rail_id": "id3",
+       "index": 1,
+       "width": 2,
+       "type": "shield_module_x2",
+       "group_number": 0,
+       "subtype": "16A/30mA",
+       "comment": "",
+       "ports": [
+        {
+         "id": "id8",
+         "parent_id": "id7",
+         "parent_type": "module",
+         "connected": 1
+        },
+        {
+         "id": "id9",
+         "parent_id": "id7",
+         "parent_type": "module",
+         "connected": 0
+        },
+        {
+         "id": "id10",
+         "parent_id": "id7",
+         "parent_type": "module",
+         "connected": 1
+        },
+        {
+         "id": "id11",
+         "parent_id": "id7",
+         "parent_type": "module",
+         "connected": 0
+        }
+       ],
+       "custom": {}
+      },
+      "id12": {
+       "id": "id12",
+       "rail_id": "id3",
+       "index": 3,
+       "width": 1,
+       "type": "shield_module",
+       "group_number": 0,
+       "subtype": "16A",
+       "comment": "",
+       "ports": [
+        {
+         "id": "id13",
+         "parent_id": "id12",
+         "parent_type": "module",
+         "connected": 1
+        },
+        {
+         "id": "id14",
+         "parent_id": "id12",
+         "parent_type": "module",
+         "connected": 1
+        }
+       ],
+       "custom": {}
+      }
+     }
+    }
+   },
+   "buses": {},
+   "collectors": {},
+   "inputs": {
+    "id15": {
+     "id": "id15",
+     "ports": [
+      {
+       "id": "id16",
+       "parent_type": "input",
+       "parent_id": "id15",
+       "type": "shield_wire_earth",
+       "connected": 1
+      },
+      {
+       "id": "id17",
+       "parent_type": "input",
+       "parent_id": "id15",
+       "type": "shield_wire_null",
+       "connected": 0
+      },
+      {
+       "id": "id18",
+       "parent_type": "input",
+       "parent_id": "id15",
+       "type": "shield_wire_phase",
+       "connected": 0
+      }
+     ],
+     "index": 0,
+     "phase": 1
+    }
+   },
+   "wires": {
+    "id19": {
+     "id": "id19",
+     "id_source": "id5",
+     "id_target": "id8",
+     "type": "shield_wire_phase",
+     "thickness": 0,
+     "is_broken": 0
+    },
+    "id20": {
+     "id": "id20",
+     "id_source": "id10",
+     "id_target": "id13",
+     "type": "shield_wire_null",
+     "thickness": 0,
+     "is_broken": 0
+    },
+    "id21": {
+     "id": "id21",
+     "id_source": "id14",
+     "id_target": "id16",
+     "type": "shield_wire_earth",
+     "thickness": 0,
+     "is_broken": 0
+    }
+   }
+  }
+ }
+}

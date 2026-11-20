@@ -3360,7 +3360,7 @@
   },
   {
    "name": "shield_module_delete",
-   "description": "Удалить модуль щитка (module_id из model_get). Позиции модулей правее и длина щитка пересчитываются автоматически.",
+   "description": "Удалить модуль щитка (module_id из model_get). Позиции модулей правее и длина щитка пересчитываются автоматически. Провода к портам модуля удаляются каскадом (как в редакторе), коллекторы с числом модулей меньше двух — тоже; в ответе deleted_wires/deleted_collectors.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -3384,7 +3384,7 @@
   },
   {
    "name": "shield_module_update",
-   "description": "Изменить модуль щитка: номинал (subtype), номер группы, подпись (comment). module_id — id модуля из model_get shields[].modules[].module_id. Перенос модуля между рейками и изменение порядка пока не поддерживаются (следующий этап).",
+   "description": "Изменить модуль щитка: номинал (subtype), номер группы, подпись (comment), перенос между рейками (rail — индекс 0-based, модуль ставится в конец рейки, как drag в редакторе) и изменение порядка (index — целевая DIN-позиция, как drag; модуль шире 1 DIN ставится только к началу соседа). module_id — id модуля из model_get shields[].modules[].module_id. Провода модуля сохраняются (порты переезжают вместе с модулем).",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -3411,6 +3411,18 @@
      "comment": {
       "type": "string",
       "maxLength": 200
+     },
+     "rail": {
+      "description": "перенос: индекс рейки 0-based (модуль встанет в конец рейки)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "index": {
+      "description": "изменение порядка: целевая DIN-позиция на рейке",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
      }
     },
     "required": [
@@ -3459,6 +3471,113 @@
     "required": [
      "item_id",
      "rail"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "shield_wire_add",
+   "description": "Соединить порты щитка проводом (лист «Электрощиток», PRO; в редакторе — инструмент shield_wire_* и клик по двум портам). type — shield_wire_phase|shield_wire_phase2|shield_wire_phase3 (фаза/фаза 2/фаза 3), shield_wire_null (ноль), shield_wire_earth (земля). source/target — порт: {module_id, port} (port — номер порта модуля 0-based из full-модели shields[].rails[].modules[].ports) или {input: \"phase\"|\"null\"|\"earth\"} (порт ввода). Несколько проводов на один порт разрешено (как в редакторе); шины (buses) пока не поддерживаются — порт шины указать нельзя (следующий этап).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "type": {
+      "type": "string",
+      "enum": [
+       "shield_wire_phase",
+       "shield_wire_phase2",
+       "shield_wire_phase3",
+       "shield_wire_null",
+       "shield_wire_earth"
+      ]
+     },
+     "source": {
+      "type": "object",
+      "properties": {
+       "module_id": {
+        "description": "id модуля из model_get",
+        "type": "string",
+        "minLength": 1
+       },
+       "port": {
+        "description": "номер порта модуля 0-based",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000
+       },
+       "input": {
+        "description": "порт ввода щитка",
+        "type": "string",
+        "enum": [
+         "phase",
+         "null",
+         "earth"
+        ]
+       }
+      },
+      "description": "исходный порт: {module_id, port} или {input}"
+     },
+     "target": {
+      "type": "object",
+      "properties": {
+       "module_id": {
+        "description": "id модуля из model_get",
+        "type": "string",
+        "minLength": 1
+       },
+       "port": {
+        "description": "номер порта модуля 0-based",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 1000000
+       },
+       "input": {
+        "description": "порт ввода щитка",
+        "type": "string",
+        "enum": [
+         "phase",
+         "null",
+         "earth"
+        ]
+       }
+      },
+      "description": "целевой порт: {module_id, port} или {input}"
+     }
+    },
+    "required": [
+     "item_id",
+     "type",
+     "source",
+     "target"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "shield_wire_delete",
+   "description": "Удалить провод щитка (wire_id из model_get shields[].wires[].wire_id). connected портов и connection шин пересчитываются автоматически (как в редакторе).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "wire_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id провода из model_get"
+     }
+    },
+    "required": [
+     "item_id",
+     "wire_id"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"
    }

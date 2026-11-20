@@ -58,6 +58,12 @@ const EDITOR_IDS_FORBIDDEN = new Set<string>([
   // внутренние ID щитка/рейки/модуля/портов заменены на id1… (сквозное обезличивание).
   "ui-ref-shield-empty.json",
   "ui-ref-shield-module.json",
+  // Эталоны «Электрощиток» ч.2 (этап 284): сняты в dev-проекте (пробы
+  // 284-wire-matrix/284-bus2), внутренние ID щитка/портов/проводов/шины/коллектора
+  // заменены на id1… (сквозное обезличивание).
+  "ui-ref-shield-wires.json",
+  "ui-ref-shield-bus.json",
+  "ui-ref-shield-collector.json",
   // Эталоны «Климат» ч.3 (этап 268): сняты в dev-проекте (пробы 268-recon4/268-recon5),
   // внутренние ID предмета/контура/вершин заменены на id1… (сквозное обезличивание).
   "ui-ref-climate3-wire-wf-contour.json",

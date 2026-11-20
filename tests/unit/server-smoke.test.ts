@@ -38,9 +38,10 @@ const EXPECTED_TOOLS = [
   "line_light_add", "line_light_update", "line_light_delete",
   "cable_add", "cable_delete",
   "wiring_add", "wiring_update", "wiring_delete",
-  // §7.4j — конструктор электрощитка (лист «Электрощиток», этап 255)
+  // §7.4j — конструктор электрощитка (лист «Электрощиток», этапы 255, 284)
   "shield_rail_add", "shield_rail_delete",
   "shield_module_add", "shield_module_update", "shield_module_delete",
+  "shield_wire_add", "shield_wire_delete",
   // §7.4e — проем в полу, терраса и участок (этап 64)
   "floor_hole_add", "floor_hole_update", "floor_hole_delete",
   "terrace_add", "terrace_border_update", "terrace_border_delete",

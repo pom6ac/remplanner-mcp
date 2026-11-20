@@ -13,8 +13,10 @@ import { addRoomRect, moveWall } from "../../src/model/walls.ts";
 import { addItem, deleteItem } from "../../src/model/items.ts";
 import {
   addShieldRail, deleteShieldRail, addShieldModule, updateShieldModule, deleteShieldModule,
+  addShieldWire, deleteShieldWire, moveShieldModuleToRail, reorderShieldModule,
+  validateShieldDerived,
   ensureShieldForItem, deleteShieldsForItem, findShieldByItem, shieldProjection, findShieldModule,
-  SHIELD_MODULE_TYPES, SHIELD_ITEM_NAMES, SHIELD_RAIL_MIN_DIN, SHIELD_RAIL_MAX_DIN,
+  SHIELD_MODULE_TYPES, SHIELD_ITEM_NAMES, SHIELD_RAIL_MIN_DIN, SHIELD_RAIL_MAX_DIN, SHIELD_WIRE_TYPES,
 } from "../../src/model/shield.ts";
 import { compactModel } from "../../src/model/compact.ts";
 import {
@@ -93,10 +95,26 @@ function maskedForm(v: unknown): unknown {
     return Object.fromEntries(
       Object.entries(v as Record<string, unknown>)
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        .map(([k, x]) => [k, /^(id|shield_id|rail_id|parent_id|module_id)$/.test(k) ? "<id>" : maskedForm(x)]),
+        .map(([k, x]) => [k, /^(id|shield_id|rail_id|parent_id|module_id|id_source|id_target)$/.test(k) ? "<id>" : maskedForm(x)]),
     );
   }
   return v;
+}
+
+/** 284: маскированная форма со словарями записей (rails/modules/wires/…), ключи
+ *  которых — случайные id сайта: словари объектов → массивы, отсортированные по
+ *  маскированному содержимому, — deepEqual не зависит от порядка и имён ключей. */
+function maskedUnordered(v: unknown, key = ""): unknown {
+  if (Array.isArray(v)) return v.map((x) => maskedUnordered(x, key));
+  if (v !== null && typeof v === "object") {
+    const entries = Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, maskedUnordered(x, k)] as const);
+    if (entries.length > 0 && entries.every(([, x]) => x !== null && typeof x === "object")) {
+      entries.sort((p, q) => JSON.stringify(p[1]).localeCompare(JSON.stringify(q[1])));
+      return entries.map(([, x]) => x);
+    }
+    return Object.fromEntries(entries);
+  }
+  return /^(id|shield_id|rail_id|parent_id|module_id|id_source|id_target)$/.test(key) ? "<id>" : v;
 }
 
 test("255: эталон ui-ref-shield-empty — форма щитка по умолчанию (рейка + ввод с 3 портами)", () => {
@@ -333,16 +351,28 @@ test("255: shield_module_delete — позиции правее уменьшаю
   assert.throws(() => deleteShieldModule(m, shield.id, "no_such"), (e: unknown) => (e as McpError).code === "NOT_FOUND");
 });
 
-test("255: провода/шины в щитке запрещают операции с модулями (формат — следующий этап)", () => {
+test("284: провода не запрещают операции с модулями/рейками (запрет 255 снят, как в редакторе)", () => {
   const { m, shield } = scenario();
   const { module: mod } = addShieldModule(m, shield.id, { type: "shield_module" });
   const s = findShieldByItem(m, shield.id)!;
-  (s.wires as Record<string, unknown>)["w1"] = { id: "w1" };
-  const before = structuredClone(s);
-  assert.throws(() => addShieldModule(m, shield.id, { type: "shield_module" }), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
-  assert.throws(() => deleteShieldModule(m, shield.id, mod.id), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
-  assert.throws(() => addShieldRail(m, shield.id), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
-  assert.deepEqual(findShieldByItem(m, shield.id), before);
+  (s.wires as Record<string, never>)["w1"] = { id: "w1", id_source: "x", id_target: "y", type: "shield_wire_phase", is_broken: 0 } as never;
+  // добавление модуля/рейки проходит при непустых проводах
+  addShieldModule(m, shield.id, { type: "shield_module" });
+  addShieldRail(m, shield.id);
+  assert.equal(Object.values(s.rails).length, 2);
+  // удаление модуля — провода к его портам каскадно, чужие остаются
+  const { module: m2 } = addShieldModule(m, shield.id, { type: "shield_module_x2" });
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: m2.id, port: 0 }, target: { module_id: mod.id, port: 0 } });
+  const wKeep = addShieldWire(m, shield.id, { type: "shield_wire_null", source: { module_id: mod.id, port: 1 }, target: { input: "earth" } });
+  const res = deleteShieldModule(m, shield.id, m2.id);
+  const sh = findShieldByItem(m, shield.id)!;
+  assert.equal(res.deleted_wires.length, 1);
+  assert.ok(!sh.wires[res.deleted_wires[0]!]);
+  assert.ok(sh.wires[wKeep.wire.id], "провод без отношения к удалённому остался");
+  // connected портов пересчитан
+  const modPorts = Object.values(Object.values(sh.rails)[0]!.modules)[0]!.ports;
+  assert.equal(modPorts[0]!.connected, 0);
+  assert.equal(modPorts[1]!.connected, 1);
 });
 
 // ---------- удаление без висячих ссылок ----------
@@ -578,7 +608,7 @@ test("256 №5: мутации проекции — порты, inputs, comment,
     ["width модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.width = 2; }],
     ["shield_id перепривязан", (s) => { s.shield_id = "other_item"; }],
     ["buses изменены", (s) => { s.buses = { b1: { id: "b1" } }; }],
-    ["wires изменены", (s) => { s.wires = { w1: { id: "w1" } }; }],
+    ["wires изменены", (s) => { s.wires = { w1: { id: "w1", id_source: "p1", id_target: "p2", type: "shield_wire_phase", is_broken: 0 } } as never; }],
     ["collectors изменены", (s) => { s.collectors = { c1: { id: "c1" } }; }],
     ["index модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.index = 5; }],
     ["rail_id модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.rail_id = "other_rail"; }],
@@ -798,4 +828,402 @@ test("255: mock save — сервер испортил номинал модул
     const list = (err.details as Record<string, unknown>)["shield_mismatches"] as string[] | undefined;
     return Array.isArray(list) && list.length > 0;
   });
+});
+
+// ---------- 284: провода ----------
+
+/** Щиток с 3 модулями и вводом (для проводов). */
+function wiresScenario(): { m: Model; shield: ItemProps; s: Shield; mA: Shield["rails"][string]["modules"][string]; mB: ReturnType<typeof findShieldModule>; inputPorts: Shield["inputs"][string]["ports"] } {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module_x2", subtype: "16A/30mA" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  return { m, shield, s, mA: mods[0]!, mB: mods[1]!, inputPorts: Object.values(s.inputs)[0]!.ports };
+}
+
+test("284: эталон ui-ref-shield-wires — маскированная форма щитка с проводами воспроизводится addShieldWire", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-shield-wires.json"), "utf8")) as { shields: Record<string, Shield> };
+  const ref = Object.values(fx.shields)[0]!;
+  // эталон проходит импорт
+  assert.doesNotThrow(() => parseModelImport({ ...baseModel(), shields: { [ref.id]: structuredClone(ref) } }));
+  // воспроизводится операциями MCP как маскированная форма ЦЕЛИКОМ (2 порт+3 порта модулей)
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module_x2", subtype: "16A/30mA" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  const [mA, mB, mC] = mods as [typeof mods[number], typeof mods[number], typeof mods[number]];
+  const inputEarth = Object.values(s.inputs)[0]!.ports.find((p) => p.type === "shield_wire_earth")!;
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB.id, port: 0 } });
+  addShieldWire(m, shield.id, { type: "shield_wire_null", source: { module_id: mB.id, port: 2 }, target: { module_id: mC.id, port: 0 } });
+  addShieldWire(m, shield.id, { type: "shield_wire_earth", source: { module_id: mC.id, port: 1 }, target: { input: "earth" } });
+  const got = findShieldByItem(m, shield.id)!;
+  assert.deepEqual(maskedUnordered(structuredClone(got)), maskedUnordered(structuredClone(ref)), "форма щитка с проводами ≠ эталону UI");
+  // connected портов как в эталоне: земляной порт ввода connected 1
+  const gotInput = Object.values(got.inputs)[0]!.ports.find((p) => p.type === "shield_wire_earth")!;
+  assert.equal(gotInput.connected, 1);
+  void inputEarth;
+});
+
+test("284: shield_wire_add — валидация: тип, ссылки, петля, лимит", () => {
+  const { m, shield, mA, inputPorts } = wiresScenario();
+  // неизвестный тип
+  assert.throws(
+    () => addShieldWire(m, shield.id, { type: "shield_wire_foo", source: { module_id: mA.id, port: 0 }, target: { input: "null" } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // оба/ни одного источника
+  assert.throws(
+    () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: {}, target: { input: "null" } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  assert.throws(
+    () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0, input: "null" }, target: { input: "null" } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // порт за пределами
+  assert.throws(
+    () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 5 }, target: { input: "null" } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // несуществующий модуль
+  assert.throws(
+    () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: "no_such", port: 0 }, target: { input: "null" } }),
+    (e: unknown) => (e as McpError).code === "NOT_FOUND",
+  );
+  // петля
+  assert.throws(
+    () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mA.id, port: 0 } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // input-типы не из тройки — NOT_FOUND (порт ввода не найден)
+  assert.throws(
+    () => addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { input: "zero" as never } }),
+    (e: unknown) => (e as McpError).code === "NOT_FOUND",
+  );
+  void inputPorts;
+  // атомарность: после отказов проводов нет
+  const s = findShieldByItem(m, shield.id)!;
+  assert.equal(Object.keys(s.wires ?? {}).length, 0);
+});
+
+test("284: несколько проводов с одного порта разрешены (эталон 284-wire-cases); connected пересчитан", () => {
+  const { m, shield, mA, mB } = wiresScenario();
+  const w1 = addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } });
+  const w2 = addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 1 } });
+  const s = findShieldByItem(m, shield.id)!;
+  assert.equal(Object.keys(s.wires).length, 2);
+  const mAports = Object.values(s.rails).flatMap((r) => Object.values(r.modules)).find((x) => x.id === mA.id)!.ports;
+  assert.equal(mAports[0]!.connected, 1);
+  const mBports = Object.values(s.rails).flatMap((r) => Object.values(r.modules)).find((x) => x.id === mB!.id)!.ports;
+  assert.equal(mBports[0]!.connected, 1);
+  assert.equal(mBports[1]!.connected, 1);
+  // форма провода как в эталоне (id_source/id_target — id портов, thickness 0, is_broken 0)
+  assert.deepEqual(
+    maskedForm(structuredClone(s.wires[w1.wire.id]!)),
+    maskedForm({ id: "<id>", id_source: mAports[0]!.id, id_target: mBports[0]!.id, type: "shield_wire_phase", thickness: 0, is_broken: 0 }),
+  );
+  void w2;
+});
+
+test("284: shield_wire_delete — connected портов пересчитан; NOT_FOUND", () => {
+  const { m, shield, mA, mB } = wiresScenario();
+  const { wire } = addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } });
+  deleteShieldWire(m, shield.id, wire.id);
+  const s = findShieldByItem(m, shield.id)!;
+  assert.equal(Object.keys(s.wires).length, 0);
+  const mAports = Object.values(s.rails).flatMap((r) => Object.values(r.modules)).find((x) => x.id === mA.id)!.ports;
+  assert.equal(mAports[0]!.connected, 0);
+  assert.throws(() => deleteShieldWire(m, shield.id, wire.id), (e: unknown) => (e as McpError).code === "NOT_FOUND");
+});
+
+test("284: провод к порту шины (живой эталон) — connected и connection шины пересчитываются", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-shield-bus.json"), "utf8")) as { shields: Record<string, Shield> };
+  const ref = Object.values(fx.shields)[0]!;
+  // эталон шины с проводом проходит импорт и сверку проекции (форма UI не теряется)
+  assert.doesNotThrow(() => parseModelImport({ ...baseModel(), shields: { [ref.id]: structuredClone(ref) } }));
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  const s = findShieldByItem(m, shield.id)!;
+  // шина из эталона (формат — следующий PR, MCP шины не пишет); провод к её порту
+  // вписан как его сериализует редактор (порт шины в API не выражается), дальше —
+  // пересчёты validateShieldDerived как у редактора
+  const refBus = Object.values(ref.buses)[0] as unknown as Record<string, unknown>;
+  s.buses = { [String(refBus["id"])]: structuredClone(refBus) } as Shield["buses"];
+  const bus = Object.values(s.buses)[0] as unknown as { id: string; ports: Shield["inputs"][string]["ports"]; connection?: string };
+  const busPort = bus.ports[0]!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  (s.wires as Record<string, never>)["wb"] = {
+    id: "wb", id_source: mods[0]!.ports[0]!.id, id_target: busPort.id,
+    type: "shield_wire_phase", thickness: 0, is_broken: 0,
+  } as never;
+  validateShieldDerived(s);
+  const afterAdd = findShieldByItem(m, shield.id)!;
+  const busAfterAdd = Object.values(afterAdd.buses)[0] as unknown as { ports: Shield["inputs"][string]["ports"]; connection?: string };
+  assert.equal(busAfterAdd.ports[0]!.connected, 1);
+  assert.equal(busAfterAdd.connection, "shield_wire_phase");
+  // удаление провода: connected и connection шины обнулены (validate_buses)
+  deleteShieldWire(m, shield.id, "wb");
+  const afterDel = findShieldByItem(m, shield.id)!;
+  const busAfterDel = Object.values(afterDel.buses)[0] as unknown as { ports: Shield["inputs"][string]["ports"]; connection?: string };
+  assert.equal(busAfterDel.ports[0]!.connected, 0);
+  assert.equal(busAfterDel.connection, "");
+});
+
+test("284: каскад — коллектор с <2 модулями после удаления модуля удаляется (validate_collectors)", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-shield-collector.json"), "utf8")) as { shields: Record<string, Shield> };
+  const ref = Object.values(fx.shields)[0]!;
+  assert.doesNotThrow(() => parseModelImport({ ...baseModel(), shields: { [ref.id]: structuredClone(ref) } }));
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "32A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  const collectorFormat = Object.values(ref.collectors)[0] as unknown as { module_width: number; position: string };
+  s.collectors = {
+    c1: { id: "c1", rail_id: Object.values(s.rails)[0]!.id, module_width: collectorFormat.module_width, modules: { [mods[0]!.id]: mods[0]!.id, [mods[1]!.id]: mods[1]!.id }, position: collectorFormat.position } as never,
+  };
+  // удалить первый модуль коллектора → остался 1 модуль → коллектор удалён
+  const res = deleteShieldModule(m, shield.id, mods[0]!.id);
+  const after = findShieldByItem(m, shield.id)!;
+  assert.deepEqual(res.deleted_collectors, ["c1"]);
+  assert.equal(Object.keys(after.collectors).length, 0);
+  // коллектор на двух живых модулях не трогается удалением стороннего модуля
+  s.collectors = {
+    c2: { id: "c2", rail_id: Object.values(after.rails)[0]!.id, module_width: 1, modules: { [mods[1]!.id]: mods[1]!.id, [mods[2]!.id]: mods[2]!.id }, position: "T" } as never,
+  };
+  const res2 = deleteShieldModule(m, shield.id, mods[2]!.id);
+  assert.deepEqual(res2.deleted_collectors, ["c2"]);
+});
+
+test("284: mock save — провода сохраняются verified; потеря провода → NORMALIZATION_DROPPED", async () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mods[0]!.id, port: 0 }, target: { module_id: mods[1]!.id, port: 0 } });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {});
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true, JSON.stringify(res).slice(0, 500));
+  const saved = Object.values(server.model.shields as Record<string, Shield>)[0]!;
+  assert.equal(Object.keys(saved.wires).length, 1);
+  assert.equal(Object.values(saved.wires)[0]!.type, "shield_wire_phase");
+});
+
+test("284: mock save — нормализатор потерял провод → NORMALIZATION_DROPPED", async () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mods[0]!.id, port: 0 }, target: { module_id: mods[1]!.id, port: 0 } });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    for (const sh of Object.values(norm.shields as Record<string, Shield>)) sh.wires = {};
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => (e as McpError).code === "NORMALIZATION_DROPPED");
+});
+
+test("284: mock save — сервер испортил тип провода → SITE_ERROR с shield_mismatches", async () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mods[0]!.id, port: 0 }, target: { module_id: mods[1]!.id, port: 0 } });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (srv) => {
+    const saved = Object.values(srv.model.shields as Record<string, Shield>)[0]!;
+    Object.values(saved.wires)[0]!.type = "shield_wire_null";
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const err = e as McpError;
+    if (!(err instanceof McpError && err.code === "SITE_ERROR")) return false;
+    const list = (err.details as Record<string, unknown>)["shield_mismatches"] as string[] | undefined;
+    return Array.isArray(list) && list.length > 0;
+  });
+});
+
+test("284: projection — редактор переставил ключи словаря проводов → не расхождение", () => {
+  const { m, shield, mA, mB } = wiresScenario();
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } });
+  const s = findShieldByItem(m, shield.id)!;
+  const reordered = structuredClone(s);
+  const entries = Object.entries(reordered.wires);
+  reordered.wires = Object.fromEntries(entries.reverse());
+  assert.deepEqual(shieldMismatches({ [s.id]: s }, { [s.id]: reordered }), []);
+});
+
+test("284: компакт — провода с адресами портов (module/port, input)", () => {
+  const { m, shield, mA, mB } = wiresScenario();
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } });
+  addShieldWire(m, shield.id, { type: "shield_wire_earth", source: { module_id: mB!.id, port: 3 }, target: { input: "earth" } });
+  const c = compactModel(m, []) as unknown as { shields: { wires: { wire_id: string; type: string; from: Record<string, unknown>; to: Record<string, unknown> }[] }[] };
+  const sh = c.shields[0]!;
+  assert.equal(sh.wires?.length, 2);
+  const w1 = sh.wires.find((w) => w.type === "shield_wire_phase")!;
+  const w2 = sh.wires.find((w) => w.type === "shield_wire_earth")!;
+  assert.deepEqual(w1!.from, { module_id: mA.id, port: 0 });
+  assert.deepEqual(w1!.to, { module_id: mB!.id, port: 0 });
+  assert.deepEqual(w2!.to, { input: "earth" });
+});
+
+test("284: импорт — провод с мусорным id_source сверх схемы отклоняется", () => {
+  const { m, shield, mA, mB } = wiresScenario();
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mA.id, port: 0 }, target: { module_id: mB!.id, port: 0 } });
+  const s = findShieldByItem(m, shield.id)!;
+  const bad = structuredClone(s);
+  Object.values(bad.wires)[0]!.id_source = 42 as never;
+  assert.throws(() => parseModelImport({ ...baseModel(), shields: { [s.id]: bad } }));
+});
+
+// ---------- 284: перенос модуля между рейками и порядок ----------
+
+test("284: перенос модуля на другую рейку — в конец целевой, индексы старой сдвинуты, провода живы", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldRail(m, shield.id);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module_x2", subtype: "16A/30mA" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A", rail: 1 });
+  const s = findShieldByItem(m, shield.id)!;
+  const rails = Object.values(s.rails).sort((a, b) => a.index - b.index);
+  const mod0 = Object.values(rails[0]!.modules).sort((a, b) => a.index - b.index)[0]!;
+  const mod2 = Object.values(rails[1]!.modules)[0]!;
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mod0.id, port: 0 }, target: { module_id: mod2.id, port: 0 } });
+  // перенос первого модуля на рейку 1 → в конец рейки (index 1)
+  moveShieldModuleToRail(s, mod0, 1);
+  const rails2 = Object.values(s.rails).sort((a, b) => a.index - b.index);
+  assert.equal(mod0.rail_id, rails2[1]!.id);
+  assert.equal(mod0.index, 1);
+  // индексы старой рейки пересчитаны
+  const rail0mods = Object.values(rails2[0]!.modules).sort((a, b) => a.index - b.index);
+  assert.deepEqual(rail0mods.map((x) => x.index), [0]);
+  // провод жив (порты переехали с модулем), connected сохранён
+  assert.equal(Object.keys(s.wires).length, 1);
+  assert.equal(Object.values(s.wires)[0]!.id_source, mod0.ports[0]!.id);
+  assert.equal(mod0.ports[0]!.connected, 1);
+  // переполнение целевой рейки — INVALID_ARGUMENT (MCP строже редактора)
+  const modA = Object.values(rails2[1]!.modules).sort((x, y) => x.index - y.index)[0]!;
+  for (let i = 0; i < 23; i++) addShieldModule(m, shield.id, { type: "shield_module_x2", rail: 0 });
+  const s2 = findShieldByItem(m, shield.id)!;
+  const rails3 = Object.values(s2.rails).sort((a, b) => a.index - b.index);
+  assert.throws(() => moveShieldModuleToRail(s2, modA, 0), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
+});
+
+test("284: перенос модуля из коллектора — INVALID_ARGUMENT (коллектор — следующий PR)", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldRail(m, shield.id);
+  addShieldModule(m, shield.id, { type: "shield_module" });
+  addShieldModule(m, shield.id, { type: "shield_module" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules);
+  s.collectors = { c1: { id: "c1", rail_id: Object.values(s.rails)[0]!.id, module_width: 1, modules: { [mods[0]!.id]: mods[0]!.id }, position: "T" } as never };
+  assert.throws(() => moveShieldModuleToRail(s, mods[0]!, 1), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
+});
+
+test("284: reorder — сдвиг соседей в обе стороны; модуль шире 1 DIN — только к началу соседа", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module_x2", subtype: "16A/30mA" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "32A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const rail = Object.values(s.rails)[0]!;
+  const mods = () => Object.values(rail.modules).sort((x, y) => x.index - y.index);
+  const [a, b, c, d] = mods() as [ReturnType<typeof mods>[number], ReturnType<typeof mods>[number], ReturnType<typeof mods>[number], ReturnType<typeof mods>[number]];
+  // рейка: a(0, 1 DIN), b(1, 2 DIN), c(3, 1 DIN), d(4, 1 DIN); слот 2 — внутри b,
+  // его последний DIN → 1-полюсный a ставится туда, b сдвигается влево (алгоритм
+  // reorder_modules редактора)
+  reorderShieldModule(s, a, 2);
+  assert.deepEqual(mods().map((x) => x.id), [b!.id, a!.id, c!.id, d!.id]);
+  assert.deepEqual(mods().map((x) => x.index), [0, 2, 3, 4]);
+  // обратно: a (index 2) на позицию 0 — b сдвигается вправо
+  reorderShieldModule(s, a, 0);
+  assert.deepEqual(mods().map((x) => x.id), [a!.id, b!.id, c!.id, d!.id]);
+  // 2-полюсный модуль (b) на позицию 0 — к началу соседа a, a сдвигается
+  reorderShieldModule(s, b, 0);
+  assert.deepEqual(mods().map((x) => x.id), [b!.id, a!.id, c!.id, d!.id]);
+  assert.deepEqual(mods().map((x) => x.index), [0, 2, 3, 4]);
+  // позиция внутри самого модуля — no-op (как reorder_modules редактора)
+  reorderShieldModule(s, b, 1);
+  assert.deepEqual(mods().map((x) => x.index), [0, 2, 3, 4]);
+  // позиция не начало соседа (3 занята c, «внутри» нельзя для b?) — c 1 DIN:
+  // позиция 3 = начало c — разрешено; позиция 4 = начало d — разрешено;
+  // несуществующий слот (1 — внутри b) — no-op выше; за концом — отказ
+  assert.throws(() => reorderShieldModule(s, a, 9), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
+  assert.equal(Object.keys(s.wires ?? {}).length, 0);
+});
+
+test("284: shield_module_update с rail/index — перенос и порядок одним вызовом", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldRail(m, shield.id);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A", rail: 1 });
+  const s = findShieldByItem(m, shield.id)!;
+  const mod0 = Object.values(Object.values(s.rails).sort((x, y) => x.index - y.index)[0]!.modules)[0]!;
+  updateShieldModule(m, shield.id, mod0.id, { rail: 1 });
+  const s2 = findShieldByItem(m, shield.id)!;
+  const rails = Object.values(s2.rails).sort((x, y) => x.index - y.index);
+  assert.equal(mod0.rail_id, rails[1]!.id);
+  assert.equal(mod0.index, 1);
+  // порядок на рейке: модуль с index 1 на позицию 0
+  updateShieldModule(m, shield.id, mod0.id, { index: 0 });
+  assert.equal(mod0.index, 0);
+  // позиция за концом рейки — отказ, модель не меняется
+  assert.throws(() => updateShieldModule(m, shield.id, mod0.id, { index: 5 }), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
+});
+
+test("284: каскад удаления рейки — провода её модулей и коллекторы удалены, чужие целы", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldRail(m, shield.id);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A", rail: 1 });
+  const s = findShieldByItem(m, shield.id)!;
+  const rails = Object.values(s.rails).sort((a, b) => a.index - b.index);
+  const mod0 = Object.values(rails[0]!.modules)[0]!;
+  const mod1 = Object.values(rails[1]!.modules)[0]!;
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mod0.id, port: 0 }, target: { module_id: mod0.id, port: 1 } });
+  addShieldWire(m, shield.id, { type: "shield_wire_null", source: { module_id: mod0.id, port: 0 }, target: { module_id: mod1.id, port: 0 } });
+  const res = deleteShieldRail(m, shield.id, 1);
+  const after = findShieldByItem(m, shield.id)!;
+  assert.equal(res.deleted_modules.length, 1);
+  // провод на удалённой рейке (mod1.target) каскадно; провод mod0.p0→mod0.p1 цел
+  assert.equal(res.deleted_wires.length, 1);
+  assert.equal(Object.keys(after.wires).length, 1);
+  // индексы рейк пересчитаны
+  assert.deepEqual(Object.values(after.rails).map((r) => r.index), [0]);
+});
+
+test("284: импорт — лимит проводов щитка (мусор сверх лимита → INVALID_ARGUMENT)", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  const s = findShieldByItem(m, shield.id)!;
+  const wires: Record<string, unknown> = {};
+  for (let i = 0; i < 201; i++) wires[`w${i}`] = { id: `w${i}`, id_source: "a", id_target: "b", type: "shield_wire_phase", is_broken: 0 };
+  assert.throws(
+    () => parseModelImport({ ...baseModel(), shields: { [s.id]: { ...structuredClone(s), wires } } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
 });
