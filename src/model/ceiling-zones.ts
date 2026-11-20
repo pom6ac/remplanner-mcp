@@ -558,35 +558,52 @@ function restoreNichesByGeometry(oldRecords: Rec[], newRecords: Rec[], heirZoneO
     for (let idx = 0; idx < edges.length; idx++) {
       const e = edges[idx]!;
       if (!e.p1 || !e.p2) continue;
-      const clip = crossLineSpan(item.line, { p1: e.p1, p2: e.p2 });
-      if (!clip) continue; // у записи-наследника нет ребра на линии ниши
+      const edgeSeg = { p1: e.p1, p2: e.p2 };
+      const ref = item.edgeLine;
+      // режим 4: концы, совпавшие с концами СТАРОГО ребра, → концы нового ребра,
+      // иные — проекция на прямую нового ребра; затем обрезка по новому ребру
+      const remap = (p: Point): Point =>
+        ref && eq(p, ref.p1) ? { ...e.p1! }
+        : ref && eq(p, ref.p2) ? { ...e.p2! }
+        : projectOnLine(p, edgeSeg);
+      const parts = (item.container["parts"] ?? {}) as Record<string, Rec>;
+      // ревью 315 F1: ребро-хозяин выбирается по ОТОБРАЖЁННОЙ линии части
+      // (как в редакторе режима 4: isCrossLineProjection + непустой crossLine),
+      // а не по старому ребру; у частичной ниши линия короче ребра — ребро без
+      // перекрытия с ней не хозяин, отказ честный. Перепривязка концов (remap)
+      // применяется уже к выбранному ребру — проектор не тянет линию на
+      // параллельные рёбра.
+      const mappedParts: Array<{ part: Rec; span: { p1: Point; p2: Point } }> = [];
+      let host = true;
+      for (const part of Object.values(parts)) {
+        const pl = part["line"] as { p1?: Point; p2?: Point } | undefined;
+        if (!pl?.p1 || !pl?.p2) continue;
+        const orig = { p1: pl.p1, p2: pl.p2 };
+        if (!crossLineSpan(orig, edgeSeg)) {
+          host = false;
+          break;
+        }
+        const mapped = { p1: remap(pl.p1), p2: remap(pl.p2) };
+        const span = crossLineSpan(mapped, edgeSeg);
+        if (!span) {
+          host = false;
+          break;
+        }
+        mappedParts.push({ part, span });
+      }
+      if (!host) continue; // у записи-наследника нет ребра на линии ниши
       if (!Array.isArray(rec["niches"])) rec["niches"] = edges.map(() => ({ exist: false }) as Rec);
       const niches = rec["niches"] as Rec[];
       if (niches[idx]!["exist"] === true) continue; // ребро уже занято другой нишей
-      const container = item.container;
-      const parts = (container["parts"] ?? {}) as Record<string, Rec>;
-      for (const part of Object.values(parts)) {
-        const pl = part["line"] as { p1?: Point; p2?: Point } | undefined;
-        if (pl?.p1 && pl?.p2) {
-          // режим 4: концы, совпавшие с концами СТАРОГО ребра, → концы нового ребра,
-          // иные — проекция на прямую нового ребра; затем обрезка по новому ребру
-          const ref = item.edgeLine;
-          const remap = (p: Point): Point =>
-            ref && eq(p, ref.p1) ? { ...e.p1! }
-            : ref && eq(p, ref.p2) ? { ...e.p2! }
-            : projectOnLine(p, { p1: e.p1!, p2: e.p2! });
-          const mapped = { p1: remap(pl.p1), p2: remap(pl.p2) };
-          const span = crossLineSpan(mapped, { p1: e.p1!, p2: e.p2! });
-          if (span) {
-            part["line"] = {
-              p1: { x: Math.round(span.p1.x * 100) / 100, y: Math.round(span.p1.y * 100) / 100 },
-              p2: { x: Math.round(span.p2.x * 100) / 100, y: Math.round(span.p2.y * 100) / 100 },
-            };
-          }
-        }
+      const setLine = (part: Rec, span: { p1: Point; p2: Point }): void => {
+        part["line"] = {
+          p1: { x: Math.round(span.p1.x * 100) / 100, y: Math.round(span.p1.y * 100) / 100 },
+          p2: { x: Math.round(span.p2.x * 100) / 100, y: Math.round(span.p2.y * 100) / 100 },
+        };
         if (typeof rec["id"] === "string") part["id_ceiling"] = rec["id"];
-      }
-      niches[idx] = container;
+      };
+      for (const { part, span } of mappedParts) setLine(part, span);
+      niches[idx] = item.container;
       placed.add(item);
       break;
     }

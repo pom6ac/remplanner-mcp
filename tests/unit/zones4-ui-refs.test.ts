@@ -580,6 +580,42 @@ test("315 F2: nichesSig различает перенос ниши между к
   assert.deepEqual(sig2.map((n) => n.pid), ["wallT2"], `сигнатура ниши на wallT2: ${JSON.stringify(sig2)}`);
 });
 
+// ---------- ревью 315 F1: частичная ниша не ставится на ребро вне её линии ----------
+
+test("315 F1: частичная ниша вне рёбер наследника — отказ с подсказкой, не молча (315-exp2)", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  withEdgePids(model, "room1");
+  addCeilingRigel(model, "room1", { start: { x: 2500, y: 1005 }, end: { x: 2500, y: 2995 } });
+  setCeilingFinish(model, "room1", "stretch_ceiling", {});
+  addCeilingNiche(model, "room1", "wallT");
+  // частичная ниша правой зоны (как после ручной правки в UI): линия 360..397.5
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  let edited = 0;
+  for (const c of ceilings) {
+    for (const n of (c["niches"] ?? []) as Array<Record<string, unknown>>) {
+      if (n?.exist !== true) continue;
+      for (const p of Object.values((n["parts"] ?? {}) as Record<string, Record<string, unknown>>)) {
+        const line = p["line"] as { p1: Pt; p2: Pt };
+        if (line.p1.x > 250 || line.p2.x > 250) {
+          p["line"] = { p1: { x: 360, y: 100 }, p2: { x: 397.5, y: 100 } };
+          edited += 1;
+        }
+      }
+    }
+  }
+  assert.equal(edited, 1, "правится ниша одной (правой) зоны");
+  // zone_ceiling x=340: наследник отделки правой зоны — зона [255..340], у которой
+  // на линии ниши (360..397.5) ребра нет — ребро-хозяин не выбирается, отказ
+  assert.throws(
+    () => addZoneCeiling(model, "room1", { fromMm: { x: 3400, y: 1000 }, toMm: { x: 3400, y: 3000 } }),
+    (e: unknown) => {
+      const err = e as { code?: string; message?: string };
+      return err.code === "INVALID_ARGUMENT" && /finish_ceiling_niche_remove/.test(err.message ?? "");
+    },
+    "частичная ниша не ставится молча на ребро вне её линии",
+  );
+});
+
 // ---------- ревью 313 №4: ниши переносятся только в зону-наследника отделки ----------
 
 test("314 №4: ниша уходит в зону-наследника отделки, линия обрезается по ребру зоны (N1)", () => {
