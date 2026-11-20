@@ -989,9 +989,16 @@ shield_module, x2_simple, x2, uzo, uzo_fire, x3, off_switch_x3);
   `floor_cap` («Стяжка»), zone_ceiling → `ceiling` (эталоны
   ui-ref-floorzone/hydrozone/capzone-delimiter). Кнопка на листах отделки одна и та
   же (`plannertool_zone_floor`), тип записи задаёт активный лист (проба 296-zone-ui).
-  `zone_c` (лист «Перегородки», своя семантика зонирования перегородками) — вынесен
-  в следующий PR: кнопка `plannertool_zone` на листе есть (разведка 303, тип не
-  служебный, план "c").
+- **Зонирование ч.5 [этап 318]** — `zone_c` (лист «Перегородки», кнопка
+  `plannertool_zone`): план "c", формат общий с ZoneDelimitering (живой эталон
+  ui-ref-zonec-delimiter; проба 318-zonec-name), ОБЕ вершины несут привязку zone
+  к ребру комнаты (`type: "room"`, room_id, edge, edge_index, edge_side,
+  edge_pid/edge_pids — как mouseup редактора). Деление зон: `Room2.updateZones("c")`
+  режет `rooms2[].zones`; наследники — безымянные записи `{polygon, edges,
+  exist:false}` (`name:"none"`), имя зоны-родителя НЕ переносится, имя помещения
+  остаётся в `room.name` (живая проба 318). Чистый save редактора делитель
+  сохраняет; MCP save не теряет делители, существующие в editor/GET (ингест при
+  project_open/импорте).
   Проверки (check_delimiter) общие: концы в одной комнате, на рёбрах (15 см);
   пересечение рёбер, стен, колонн и ДРУГИХ РАЗДЕЛИТЕЛЕЙ ТОГО ЖЕ plan и комнаты
   запрещено (разделители разных планов могут пересекаться); проверка ригелей и
