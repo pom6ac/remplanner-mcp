@@ -158,6 +158,18 @@ test("258 №3: активный пункт с вложенной разметк
   assert.equal(parseClientPage(html).tariff, "pro");
 });
 
+// Шаг 260: живая разметка ЛК — активный пункт содержит ссылку «сменить»
+// (user_cabinet_pro_status_upgrade); её подпись не ломает распознавание PRO.
+// Фикстура — обезличенный фрагмент реальной страницы /client/ (без email/имени/ID).
+test("260: живой фрагмент ЛК с ссылкой «сменить» в активном пункте — pro", async () => {
+  const { readFileSync } = await import("node:fs");
+  const fixture = readFileSync(new URL("../../tests/fixtures/client-page-pro-fragment.html", import.meta.url), "utf8");
+  const html = `<div id="clientline" class="is_logged">user</div>\n${fixture}`;
+  assert.equal(parseClientPage(html).tariff, "pro");
+  // то же без оболочки clientline: тариф по блоку pro_status определяется и так
+  assert.equal(parseClientPage(fixture).tariff, "pro");
+});
+
 test("isReloadResponse: reload:101", () => {
   assert.equal(isReloadResponse({ reload: 101 }), true);
   assert.equal(isReloadResponse({ result: "success" }), false);

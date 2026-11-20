@@ -38,6 +38,9 @@ const FREE_RE = /Версия PRO:\s*не\s+подключ[её]на|в бесп
  *  токеном `active` (границы слова: inactive/notactive не совпадают). */
 const PRO_STATUS_ITEM_RE = /<[^>]*\sclass="([^"]*\buser_cabinet_pro_status_item\b[^"]*)"[^>]*>/g;
 const ACTIVE_TOKEN_RE = /(^|\s)active(\s|$)/;
+/** Ссылка «сменить» внутри активного пункта (живая разметка ЛК, шаг 260):
+ *  её подпись не часть названия тарифа — вырезается до stripTags. */
+const UPGRADE_LINK_RE = /<a\b[^>]*\buser_cabinet_pro_status_upgrade\b[^>]*>[\s\S]*?<\/a>/i;
 
 /** Разбор HTML личного кабинета /client/ (только чтение). */
 export function parseClientPage(html: string): ClientPageInfo {
@@ -54,7 +57,7 @@ export function parseClientPage(html: string): ClientPageInfo {
   const items = starts.map((m, i) => {
     const from = m.index + m[0].length;
     const to = i + 1 < starts.length ? starts[i + 1]!.index : Math.min(from + 400, html.length);
-    const chunk = html.slice(from, to);
+    const chunk = html.slice(from, to).replace(UPGRADE_LINK_RE, " ");
     const close = /<\/div>/i.exec(chunk);
     const text = stripTags(close ? chunk.slice(0, close.index) : chunk).trim();
     return { cls: m[1]!, text };
