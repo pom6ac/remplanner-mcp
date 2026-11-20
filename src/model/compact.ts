@@ -1,4 +1,4 @@
-import type { Cable, ElecCable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip, WarmFloor, Shield } from "./types.ts";
+import type { Cable, ElecCable, Model, Wall, GasLine, Pipe, LedStrip, StripLight, LineStrip, WarmFloor, Shield, ShieldPort } from "./types.ts";
 import { cmToMm, round0 } from "./units.ts";
 import { roomPolygons, type RoomPolygon } from "./rooms.ts";
 import { holeOffsetFromStart } from "./openings.ts";
@@ -321,8 +321,9 @@ export type CompactShieldWire = {
   wire_id: string;
   /** shield_wire_phase|phase2|phase3|null|earth. */
   type: string;
-  from: { module_id?: string; port?: number; input?: "phase" | "null" | "earth" };
-  to: { module_id?: string; port?: number; input?: "phase" | "null" | "earth" };
+  // ревью 285 №10: порт шины виден агенту — {bus: <bus_id>, port: n}
+  from: { module_id?: string; port?: number; input?: "phase" | "null" | "earth"; bus?: string };
+  to: { module_id?: string; port?: number; input?: "phase" | "null" | "earth"; bus?: string };
   is_broken?: number;
 };
 
@@ -755,11 +756,18 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
           (mod.ports ?? []).forEach((p, idx) => moduleByPort.set(p.id, { module_id: mod.id, port: idx }));
         }
       }
+      // ревью 285 №10: порт шины — {bus: <bus_id>, port: n} вместо пустого {}
+      const busByPort = new Map<string, { bus: string; port: number }>();
+      for (const bus of Object.values(shield.buses ?? {}) as Array<{ id: string; ports?: ShieldPort[] }>) {
+        (bus.ports ?? []).forEach((p, idx) => busByPort.set(p.id, { bus: bus.id, port: idx }));
+      }
       const portRef = (portId: string): CompactShieldWire["from"] => {
         const m = moduleByPort.get(portId);
         if (m) return { module_id: m.module_id, port: m.port };
         const inp = inputPortByKey.get(portId);
         if (inp) return { input: inp };
+        const bus = busByPort.get(portId);
+        if (bus) return { bus: bus.bus, port: bus.port };
         return {};
       };
       const wires = Object.values(shield.wires ?? {})

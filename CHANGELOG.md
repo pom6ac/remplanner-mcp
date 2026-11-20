@@ -296,7 +296,8 @@
   переезжают вместе с модулем. Перенос/порядок модулей внутри коллектора —
   INVALID_ARGUMENT до отдельного этапа.
 - **В model_get** (compact): `shields[].wires[]` — провода с адресами портов
-  (`from`/`to`: `{module_id, port}` или `{input}`), `shields[].buses`/
+  (`from`/`to`: `{module_id, port}`, `{input}` или `{bus, port}` для порта шины —
+  ревью 285 №10; раньше порт шины показывался пустым `{}`), `shields[].buses`/
   `.collectors` — счётчики. Аддитивные публичные ключи этого этапа:
   `shields[].wires[]` (compact), `deleted_wires`/`deleted_collectors` в
   ответах shield_module_delete/shield_rail_delete.

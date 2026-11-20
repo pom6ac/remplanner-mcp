@@ -972,6 +972,11 @@ test("284: провод к порту шины (живой эталон) — con
   const busAfterAdd = Object.values(afterAdd.buses)[0] as unknown as { ports: Shield["inputs"][string]["ports"]; connection?: string };
   assert.equal(busAfterAdd.ports[0]!.connected, 1);
   assert.equal(busAfterAdd.connection, "shield_wire_phase");
+  // ревью 285 №10: провод к порту шины виден агенту в model_get — {bus, port},
+  // а не пустые from/to
+  const compactBus = (compactModel(m, []) as unknown as { shields: { wires: { wire_id: string; to: Record<string, unknown> }[] }[] }).shields[0]!
+    .wires.find((w) => w.wire_id === "wb")!;
+  assert.deepEqual(compactBus.to, { bus: String(refBus["id"]), port: 0 });
   // удаление провода: connected и connection шины обнулены (validate_buses)
   deleteShieldWire(m, shield.id, "wb");
   const afterDel = findShieldByItem(m, shield.id)!;
@@ -1008,7 +1013,7 @@ test("284: каскад — коллектор с <2 модулями после
   assert.deepEqual(res2.deleted_collectors, ["c2"]);
 });
 
-test("284: mock save — провода сохраняются verified; потеря провода → NORMALIZATION_DROPPED", async () => {
+test("284: mock save — провода сохраняются verified (без потерь)", async () => {
   const { m, shield } = scenario();
   ensureShieldForItem(m, shield);
   addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
@@ -1039,7 +1044,13 @@ test("284: mock save — нормализатор потерял провод �
     for (const sh of Object.values(norm.shields as Record<string, Shield>)) sh.wires = {};
   });
   await ws.open("0", "1");
-  await assert.rejects(() => ws.save(), (e: unknown) => (e as McpError).code === "NORMALIZATION_DROPPED");
+  // ревью 285 №12: spec требует непустой details.shield_mismatches в NORMALIZATION_DROPPED
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const err = e as McpError;
+    if (!(err instanceof McpError && err.code === "NORMALIZATION_DROPPED")) return false;
+    const list = (err.details as Record<string, unknown>)["shield_mismatches"] as string[] | undefined;
+    return Array.isArray(list) && list.length > 0;
+  });
 });
 
 test("284: mock save — сервер испортил тип провода → SITE_ERROR с shield_mismatches", async () => {
