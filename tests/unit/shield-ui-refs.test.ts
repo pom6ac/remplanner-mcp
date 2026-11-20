@@ -1555,6 +1555,26 @@ test("293 №1: провод шина→шина и гнездо→гнездо 
   assert.equal(s.buses[bus2.id]!.connection, "");
 });
 
+// 293 ревью №5: эталон ui-ref-shield-bus (шина TL + провод модуль→гнездо)
+// воспроизводится операциями MCP целиком — shield_bus_add(T, L) + 2 модуля +
+// shield_wire_add {module_id, port} → {bus, port}; сравнение маскированной
+// формой, как у эталона коллектора.
+test("293 №5: эталон ui-ref-shield-bus — маскированная форма щитка с шиной воспроизводится операциями MCP", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-shield-bus.json"), "utf8")) as { shields: Record<string, Shield> };
+  const ref = Object.values(fx.shields)[0]!;
+  assert.doesNotThrow(() => parseModelImport({ ...baseModel(), shields: { [ref.id]: structuredClone(ref) } }));
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  const s0 = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s0.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  const { bus } = addShieldBus(m, shield.id, { position: "T", align: "L" });
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mods[0]!.id, port: 0 }, target: { bus: bus.id, port: 0 } });
+  const got = findShieldByItem(m, shield.id)!;
+  assert.deepEqual(maskedUnordered(structuredClone(got)), maskedUnordered(structuredClone(ref)), "форма щитка с шиной ≠ эталону UI");
+});
+
 // 293 ревью №7: delete_bus редактора вызывает только validate_wires/
 // validate_ports — коллекторы (даже «битые», с <2 известными модулями) не
 // трогаются, иначе импортированный битый коллектор пропадал бы молча
