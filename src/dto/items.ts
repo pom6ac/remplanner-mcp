@@ -3,7 +3,7 @@ import { mm, mmInt, mmPoint } from "./units.ts";
 import { throwNotFound } from "./common.ts";
 import { wallRef } from "./walls.ts";
 import { compactModel } from "../model/compact.ts";
-import { againstWallPlacement, roomPolygons } from "../model/items.ts";
+import { againstWallPlacement, faceOffsetCm, roomPolygons } from "../model/items.ts";
 import { cmToMm, round0 } from "../model/units.ts";
 import type { MmPoint } from "../model/walls.ts";
 import type { Model, ItemProps, Wall } from "../model/types.ts";
@@ -129,7 +129,9 @@ function cornerPoint(corner: string, minX: number, maxX: number, minY: number, m
  * полушириной вдоль стены, угол оси в (−90; 90]. Ревью 190: прежний дубль формулы
  * в DTO смешивал мм и см (нормаль в 10 раз короче), терял полутолщину стены и
  * полуширину и брал нормаль «вправо» без учёта помещения. Публичные мм → см
- * модели; центр ответа — целые мм.
+ * модели; центр ответа — целые мм. Ревью 269 М1: itemName — точка привязки по
+ * виду предмета (одно правило с item_add); probePointCm — пробная точка на
+ * внутренней грани (см) для видов с pc в стене (int_manifold_box).
  */
 export function againstWallCenter(
   wall: Wall,
@@ -137,13 +139,24 @@ export function againstWallCenter(
   itemWidthCm: number,
   itemDepthCm: number,
   rooms: RoomPolygon[],
-): { center: MmPoint; angleDeg: number } {
-  const { pc, angleDeg } = againstWallPlacement(wall, {
+  itemName?: string,
+): { center: MmPoint; pcCm: { x: number; y: number }; angleDeg: number; probePointCm?: { x: number; y: number } } {
+  // ревью 271 N1: пробная точка грани нужна только видам с pc в стене
+  // (faceOffsetCm !== null) — те же виды, у которых item_add её использует;
+  // item_update против обычных видов не должен получать её, иначе pc вне
+  // комнат проходит без OUTSIDE_ROOM (расхождение add/update)
+  const face = itemName !== undefined ? faceOffsetCm(itemName) : null;
+  const { pc, angleDeg, probePoint } = againstWallPlacement(wall, {
     wallId: wall.id, offsetMm: aw.offset_mm, from: aw.from, gapMm: aw.gap_mm,
-  }, itemWidthCm, itemDepthCm, rooms);
+  }, itemWidthCm, itemDepthCm, rooms, face ?? undefined);
   return {
     center: { x: round0(cmToMm(pc.x)), y: round0(cmToMm(pc.y)) },
+    // точный центр в см модели (точность хранения 0.1 мм) — tools-plan передаёт
+    // его в updateItem centerCm, чтобы правило привязки по виду не искажалось
+    // округлением до целых мм
+    pcCm: { x: pc.x, y: pc.y },
     angleDeg: Math.round(angleDeg),
+    ...(face !== null ? { probePointCm: { x: probePoint.x, y: probePoint.y } } : {}),
   };
 }
 

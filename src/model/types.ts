@@ -427,6 +427,16 @@ export type ElecCable = {
 };
 
 /**
+ * Предмет с обратными ссылками на кабели-проводку (props.cables_socket и т.п.).
+ * Ревью 269 m6: тип живёт в model (не в verify) — модельный слой
+ * (elecLinkHolders) не зависит от verify; verify и save импортируют отсюда.
+ */
+export type ElecLinkItem = {
+  name?: string;
+  socket_group?: Array<{ id?: string; name?: string } & Record<string, unknown>>;
+} & Record<string, unknown>;
+
+/**
  * Контур тёплого пола (лист «Тёплые полы», инструмент warm_floor/warm_floor_ir/
  * warm_floor_water, model.warm_floors, этап 122, 2026-11-17). Класс GraphLines —
  * тот же формат графа, что pipes/pipes_gas: vertexes — узлы type "node" (point в см,

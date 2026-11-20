@@ -276,19 +276,19 @@ test("againstWallCenter: та же формула модельного слоя,
   const h = wall("h", 0, 0, 100, 0);
   const roomsH = [room];
   // offset 500 мм + полуширина 40 см вдоль; полутолщина 10 + gap 10 + полуглубина 30 см по нормали
-  assert.deepEqual(againstWallCenter(h, { offset_mm: 500, gap_mm: 100 }, 80, 60, roomsH), { center: { x: 900, y: 500 }, angleDeg: 0 });
+  assert.deepEqual(againstWallCenter(h, { offset_mm: 500, gap_mm: 100 }, 80, 60, roomsH), { center: { x: 900, y: 500 }, pcCm: { x: 90, y: 50 }, angleDeg: 0 });
   // from=end: 200 мм от конца = 400 мм от начала; gap 0 — только полутолщина + полуглубина
-  assert.deepEqual(againstWallCenter(h, { offset_mm: 200, from: "end" }, 80, 60, roomsH), { center: { x: 400, y: 400 }, angleDeg: 0 });
+  assert.deepEqual(againstWallCenter(h, { offset_mm: 200, from: "end" }, 80, 60, roomsH), { center: { x: 400, y: 400 }, pcCm: { x: 40, y: 40 }, angleDeg: 0 });
   // вертикальная стена: ось → +y, внутренняя нормаль → +x; gap_mm 0
   const v = wall("v", 0, 0, 0, 100);
-  assert.deepEqual(againstWallCenter(v, { offset_mm: 250, gap_mm: 0 }, 80, 60, roomsH), { center: { x: 400, y: 650 }, angleDeg: 90 });
+  assert.deepEqual(againstWallCenter(v, { offset_mm: 250, gap_mm: 0 }, 80, 60, roomsH), { center: { x: 400, y: 650 }, pcCm: { x: 40, y: 65 }, angleDeg: 90 });
   // offset больше длины — как в item_add, без clamp (эталон — item_add, он не режет)
-  assert.deepEqual(againstWallCenter(h, { offset_mm: 5000 }, 80, 60, roomsH), { center: { x: 5400, y: 400 }, angleDeg: 0 });
+  assert.deepEqual(againstWallCenter(h, { offset_mm: 5000 }, 80, 60, roomsH), { center: { x: 5400, y: 400 }, pcCm: { x: 540, y: 40 }, angleDeg: 0 });
   // ревью 198 №3: обратная ориентация p1→p2 (стена справа налево) — угол
   // нормируется в 0, а не 180 (нормировка в (−90; 90]), нормаль к той же комнате
   const hRev = wall("h-rev", 100, 0, 0, 0);
-  assert.deepEqual(againstWallCenter(hRev, { offset_mm: 500, gap_mm: 100 }, 80, 60, roomsH), { center: { x: 100, y: 500 }, angleDeg: 0 });
-  assert.deepEqual(againstWallCenter(hRev, { offset_mm: 200, from: "end" }, 80, 60, roomsH), { center: { x: 600, y: 400 }, angleDeg: 0 });
+  assert.deepEqual(againstWallCenter(hRev, { offset_mm: 500, gap_mm: 100 }, 80, 60, roomsH), { center: { x: 100, y: 500 }, pcCm: { x: 10, y: 50 }, angleDeg: 0 });
+  assert.deepEqual(againstWallCenter(hRev, { offset_mm: 200, from: "end" }, 80, 60, roomsH), { center: { x: 600, y: 400 }, pcCm: { x: 60, y: 40 }, angleDeg: 0 });
 });
 
 test("againstWallCenter == addItem againstWall: одна формула на разных стенах, ориентациях p1→p2, from и gap (±1 мм)", () => {
@@ -369,9 +369,9 @@ test("ревью 198 №4: стена маленькой комнаты B — н
   assert.equal(addedRev.angle, 0);
   // item_update (againstWallCenter) — ровно те же значения, что у item_add
   assert.deepEqual(againstWallCenter(wb, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
-    { center: { x: 4700, y: 700 }, angleDeg: 0 });
+    { center: { x: 4700, y: 700 }, pcCm: { x: 470, y: 70 }, angleDeg: 0 });
   assert.deepEqual(againstWallCenter(wbRev, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
-    { center: { x: 5300, y: 700 }, angleDeg: 0 });
+    { center: { x: 5300, y: 700 }, pcCm: { x: 530, y: 70 }, angleDeg: 0 });
 });
 
 test("ревью 198 №4: стена большой комнаты — сторона помещения как раньше", () => {
@@ -386,7 +386,7 @@ test("ревью 198 №4: стена большой комнаты — стор
   assert.deepEqual(added.pc, { x: 70, y: 30 });
   assert.equal(added.angle, 0);
   assert.deepEqual(againstWallCenter(wa, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
-    { center: { x: 700, y: 300 }, angleDeg: 0 });
+    { center: { x: 700, y: 300 }, pcCm: { x: 70, y: 30 }, angleDeg: 0 });
 });
 
 test("ревью 198 №4: внутренняя перегородка A|B — обе нормали дают комнату, детерминированный выбор как раньше (самая большая)", () => {
@@ -403,7 +403,7 @@ test("ревью 198 №4: внутренняя перегородка A|B — �
   assert.equal(added.angle, 90);
   assert.equal(added.id_room, "roomA");
   assert.deepEqual(againstWallCenter(wp, { offset_mm: 500, gap_mm: 0 }, 40, 40, bothRooms),
-    { center: { x: 3700, y: 700 }, angleDeg: 90 });
+    { center: { x: 3700, y: 700 }, pcCm: { x: 370, y: 70 }, angleDeg: 90 });
 });
 
 test("ревью 198 №4: пробные точки вне обеих комнат — прежнее поведение, OUTSIDE_ROOM без падения", () => {
@@ -453,7 +453,7 @@ test("ревью 209 №1: грани по rooms2 редактора — пре�
   assert.equal(added.id_room, "faceB");
   // item_update (againstWallCenter) — те же значения
   assert.deepEqual(againstWallCenter(wb, { offset_mm: 500, gap_mm: 0 }, 40, 40, faceRooms),
-    { center: { x: 4700, y: 700 }, angleDeg: 0 });
+    { center: { x: 4700, y: 700 }, pcCm: { x: 470, y: 70 }, angleDeg: 0 });
 });
 
 test("ревью 209 №1: реальная фикстура редактора editor-corridor-3rooms (rooms2 по граням) — w5 → коридор _sn2hk", () => {
@@ -511,8 +511,10 @@ test("ревью 209 №2: ступенчатая стена — проба на
   }, stepRooms);
   assert.deepEqual(addedC.pc, { x: 730, y: 130 });
   assert.equal(addedC.id_room, "stepC");
+  // ревью 269 М1: againstWallCenter дополнительно отдаёт точный центр в см (pcCm);
+  // ревью 271 N1: probePointCm — только для видов с faceOffsetCm !== null (у sofa нет)
   assert.deepEqual(againstWallCenter(wstep, { offset_mm: 500, from: "end", gap_mm: 0 }, 40, 40, stepRooms),
-    { center: { x: 7300, y: 1300 }, angleDeg: 0 });
+    { center: { x: 7300, y: 1300 }, pcCm: { x: 730, y: 130 }, angleDeg: 0 });
   // ширина 100 см, offset 3700: с width/2 проба на x=420 → (420, 110.01) в C →
   // предмет (420,130) в C; без width/2 проба на x=370 → (370, 89.99) в A —
   // сторона выбрана неверно → (420,70) вне комнат → OUTSIDE_ROOM. Проба на

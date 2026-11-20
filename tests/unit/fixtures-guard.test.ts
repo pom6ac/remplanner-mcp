@@ -58,6 +58,12 @@ const EDITOR_IDS_FORBIDDEN = new Set<string>([
   // внутренние ID щитка/рейки/модуля/портов заменены на id1… (сквозное обезличивание).
   "ui-ref-shield-empty.json",
   "ui-ref-shield-module.json",
+  // Эталоны «Климат» ч.3 (этап 268): сняты в dev-проекте (пробы 268-recon4/268-recon5),
+  // внутренние ID предмета/контура/вершин заменены на id1… (сквозное обезличивание).
+  "ui-ref-climate3-wire-wf-contour.json",
+  "ui-ref-climate3-manifold-radiator-collector.json",
+  "ui-ref-climate3-manifold-ext-box.json",
+  "ui-ref-climate3-manifold-int-box.json",
   // Эталон «Зонирование потолка» (этап 260): снят в dev-проекте кликами UI
   // (пробы 260-zone-ui6/260-zone-serialize), ID делителя/вершин/комнаты/рёбер
   // заменены на zd1/v1/v2/room1/wall1..4 (сквозное обезличивание).

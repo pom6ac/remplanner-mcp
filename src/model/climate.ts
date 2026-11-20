@@ -7,6 +7,7 @@ import { assignCandidate } from "./assign.ts";
 import { pointInPolygon, polygonInsidePolygon, segmentsCross } from "./geometry.ts";
 import { roomPolygons } from "./rooms.ts";
 import { refreshPipesForWarmFloor, pipesReferencingItem } from "./pipes.ts";
+import { refreshElecCablesForWarmFloor, elecCablesReferencingItem } from "./electric2.ts";
 
 /**
  * Тёплый пол (лист «Тёплые полы», этап 122, 2026-11-17): контуры model.warm_floors —
@@ -248,9 +249,11 @@ export function updateWarmFloor(
   const oldP0 = poly[0];
   assignCandidate(wf, candidate);
   // пересчёт только затронутых привязок: вершины-контуры магистралей тёплого пола
-  // следуют за новым polygon[0] контура (климат ч.2, этап 250)
+  // следуют за новым polygon[0] контура (климат ч.2, этап 250); вершины-контуры
+  // кабелей тёплого пола — то же правило (климат ч.3, этап 268)
   if (oldP0 && (oldP0.x !== pts[0]!.x || oldP0.y !== pts[0]!.y)) {
     refreshPipesForWarmFloor(model, wf.id, pts[0]!);
+    refreshElecCablesForWarmFloor(model, wf.id, pts[0]!);
   }
   return wf;
 }
@@ -261,8 +264,10 @@ function kindOf(type: string): WarmFloorKind {
   return "cable";
 }
 
-/** warm_floor_delete: контур с подключённой магистралью тёплого пола не удаляется —
- *  у трубы осталась бы вершина-контур без объекта (сначала pipe_delete). */
+/**
+ * warm_floor_delete: контур с подключённой магистралью тёплого пола или кабелем
+ * (warm_floor_wire, климат ч.3) не удаляется — у трубы/кабеля осталась бы
+ * вершина-контур без объекта (сначала pipe_delete/wiring_delete). */
 export function deleteWarmFloor(model: Model, warmFloorId: string): void {
   if (!model.warm_floors?.[warmFloorId]) {
     throw new McpError("NOT_FOUND", `контур тёплого пола ${warmFloorId} не найден`);
@@ -273,6 +278,14 @@ export function deleteWarmFloor(model: Model, warmFloorId: string): void {
       "INVALID_ARGUMENT",
       `контур ${warmFloorId} подключён к магистрали тёплого пола ${linked.map((p) => p.id).join(", ")} — сначала удалите её (pipe_delete)`,
       { details: { kind: "pipe_referenced", pipes: linked.map((p) => p.id) } },
+    );
+  }
+  const wired = elecCablesReferencingItem(model, warmFloorId).filter((c) => c.type === "warm_floor_wire");
+  if (wired.length > 0) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `контур ${warmFloorId} подключён к кабелю тёплого пола ${wired.map((c) => c.id).join(", ")} — сначала удалите его (wiring_delete)`,
+      { details: { kind: "wiring_referenced", wirings: wired.map((c) => c.id) } },
     );
   }
   delete model.warm_floors![warmFloorId];

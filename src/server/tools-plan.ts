@@ -575,6 +575,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     item_add: tool(
       "Поставить предмет из каталога (name — точное имя из catalog_search). Позиция: center (координаты в мм, точка внутри комнаты) " +
         "ИЛИ against_wall (у стены, вплотную к внутренней грани при gap_mm=0) ИЛИ in_room (угол комнаты R<n>). " +
+        "У коллекторных узлов (radiator_collector, ext_manifold_box, int_manifold_box) точка привязки по виду, как в редакторе: " +
+        "int_manifold_box утоплен в стену (pc на 55 мм в стену от внутренней грани), radiator_collector на 45.5 мм от грани, " +
+        "ext_manifold_box вплотную; смещение снято для каталожной глубины — depth_mm на точку привязки не влияет; " +
+        "gap_mm для них не применяется (gap_mm > 0 — INVALID_ARGUMENT). " +
         "Точка вне помещений → OUTSIDE_ROOM. Размеры берутся из каталога; width_mm/depth_mm/height_mm переопределяют (если resizable). " +
         "Лестницы (меню «Лестницы»: ladder_march, ladder_console, ladder_2march, ladder_2march-fan, ladder_2march_console-fan, " +
         "ladder_2march_console, ladder_trapeze, rounded_staircase, ladder_march_double, ladder_fan_2march, ladder_3march, ladder_3march_fan, " +
@@ -625,6 +629,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "radiator_tubular_horizontal, vertical_radiator, floor_convector, convector_on_floor, electro_convector — у стены), " +
         "вентиляция листа «Вентиляция» — вентиляторы fan, fan_wall, fan_channel (свободно; решётки ventilation_gate*, " +
         "диффузоры ventilation_diffusor*, приточно-вытяжная установка ventilation_system и др. — PRO-группа). " +
+        "Коллекторные узлы (PRO-группа меню «Коллекторные узлы», климат ч.3): отопительный коллектор radiator_collector, " +
+        "коллекторный шкаф внешний ext_manifold_box и встроенный int_manifold_box (листы «Радиаторы» и «Тёплые полы») — " +
+        "предметы каталога, ставятся только у стены (against_wall); подключаются к магистралям отопления и тёплого пола " +
+        "(pipe_add, у коллектора несколько подключений — multi). " +
         "Контуры тёплого пола и трубы климата — НЕ предметы: warm_floor/warm_floor_ir/warm_floor_water → warm_floor_add, " +
         "warm_floor_pipe/conditioner_drainage/heat_pipe_hot/heat_pipe_cold/ventpipe_out/ventpipe_in → pipe_add.",
       {
@@ -662,6 +670,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       "Изменить предмет: переместить (center или against_wall), повернуть (angle_deg), изменить размеры. " +
         "При against_wall угол задаёт стена (у пристенной электрики socket_group — «ось + 180», как в item_add), " +
         "переданный angle_deg игнорируется — то же правило, что в item_add. " +
+        "У коллекторных узлов (radiator_collector, ext/int_manifold_box) точка привязки по виду — как в item_add. " +
         "При переносе/повороте привязанные размеры (dim_add attach) и комментарии предмета следуют за ним.",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
@@ -690,7 +699,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             const wall = resolveWall(m, aw.wall_id);
             const widthCm = a["width_mm"] !== undefined ? mmToCm(a["width_mm"] as number) : target.width;
             const depthCm = a["depth_mm"] !== undefined ? mmToCm(a["depth_mm"] as number) : target.height;
-            const at = againstWallCenter(wall, aw, widthCm, depthCm, ws.rooms());
+            // ревью 269 М1: точка привязки по виду предмета — одно правило с item_add
+            const at = againstWallCenter(wall, aw, widthCm, depthCm, ws.rooms(), target.name);
             // ревью 198 №1/№2/№6/№7: как в item_add against_wall — у socket_group
             // угол «ось + 180», id_wall = новая стена, angle_deg с against_wall
             // игнорируется, OUTSIDE_ROOM проверяется по тем же комнатам (кеш
@@ -698,13 +708,20 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             const socketGroup = Array.isArray(target.socket_group);
             return updateItem(m, {
               itemId: target.id,
-              center: at.center,
+              // точный центр в см модели — правило привязки по виду (ревью 269 М1)
+              // не искажается округлением до целых мм публичного API
+              centerCm: at.pcCm,
               angleDeg: socketGroup ? socketGroupAngleDeg(at.angleDeg) : at.angleDeg,
               idWall: wall.id,
               // ревью 203 №10: режим пересчёта под-розеток — явный флаг, а не
               // скрытая связь «пришёл idWall»
               resnapToWall: true,
               rooms: ws.rooms(),
+              // ревью 269 М1, 271 N1: у видов с pc в стене (faceOffsetCm !== null)
+              // комната по пробной точке на внутренней грани; againstWallCenter
+              // отдаёт пробную точку только для них — у обычных видов undefined,
+              // как в item_add (pc вне комнат → OUTSIDE_ROOM)
+              againstWallProbe: at.probePointCm,
               widthMm: a["width_mm"] as number | undefined, depthMm: a["depth_mm"] as number | undefined,
               heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined,
             });
@@ -1295,14 +1312,17 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "(мм; элементы {x, y} — узел или {item_id} — предмет: электрощиток, распредел. коробка/КУП, " +
         "розетка или вывод провода; не менее 2). kind — ключ кабеля из каталога UI: " +
         "wire_2_05…wire_5_100 (2–5 жил), wire_earth_* (заземление), wire_tv/utp/hdmi/audio/phone/optical " +
-        "(слаботочные; коллекция cables_socket), warm_floor_wire (cables_warm_floor), " +
-        "conditioner_wire (cables_conditioner) — связывает блоки кондиционера: внутренний/внешний " +
-        "блок, канальные/кассетные блоки, клапан, бризер, рекуператор, щиток (коробки, розетки " +
-        "и выводы проводов не подключаются — ревью 253 Н2, проба 250-connect4). " +
-        "У multi-предметов (щиток, коробки) допускается несколько " +
-        "кабелей; у розеток/выводов — один кабель на тип (повторное подключение отклоняется). " +
-        "Обратные ссылки на предметах ставятся автоматически. Длину с опусками до точек пересчитывает " +
-        "редактор. После добавления вызывайте model_validate и project_save.",
+        "(слаботочные; коллекция cables_socket), warm_floor_wire (cables_warm_floor) — соединяет " +
+        "терморегулятор (socket_thermo) с контуром тёплого пола: кабельным или инфракрасным " +
+        "({item_id: \"<WF<n> или id контура>\"}; вершина-контур {id, point: polygon[0], type: warm_floor}, " +
+        "ссылка в props контура; водяной контур к проводу не подключается — у него магистрали " +
+        "pipe_add kind=warm_floor; один терморегулятор на кабель), conditioner_wire (cables_conditioner) — " +
+        "связывает блоки кондиционера: внутренний/внешний блок, канальные/кассетные блоки, клапан, " +
+        "бризер, рекуператор, щиток (коробки, розетки и выводы проводов не подключаются — ревью 253 Н2, " +
+        "проба 250-connect4). У multi-предметов (щиток, коробки) допускается несколько " +
+        "кабелей; у розеток/выводов/контуров — один кабель на тип (повторное подключение отклоняется). " +
+        "Обратные ссылки на предметах и контурах ставятся автоматически. Длину с опусками до точек " +
+        "пересчитывает редактор. После добавления вызывайте model_validate и project_save.",
       {
         kind: z.enum([...SOCKET_CABLE_TOOLS, "warm_floor_wire", "conditioner_wire"])
           .describe("ключ кабеля из каталога UI (wire_3_25, warm_floor_wire, conditioner_wire и др.)"),
@@ -1316,9 +1336,17 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const toolKey = a["kind"] as string;
         const cable = ws.apply("wiring_add", (m) => addElecCable(m, {
           tool: toolKey,
-          // DTO: {item_id} публичного API → {itemId} модельного слоя
-          path: (a["path"] as Array<{ x?: number; y?: number; item_id?: string }>).map((p) =>
-            p["item_id"] !== undefined ? { itemId: resolveItem(m, p["item_id"]!).id } : { x: p.x!, y: p.y! }),
+          // DTO: {item_id} публичного API → {itemId} модельного слоя; у
+          // warm_floor_wire элемент пути может быть контуром тёплого пола
+          // (климат ч.3): метка WF<n> или id контура
+          path: (a["path"] as Array<{ x?: number; y?: number; item_id?: string }>).map((p) => {
+            if (p["item_id"] === undefined) return { x: p.x!, y: p.y! };
+            const ref = String(p["item_id"]);
+            if (toolKey === "warm_floor_wire" && ((m.warm_floors ?? {})[ref] || /^WF\d+$/.test(ref))) {
+              return { itemId: resolveWarmFloor(m, ref).id };
+            }
+            return { itemId: resolveItem(m, ref).id };
+          }),
         }));
         return ok(compactEntity(ws.model, (c) => {
           for (const key of ["cables_socket", "cables_warm_floor", "cables_conditioner"] as const) {

@@ -81,6 +81,8 @@ export type CompactRoom = {
 
 export type CompactItem = {
   id: string;
+  /** id сайта (ключ в model.items) — резолв меток и удаление item_delete (ревью 269 М3). */
+  site_id: string;
   name: string;
   x_mm: number;
   y_mm: number;
@@ -470,6 +472,9 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     const overFloor = item.over_floor;
     return {
       id: `I${i + 1}`,
+      // ревью 269 М3: site_id в компактном виде — резолв метки из рабочей модели
+      // (удаление item_delete по метке, сверенной с site_id)
+      site_id: item.id,
       name: item.name,
       x_mm: round0(cmToMm(item.pc.x)),
       y_mm: round0(cmToMm(item.pc.y)),

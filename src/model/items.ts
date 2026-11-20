@@ -20,7 +20,7 @@ import {
 // ---------- комнаты (канонические полигоны считает редактор: rooms2) ----------
 
 export { roomPolygons, type RoomPolygon } from "./rooms.ts";
-import { roomPolygons, inwardSideByProbe, type RoomPolygon } from "./rooms.ts";
+import { roomPolygons, inwardSideByProbe, PROBE_EPS_CM, type RoomPolygon } from "./rooms.ts";
 
 function dist(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -216,6 +216,31 @@ export function socketGroupAngleDeg(wallAxisAngleDeg: number): number {
 }
 
 /**
+ * Точка привязки (pc) коллекторных узлов по виду предмета (ревью 269 М1):
+ * смещение pc от внутренней грани стены, см (в комнату — плюс). Снято с живых
+ * эталонов .orca-reports/tmp/268-manifold-* (клики UI, projection = грань):
+ * ext_manifold_box — как у всех предметов, вплотную (depth/2, wall_line
+ * редактор пишет); int_manifold_box утоплен в стену (pc на грани − 5.5,
+ * wall_line редактор НЕ пишет); radiator_collector — 4.55 от грани (не
+ * depth/2 = 5; icon_center у него на 5). Одно правило для item_add и
+ * item_update (одно вычисление в againstWallPlacement); gap_mm для этих
+ * видов не применяется (зазор редактором для них не поддержан), gap_mm > 0 —
+ * INVALID_ARGUMENT (ревью 271 N4). Смещение снято с одного дампа при
+ * каталожной глубине — depth_mm на точку привязки не влияет.
+ */
+export const MANIFOLD_FACE_OFFSET_CM: Record<string, number> = {
+  int_manifold_box: -5.5,
+  radiator_collector: 4.55,
+};
+
+/** Смещение pc от внутренней грани по виду предмета (null — правило по умолчанию). */
+export function faceOffsetCm(name: string): number | null {
+  return Object.prototype.hasOwnProperty.call(MANIFOLD_FACE_OFFSET_CM, name)
+    ? MANIFOLD_FACE_OFFSET_CM[name]!
+    : null;
+}
+
+/**
  * Постановка предмета у стены: центр (см модели) и угол оси, нормированный
  * в (−90; 90]. Общая формула item_add (againstWall) и item_update
  * (against_wall, через DTO-слой) — ревью 190: дубликат в DTO считал нормаль
@@ -223,7 +248,11 @@ export function socketGroupAngleDeg(wallAxisAngleDeg: number): number {
  * помещения. Внутренняя сторона стены — ревью 198 №4: та, чья пробная точка
  * (на offset вдоль стены, depth/2 + ε от оси) попадает в полигон комнаты;
  * если попадают обе (внутренняя перегородка) или ни одна — прежнее правило:
- * сторона центра самой большой комнаты.
+ * сторона центра самой большой комнаты. Ревью 269 М1: faceOffsetCm (см от
+ * внутренней грани, по виду предмета) заменяет формулу «gap + depth/2» для
+ * видов с собственным правилом привязки; probePoint — пробная точка на
+ * внутренней грани (для видов с pc в стене — int_manifold_box: комната
+ * определяется по ней, как в редакторе, где у предмета есть id_room).
  */
 export function againstWallPlacement(
   wall: Wall,
@@ -231,10 +260,21 @@ export function againstWallPlacement(
   widthCm: number,
   depthCm: number,
   rooms: RoomPolygon[],
-): { pc: Point; angleDeg: number } {
+  faceOffsetCm?: number,
+): { pc: Point; angleDeg: number; probePoint: Point } {
   const dir = sub(wall.p2, wall.p1);
   const len = Math.hypot(dir.x, dir.y);
   if (len < 1e-6) throw new McpError("INVALID_ARGUMENT", "стена нулевой длины");
+  // ревью 271 N4: у видов с собственным правилом привязки (MANIFOLD_FACE_OFFSET_CM)
+  // зазор молча не применяется — смещение снято с живого дампа для каталожной
+  // глубины; вместо молчаливого игнорирования — отказ
+  if (faceOffsetCm !== undefined && (aw.gapMm ?? 0) > 0) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "gap_mm не применяется к коллекторным узлам: точка привязки по виду (смещение снято для каталожной глубины), уберите gap_mm",
+      { details: { kind: "gap_not_applied" } },
+    );
+  }
   const u = scale(dir, 1 / len);
   const nl = leftNormal(dir.x, dir.y);
   const from = aw.from ?? "start";
@@ -254,12 +294,18 @@ export function againstWallPlacement(
     const toRoom = sub(center, wallMid);
     inward = nl.x * toRoom.x + nl.y * toRoom.y > 0 ? nl : scale(nl, -1);
   }
-  const pc = add(onAxis, scale(inward, wall.depth / 2 + mmToCm(aw.gapMm ?? 0) + depthCm / 2));
+  // ревью 269 М1: у видов с собственным правилом (MANIFOLD_FACE_OFFSET_CM) pc
+  // считается от внутренней грани по виду, gap_mm не применяется
+  const pc = add(onAxis, scale(inward, wall.depth / 2 + (faceOffsetCm !== undefined
+    ? faceOffsetCm
+    : mmToCm(aw.gapMm ?? 0) + depthCm / 2)));
+  // пробная точка на внутренней грани (та же проба, что выбрала сторону)
+  const probePoint = add(onAxis, scale(inward, wall.depth / 2 + PROBE_EPS_CM));
   // ширина предмета ВДОЛЬ стены (эталон ui-ref-sofa: угол = углу оси, а не нормали) — №10 ревью
   let angle = angleDeg(wall.p1, wall.p2);
   if (angle > 90) angle -= 180;
   if (angle <= -90) angle += 180;
-  return { pc, angleDeg: angle };
+  return { pc, angleDeg: angle, probePoint };
 }
 
 /**
@@ -328,6 +374,9 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
   let pc: Point;
   let angle = params.angleDeg ?? 0;
   let idWall: string | null = null;
+  // ревью 269 М1: у видов с pc в стене (int_manifold_box) комната берётся по
+  // пробной точке на внутренней грани
+  let wallProbe: Point | null = null;
 
   if ("center" in params.position) {
     pc = { x: mmToCm(params.position.center.x), y: mmToCm(params.position.center.y) };
@@ -335,10 +384,13 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
     const aw = params.position.againstWall;
     const wall = model.walls[aw.wallId];
     if (!wall) throw new McpError("NOT_FOUND", `стена ${aw.wallId} не найдена`);
-    const placement = againstWallPlacement(wall, aw, widthCm, depthCm, allRooms);
+    // ревью 269 М1: точка привязки по виду предмета — одно правило с item_update
+    const face = faceOffsetCm(params.name);
+    const placement = againstWallPlacement(wall, aw, widthCm, depthCm, allRooms, face ?? undefined);
     pc = placement.pc;
     angle = placement.angleDeg;
     idWall = wall.id;
+    if (face !== null) wallProbe = placement.probePoint;
   } else {
     const corner = params.position.inRoom.corner;
     const room = findRoom(allRooms);
@@ -359,7 +411,11 @@ export function addItem(model: Model, params: AddItemParams, rooms?: RoomPolygon
     }
   }
 
-  const found = allRooms.find((room) => pointInPolygon(room.polygon, pc));
+  let found = allRooms.find((room) => pointInPolygon(room.polygon, pc));
+  // ревью 269 М1: у утопленного в стену int_manifold_box pc внутри стены —
+  // комната по пробной точке на внутренней грани (в редакторе у предмета
+  // с pc в стене id_room есть, OUTSIDE_ROOM редактор не бросает)
+  if (!found && wallProbe) found = allRooms.find((room) => pointInPolygon(room.polygon, wallProbe!));
   if (!found) {
     if (allRooms.length === 0) {
       throw new McpError("GEOMETRY_CONFLICT", "в модели нет замкнутых помещений", { details: { kind: "no_rooms" } });
@@ -491,6 +547,13 @@ export type UpdateItemParams = {
   /** ревью 198 №7: комнаты, по которым считалась позиция (кеш workspace) —
    *  OUTSIDE_ROOM проверяется по ним, а не только по rooms2 модели. */
   rooms?: RoomPolygon[];
+  /** ревью 269 М1: пробная точка на внутренней грани (см) для видов с pc в стене
+   *  (int_manifold_box, перенос against_wall): комната определяется по ней. */
+  againstWallProbe?: Point;
+  /** ревью 269 М1: точный центр в см модели (минуя округление до целых мм
+   *  публичного API) — перенос against_wall из tools-plan, чтобы правило
+   *  привязки по виду (4.55 у radiator_collector) не искажалось округлением. */
+  centerCm?: Point;
 };
 
 /** item_update: перемещение, поворот, размеры. */
@@ -500,9 +563,14 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   const props = item;
   const oldPc = { ...props.pc };
   const oldAngle = props.angle;
-  if (params.center) {
-    const pc = { x: mmToCm(params.center.x), y: mmToCm(params.center.y) };
-    const found = (params.rooms ?? roomPolygons(model)).find((room) => pointInPolygon(room.polygon, pc));
+  const moved = params.center !== undefined || params.centerCm !== undefined;
+  if (moved) {
+    const pc = params.centerCm ?? { x: mmToCm(params.center!.x), y: mmToCm(params.center!.y) };
+    const allRooms = params.rooms ?? roomPolygons(model);
+    let found = allRooms.find((room) => pointInPolygon(room.polygon, pc));
+    // ревью 269 М1: перенос against_wall вида с pc в стене (int_manifold_box) —
+    // комната по пробной точке на внутренней грани (tools-plan передаёт её)
+    if (!found && params.againstWallProbe) found = allRooms.find((room) => pointInPolygon(room.polygon, params.againstWallProbe!));
     if (!found) {
       throw new McpError("OUTSIDE_ROOM", "точка вне помещений", { details: { kind: "outside_room", point: pc } });
     }
@@ -527,7 +595,7 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   if (params.comment !== undefined) props.comment = { id: params.comment };
   // этап 88: транзитивный пересчёт затронутых привязок электрики — под-розетки
   // группы (перенос/поворот) и вершины связей, ссылающиеся на предмет
-  if (Array.isArray(props.socket_group) && (params.center !== undefined || params.angleDeg !== undefined)) {
+  if (Array.isArray(props.socket_group) && (moved || params.angleDeg !== undefined)) {
     // ревью 198 №1/№2, 203 №8/№10: перенос against_wall (явный режим resnapToWall
     // от tools-plan) — под-элементы пересчитываются с сохранением взаимного
     // расположения (шаг): вдоль-составляющая смещения переносится, нормальная
@@ -536,7 +604,7 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
     // переключает только явный флаг (ревью 203 №10).
     refreshSocketGroupSubs(model, props, oldPc, oldAngle, params.resnapToWall === true);
   }
-  if (params.center !== undefined || params.angleDeg !== undefined) {
+  if (moved || params.angleDeg !== undefined) {
     refreshCablesForItem(model, params.itemId);
     // часть 2: вершины кабелей-проводки следуют за предметом (multi — pc,
     // electrospot — точка на 7 см от грани стены)
@@ -544,7 +612,7 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   }
   // этап 113: транзитивный пересчёт затронутых привязок размеров (формула
   // Ruler.update редактора) и комментариев, привязанных к предмету
-  if (params.center !== undefined || params.angleDeg !== undefined) {
+  if (moved || params.angleDeg !== undefined) {
     refreshRulersForItem(model, params.itemId);
     refreshItemComments(model, params.itemId);
   }

@@ -1123,3 +1123,33 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
   диапазону габаритов. Трасса кондиционера: `wiring_add kind=conditioner_wire`
   подключает блоки кондиционера; ключ ссылки — `conditioner_cable_id`
   (не `cable_conditioner_id` — поправлено в ч.2, эталон заменён живым).
+- **MCP, климат ч.3** (этап 268; пробы 268-recon4/268-recon5, клики без
+  сохранения): кабель тёплого пола к контурам — `wiring_add
+  kind=warm_floor_wire` принимает контур ({item_id: "<WF<n> или id>"}): вершина
+  `{id: id контура, point: polygon[0], type: "warm_floor"}` (get_point
+  редактора возвращает polygon[0] у контура; pp {i, d} — производное протяжки,
+  в модели хранится ссылка на ребро полигона), ссылка в props КОНТУРА
+  (`cables_warm_floor.cable_warm_floor_id`, скаляр — set_tree_id редактора
+  дописывает props сразу при соединении). source_items CablingWarnFloor: от
+  терморегулятора — кабельный/ИК контур, узлы; **водяной контур к проводу не
+  подключается**; один терморегулятор на кабель (l10n
+  cabling_warm_floor_not_connect_two_thermo); MCP строже редактора: в редакторе
+  запрещён прямой штрих контур–контур (not_connect_two_floor), терморегулятор
+  с двумя контурами MCP не строит (ревью 271 N3; по коду бандла второй штрих
+  терморегулятор → контур проверяется только по same_floor/two_thermo);
+  повторная связь
+  контура — cabling_warm_floor_not_connect_same_floor. warm_floor_update
+  пересчитывает вершины-контуры кабелей; warm_floor_delete с кабелем — отказ.
+  **Коллекторные узлы** — предметы каталога `radiator_collector` (48×10,
+  «Отопительный коллектор»), `ext_manifold_box`/`int_manifold_box` (60×15,
+  self_height 65, «Коллекторный шкаф внешний/встроенный»): anchor wall, план
+  `{radiators: 26, warm_floor: 11}`, `over_floor {value:0, display:false}` —
+  ставятся item_add у стены; точка привязки по виду (ревью 269 М1, дампы
+  кликов 268): `ext_manifold_box` вплотную к внутренней грани, встроенный
+  `int_manifold_box` утоплен в стену (pc на 5.5 см в стену от грани, wall_line
+  редактор не пишет), `radiator_collector` на 4.55 см от грани; подключаются
+  к магистралям (multi).
+  **Тёплая стена** `warm_wall_cable` — декоративные линии `warms_walls` в
+  rooms2 (WarmLine: `line`, height 135, height_from_floor 15, части по рёбрам
+  комнаты — механика tool_group wall_elements) + кабель в cables_warm_floor
+  (вершина type "warm_wall", point = центр линии) — следующий PR.
