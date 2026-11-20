@@ -1,7 +1,10 @@
 // 310 (б, разведка zone_c): живой эталон делителя зон листа «Перегородки» —
 // кнопка plannertool_zone, drag между рёбрами пробной комнаты, формат записи
 // (type/plan), поведение комнат (zones), save verified, очистка по захваченным
-// site_id. Гарды полные (285 №3). node scripts/probes/310-zonec-ui.ts run
+// site_id. Гарды полные (285 №3; ревью 311 №5): план в редакторе == серверу,
+// сверка с бэкапом и контрольный проект — семантический sig(), расхождение —
+// exitCode=1, контрольный GET «после» — в finally.
+// node scripts/probes/310-zonec.ts run
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -9,6 +12,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { sig } from "./probe-sig.ts";
 
 if (process.argv[2] !== "run") { console.error("запуск: run"); process.exit(0); }
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
@@ -17,6 +21,8 @@ const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
 const READONLY_PLAN_ID = process.env["REMPLANNER_PROBE_READONLY_PLAN_ID"];
 if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) { console.error("нужны env"); process.exit(1); }
 if (OBJECT_ID === READONLY_ID) { console.error("OBJECT_ID == READONLY_ID — стоп"); process.exit(1); }
+const RO_ID: string = READONLY_ID;
+const RO_PLAN_ID: string = READONLY_PLAN_ID;
 mkdirSync(".orca-reports/tmp", { recursive: true });
 setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
 
@@ -74,42 +80,52 @@ async function restoreByCaptured(): Promise<void> {
   opened = false;
 }
 
-const raw = (x: unknown): string => {
-  const c = structuredClone(x as Record<string, unknown>);
-  for (const k of ["errors", "logs", "log_plan", "session", "version", "drawing", "params", "final", "signals", "smeta_water_pipes", "save_id", "is_forced"]) delete c[k];
-  return JSON.stringify(c);
-};
-/** Канонические оси стен (переносы/разрезы редактора не считаются изменением). */
-const wallAxes = (m: Record<string, unknown> | undefined): string => {
-  const walls = (m?.["walls"] ?? {}) as Record<string, { p1?: { x: number; y: number }; p2?: { x: number; y: number }; depth?: number; role?: string }>;
-  return JSON.stringify(Object.values(walls)
-    .filter((w) => w.p1 && w.p2)
-    .map((w) => ({ x1: Math.round(w.p1!.x * 2) / 2, y1: Math.round(w.p1!.y * 2) / 2, x2: Math.round(w.p2!.x * 2) / 2, y2: Math.round(w.p2!.y * 2) / 2, d: w.depth ?? null, role: w.role ?? null }))
-    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
-};
-const itemsSig = (m: Record<string, unknown> | undefined): string => {
-  const items = (m?.["items"] ?? {}) as Record<string, { name?: string; pc?: { x: number; y: number } }>;
-  return JSON.stringify(Object.values(items).map((i) => ({ n: i.name ?? "", x: Math.round(i.pc?.x ?? 0), y: Math.round(i.pc?.y ?? 0) })).sort());
-};
+let roBefore: LoadedModel | null = null;
+
+/** Контрольный проект «после» (в finally, ревью 311 №5): семантический sig +
+ *  save_id; изменение — exitCode=1. */
+async function checkReadonly(): Promise<void> {
+  if (!roBefore) return;
+  try {
+    const roAfter = await loadModel(ctx.session(), RO_ID, RO_PLAN_ID);
+    if (roAfter.data_empty) { console.error("контрольный GET после — пустой (data_empty)"); process.exitCode = 1; return; }
+    const ok = sig(roAfter.model) === sig(roBefore.model) && roAfter.save_id === roBefore.save_id;
+    console.log("контрольный (finally):", ok ? "не изменился (канон + save_id)" : "ИЗМЕНИЛСЯ — СТОП");
+    if (!ok) process.exitCode = 1;
+  } catch (e) {
+    console.error("контрольный GET после не удался:", String((e as Error).message ?? e).slice(0, 300));
+    process.exitCode = 1;
+  }
+}
 
 try {
-  const roBefore = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
-  if (roBefore.data_empty) throw new Error("контрольный GET пустой — отказ");
-  writeFileSync(".orca-reports/tmp/310-get-readonly-before.json", JSON.stringify(roBefore, null, 1));
+  const roBeforeLocal = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
+  if (roBeforeLocal.data_empty) throw new Error("контрольный GET пустой — отказ");
+  roBefore = roBeforeLocal;
+  writeFileSync(".orca-reports/tmp/310-get-readonly-before.json", JSON.stringify(roBeforeLocal, null, 1));
   before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const backupPath = ".orca-reports/backup-".concat(OBJECT_ID, "-310.json");
   if (!existsSync(backupPath)) writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
   else {
     const stored = JSON.parse(readFileSync(backupPath, "utf8")) as { model?: Record<string, unknown> };
     const bm = stored.model as Record<string, unknown> | undefined;
-    // производные поля комнат редактор перестраивает при каждом save (этап 310):
-    // сверяем оси стен и предметы, производные комнат — не стоп
-    if (wallAxes(bm) !== wallAxes(before.model as Record<string, unknown>) || itemsSig(bm) !== itemsSig(before.model as Record<string, unknown>)) {
-      throw new Error("модель на сервере не совпадает с бэкапом (оси стен/предметы) — стоп");
+    // семантическая сверка с бэкапом (как sig() в 310-m11-live; ревью 311 №5):
+    // расхождение — стоп
+    if (sig(bm) !== sig(before.model as Record<string, unknown>)) {
+      throw new Error("модель на сервере не совпадает с бэкапом (семантический канон) — стоп");
     }
   }
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
   opened = true;
+  // гард «план в редакторе == серверу» (как в 310-m11-live; ревью 311 №5):
+  // редактор создаётся лениво — render_plan запускает его без изменения модели
+  await call("render_plan", {});
+  const editorGuard = (ctx.workspaceOrNull?.editorOrNull() ?? null) as unknown as { compatInfo(): Promise<{ plan_id?: unknown }> } | null;
+  const compat = editorGuard ? await editorGuard.compatInfo() : null;
+  const planInEditor = compat?.plan_id == null ? "" : String(compat.plan_id);
+  if (!planInEditor) throw new Error("compat.plan_id пуст — стоп");
+  if (planInEditor !== String(PLAN_ID)) throw new Error(`план в редакторе ${planInEditor} != серверу ${PLAN_ID}`);
+  console.log("гард «план в редакторе == серверу» (compat, in-process): OK");
 
   // пробная комната (как в m11-цикле)
   const rawWalls = (before.model["walls"] ?? {}) as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>;
@@ -220,15 +236,18 @@ try {
 
   await restoreByCaptured();
   const final = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const same = wallAxes(final.model as Record<string, unknown>) === wallAxes(before.model as Record<string, unknown>) && itemsSig(final.model as Record<string, unknown>) === itemsSig(before.model as Record<string, unknown>);
-  console.log("сверка с бэкапом (оси стен/предметы):", same ? "OK" : "РАСХОЖДЕНИЕ — требуется разбор");
-  const roAfter = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
-  console.log("контрольный:", raw(roAfter.model) === raw(roBefore.model) && roAfter.save_id === roBefore.save_id ? "не изменился" : "ИЗМЕНИЛСЯ");
+  const same = sig(final.model) === sig(before!.model);
+  console.log("семантическая сверка с бэкапом:", same ? "OK" : "РАСХОЖДЕНИЕ — требуется разбор");
+  if (!same) {
+    process.exitCode = 1;
+    throw new Error("модель после restore не совпала с бэкапом");
+  }
 } catch (e) {
   console.error("FAIL:", String((e as Error).message ?? e).slice(0, 1500));
   process.exitCode = 1;
 } finally {
   try { await restoreByCaptured(); } catch (ce) { console.error("RESTORE FAIL:", String((ce as Error).message ?? ce).slice(0, 400)); process.exitCode = 1; }
+  await checkReadonly();
   await closeBrowser();
 }
 process.exit(process.exitCode ?? 0);
