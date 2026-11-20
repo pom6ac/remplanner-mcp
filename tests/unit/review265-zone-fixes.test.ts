@@ -286,3 +286,16 @@ test("265 R2: save, затронутая комната, концы на мес�
   const res = zoneDelimiterCompare(R2_NORM, structuredClone(R2_NORM), "save", R2_AFF);
   assert.deepEqual(res, { problems: [], warnings: [] });
 });
+
+// ---------- мутации ревью 266: условия, не покрытые тестами выше ----------
+
+test("265 R2: save, затронутая комната, концы на месте, сервер пересчитал length по геометрии → problem (нужен ненулевой сдвиг)", () => {
+  const norm = structuredClone(R2_NORM) as unknown as { zone_delimiters: { za: Record<string, unknown> } };
+  norm.zone_delimiters.za["length"] = 1.97; // прежний length не по геометрии (190 см)
+  const got = structuredClone(norm);
+  got.zone_delimiters.za["length"] = 1.9; // сервер «пересчитал», концы не двигались
+  const g = got as unknown as Record<string, unknown>;
+  const res = zoneDelimiterCompare(norm as unknown as Record<string, unknown>, { ...g, rooms2: { A1x: R2_ROOMS.A1, C: R2_ROOMS.C } }, "save", R2_AFF);
+  assert.ok(res.problems.length > 0, JSON.stringify(res));
+  assert.equal(res.warnings.some((w) => w.includes("переопределил")), false, JSON.stringify(res.warnings));
+});
