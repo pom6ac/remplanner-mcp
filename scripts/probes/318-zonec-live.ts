@@ -21,7 +21,7 @@ import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { sig } from "./probe-sig.ts";
-import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, type ReadonlyGuard } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath, type ReadonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") { console.error("запуск: run"); process.exit(0); }
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
@@ -67,6 +67,7 @@ async function restoreByCaptured(): Promise<void> {
         if (d) { try { d.deleteFull(); } catch { try { d.delete(); } catch { /* уже нет */ } } }
       }
     }, delimIds);
+    await roGuard?.assertUnchanged("{tag}");
     try { await call("project_save", {}); } catch (e) { console.log("restore save:", String((e as Error).message).slice(0, 200)); }
   }
   const mg2 = await call("model_get", {});
@@ -82,6 +83,7 @@ async function restoreByCaptured(): Promise<void> {
     walls.length = 0;
     walls.push(...fw);
   }
+  await roGuard?.assertUnchanged("{tag}");
   const saveRes = await call("project_save", {});
   console.log("restore save:", JSON.stringify({ verified: saveRes["verified"] }));
   created = [];
@@ -113,6 +115,7 @@ async function makeTrialRoom(beforeModel: LoadedModel): Promise<{ roomId: string
     if (!sid) throw new Error("wall_add без site_id");
     created.push({ kind: "wall", siteId: sid });
   }
+  await roGuard?.assertUnchanged("{tag}");
   await call("project_save", {});
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
   const afterRoom = await loadModel(ctx.session(), OBJECT_ID!, PLAN_ID!);
@@ -143,7 +146,7 @@ async function openAndGuard(): Promise<void> {
 try {
   // ревью 319 №4: эталон контрольного проекта фиксированный — файл создаётся,
   // только если его нет, и не перезаписывается; сверка перед каждой фазой записи
-  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, ".orca-reports/tmp/318-zonec-readonly-ref.json");
+  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
   // ревью 319 №3: пара объект/план из env и PLAN_ID в планах объекта
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
   before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
@@ -175,6 +178,7 @@ try {
   created.push({ kind: "delimiter", siteId: zSiteId });
   const vRes = await call("model_validate", {});
   console.log("validate:", JSON.stringify({ ok: vRes["ok"] }));
+  await roGuard?.assertUnchanged("{tag}");
   const save1 = await call("project_save", {});
   console.log("save 1:", JSON.stringify({ verified: save1["verified"], warnings: save1["warnings"] }));
   if (!save1["verified"]) throw new Error("save 1 не verified");
@@ -186,6 +190,7 @@ try {
   const render = await call("render_plan", {});
   console.log("render_plan:", JSON.stringify({ ok: render["ok"] ?? true, path: render["path"] ?? render["file"] ?? null }));
   await call("zone_c_remove", { delimiter_id: zSiteId });
+  await roGuard?.assertUnchanged("{tag}");
   const save2 = await call("project_save", {});
   console.log("save 2 (после remove):", JSON.stringify({ verified: save2["verified"], warnings: save2["warnings"] }));
   if (!save2["verified"]) throw new Error("save 2 не verified");
@@ -207,6 +212,7 @@ try {
       walls.push(...fw);
     }
     created = created.filter((c) => c.kind !== "wall");
+    await roGuard?.assertUnchanged("{tag}");
     const saveCleanup = await call("project_save", {});
     console.log("cleanup комнаты 1:", JSON.stringify({ verified: saveCleanup["verified"] }));
   }
@@ -262,6 +268,7 @@ try {
   // инцидент 240: чужие делители пользователя не трогаем — новых не ровно один → стоп
   if (dragDelims.length !== 1) throw new Error(`после drag новых делителей не ровно один (${dragDelims.length}) — стоп`);
   for (const id of dragDelims) created.push({ kind: "delimiter", siteId: id });
+  await roGuard?.assertUnchanged("{tag}");
   const pageSave = await page.evaluate(async () => {
     const w: any = window as any;
     return await Promise.resolve(w.project.save(false, true)).then((r: unknown) => String(r).slice(0, 40)).catch((e: unknown) => `ERR ${String(e).slice(0, 40)}`);
@@ -270,6 +277,7 @@ try {
   await new Promise((r) => setTimeout(r, 2500));
   // ингест: project_open перечитывает GET с делителем UI
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
+  await roGuard?.assertUnchanged("{tag}");
   const save3 = await call("project_save", {});
   console.log("save 3 (после ингеста):", JSON.stringify({ verified: save3["verified"], warnings: save3["warnings"] }));
   if (!save3["verified"]) throw new Error("save 3 не verified");

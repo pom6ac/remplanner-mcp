@@ -14,7 +14,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, assertUnchangedRef, newGuardRef, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … run (REMPLANNER_PROBE_* из env)");
@@ -104,6 +104,7 @@ const removeCapturedDelimiters = async (): Promise<void> => {
   }
 };
 const saveStep = async (tag: string): Promise<{ verified: boolean; warnings: unknown[] }> => {
+  await assertUnchangedRef(roRef, "{tag}");
   const res = await call("project_save", {}, { quiet: true });
   const out = { verified: Boolean(res["verified"]), warnings: (res["warnings"] ?? []) as unknown[] };
   console.log(`SAVE ${tag}: verified=${out.verified} rounds=${res["rounds"]} warnings=${JSON.stringify(out.warnings).slice(0, 400)}`);
@@ -128,6 +129,7 @@ const cleanup = async (): Promise<void> => {
       try { await call("wall_delete", { wall_id: label }, { quiet: true }); } catch (e) { console.log(`  wall_delete ${label}: ${(e as Error).message.slice(0, 120)}`); }
       left.shift();
     }
+    await assertUnchangedRef(roRef, "{tag}");
     const saveRes = await call("project_save", {}, { quiet: true });
     console.log("cleanup save verified:", saveRes["verified"]);
   } catch (e) {
@@ -201,11 +203,13 @@ function sig(m: unknown): string {
   return JSON.stringify(aliasAll(c));
 }
 
+const roRef = newGuardRef();
 try {
   // 0. контрольный проект до (только GET, реальный plan_id, непустой)
   // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, `${OUT}/296-readonly-ref.json`);
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+  roRef.current = roGuard;
   await roGuard.assertUnchanged("перед записями");
   const snapBefore = await roSnap("before");
 
@@ -346,6 +350,7 @@ try {
     try { await call("wall_delete", { wall_id: label }, { quiet: true }); } catch { /* уже нет */ }
     left.shift();
   }
+  await assertUnchangedRef(roRef, "{tag}");
   const saveRes2 = await call("project_save", {}, { quiet: true });
   console.log("restore save verified:", saveRes2["verified"]);
   if (!saveRes2["verified"]) throw new Error("restore save не verified");

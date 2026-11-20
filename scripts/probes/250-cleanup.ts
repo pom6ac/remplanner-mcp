@@ -86,6 +86,7 @@ await deleteBySiteId((created.items ?? []).map((site_id) => ({ coll: "items", si
 await deleteBySiteId((created.walls ?? []).map((site_id) => ({ coll: "walls", site_id })), "wall_delete", "wall_id");
 
 await sleep(6000);
+await roGuard.assertUnchanged("{tag}");
 const s = await call("project_save", {});
 console.log("save:", JSON.stringify(s).slice(0, 200));
 if (s["verified"] !== true) { console.error("save не verified"); process.exit(1); }

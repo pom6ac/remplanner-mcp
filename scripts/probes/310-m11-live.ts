@@ -16,7 +16,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, type ReadonlyGuard } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath, type ReadonlyGuard } from "./probe-guard.ts";
 import { sig } from "./probe-sig.ts";
 
 if (process.argv[2] !== "run") {
@@ -77,6 +77,7 @@ async function restoreByCaptured(): Promise<void> {
   const roomRefCap = created.find((c) => c.kind === "ceiling")?.roomRef;
   if (roomRefCap) {
     try { await call("finish_ceiling_remove", { room_id: roomRefCap }); } catch { /* уже снята */ }
+    await roGuard?.assertUnchanged("{tag}");
     try { await call("project_save", {}); } catch { /* продолжаем зачистку */ }
   }
   const mg = await call("model_get", {});
@@ -109,6 +110,7 @@ async function restoreByCaptured(): Promise<void> {
     walls.length = 0;
     walls.push(...fw);
   }
+  await roGuard?.assertUnchanged("{tag}");
   const saveRes = await call("project_save", {});
   console.log("restore save:", JSON.stringify({ verified: saveRes["verified"], rounds: saveRes["rounds"] }));
   if (!saveRes["verified"]) throw new Error("restore save не verified");
@@ -157,7 +159,7 @@ try {
   // 0. контрольный проект до (только GET, реальный plan_id)
   // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, `${OUT}/310-readonly-ref.json`);
+  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
   await roGuard.assertUnchanged("перед записями");
   roBefore = await snap(READONLY_ID, READONLY_PLAN_ID, "readonly-before");
 
@@ -208,6 +210,7 @@ try {
     if (!sid) throw new Error("wall_add не вернул entity.site_id");
     created.push({ kind: "wall", siteId: sid });
   }
+  await roGuard?.assertUnchanged("{tag}");
   const saveRoom = await call("project_save", {});
   console.log("save пробной комнаты:", JSON.stringify({ verified: saveRoom["verified"], rounds: saveRoom["rounds"] }));
   if (!saveRoom["verified"]) throw new Error("save пробной комнаты не verified");
@@ -243,6 +246,7 @@ try {
   // 3. имя комнаты (как UI: name комнаты + зоны; проба 43) — через редактор
   const page = editor?.page ?? null;
   if (!page) throw new Error("страница редактора недоступна");
+  await roGuard?.assertUnchanged("{tag}");
   const nameSet = await page.evaluate(async (rid) => {
     const w: any = window as any;
     const rr: any = w.ROOMS2?.[rid];
@@ -267,6 +271,7 @@ try {
 
   // 4. покрытие потолка (MCP-инструмент, проверен ранее) → save → reopen
   await call("finish_ceiling_set", { room_id: roomRef2, material: "gypsum_ceiling", profile: "standard" });
+  await roGuard?.assertUnchanged("{tag}");
   const saveFin = await call("project_save", {});
   console.log("save отделки:", JSON.stringify({ verified: saveFin["verified"], rounds: saveFin["rounds"] }));
   if (!saveFin["verified"]) throw new Error("save отделки не verified");
@@ -288,6 +293,7 @@ try {
   const rgSite = String(rgAdd["site_id"] ?? "");
   if (!rgSite) throw new Error("ceiling_rigel_add не вернул site_id");
   created.push({ kind: "rigel", siteId: rgSite });
+  await roGuard?.assertUnchanged("{tag}");
   const saveRigel = await call("project_save", {});
   console.log("save закладной:", JSON.stringify({ verified: saveRigel["verified"], rounds: saveRigel["rounds"], warnings: saveRigel["warnings"] }));
   if (!saveRigel["verified"]) throw new Error("save закладной не verified (NORMALIZATION_DROPPED?)");
@@ -306,6 +312,7 @@ try {
   });
   console.log("zone_ceiling_add:", JSON.stringify({ id: zdAdd["id"], site_id: zdAdd["site_id"], length_mm: zdAdd["length_mm"] }));
   created.push({ kind: "delimiter", siteId: String(zdAdd["site_id"] ?? "") });
+  await roGuard?.assertUnchanged("{tag}");
   const saveZone = await call("project_save", {});
   console.log("save зоны:", JSON.stringify({ verified: saveZone["verified"], rounds: saveZone["rounds"], warnings: saveZone["warnings"] }));
   if (!saveZone["verified"]) throw new Error("save зоны не verified");
@@ -336,6 +343,7 @@ try {
   {
     // вернём ширину 100, чтобы эталонные шаги 6–9 продолжали сравнение с UI
     await call("ceiling_rigel_update", { rigel_id: rgSite, width_mm: 100 });
+    await roGuard?.assertUnchanged("{tag}");
     const saveBack = await call("project_save", {});
     console.log("save возврата ширины 100:", JSON.stringify({ verified: saveBack["verified"], rounds: saveBack["rounds"] }));
     if (!saveBack["verified"]) throw new Error("save возврата ширины не verified");
@@ -345,6 +353,7 @@ try {
   // 5г. делитель снимается (подсказка отказа), ширина меняется уже без него
   const zdDel = await call("zone_ceiling_remove", { delimiter_id: String(zdAdd["site_id"]) });
   console.log("zone_ceiling_remove:", JSON.stringify(zdDel).slice(0, 160));
+  await roGuard?.assertUnchanged("{tag}");
   const saveZd = await call("project_save", {});
   console.log("save снятия делителя:", JSON.stringify({ verified: saveZd["verified"], rounds: saveZd["rounds"] }));
   if (!saveZd["verified"]) throw new Error("save снятия делителя не verified");
@@ -386,6 +395,7 @@ try {
   // 7. MCP update ширины → save → reopen → сверка всех ceilings и имени с эталоном
   const upd = await call("ceiling_rigel_update", { rigel_id: rgSite, width_mm: 300 });
   console.log("ceiling_rigel_update:", JSON.stringify({ width_mm: upd["width_mm"] }));
+  await roGuard?.assertUnchanged("{tag}");
   const saveUpd = await call("project_save", {});
   console.log("save update:", JSON.stringify({ verified: saveUpd["verified"], rounds: saveUpd["rounds"], warnings: saveUpd["warnings"] }));
   if (!saveUpd["verified"]) throw new Error("save update не verified");
@@ -419,6 +429,7 @@ try {
   // 9. MCP delete → save → reopen → сверка с эталоном (делитель остаётся — стандарт)
   const delRes = await call("ceiling_rigel_delete", { rigel_id: rgSite });
   console.log("ceiling_rigel_delete:", JSON.stringify(delRes).slice(0, 200));
+  await roGuard?.assertUnchanged("{tag}");
   const saveDel = await call("project_save", {});
   console.log("save delete:", JSON.stringify({ verified: saveDel["verified"], rounds: saveDel["rounds"], warnings: saveDel["warnings"] }));
   if (!saveDel["verified"]) throw new Error("save delete не verified");

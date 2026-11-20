@@ -130,6 +130,7 @@ try {
   // 4. validate → save
   const validation = (await call("model_validate", {})) as { ok?: boolean; problems?: unknown[] };
   console.log("validate ok:", validation.ok, validation.problems?.length ?? 0);
+  await roGuard.assertUnchanged("{tag}");
   const save = await call("project_save", {});
   writeFileSync(`${OUT}/240-save-result.json`, JSON.stringify(save, null, 1));
   verified = (save as { verified?: boolean }).verified === true;
@@ -174,12 +175,14 @@ try {
     for (const id of [...created.walls].reverse()) {
       try {
         await call("wall_delete", { wall_id: id });
+        await roGuard.assertUnchanged("{tag}");
         const sv = (await call("project_save", {})) as { verified?: boolean };
         if (sv.verified !== true) {
           // ретрай: перечитать проект и удалить стену заново (NORMALIZATION_DROPPED бывает
           //flaky при удалении стен — редактор пересобирает отрезки)
           await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
           await call("wall_delete", { wall_id: id });
+          await roGuard.assertUnchanged("{tag}");
           const sv2 = (await call("project_save", {})) as { verified?: boolean };
           if (sv2.verified !== true) cleanupOk = false;
         }

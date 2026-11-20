@@ -10,7 +10,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, assertUnchangedRef, newGuardRef, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск: … run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
@@ -90,6 +90,7 @@ const cleanup = async (): Promise<void> => {
       }
     }
     if (left.length > 0) console.error("CLEANUP: не удалены стены:", left.join(","));
+    await assertUnchangedRef(roRef, "{tag}");
     const saveRes = await call("project_save", {}, true);
     console.log("cleanup save verified:", saveRes["verified"]);
   } catch (e) {
@@ -189,10 +190,12 @@ const snapReadonly = async (tag: string): Promise<LoadedModel> => {
   return m;
 };
 
+const roRef = newGuardRef();
 try {
   // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
   const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+  roRef.current = roGuard;
   await roGuard.assertUnchanged("перед записями");
   const snapBefore = await snapReadonly("before");
   const before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
@@ -223,6 +226,7 @@ try {
     [{ x: ox + 300, y: 200 }, { x: ox, y: 200 }],
     [{ x: ox, y: 200 }, { x: ox, y: 0 }],
   ] as Array<[{ x: number; y: number }, { x: number; y: number }]>) await addWall(p1, p2);
+  await assertUnchangedRef(roRef, "{tag}");
   await call("project_save", {}, true);
   await sleep(5500);
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID }, true);
@@ -235,6 +239,7 @@ try {
   created.push({ kind: "delimiter", siteId: String((zdA as { entity?: { site_id?: string } }).entity?.site_id ?? "") });
   // разрез: новая стена по x=ox+100 от нижнего ребра до верхнего (узел совпадает с концом делителя)
   await addWall({ x: ox + 100, y: 0 }, { x: ox + 100, y: 200 });
+  await assertUnchangedRef(roRef, "{tag}");
   const saveA = await call("project_save", {}, true);
   console.log("SAVE A (конец делителя в узле разреза): verified=", saveA["verified"], "warnings=", JSON.stringify(saveA["warnings"]).slice(0, 400));
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID }, true);
@@ -248,6 +253,7 @@ try {
     [{ x: ox2 + 300, y: 200 }, { x: ox2, y: 200 }],
     [{ x: ox2, y: 200 }, { x: ox2, y: 0 }],
   ] as Array<[{ x: number; y: number }, { x: number; y: number }]>) await addWall(p1, p2);
+  await assertUnchangedRef(roRef, "{tag}");
   await call("project_save", {}, true);
   await sleep(5500);
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID }, true);
@@ -259,6 +265,7 @@ try {
   created.push({ kind: "delimiter", siteId: String((zdB as { entity?: { site_id?: string } }).entity?.site_id ?? "") });
   // разрез на 15 см левее делителя: делитель остаётся в правой части (H7 ревью 261)
   await addWall({ x: ox2 + 180, y: 0 }, { x: ox2 + 180, y: 200 });
+  await assertUnchangedRef(roRef, "{tag}");
   const saveB = await call("project_save", {}, true);
   console.log("SAVE B (разрез в 10 см от конца): verified=", saveB["verified"], "warnings=", JSON.stringify(saveB["warnings"]).slice(0, 400));
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID }, true);
@@ -272,6 +279,7 @@ try {
     [{ x: ox3 + 300, y: 200 }, { x: ox3, y: 200 }],
     [{ x: ox3, y: 200 }, { x: ox3, y: 0 }],
   ] as Array<[{ x: number; y: number }, { x: number; y: number }]>) await addWall(p1, p2);
+  await assertUnchangedRef(roRef, "{tag}");
   await call("project_save", {}, true);
   await sleep(5500);
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID }, true);
@@ -283,6 +291,7 @@ try {
   created.push({ kind: "delimiter", siteId: String((zdC as { entity?: { site_id?: string } }).entity?.site_id ?? "") });
   try {
     await addWall({ x: ox3 + 150, y: 0 }, { x: ox3 + 150, y: 200 });
+    await assertUnchangedRef(roRef, "{tag}");
     const saveC = await call("project_save", {}, true);
     console.log("SAVE C (делитель поперёк разреза): verified=", saveC["verified"], "warnings=", JSON.stringify(saveC["warnings"]).slice(0, 400));
     await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID }, true);
@@ -302,6 +311,7 @@ try {
     try { await call("wall_delete", { wall_id: label }, true); } catch { /* уже нет */ }
     left.shift();
   }
+  await assertUnchangedRef(roRef, "{tag}");
   const saveR = await call("project_save", {}, true);
   console.log("restore save verified:", saveR["verified"]);
   if (!saveR["verified"]) throw new Error("restore save не verified");

@@ -224,6 +224,7 @@ try {
   // 4. validate → save → reopen → сверка
   const v = await call("model_validate", {});
   console.log("validate: проблем", ((v["problems"] ?? []) as unknown[]).length);
+  await roGuard.assertUnchanged("{tag}");
   const saveRes = await call("project_save", {});
   console.log("save:", JSON.stringify({ verified: saveRes["verified"], rounds: saveRes["rounds"] }));
   if (!saveRes["verified"]) throw new Error("save не verified");
@@ -265,6 +266,7 @@ try {
   } else {
     await call("finish_ceiling_remove", { room_id: roomId });
   }
+  await roGuard.assertUnchanged("{tag}");
   const saveRes2 = await call("project_save", {});
   console.log("restore save:", JSON.stringify({ verified: saveRes2["verified"], rounds: saveRes2["rounds"] }));
   if (!saveRes2["verified"]) throw new Error("restore save не verified");

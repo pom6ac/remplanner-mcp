@@ -147,6 +147,7 @@ try {
   console.log("room walls (site_id):", created.walls.join(" "), "top:", topWall.site_id);
   await call("item_add", { name: "socket_thermo", position: { against_wall: { wall_id: topWall.site_id, offset_mm: 1000 } } });
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s1 = await call("project_save", {});
   console.log("save#1 (комнаты+терморегулятор):", JSON.stringify(s1).slice(0, 200));
   if (s1["verified"] !== true) throw new Error("save#1 не verified");
@@ -199,6 +200,7 @@ try {
   const v1 = await call("model_validate", {});
   console.log("validate:", JSON.stringify(v1).slice(0, 200));
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s2 = await call("project_save", {});
   console.log("save#2 (тёплая стена+кабель):", JSON.stringify(s2).slice(0, 240));
   if (s2["verified"] !== true) throw new Error("save#2 не verified");
@@ -247,6 +249,7 @@ try {
   // 5. warm_wall_update: границы и высоты; вершина кабеля следует
   await call("warm_wall_update", { warm_wall_id: wwId, start_mm: 2200, end_mm: 3600, height_mm: 1200, height_from_floor_mm: 100 });
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s3 = await call("project_save", {});
   console.log("save#3 (warm_wall_update):", JSON.stringify(s3).slice(0, 240));
   if (s3["verified"] !== true) throw new Error("save#3 не verified");
@@ -287,6 +290,7 @@ try {
   if (!partSite) throw new Error(`wall_add: нет site_id: ${JSON.stringify(partRes).slice(0, 200)}`);
   created.walls.push(partSite);
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s4 = await call("project_save", {});
   console.log("save#4 (split):", JSON.stringify(s4).slice(0, 240));
   if (s4["verified"] !== true) throw new Error("save#4 (split) не verified");
@@ -305,6 +309,7 @@ try {
   const bottomNow = mg5.walls.find((w) => w.site_id === bottom.site_id)!;
   await call("wall_update", { wall_id: bottomNow.id, to: { x: bottomNow.to[0], y: bottomNow.to[1] + 200 } });
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s5 = await call("project_save", {});
   console.log("save#5 (перенос стены):", JSON.stringify(s5).slice(0, 240));
   if (s5["verified"] !== true) throw new Error("save#5 (перенос) не verified");
@@ -319,6 +324,7 @@ try {
   await call("wall_delete", { wall_id: partSite });
   created.walls = created.walls.filter((w) => w !== partSite);
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s6 = await call("project_save", {});
   console.log("save#6 (merge):", JSON.stringify(s6).slice(0, 240));
   if (s6["verified"] !== true) throw new Error("save#6 (merge) не verified");
@@ -338,11 +344,13 @@ try {
 } finally {
   try {
     if (failed) {
+      await roGuard.assertUnchanged("{tag}");
       try { await call("project_save", {}); } catch { /* проект мог не открыться */ }
     }
     await pause();
     await cleanupCreated();
     await pause();
+    await roGuard.assertUnchanged("{tag}");
     const s7 = await call("project_save", {});
     console.log("save#7 (очистка):", JSON.stringify(s7).slice(0, 240));
     if (s7["verified"] !== true) throw new Error("save#7 (очистка) не verified");

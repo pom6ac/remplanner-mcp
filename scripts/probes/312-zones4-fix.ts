@@ -14,7 +14,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, type ReadonlyGuard } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath, type ReadonlyGuard } from "./probe-guard.ts";
 import { sig } from "./probe-sig.ts";
 
 if (process.argv[2] !== "run") {
@@ -71,6 +71,7 @@ async function restoreByCaptured(): Promise<void> {
   const roomRefCap = created.find((c) => c.kind === "ceiling")?.roomRef;
   if (roomRefCap) {
     try { await call("finish_ceiling_remove", { room_id: roomRefCap }); } catch { /* уже снята */ }
+    await roGuard?.assertUnchanged("{tag}");
     try { await call("project_save", {}); } catch { /* продолжаем зачистку */ }
   }
   const mg = await call("model_get", {});
@@ -97,6 +98,7 @@ async function restoreByCaptured(): Promise<void> {
     walls.length = 0;
     walls.push(...fw);
   }
+  await roGuard?.assertUnchanged("{tag}");
   const saveRes = await call("project_save", {});
   console.log("restore save:", JSON.stringify({ verified: saveRes["verified"], rounds: saveRes["rounds"] }));
   if (!saveRes["verified"]) throw new Error("restore save не verified");
@@ -125,7 +127,7 @@ try {
   // 0. контрольный проект до (только GET)
   // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, `${OUT}/312-readonly-ref.json`);
+  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
   await roGuard.assertUnchanged("перед записями");
   roBefore = await snap(READONLY_ID, READONLY_PLAN_ID, "readonly-before");
 
@@ -175,6 +177,7 @@ try {
     if (!sid) throw new Error("wall_add не вернул entity.site_id");
     created.push({ kind: "wall", siteId: sid });
   }
+  await roGuard?.assertUnchanged("{tag}");
   const saveRoom = await call("project_save", {});
   console.log("save пробной комнаты:", JSON.stringify({ verified: saveRoom["verified"] }));
   if (!saveRoom["verified"]) throw new Error("save пробной комнаты не verified");
@@ -193,6 +196,7 @@ try {
 
   // ---------- №1: finish_get/remove после rigel_add ----------
   await call("finish_ceiling_set", { room_id: trialRef, material: "gypsum_ceiling", profile: "standard" });
+  await roGuard?.assertUnchanged("{tag}");
   const saveFin = await call("project_save", {});
   console.log("save отделки:", JSON.stringify({ verified: saveFin["verified"] }));
   if (!saveFin["verified"]) throw new Error("save отделки не verified");
@@ -208,6 +212,7 @@ try {
   const rg1Site = String(rg1["site_id"] ?? "");
   if (!rg1Site) throw new Error("ceiling_rigel_add не вернул site_id");
   created.push({ kind: "rigel", siteId: rg1Site });
+  await roGuard?.assertUnchanged("{tag}");
   const saveRg1 = await call("project_save", {});
   console.log("save закладной №1:", JSON.stringify({ verified: saveRg1["verified"], warnings: saveRg1["warnings"] }));
   if (!saveRg1["verified"]) throw new Error("save закладной не verified (NORMALIZATION_DROPPED?)");
@@ -231,6 +236,7 @@ try {
   if (!(maxX1 <= rigelX + 5 + 1)) throw new Error(`№1: отделка переписана полигоном всей комнаты (x до ${maxX1})`);
   // remove снимает
   await call("finish_ceiling_remove", { room_id: trialRef });
+  await roGuard?.assertUnchanged("{tag}");
   const saveRem = await call("project_save", {});
   console.log("save remove:", JSON.stringify({ verified: saveRem["verified"] }));
   if (!saveRem["verified"]) throw new Error("save remove не verified");
@@ -243,6 +249,7 @@ try {
 
   // ---------- №3: zone_ceiling_add → rigel_update width → save без NORMALIZATION_DROPPED ----------
   await call("finish_ceiling_set", { room_id: trialRef, material: "gypsum_ceiling", profile: "standard" });
+  await roGuard?.assertUnchanged("{tag}");
   const saveFin2 = await call("project_save", {});
   if (!saveFin2["verified"]) throw new Error("save отделки №3 не verified");
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
@@ -255,6 +262,7 @@ try {
   const rg2Site = String(rg2["site_id"] ?? "");
   if (!rg2Site) throw new Error("ceiling_rigel_add №3 не вернул site_id");
   created.push({ kind: "rigel", siteId: rg2Site });
+  await roGuard?.assertUnchanged("{tag}");
   const saveRg2 = await call("project_save", {});
   if (!saveRg2["verified"]) throw new Error("save закладной №3 не verified");
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
@@ -267,6 +275,7 @@ try {
   const zdSite = String(zd["site_id"] ?? "");
   if (!zdSite) throw new Error("zone_ceiling_add не вернул site_id");
   created.push({ kind: "delimiter", siteId: zdSite });
+  await roGuard?.assertUnchanged("{tag}");
   const saveZd = await call("project_save", {});
   console.log("save делителя:", JSON.stringify({ verified: saveZd["verified"] }));
   if (!saveZd["verified"]) throw new Error("save делителя не verified");
@@ -285,6 +294,7 @@ try {
   // update ширины: прежний консервативный отказ убран, save обязан пройти
   const upd = await call("ceiling_rigel_update", { rigel_id: rg2Site, width_mm: 300 });
   console.log("№3 ceiling_rigel_update:", JSON.stringify({ width_mm: upd["width_mm"] }));
+  await roGuard?.assertUnchanged("{tag}");
   const saveUpd = await call("project_save", {});
   console.log("save update №3:", JSON.stringify({ verified: saveUpd["verified"], warnings: saveUpd["warnings"] }));
   if (!saveUpd["verified"]) throw new Error("№3: save update не verified (NORMALIZATION_DROPPED?)");
@@ -302,6 +312,7 @@ try {
   // ---------- №7: delete закладной с привязанным делителем ----------
   const delRes = await call("ceiling_rigel_delete", { rigel_id: rg2Site });
   console.log("№7 ceiling_rigel_delete:", JSON.stringify(delRes).slice(0, 160));
+  await roGuard?.assertUnchanged("{tag}");
   const saveDel = await call("project_save", {});
   console.log("save delete №7:", JSON.stringify({ verified: saveDel["verified"] }));
   if (!saveDel["verified"]) throw new Error("№7: save delete не verified");

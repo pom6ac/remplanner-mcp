@@ -20,7 +20,7 @@ import { loadModel, saveModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, assertUnchangedRef, newGuardRef, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 import { BASE_URL, HTTP_TIMEOUT_MS, USER_AGENT } from "../../src/config.ts";
 import { cookieHeader, type SessionState } from "../../src/session.ts";
 import { toModel } from "../../src/model/canonical.ts";
@@ -153,6 +153,7 @@ let shieldItemSiteId: string | null = null;
 let verified = false;
 let restoreOk = false;
 let mainOk = false;
+const roRef = newGuardRef();
 try {
   // 0. бэкап GET dev-проекта + контрольный GET рабочего
   ownBefore = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
@@ -162,7 +163,8 @@ try {
   }, null, 1));
   // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, `${OUT}/284-live-check-readonly-ref.json`);
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+  roRef.current = roGuard;
   await roGuard.assertUnchanged("перед записями");
   readonlyBefore = await snap(READONLY_ID, "before");
   console.log("backup ok");
@@ -210,6 +212,7 @@ try {
   // 3. validate → save
   const validation = (await call("model_validate", {})) as { ok?: boolean; problems?: unknown[] };
   console.log("validate ok:", validation.ok, validation.problems?.length ?? 0);
+  await assertUnchangedRef(roRef, "{tag}");
   const save = await call("project_save", {});
   writeFileSync(`${OUT}/284-save-result.json`, JSON.stringify(save, null, 1));
   const verified = (save as { verified?: boolean }).verified === true;
@@ -238,6 +241,7 @@ try {
   // 5. перенос модуля на рейку 1 + порядок (drag-семантика)
   await call("shield_module_update", { item_id: shieldItemLabel, module_id: idA, rail: 1 });
   await call("shield_module_update", { item_id: shieldItemLabel, module_id: idA, index: 0 });
+  await assertUnchangedRef(roRef, "{tag}");
   const sv2 = (await call("project_save", {})) as { verified?: boolean };
   console.log("save after move verified:", sv2.verified === true);
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
@@ -250,6 +254,7 @@ try {
   // 6. удаление провода
   const wireId = wireByType("shield_wire_null")!.wire_id;
   await call("shield_wire_delete", { item_id: shieldItemLabel, wire_id: wireId });
+  await assertUnchangedRef(roRef, "{tag}");
   const sv3 = (await call("project_save", {})) as { verified?: boolean };
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
   const afterDel = await mg();
@@ -261,6 +266,7 @@ try {
   const delRes = await call("shield_module_delete", { item_id: shieldItemLabel, module_id: idC });
   const deletedWires = (delRes as { deleted_wires?: string[] }).deleted_wires ?? [];
   console.log("deleted_wires:", deletedWires.length);
+  await assertUnchangedRef(roRef, "{tag}");
   const sv4 = (await call("project_save", {})) as { verified?: boolean };
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
   const afterModDel = await mg();
@@ -283,6 +289,7 @@ try {
   const cleanupLabel = itemLabelBySiteId(shieldItemSiteId!);
   if (cleanupLabel) {
     await call("item_delete", { item_id: cleanupLabel });
+    await assertUnchangedRef(roRef, "{tag}");
     const sv = (await call("project_save", {})) as { verified?: boolean };
     await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
     const clean = await mg();
@@ -308,6 +315,7 @@ try {
         const label = itemLabelBySiteId(shieldItemSiteId);
         if (label) {
           await call("item_delete", { item_id: label });
+          await assertUnchangedRef(roRef, "{tag}");
           const sv = (await call("project_save", {})) as { verified?: boolean };
           console.log("finally: пробный щиток удалён, save verified:", sv.verified === true);
         }
@@ -316,6 +324,7 @@ try {
       if (!samePlan(ownBefore.model, afterModel.model)) {
         console.log("finally: сигнатура плана отличается от бэкапа — возврат бэкапа");
         const fresh = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+        await assertUnchangedRef(roRef, "{tag}");
         const sv = await saveModel(ctx.session(), {
           objectId: OBJECT_ID,
           planId: PLAN_ID,

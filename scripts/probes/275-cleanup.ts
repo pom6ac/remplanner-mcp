@@ -78,6 +78,7 @@ await deleteBySite(created.items, "item_delete", "item_id");
 await deleteBySite(created.walls, "wall_delete", "wall_id");
 await roGuard.assertUnchanged("перед save зачистки");
 await new Promise((r) => setTimeout(r, 6000));
+await roGuard.assertUnchanged("{tag}");
 const s = await call("project_save", {});
 console.log("save:", JSON.stringify(s).slice(0, 200));
 if (s["verified"] !== true) throw new Error("save не verified");

@@ -12,7 +12,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, assertUnchangedRef, newGuardRef, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
@@ -215,14 +215,17 @@ const restoreWrites = async (): Promise<void> => {
   await call("finish_ceiling_molding_remove", { room_id: roomId, wall_id: wallId });
   await call("finish_floor_molding_remove", { room_id: roomId, wall_id: wallId });
   await call("finish_ceiling_remove", { room_id: roomId });
+  await assertUnchangedRef(roRef, "{tag}");
   const s = await call("project_save", {});
   if (!s["verified"]) throw new Error("restore save не verified");
 };
 
+const roRef = newGuardRef();
 try {
   // 0. ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
   const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+  roRef.current = roGuard;
   await roGuard.assertUnchanged("перед записями");
   const snapBefore = await snap(READONLY_ID, "before");
   // 1. бэкап dev-проекта
@@ -338,6 +341,7 @@ try {
   const v = await call("model_validate", {});
   console.log("validate: проблем", ((v["problems"] ?? []) as unknown[]).length);
   written = true; // с этого места сервер может получить изменения — в finally восстановление
+  await assertUnchangedRef(roRef, "{tag}");
   const saveRes = await call("project_save", {});
   console.log("save:", JSON.stringify({ verified: saveRes["verified"], rounds: saveRes["rounds"] }));
   if (!saveRes["verified"]) throw new Error("save не verified");

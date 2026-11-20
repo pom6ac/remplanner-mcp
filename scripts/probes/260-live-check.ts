@@ -12,7 +12,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, assertUnchangedRef, newGuardRef, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
@@ -82,6 +82,7 @@ const cleanup = async (): Promise<void> => {
         await call("wall_delete", { wall_id: label });
         left.shift();
       }
+      await assertUnchangedRef(roRef, "{tag}");
       await call("project_save", {});
       console.log("cleanup save: OK");
     }
@@ -208,10 +209,12 @@ function sig(m: unknown): string {
   return JSON.stringify(aliasAll(c));
 }
 
+const roRef = newGuardRef();
 try {
   // 0. ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
   const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+  roRef.current = roGuard;
   await roGuard.assertUnchanged("перед записями");
   const snapBefore = await snap(READONLY_ID, "before");
 
@@ -254,6 +257,7 @@ try {
     created.push({ kind: "wall", siteId: sid });
   }
   console.log("стены пробной комнаты:", created.length);
+  await assertUnchangedRef(roRef, "{tag}");
   const saveRoom = await call("project_save", {});
   console.log("save пробной комнаты:", JSON.stringify({ verified: saveRoom["verified"], rounds: saveRoom["rounds"] }));
   if (!saveRoom["verified"]) throw new Error("save пробной комнаты не verified");
@@ -280,6 +284,7 @@ try {
   if (partIds.length !== 2) throw new Error("wall_split не вернул две части");
   created.push({ kind: "wall", siteId: partIds[0] }, { kind: "wall", siteId: partIds[1] });
   console.log("split:", partIds);
+  await assertUnchangedRef(roRef, "{tag}");
   const saveSplit = await call("project_save", {});
   console.log("save после split:", JSON.stringify({ verified: saveSplit["verified"], rounds: saveSplit["rounds"], warnings: saveSplit["warnings"] }));
   if (!saveSplit["verified"]) throw new Error("save после split не verified");
@@ -297,6 +302,7 @@ try {
   const reAddId = (reAdd as { entity?: { site_id?: string } }).entity?.site_id;
   if (!reAddId) throw new Error("wall_add (merge) не вернул site_id");
   created.push({ kind: "wall", siteId: reAddId });
+  await assertUnchangedRef(roRef, "{tag}");
   const saveMerge = await call("project_save", {});
   console.log("save после merge:", JSON.stringify({ verified: saveMerge["verified"], rounds: saveMerge["rounds"], warnings: saveMerge["warnings"] }));
   if (!saveMerge["verified"]) throw new Error("save после merge не verified");
@@ -318,6 +324,7 @@ try {
   });
   console.log("zd2:", JSON.stringify({ id: zd2["id"], site_id: zd2["site_id"], length_mm: zd2["length_mm"] }));
   created.push({ kind: "delimiter", siteId: String(zd2["site_id"] ?? ""), roomRef });
+  await assertUnchangedRef(roRef, "{tag}");
   const saved = await call("project_save", {});
   console.log("save:", JSON.stringify({ verified: saved["verified"], rounds: saved["rounds"], warnings: saved["warnings"] }));
   if (!saved["verified"]) throw new Error("save не verified");
@@ -336,6 +343,7 @@ try {
     const topLabel = await freshLabel("walls", created.find((c) => c.kind === "wall" && c.siteId !== bottomSite && c.siteId !== reAddId)?.siteId ?? "");
     if (topLabel) {
       await call("wall_move", { wall_id: topLabel, offset_mm: 30 });
+      await assertUnchangedRef(roRef, "{tag}");
       const saveMove = await call("project_save", {});
       console.log("wall_move:", JSON.stringify({ verified: saveMove["verified"], rounds: saveMove["rounds"], warnings: saveMove["warnings"] }));
       await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
@@ -360,6 +368,7 @@ try {
     await call("wall_delete", { wall_id: label });
     left.shift();
   }
+  await assertUnchangedRef(roRef, "{tag}");
   const saveRes2 = await call("project_save", {});
   console.log("restore save:", JSON.stringify({ verified: saveRes2["verified"], rounds: saveRes2["rounds"] }));
   if (!saveRes2["verified"]) throw new Error("restore save не verified");

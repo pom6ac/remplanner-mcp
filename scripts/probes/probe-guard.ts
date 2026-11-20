@@ -240,6 +240,20 @@ export function guardedSave(guard: ReadonlyGuard, save: () => Promise<unknown>):
   };
 }
 
+/** Ссылка на гард для проб, где save-сайты вне области видимости локального
+ *  roGuard (top-level хелперы, finally) — ревью 321 N4. */
+export type ReadonlyGuardRef = { current: ReadonlyGuard | null };
+
+export function newGuardRef(): ReadonlyGuardRef {
+  return { current: null };
+}
+
+/** assertUnchanged по ссылке (ревью 321 N4): гард создаётся до первой записи,
+ *  поэтому null здесь означает «записей ещё не было» — сверка пропускается. */
+export async function assertUnchangedRef(ref: ReadonlyGuardRef, tag: string): Promise<void> {
+  await ref.current?.assertUnchanged(tag);
+}
+
 /** Решение координатора (ревью 321 N3г, задача 322 п.1г): старые записывающие
  *  пробы без probe-guard НЕ переписываются — их запуск запрещён. Вызывается
  *  первой исполняемой строкой такой пробы. */

@@ -198,6 +198,7 @@ try {
   const v1 = await call("model_validate", {});
   console.log("validate:", JSON.stringify(v1).slice(0, 200));
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s1 = await call("project_save", {});
   console.log("save#1:", JSON.stringify(s1).slice(0, 240));
   if (s1["verified"] !== true) throw new Error("save#1 не verified");
@@ -292,6 +293,7 @@ try {
   created.walls.push(partSite);
   console.log("split: перегородка", partSite);
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s2 = await call("project_save", {});
   console.log("save#2 (split):", JSON.stringify(s2).slice(0, 240));
   if (s2["verified"] !== true) throw new Error("save#2 (split) не verified");
@@ -304,6 +306,7 @@ try {
   await call("wall_delete", { wall_id: partSite });
   created.walls = created.walls.filter((w) => w !== partSite);
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s3 = await call("project_save", {});
   console.log("save#3 (merge):", JSON.stringify(s3).slice(0, 240));
   if (s3["verified"] !== true) throw new Error("save#3 (merge) не verified");
@@ -322,6 +325,7 @@ try {
   await pause();
   await cleanupCreated();
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s4 = await call("project_save", {});
   console.log("save#4 (очистка):", JSON.stringify(s4).slice(0, 240));
   if (s4["verified"] !== true) throw new Error("save#4 (очистка) не verified");
@@ -343,6 +347,7 @@ try {
   // даже при сбое (best effort; список ID в 250-created.json остаётся для 250-cleanup)
   try {
     await cleanupCreated();
+    await roGuard.assertUnchanged("{tag}");
     await call("project_save", {});
     console.error("cleanup после сбоя выполнен");
   } catch (ce) {

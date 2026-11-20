@@ -112,6 +112,7 @@ const guessColl = (tool: string): string =>
   tool === "wiring_delete" ? "cables_warm_floor" : tool === "item_delete" ? "items" : "walls";
 
 const saveLog = async (tag: string): Promise<Record<string, unknown>> => {
+  await roGuard.assertUnchanged("{tag}");
   const s = await call("project_save", {});
   console.log(`${tag}: verified =`, s["verified"], "; will_delete =", JSON.stringify(s["will_delete"] ?? null), "; warnings =", JSON.stringify(s["warnings"] ?? null));
   if (s["verified"] !== true) throw new Error(`${tag} не verified`);
@@ -277,6 +278,7 @@ try {
 } finally {
   try {
     if (failed) {
+      await roGuard.assertUnchanged("{tag}");
       try { await call("project_save", {}); } catch { /* проект мог не открыться */ }
     }
     await pause();

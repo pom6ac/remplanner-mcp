@@ -15,7 +15,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID, REMPLANNER_PROBE_READONLY_PLAN_ID из env)");
@@ -93,7 +93,7 @@ try {
 
   // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, `${OUT}/242-readonly-ref.json`);
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
   await roGuard.assertUnchanged("перед записями");
 
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
@@ -140,6 +140,7 @@ try {
   console.log("item_update: перенос вдоль стены на offset", newOffset);
   const validation = (await call("model_validate", {})) as { ok?: boolean; problems?: unknown[] };
   console.log("validate ok:", validation.ok, validation.problems?.length ?? 0);
+  await roGuard.assertUnchanged("{tag}");
   const save = await call("project_save", {});
   writeFileSync(`${OUT}/242-save-result.json`, JSON.stringify(save, null, 1));
   const verified = (save as { verified?: boolean }).verified === true;
@@ -161,6 +162,7 @@ try {
   // 5. очистка созданных объектов по захваченным ID + save
   for (const id of [...created.wiring].reverse()) await call("wiring_delete", { wiring_id: id });
   for (const id of [...created.items].reverse()) await call("item_delete", { item_id: id });
+  await roGuard.assertUnchanged("{tag}");
   const sv0 = (await call("project_save", {})) as { verified?: boolean };
   console.log("cleanup items save verified:", sv0.verified === true);
   allOk = allOk && sv0.verified === true;
@@ -169,10 +171,12 @@ try {
   for (const id of [...created.walls].reverse()) {
     try {
       await call("wall_delete", { wall_id: id });
+      await roGuard.assertUnchanged("{tag}");
       const sv = (await call("project_save", {})) as { verified?: boolean };
       if (sv.verified !== true) {
         await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
         await call("wall_delete", { wall_id: id });
+        await roGuard.assertUnchanged("{tag}");
         const sv2 = (await call("project_save", {})) as { verified?: boolean };
         if (sv2.verified !== true) cleanupWalls = false;
       }

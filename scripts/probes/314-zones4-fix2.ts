@@ -14,7 +14,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, type ReadonlyGuard } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath, type ReadonlyGuard } from "./probe-guard.ts";
 import { sig } from "./probe-sig.ts";
 
 if (process.argv[2] !== "run") {
@@ -59,6 +59,7 @@ const snap = async (objectId: string, planId: string, tag: string): Promise<Load
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const save = async (label: string): Promise<Record<string, unknown>> => {
   await sleep(5100); // сохранение не чаще раза в 5 с
+  await roGuard?.assertUnchanged("{tag}");
   const res = await call("project_save", {});
   console.log(`${label}: save`, JSON.stringify({ verified: res["verified"], warnings: res["warnings"] }));
   return res;
@@ -128,7 +129,7 @@ try {
   // 0. контрольный проект до (только GET)
   // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
-  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, `${OUT}/314-readonly-ref.json`);
+  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
   await roGuard.assertUnchanged("перед записями");
   roBefore = await snap(READONLY_ID, READONLY_PLAN_ID, "readonly-before");
 
