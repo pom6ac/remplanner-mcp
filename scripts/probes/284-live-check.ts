@@ -222,8 +222,8 @@ try {
     // запись по умолчанию уже содержит 1 рейку + 2 shield_rail_add
     ["щиток: 3 рейки (умолчание + 2), 4 модуля", !!sh && sh.rails === 3 && sh.modules.length === 4],
     ["провода: 3 (phase/null/earth)", !!sh && sh.wires?.length === 3],
-    // ревью 285 №12: скобки — без них приоритет &&/|| пропускает w.from === null
-    ["фаза A.p0→B.p0", (() => { const w = wireByType("shield_wire_phase"); return !!w && (w.from === null || (w.from as { module_id?: string })?.module_id === idA && (w.from as { port?: number })?.port === 0); })()],
+    // ревью 287 N3: проверяются и from, и to (в compact from не бывает null)
+    ["фаза A.p0→B.p0", (() => { const w = wireByType("shield_wire_phase"); return !!w && w.from.module_id === idA && w.from.port === 0 && w.to.module_id === idB && w.to.port === 0; })()],
     ["ноль B.p2→C.p0", (() => { const w = wireByType("shield_wire_null"); return (w?.from as { module_id?: string })?.module_id === idB && (w?.from as { port?: number })?.port === 2 && (w?.to as { module_id?: string })?.module_id === idC; })()],
     ["земля C.p1→ввод", (() => { const w = wireByType("shield_wire_earth"); return (w?.from as { module_id?: string })?.module_id === idC && (w?.to as { input?: string })?.input === "earth"; })()],
   ];
