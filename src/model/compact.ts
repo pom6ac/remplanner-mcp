@@ -73,10 +73,21 @@ export type CompactRoom = {
   /** Площадь по осевым линиям, м² (null для комнат из rooms2 — осевой контур не восстанавливается). */
   area_axis_m2: number | null;
   perimeter_mm: number;
+  /** Рёбра контура комнаты в мм, в порядке rooms2.edges (для выбора edge в
+   *  warm_wall_add; ревью 274 №3): edge — индекс, from/to — первая/вторая
+   *  вершина ребра, length_mm — длина ребра. */
+  edges?: CompactRoomEdge[];
   /** Покрытие пола комнаты (лист «Напольные покрытия», этап 94). */
   floor?: string | null;
   /** Покрытие потолка комнаты (лист «Потолки», этап 94). */
   ceiling?: string | null;
+};
+
+export type CompactRoomEdge = {
+  edge: number;
+  from: [number, number];
+  to: [number, number];
+  length_mm: number;
 };
 
 export type CompactItem = {
@@ -453,6 +464,25 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       : null;
     // этап 94: покрытие пола/потолка комнаты видно в компактном API
     const room2 = room.roomId ? (model.rooms2 as Record<string, Record<string, unknown>> | undefined)?.[room.roomId] : undefined;
+    // рёбра контура комнаты в мм (ревью 274 №3): записи edges rooms2 или
+    // производные из полигона — тот же порядок, что в warm_wall_add (edge)
+    const edgesRec = room2 ? room2["edges"] : undefined;
+    let edgeSegs: Array<{ p1: { x: number; y: number }; p2: { x: number; y: number } }> = [];
+    if (Array.isArray(edgesRec)) {
+      edgeSegs = (edgesRec as Array<{ p1?: { x: number; y: number }; p2?: { x: number; y: number } }>)
+        .filter((e) => e && e.p1 && e.p2) as Array<{ p1: { x: number; y: number }; p2: { x: number; y: number } }>;
+    }
+    if (edgeSegs.length === 0 && room.polygon.length >= 3) {
+      for (let j = 0; j < room.polygon.length; j++) {
+        edgeSegs.push({ p1: room.polygon[j]!, p2: room.polygon[(j + 1) % room.polygon.length]! });
+      }
+    }
+    const compactEdges: CompactRoomEdge[] = edgeSegs.map((e, j) => ({
+      edge: j,
+      from: [round0(cmToMm(e.p1.x)), round0(cmToMm(e.p1.y))],
+      to: [round0(cmToMm(e.p2.x)), round0(cmToMm(e.p2.y))],
+      length_mm: round0(cmToMm(Math.hypot(e.p2.x - e.p1.x, e.p2.y - e.p1.y))),
+    }));
     const floorRec = room2 ? (room2["floors"] as Array<Record<string, unknown>> | undefined)?.[0] : undefined;
     const ceilingRec = room2 ? (room2["ceilings"] as Array<Record<string, unknown>> | undefined)?.[0] : undefined;
     return {
@@ -461,6 +491,7 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       area_m2: Math.round((room.areaCm2 / 10_000) * 100) / 100,
       area_axis_m2: room.axisAreaCm2 === null ? null : Math.round((room.axisAreaCm2 / 10_000) * 100) / 100,
       perimeter_mm: round0(cmToMm(perimeter)),
+      ...(compactEdges.length > 0 ? { edges: compactEdges } : {}),
       floor: floorRec && floorRec["exist"] === true && typeof floorRec["cover"] === "string" ? floorRec["cover"] as string : null,
       ceiling: ceilingRec && ceilingRec["exist"] === true && typeof ceilingRec["material"] === "string" ? ceilingRec["material"] as string : null,
     };

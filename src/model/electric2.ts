@@ -6,7 +6,7 @@ import { McpError } from "../errors.ts";
 import { add, scale, sub } from "./geometry.ts";
 import { gasLineLengthM } from "./pipes.ts";
 import { wallInwardNormal, SOCKET_GROUP_SUBS, parseSwitchVertexId, type SocketGroupSub } from "./electric.ts";
-import { warmWallEntries, warmWallCableOf, clearWarmWallCableLink, warmWallLinkHolders } from "./warmwall.ts";
+import { warmWallEntries, warmWallCableOf, clearWarmWallCableLink, warmWallLinkHolders, resolveWarmWallEntry } from "./warmwall.ts";
 
 /**
  * Кабели-проводка (часть 2, 2026-11-19): лист «Электропроводка» — model.cables_socket
@@ -174,10 +174,7 @@ export function elecContourVertex(model: Model, contourId: string): ElecVertexSp
  * подключение, l10n cabling_warm_floor_not_connect_same_wall).
  */
 export function elecWarmWallVertex(model: Model, warmWallRef: string): ElecVertexSpec {
-  const entries = warmWallEntries(model);
-  const hit = entries.find((e) => e.part.id === warmWallRef)
-    ?? (/^WW(\d+)$/.exec(warmWallRef) ? entries[Number(/^WW(\d+)$/.exec(warmWallRef)![1]) - 1] : undefined);
-  if (!hit) throw new McpError("NOT_FOUND", `тёплая стена ${warmWallRef} не найдена (warm_wall_list)`);
+  const hit = resolveWarmWallEntry(model, warmWallRef);
   const linked = warmWallCableOf(hit.part);
   if (linked) {
     throw new McpError(
@@ -379,11 +376,16 @@ export function addElecCable(model: Model, params: { tool: string; path: ElecPat
         { details: { kind: "two_thermo", items: thermos.map((s) => s.itemId) } },
       );
     }
-    const contours = specs.filter((s) => s.kind === "warm_floor");
+    // тёплая стена в счёте контуров наравне с контуром тёплого пола (ревью 274
+    // №2): в редакторе запрещён прямой штрих тёплая стена—контур и
+    // стена—стена (source_items: от warm_wall_cable — только socket_group и
+    // node), а «не более одного контура/тёплой стены на кабель» — MCP строже
+    // редактора (в редакторе стена—node—стена допустима)
+    const contours = specs.filter((s) => s.kind === "warm_floor" || s.kind === "warm_wall");
     if (contours.length > 1) {
       throw new McpError(
         "INVALID_ARGUMENT",
-        `в пути кабеля тёплого пола ${contours.length} контура — MCP строже редактора: в редакторе запрещён прямой штрих контур–контур; терморегулятор с двумя контурами MCP не строит — подключите каждый контур отдельным кабелем`,
+        `в пути кабеля тёплого пола ${contours.length} контура/тёплой стены — MCP строже редактора: в редакторе запрещён прямой штрих тёплая стена—контур и стена—стена, а у кабеля MCP строит не более одной тёплой стены или контура — подключите каждую отдельным кабелем`,
         { details: { kind: "two_contours", items: contours.map((s) => s.itemId) } },
       );
     }

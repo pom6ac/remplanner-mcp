@@ -67,8 +67,10 @@ function scenario(): { m: Model; thermo: ItemProps; thermoSubId: string; ww: Ret
 // ---------- эталон ui-ref-warmwall-line (обе стороны) ----------
 
 /** Маска части тёплой стены для сверки с эталоном ЦЕЛИКОМ: id и производные
- *  (distance — размерная подпись get_distance, line_wall — демолиния после
- *  подрезки редактора, MCP пишет демолинию без подрезки) маскируются. */
+ *  (distance — размерная подпись get_distance — маскируется только для
+ *  прямой формулы (см. отдельные проверки без маски); line_wall — демолиния
+ *  после подрезки редактора, MCP пишет демолинию без подрезки, поэтому
+ *  distance эталона и MCP различаются законно) маскируются. */
 function maskedPart(raw: unknown): Record<string, unknown> {
   const p = structuredClone(raw) as Record<string, unknown>;
   delete p["id"];
@@ -113,7 +115,10 @@ test("273: эталон ui-ref-warmwall-line — warm_wall_add воспроиз�
   assert.equal(part.height, 135);
   assert.equal(part.height_from_floor, 15);
   assert.deepEqual(part.props, { id: part.id, name: "warm_wall_cable" });
-  assert.equal(part.distance, 24.9);
+  // distance по формуле get_distance бандла (ревью 274 №6): конец линии не на
+  // конце демолинии — без бонуса (в эталоне демолиния подрезана, конец части
+  // на подрезанном конце давал +5 → 24.9; у MCP демолиния без подрезки)
+  assert.equal(part.distance, 19.9);
   // group-запись ребра: {exist: true, parts}
   const room = m.rooms2!.r1 as { warms_walls: Array<Record<string, unknown>> };
   assert.equal(room.warms_walls.length, 4);
@@ -213,7 +218,9 @@ test("273: warm_wall_delete с подключённым кабелем — от�
   // после wiring_delete удаление возможно
   deleteElecCable(m, wire.id);
   const res = warmWallDelete(m, ww.id);
-  assert.equal(res.room_id, "r1");
+  assert.equal(res.id, ww.id);
+  assert.equal(res.room, "R1");
+  assert.equal(res.edge, 0);
   assert.equal(warmWallEntries(m).length, 0);
   const room = m.rooms2!.r1 as { warms_walls: Array<{ exist: boolean; parts?: unknown }> };
   assert.equal(room.warms_walls[0]!.exist, false);
@@ -227,7 +234,7 @@ test("273: минимальная длина и границы ребра — к
     () => warmWallAdd(m, { roomRef: "r1", edge: 0, startMm: 1000, endMm: 1190 }),
     (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("короче"),
   );
-  // 150 мм на конце ребра — допустимо (бонус открытого конца демолинии, get_distance)
+  // 150 мм на конце ребра — допустимо (+5 за конец на конце демолинии, get_distance)
   const short = warmWallAdd(m, { roomRef: "r1", edge: 0, startMm: 3850, endMm: 4000 });
   assert.equal(short.length_mm, 150);
   // за пределами ребра — отказ
@@ -302,7 +309,7 @@ test("273: warm_wall_list — метки WW<n>, кабель, фильтр по 
   assert.equal(list.length, 1);
   assert.equal(list[0]!.label, "WW1");
   assert.equal(list[0]!.id, ww.id);
-  assert.equal(list[0]!.room_id, "r1");
+  assert.equal(list[0]!.room_id, "R1");
   assert.equal(list[0]!.edge, 0);
   assert.equal(list[0]!.length_mm, 2000);
   assert.equal(list[0]!.height_mm, 1350);

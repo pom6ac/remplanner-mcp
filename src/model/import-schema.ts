@@ -221,6 +221,33 @@ const shield = z.looseObject({
 });
 
 /**
+ * Тёплая стена (этап 273, rev 274 №11): часть WarmLine в
+ * rooms2[rid].warms_walls[edge].parts. Части итерируют list/резолв/сверка,
+ * поэтому число частей ограничено MAX_IMPORT_ENTITIES; line/line_wall — точки
+ * в допустимом диапазоне. Неизвестные поля passthrough.
+ */
+const warmWallPart = z.looseObject({
+  id: idStr,
+  type: shortStr.optional(),
+  layer: z.number().finite().optional(),
+  line: z.looseObject({ p1: point, p2: point }),
+  line_wall: z.looseObject({ p1: point, p2: point }).optional(),
+  distance: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  height: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  height_from_floor: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  props: z.looseObject({ id: idStr, name: nameStr.optional() }).optional(),
+});
+
+const warmWallGroup = z.looseObject({
+  exist: z.boolean().optional(),
+  parts: collection(warmWallPart, MAX_IMPORT_ENTITIES).optional(),
+});
+
+const room2 = z.looseObject({
+  warms_walls: z.array(warmWallGroup).max(MAX_IMPORT_ENTITIES).optional(),
+});
+
+/**
  * Граф-коллекции схемы импорта — выводятся из реестра MODEL_ENTITY_COLLECTIONS
  * (ревью 241 №1): у схемы импорта больше нет своего перечня, который отстал от
  * реестра (cables_socket/cables_warm_floor/cables_conditioner проходили импорт
@@ -253,6 +280,9 @@ export const importModelSchema: z.ZodType = z.looseObject({
   plan_id: idStr.optional(),
   total_height: cmSize.optional(),
   final: z.boolean().optional(),
+  // комнаты редактора (этап 273 rev 274 №11): warms_walls с лимитами; прочие
+  // поля комнаты — passthrough (унаследованный долг rooms2 сохранён)
+  rooms2: z.record(z.string(), room2).optional(),
   ...collectionsSchema(),
 });
 

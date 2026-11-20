@@ -27,6 +27,14 @@ export type WarmWallSig = {
   height: number;
   hff: number;
   type: string;
+  /** Слой части (ревью 274 №5). */
+  layer: number;
+  /** props.name (форма ссылки части). */
+  propsName: string;
+  /** Наличие props.id (редактор пишет всегда). */
+  hasPropsId: boolean;
+  /** Флаг группы ребра exist (группа с частью обязана быть exist:true). */
+  exist: boolean;
   cableId: string | null;
 };
 
@@ -45,6 +53,7 @@ export function warmWallSigsOf(model: Record<string, unknown> | undefined): Warm
         if (!line?.p1 || !line?.p2) continue;
         const cableId = (part.props as { cables_warm_floor?: { cable_warm_floor_id?: unknown } } | undefined)
           ?.cables_warm_floor?.cable_warm_floor_id;
+        const props = part.props as Record<string, unknown> | undefined;
         out.push({
           key: String(part.id),
           idRoom: rid,
@@ -54,6 +63,10 @@ export function warmWallSigsOf(model: Record<string, unknown> | undefined): Warm
           height: Number(part.height ?? 0),
           hff: Number(part.height_from_floor ?? 0),
           type: String(part.type ?? ""),
+          layer: Number(part.layer ?? 1),
+          propsName: typeof props?.name === "string" ? props.name : "",
+          hasPropsId: typeof props?.id === "string" && props.id !== "",
+          exist: (ww[e] as { exist?: unknown } | null)?.exist === true,
           cableId: typeof cableId === "string" && cableId !== "" ? cableId : "",
         });
       }
@@ -115,6 +128,16 @@ export function warmWallsCompare(
     const found = strictList.filter((g) => !used.has(g.key)).find((g) => sameSigStrict(e, g));
     if (found) {
       used.add(found.key);
+      // комната совпадает контуром (exact или heir «same»): сверяем и проекцию
+      // привязки — ребро и флаг exist группы (ревью 274 №5)
+      if (gid !== undefined && (exact.get(e.idRoom) === gid || sameOf(e.idRoom) === gid)) {
+        if (e.edge !== found.edge) {
+          problems.push(`room ${e.idRoom}: тёплая стена ${e.key} перенесена на другое ребро (${e.edge} → ${found.edge})`);
+        }
+        if (e.exist !== found.exist) {
+          problems.push(`room ${e.idRoom}: у группы ребра ${found.edge} тёплой стены ${e.key} флаг exist ${e.exist} → ${found.exist}`);
+        }
+      }
       continue;
     }
     const affected = opts.affectedRooms?.has(e.idRoom) ?? false;
@@ -180,7 +203,17 @@ function sameLine(e: WarmWallSig, g: WarmWallSig): boolean {
 }
 
 function sameSigStrict(e: WarmWallSig, g: WarmWallSig): boolean {
-  return e.type === g.type && sameLine(e, g) && e.height === g.height && e.hff === g.hff && e.cableId === g.cableId;
+  return (
+    e.type === g.type
+    && sameLine(e, g)
+    && e.height === g.height
+    && e.hff === g.hff
+    && e.cableId === g.cableId
+    // полная проекция части (ревью 274 №5): layer, props.name, props.id
+    && e.layer === g.layer
+    && e.propsName === g.propsName
+    && e.hasPropsId === g.hasPropsId
+  );
 }
 
 function intersectingPool(

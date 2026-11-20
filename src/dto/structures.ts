@@ -4,7 +4,7 @@ import { resolveItem } from "./items.ts";
 import { findPipe } from "../model/pipes.ts";
 import { RIGEL_CEILING_TYPES } from "../model/rigels.ts";
 import { LIGHT_COLLECTION_BY_KIND, type LightKind } from "../model/lighting.ts";
-import { warmWallEntries } from "../model/warmwall.ts";
+import { resolveWarmWallEntry } from "../model/warmwall.ts";
 import type { Model, Pillar, Rigel, GasLine, Pipe, WarmFloor, LedStrip, StripLight, LineStrip } from "../model/types.ts";
 
 // DTO группы «колонны, ригели, трубы, тёплый пол, световые линии, проёмы пола»:
@@ -86,19 +86,10 @@ export function resolveWarmFloor(model: Model, ref: string): WarmFloor {
 
 /**
  * Тёплая стена по id части (WarmLine) или метке WW<n> из warm_wall_list (этап 273).
- * Части хранятся в rooms2[rid].warms_walls[edge].parts; порядок меток — как в
- * warm_wall_list (порядок обхода комнат и рёбер).
+ * Одна карта меток с warm_wall_list — модельная resolveWarmWallEntry (ревью 274 №1).
  */
 export function resolveWarmWall(model: Model, ref: string): string {
-  const entries = warmWallEntries(model);
-  const hit = entries.find((e) => e.part.id === ref);
-  if (hit) return hit.part.id;
-  const m = /^WW(\d+)$/.exec(ref);
-  if (m) {
-    const entry = entries[Number(m[1]) - 1];
-    if (entry) return entry.part.id;
-  }
-  return throwNotFound(`тёплая стена ${ref} не найдена (id сайта или метка WW<n> из warm_wall_list)`);
+  return resolveWarmWallEntry(model, ref).part.id;
 }
 
 /** Световая линия по site-id или метке LS/SL/LL1…_n из model_get (этап 84). */

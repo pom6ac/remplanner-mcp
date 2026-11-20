@@ -192,7 +192,7 @@ test("ревью 269 m2: у кабеля тёплого пола не более
   // путь C: контур → узел → контур
   assert.throws(
     () => addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: wfc.id }, { x: 2000, y: 2000 }, { itemId: wfi.id }] }),
-    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("MCP не строит"),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("MCP строже редактора"),
   );
   // путь C2: контур → терморегулятор → контур — тоже отклоняется: MCP строже
   // редактора — в редакторе запрещён прямой штрих контур–контур
@@ -200,7 +200,7 @@ test("ревью 269 m2: у кабеля тёплого пола не более
   // прежнее сообщение «добавьте узел» противоречило факту
   assert.throws(
     () => addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: wfc.id }, { itemId: thermo2.id }, { itemId: wfi.id }] }),
-    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("MCP не строит"),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("MCP строже редактора"),
   );
   // один контур с терморегулятором и узлами — допустим
   const wire = addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: thermo2.id }, { x: 2000, y: 2000 }, { itemId: wfc.id }] });

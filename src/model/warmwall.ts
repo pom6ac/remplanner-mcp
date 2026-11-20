@@ -109,15 +109,36 @@ export function warmWallEntries(model: Model): WarmWallEntry[] {
 }
 
 function partById(model: Model, ref: string): WarmWallEntry {
+  return resolveWarmWallEntry(model, ref);
+}
+
+/** Метка WW<n> — позиция в ПОЛНОМ списке warmWallEntries (до всякого фильтра). */
+export function warmWallLabel(index: number): string {
+  return `WW${index + 1}`;
+}
+
+/**
+ * Резолв части по id сайта или метке WW<n> — ЕДИНАЯ карта меток для
+ * warm_wall_list, warm_wall_update/delete и wiring_add (ревью 274 №1):
+ * метка — позиция в полном списке warmWallEntries, warm_wall_list лишь
+ * фильтрует вывод, не перенумеровывая.
+ */
+export function resolveWarmWallEntry(model: Model, ref: string): WarmWallEntry {
   const entries = warmWallEntries(model);
-  const byId = entries.find((e) => e.part.id === ref);
-  if (byId) return byId;
+  const hit = entries.find((e) => e.part.id === ref);
+  if (hit) return hit;
   const m = /^WW(\d+)$/.exec(ref);
   if (m) {
     const idx = Number(m[1]) - 1;
     if (idx >= 0 && idx < entries.length) return entries[idx]!;
   }
-  throw new McpError("NOT_FOUND", `тёплая стена ${ref} не найдена (warm_wall_list)`);
+  throw new McpError("NOT_FOUND", `тёплая стена ${ref} не найдена (id сайта или метка WW<n> из warm_wall_list)`);
+}
+
+/** Метка комнаты R<n> — позиция в словаре rooms2 (один порядок с roomByRef и rooms_list). */
+export function roomLabelOf(model: Model, roomId: string): string {
+  const idx = Object.keys(roomsOf(model)).indexOf(roomId);
+  return idx >= 0 ? `R${idx + 1}` : roomId;
 }
 
 /** Ссылка части на кабель (props.cables_warm_floor.cable_warm_floor_id, скаляр). */
@@ -142,22 +163,41 @@ function demolineOf(edge: { p1: Point; p2: Point }, poly: Point[]): { p1: Point;
   return { p1: off(edge.p1), p2: off(edge.p2) };
 }
 
-/** Конец линии на конце демолинии (для длины и бонуса размера, get_distance).
- *  Демолиния редактора подрезается на пересечениях с соседними демолиниями —
- *  подрезанный конец лежит в 5 см от конца ребра. Совпадение с концом ребра
- *  (0) или с подрезанным концом (5 см) — открытый конец демолинии. */
-function openEnds(line: { p1: Point; p2: Point }, lineWall: { p1: Point; p2: Point }): number {
-  const at = (p: Point): number => {
-    const d1 = dist(p, lineWall.p1), d2 = dist(p, lineWall.p2);
-    const near = (d: number) => d <= 0.05 || Math.abs(d - 5) <= 0.05;
-    return (near(d1) ? 1 : 0) + (near(d2) ? 1 : 0);
-  };
-  return at(line.p1) + at(line.p2);
+/** Конец линии на конце демолинии (для длины и бонуса размера, get_distance
+ *  бандла 268-app.js: «(line.p1==s.p1||line.p2==s.p1) && (e++, s.s_end||(n+=r))»).
+ *  Совпадение конца линии с концом демолинии — с допуском 0.05 см (r2-округление). */
+function endsAtDemolineEnds(line: { p1: Point; p2: Point }, lineWall: { p1: Point; p2: Point }): number {
+  const at = (p: Point): number =>
+    ((dist(p, lineWall.p1) <= 0.05 ? 1 : 0) + (dist(p, lineWall.p2) <= 0.05 ? 1 : 0));
+  return Math.min(2, at(line.p1) + at(line.p2));
 }
 
-/** Производная размерная подпись: длина линии + 5 за каждый открытый конец демолинии. */
+/**
+ * Производная размерная подпись — get_distance бандла (этап 275, rev 274 №6):
+ *   n = длина линии; за КАЖДЫЙ конец линии на конце демолинии +5 (слой 1);
+ *   если оба конца на концах демолинии — n = длина ВСЕЙ демолинии
+ *   («2===e && (n=LIB.distance(s.s0,s.e0))», бонусов нет).
+ * Эталоны: ui-ref-warmwall-line (19.86+5=24.9) и ui-ref-warmwall-wire
+ * (line=line_wall → 30, не 40).
+ */
 export function warmWallDistance(line: { p1: Point; p2: Point }, lineWall: { p1: Point; p2: Point }): number {
-  return r1(dist(line.p1, line.p2) + 5 * openEnds(line, lineWall));
+  const ends = endsAtDemolineEnds(line, lineWall);
+  if (ends === 2) return r1(dist(lineWall.p1, lineWall.p2));
+  return r1(dist(line.p1, line.p2) + 5 * ends);
+}
+
+/**
+ * get_distance для границы минимальной длины (create_line, 20 <= get_distance):
+ * у редактора демолиния подрезана на пересечениях с соседними — её конец лежит
+ * в ~5 см от конца ребра, и конец линии на подрезанном конце тоже даёт +5
+ * (s_end=false). Демолиния MCP не подрезана, поэтому конец линии распознаётся
+ * и на конце ребра, и в 5 см от него; оба конца — длина всей демолинии.
+ */
+function minDistanceCm(line: { p1: Point; p2: Point }, dl: { p1: Point; p2: Point }): number {
+  const near = (p: Point, q: Point): number => (dist(p, q) <= 0.05 || Math.abs(dist(p, q) - 5) <= 0.05 ? 1 : 0);
+  const ends = Math.min(2, near(line.p1, dl.p1) + near(line.p1, dl.p2) + near(line.p2, dl.p1) + near(line.p2, dl.p2));
+  if (ends === 2) return dist(dl.p1, dl.p2);
+  return dist(line.p1, line.p2) + 5 * ends;
 }
 
 export type WarmWallAddParams = {
@@ -215,12 +255,10 @@ export function warmWallAdd(model: Model, params: WarmWallAddParams): { id: stri
   const dir = { x: (edge.p2.x - edge.p1.x) / edgeLen, y: (edge.p2.y - edge.p1.y) / edgeLen };
   const clamp = (v: number) => Math.min(Math.max(v, 0), edgeLen);
   const line = { p1: { x: r2(dl.p1.x + dir.x * clamp(s)), y: r2(dl.p1.y + dir.y * clamp(s)) }, p2: { x: r2(dl.p1.x + dir.x * clamp(t)), y: r2(dl.p1.y + dir.y * clamp(t)) } };
-  // длина как в редакторе: create_line требует get_distance >= 20 (длина + 5 за
-  // конец на конце демолинии); сравнение на концах ребра — по демолинии
-  const ends = openEnds(line, dl);
-  const rawLen = dist(line.p1, line.p2);
-  if (rawLen + 5 * ends < 20) {
-    throw new McpError("INVALID_ARGUMENT", `длина участка ${Math.round(rawLen * 10)} мм короче минимальной редактора 200 мм`);
+  // минимум как в редакторе: create_line требует get_distance >= 20
+  // (с бонусом подрезанных концов — minDistanceCm)
+  if (minDistanceCm(line, dl) < 20) {
+    throw new McpError("INVALID_ARGUMENT", `длина участка ${Math.round(dist(line.p1, line.p2) * 10)} мм короче минимальной редактора 200 мм`);
   }
   const ww = warmsWallsOfRoom(room);
   while (ww.length < edges.length) ww.push({ exist: false });
@@ -254,7 +292,7 @@ export function warmWallAdd(model: Model, params: WarmWallAddParams): { id: stri
     if (backup !== undefined) room.warms_walls = backup;
     throw e;
   }
-  return { id, edge: params.edge, room_id: roomId, length_mm: cmToMm(r1(rawLen)) };
+  return { id, edge: params.edge, room_id: roomLabelOf(model, roomId), length_mm: cmToMm(r1(dist(line.p1, line.p2))) };
 }
 
 export type WarmWallUpdateParams = {
@@ -304,10 +342,8 @@ export function warmWallUpdate(model: Model, params: WarmWallUpdateParams): { id
         throw new McpError("INVALID_ARGUMENT", `участок выходит за ребро длиной ${r1(edgeLen * 10)} мм`);
       }
       const line = { p1: { x: r2(dl.p1.x + dir.x * clamp01(s, edgeLen)), y: r2(dl.p1.y + dir.y * clamp01(s, edgeLen)) }, p2: { x: r2(dl.p1.x + dir.x * clamp01(t, edgeLen)), y: r2(dl.p1.y + dir.y * clamp01(t, edgeLen)) } };
-      const ends = openEnds(line, dl);
-      const rawLen = dist(line.p1, line.p2);
-      if (rawLen + 5 * ends < 20) {
-        throw new McpError("INVALID_ARGUMENT", `длина участка ${Math.round(rawLen * 10)} мм короче минимальной редактора 200 мм`);
+      if (minDistanceCm(line, dl) < 20) {
+        throw new McpError("INVALID_ARGUMENT", `длина участка ${Math.round(dist(line.p1, line.p2) * 10)} мм короче минимальной редактора 200 мм`);
       }
       for (const other of Object.values((warmsWallsOfRoom(room)[entry.edge]?.parts ?? {}) as Record<string, WarmWallPart>)) {
         if (other.id === entry.part.id) continue;
@@ -362,7 +398,7 @@ function elecLengthM(cable: ElecCable): number {
  * кабель каскадно удаляется вместе с линией; MCP строже редактора — сначала
  * wiring_delete, чтобы удаление было осознанным).
  */
-export function warmWallDelete(model: Model, warmWallId: string): { room_id: string; edge: number } {
+export function warmWallDelete(model: Model, warmWallId: string): { id: string; room: string; edge: number } {
   const entry = partById(model, warmWallId);
   const linked = elecCablesReferencingWarmWall(model, entry.part.id);
   if (linked.length > 0) {
@@ -388,25 +424,28 @@ export function warmWallDelete(model: Model, warmWallId: string): { room_id: str
     if (backup !== undefined) room.warms_walls = backup;
     throw e;
   }
-  return { room_id: entry.roomId, edge: entry.edge };
+  // ответ идентифицирует объект после сдвига меток (ревью 274 №10): id части,
+  // комната меткой R<n> и ребро
+  return { id: entry.part.id, room: roomLabelOf(model, entry.roomId), edge: entry.edge };
 }
 
-/** Список тёплых стен (для меток WW<n> и выбора ребра). */
+/** Список тёплых стен (для меток WW<n> и выбора ребра). Метки — по ПОЛНОМУ
+ *  списку (ревью 274 №1): фильтр по комнате не перенумеровывает. room_id —
+ *  метка R<n> (ревью 274 №3): внутренние id rooms2 публичный API не отдаёт. */
 export function warmWallList(model: Model, roomRef?: string): Array<Record<string, unknown>> {
-  const rooms = roomsOf(model);
   const filterRid = roomRef ? roomByRef(model, roomRef).id : undefined;
   return warmWallEntries(model)
-    .filter((e) => filterRid === undefined || e.roomId === filterRid)
     .map((e, i) => ({
-      label: `WW${i + 1}`,
+      label: warmWallLabel(i),
       id: e.part.id,
-      room_id: e.roomId,
+      room_id: roomLabelOf(model, e.roomId),
       edge: e.edge,
       length_mm: cmToMm(r1(dist(e.part.line.p1, e.part.line.p2))),
       height_mm: cmToMm(e.part.height),
       height_from_floor_mm: cmToMm(e.part.height_from_floor),
       cable: warmWallCableOf(e.part) ?? null,
-    }));
+    }))
+    .filter((x) => filterRid === undefined || x.room_id === roomLabelOf(model, filterRid));
 }
 
 /**

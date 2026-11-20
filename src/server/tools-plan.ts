@@ -14,11 +14,6 @@ import { addRigel, updateRigel, deleteRigel } from "../model/rigels.ts";
 import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind, type ClimatePipeKind } from "../model/pipes.ts";
 import { addWarmFloor, updateWarmFloor, deleteWarmFloor } from "../model/climate.ts";
 import { warmWallAdd, warmWallUpdate, warmWallDelete, warmWallList, warmWallEntries } from "../model/warmwall.ts";
-
-/** Есть ли тёплая стена с таким id части (для резолва пути wiring_add, этап 273). */
-function warmWallPartExists(model: import("../model/types.ts").Model, ref: string): boolean {
-  return warmWallEntries(model).some((e) => e.part.id === ref);
-}
 import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, type LightKind } from "../model/lighting.ts";
 import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.ts";
 import { addElecCable, updateElecCable, deleteElecCable, MAX_ELEC_PATH_NODES, SOCKET_CABLE_TOOLS, type ElecPathElement } from "../model/electric2.ts";
@@ -1106,17 +1101,19 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     // ---------- Тёплая стена (лист «Тёплые полы», этап 273) ----------
     warm_wall_add: tool(
       "Протянуть тёплую стену (лист «Тёплые полы» → «Кабельная тёплая стена», тариф «Расширенный»): участок " +
-        "на ребре комнаты. room_id — метка R<n> или id комнаты; edge — индекс ребра комнаты (0-based, как в " +
-        "rooms_list/rooms2.edges); start_mm/end_mm — границы участка вдоль ребра от его первой вершины (мм). " +
+        "на ребре комнаты. room_id — метка R<n> или id комнаты; edge — индекс ребра комнаты (0-based; рёбра " +
+        "комнаты с направлением и длиной — в rooms_list, поле edges); start_mm/end_mm — границы участка вдоль " +
+        "ребра от его первой вершины (мм). " +
         "Линия кладётся на демолинию ребра (ребро + 5 см внутрь комнаты, сторона «внутрь» по ориентации контура), " +
-        "как в редакторе. Длина участка — не короче 200 мм (правило редактора); пересечение существующей тёплой " +
-        "стены на том же ребре — отказ (стык вплотную допустим). height_mm (умолчание 1350) — высота от пола " +
-        "до верха, height_from_floor_mm (умолчание 150) — отступ нижней кромки. На одном ребре может быть " +
-        "несколько участков (parts), у каждого — не более одного кабеля терморегулятора. Перенос на другое " +
-        "ребро не поддерживается — удалите и создайте заново. После добавления вызывайте model_validate и project_save.",
+        "как в редакторе. Длина участка — не короче 200 мм с бонусом конца демолинии (правило редактора); " +
+        "пересечение существующей тёплой стены на том же ребре — отказ (стык вплотную допустим). height_mm " +
+        "(умолчание 1350) — высота от пола до верха, height_from_floor_mm (умолчание 150) — отступ нижней кромки; " +
+        "MCP ограничивает обе высоты диапазоном 0..5000 мм (редактор принимает любое значение ≥ 0). На одном ребре " +
+        "может быть несколько участков (parts), у каждого — не более одного кабеля терморегулятора. Перенос на " +
+        "другое ребро не поддерживается — удалите и создайте заново. После добавления вызывайте model_validate и project_save.",
       {
         room_id: z.string().min(1).describe("метка R<n> из rooms_list или id комнаты"),
-        edge: mmInt.describe("индекс ребра комнаты (0-based, порядок edges)"),
+        edge: mmInt.describe("индекс ребра комнаты (0-based, поле edges в rooms_list)"),
         start_mm: mmIntSigned.describe("начало участка вдоль ребра от его первой вершины, мм"),
         end_mm: mmIntSigned.describe("конец участка вдоль ребра, мм"),
         height_mm: mmInt.optional().describe("высота от пола до верха, мм (умолчание 1350)"),
@@ -1148,7 +1145,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     warm_wall_update: tool(
       "Изменить тёплую стену: новые границы участка по тому же ребру (start_mm/end_mm — только явно " +
-        "переданные) и/или высоты (мм). Участок не должен пересекать соседние части ребра. Если к стене " +
+        "переданные) и/или высоты (мм; MCP ограничивает 0..5000 мм — редактор принимает любое ≥ 0). " +
+        "Участок не должен пересекать соседние части ребра. Если к стене " +
         "подключён кабель, его вершина следует за центром линии. warm_wall_id — метка WW<n> из warm_wall_list " +
         "или id сайта.",
       {
@@ -1177,11 +1175,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       { warm_wall_id: z.string().min(1).describe("метка WW<n> из warm_wall_list или id сайта") },
       async (a) => {
         const ws = wsOf();
-        ws.apply("warm_wall_delete", (m) => {
-          warmWallDelete(m, resolveWarmWall(m, a["warm_wall_id"] as string));
-          return true;
-        });
-        return ok({ deleted: a["warm_wall_id"], hint: SCENARIO_HINT });
+        const res = ws.apply("warm_wall_delete", (m) => warmWallDelete(m, resolveWarmWall(m, a["warm_wall_id"] as string)));
+        // ответ идентифицирует объект после сдвига меток (ревью 274 №10)
+        return ok({ deleted: res.id, room: res.room, edge: res.edge, hint: SCENARIO_HINT });
       },
     ),
 
@@ -1406,9 +1402,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "ссылка в props контура; водяной контур к проводу не подключается — у него магистрали " +
         "pipe_add kind=warm_floor), а также с тёплой стеной ({item_id: \"<WW<n> из warm_wall_list " +
         "или id части>\"}; вершина {id, point: центр линии, type: warm_wall}, ссылка в props части; " +
-        "прямой штрих тёплая стена—контур редактор не допускает — путь через узел {x, y}; у тёплой " +
+        "прямой штрих тёплая стена—контур и тёплая стена—тёплая стена редактор не допускает; у тёплой " +
         "стены одно подключение, как у контура; один терморегулятор на кабель; у кабеля не более " +
-        "одного контура — MCP строже редактора), conditioner_wire (cables_conditioner) — " +
+        "одной тёплой стены или контура — MCP строже редактора), conditioner_wire (cables_conditioner) — " +
         "связывает блоки кондиционера: внутренний/внешний блок, канальные/кассетные блоки, клапан, " +
         "бризер, рекуператор, щиток (коробки, розетки и выводы проводов не подключаются — ревью 253 Н2, " +
         "проба 250-connect4). У multi-предметов (щиток, коробки) допускается несколько " +
@@ -1438,7 +1434,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
               return { itemId: resolveWarmFloor(m, ref).id };
             }
             // тёплая стена (этап 273): id части WarmLine или метка WW<n> из warm_wall_list
-            if (toolKey === "warm_floor_wire" && (/^WW\d+$/.test(ref) || warmWallPartExists(m, ref))) {
+            if (toolKey === "warm_floor_wire" && (/^WW\d+$/.test(ref) || warmWallEntries(m).some((e) => e.part.id === ref))) {
               return { itemId: resolveWarmWall(m, ref) };
             }
             return { itemId: resolveItem(m, ref).id };
