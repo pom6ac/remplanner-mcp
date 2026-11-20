@@ -12,9 +12,9 @@
     "login": "node src/cli.ts login",
     "check": "node src/cli.ts check",
     "discover": "node scripts/discover.ts",
-    "test": "node --import ./tests/setup.ts --test 'tests/unit/*.test.ts'",
-    "test:contract": "node --import ./tests/setup.ts --test 'tests/contract/*.test.ts'",
-    "test:live": "node --import ./tests/setup.ts --test 'tests/live/*.test.ts'",
+    "test": "node --import ./tests/setup.ts --test tests/unit",
+    "test:contract": "node --import ./tests/setup.ts --test tests/contract",
+    "test:live": "node --import ./tests/setup.ts --test tests/live",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
