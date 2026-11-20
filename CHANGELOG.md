@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Исправлено (ревью 293, PR #45)
+
+- **shield_wire_add**: провод между двумя гнёздами шин (шина→шина, в том числе
+  два гнезда одной шины) — `INVALID_ARGUMENT bus_to_bus`, как в редакторе
+  (`ShieldBus.port_mousedown` не даёт начать провод с порта шины).
+- **shield_collector_add / shield_collector_update**: «модули подряд» —
+  диапазон по min/max всех модулей (неупорядоченный список с разрывом —
+  `collector_gap`); правило одно для add и update.
+- **model_import**: у шины в схеме импорта обязательны `ports` и `type`
+  (раньше проходила шина без них, на которой падал `model_get`/compact);
+  лимит импорта шин и коллекторов — MAX_IMPORT_GRAPH_NODES (лимит
+  SHIELD_MAX_* действует только на add, как в редакторе).
+- **shield_bus_delete**: чистит только провода к гнёздам
+  (validate_wires/validate_ports, как `delete_bus` редактора) — коллекторы
+  не трогаются.
+- **shield_bus_update**: при одновременной смене align и sockets distance
+  считается по новому числу гнёзд (формула drag редактора).
+- Описание `shield_collector_add`: position всегда «T» (нижний ряд B не
+  поддержан). ReDoS-канарейки переведены с абсолютного порога на
+  относительный (отношение к эталонной линейной регулярке в том же прогоне).
+
 ### Добавлено (электрика, часть 5 — конструктор щитка ч.3: шины и коллекторы)
 
 - **shield_bus_add / shield_bus_update / shield_bus_delete** — шины (нулевые
