@@ -1010,14 +1010,25 @@ export function updateShieldBus(model: Model, itemId: string, busId: string, par
 
 /**
  * shield_bus_delete: удалить шину (delete_bus редактора: провода к её гнёздам
- * чистятся каскадом — validate_wires/validate_ports).
+ * чистятся каскадом — validate_wires/validate_ports). Ревью 293 №7: коллекторы
+ * (в том числе битые) delete_bus не трогает — как в редакторе, их пересчитывает
+ * только validate_collectors при операциях с модулями и рейками.
  */
 export function deleteShieldBus(model: Model, itemId: string, busId: string): { shield: Shield; deleted_wires: string[] } {
   const { shield } = shieldOfItem(model, itemId);
-  if (!shield.buses?.[busId]) throw new McpError("NOT_FOUND", `шина ${busId} не найдена в щитке предмета ${itemId}`);
+  const bus = shield.buses?.[busId];
+  if (!bus) throw new McpError("NOT_FOUND", `шина ${busId} не найдена в щитке предмета ${itemId}`);
+  const gone = new Set(bus.ports.map((p) => p.id));
   delete shield.buses[busId];
-  const cascade = validateShieldDerived(shield);
-  return { shield, deleted_wires: cascade.deleted_wires };
+  const deletedWires: string[] = [];
+  for (const [id, wire] of Object.entries(shield.wires ?? {})) {
+    if (gone.has(wire.id_source) || gone.has(wire.id_target)) {
+      delete shield.wires![id];
+      deletedWires.push(id);
+    }
+  }
+  refreshShieldConnections(shield, shieldPorts(shield));
+  return { shield, deleted_wires: deletedWires };
 }
 
 // ---------- Коллекторы (этап 291, живой эталон ui-ref-shield-collector) ----------

@@ -1535,6 +1535,30 @@ test("293 №1: провод шина→шина и гнездо→гнездо 
   assert.equal(s.buses[bus2.id]!.connection, "");
 });
 
+// 293 ревью №7: delete_bus редактора вызывает только validate_wires/
+// validate_ports — коллекторы (даже «битые», с <2 известными модулями) не
+// трогаются, иначе импортированный битый коллектор пропадал бы молча
+// (deleted_collectors в ответе нет).
+test("293 №7: delete_bus — только провода к гнёздам; битый коллектор и чужой провод не тронуты", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  const { bus } = addShieldBus(m, shield.id, { position: "T" });
+  const s0 = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s0.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  // провод модуль→гнездо шины (удалится) и модуль→модуль (останется);
+  // битый коллектор с несуществующими модулями
+  (s0.wires as Record<string, never>)["wb"] = { id: "wb", id_source: mods[0]!.ports[0]!.id, id_target: bus.ports[0]!.id, type: "shield_wire_phase", thickness: 0, is_broken: 0 } as never;
+  (s0.wires as Record<string, never>)["wm"] = { id: "wm", id_source: mods[0]!.ports[1]!.id, id_target: mods[1]!.ports[0]!.id, type: "shield_wire_null", thickness: 0, is_broken: 0 } as never;
+  (s0.collectors as Record<string, never>)["c1"] = { id: "c1", rail_id: Object.values(s0.rails)[0]!.id, module_width: 1, modules: { dead1: 1, dead2: 1 }, position: "T" } as never;
+  const res = deleteShieldBus(m, shield.id, bus.id);
+  assert.deepEqual(res.deleted_wires, ["wb"]);
+  const s = findShieldByItem(m, shield.id)!;
+  assert.deepEqual(Object.keys(s.collectors), ["c1"], "битый коллектор delete_bus не удаляет (validate_collectors при операциях с модулями)");
+  assert.deepEqual(Object.keys(s.wires), ["wm"], "чужой провод не тронут");
+});
+
 // ---------- 291: коллекторы (shield_collector_*) ----------
 
 test("291: эталон ui-ref-shield-collector — маскированная форма щитка с коллектором и шиной воспроизводится операциями MCP", () => {
