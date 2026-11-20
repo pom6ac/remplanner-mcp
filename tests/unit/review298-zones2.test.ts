@@ -110,7 +110,7 @@ test("299 мелочь: remove по метке ZD<n> при несовпаден
   );
 });
 
-test("299 мелочь: legacy zone_c без подсказки несуществующего zone_c_remove", () => {
+test("318: legacy zone_c — подсказка zone_c_remove (инструмент появился в этапе 318)", () => {
   const legacy = {
     id: "zc", matrix: [[null, { length: 1 }], [{ length: 1 }, null]],
     vertexes: [
@@ -123,7 +123,7 @@ test("299 мелочь: legacy zone_c без подсказки несущест
   const exp = { rooms2: { r1: { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }] } }, zone_delimiters: { zc: legacy } };
   const res = zoneDelimiterCompare(exp, { rooms2: structuredClone(exp.rooms2), zone_delimiters: {} }, "normalize", { affectedRooms: new Set(["r1"]) });
   assert.ok(res.warnings.some((w) => /не сохранил/.test(w)), JSON.stringify(res.warnings));
-  assert.equal(res.warnings.some((w) => w.includes("zone_c_remove")), false, JSON.stringify(res.warnings));
+  assert.ok(res.warnings.some((w) => w.includes("zone_c_remove")), JSON.stringify(res.warnings));
   // у типов с инструментом подсказка остаётся
   const ceil = structuredClone(legacy) as Record<string, unknown>;
   ceil["type"] = "zone_ceiling";

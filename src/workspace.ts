@@ -22,7 +22,7 @@ import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmat
 import { dist } from "./model/geometry.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { finishCompare } from "./model/finish.ts";
-import { zoneDelimiterCompare } from "./model/zone.ts";
+import { zoneDelimiterCompare, roomsWithNewZoneCDividers } from "./model/zone.ts";
 import { ceilingRigelCompare } from "./model/ceiling-rigels.ts";
 import { warmWallsCompare } from "./verify/warmwall.ts";
 import { demolitionMismatches } from "./model/demolition.ts";
@@ -619,6 +619,9 @@ export class Workspace {
             normRoomsMap,
             "normalize",
             wallPolicy,
+            // этап 318: комнаты с новым zone_c-делителем — деление зон
+            // редактором штатно сбрасывает имена/состав зон
+            { zoneDivisionRooms: roomsWithNewZoneCDividers(this.modelInternal! as unknown as Record<string, unknown>, norm.model as unknown as Record<string, unknown>) },
           );
       warnings.push(...roomsNormCheck.warnings);
       if (roomsNormCheck.problems.length > 0) {

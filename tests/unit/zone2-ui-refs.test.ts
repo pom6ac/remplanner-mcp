@@ -242,10 +242,12 @@ test("296: атомарность отказов add; нумерация ZD ск
 test("296: неизвестный тип разделителя — INVALID_ARGUMENT", () => {
   const { m, room } = modelWithRefRoom();
   assert.throws(
-    () => addZoneDelimiter(m, room, { type: "zone_c" as never, fromMm: { x: 2000, y: 100 }, toMm: { x: 2000, y: 3000 } }),
+    () => addZoneDelimiter(m, room, { type: "zone_unknown" as never, fromMm: { x: 2000, y: 100 }, toMm: { x: 2000, y: 3000 } }),
     /неизвестный тип/,
   );
-  assert.equal(Object.keys(ZONE_DELIMITER_PLANS).length, 4);
+  // этап 318: zone_c (лист «Перегородки», план "c") — пятый тип общего слоя
+  assert.equal(Object.keys(ZONE_DELIMITER_PLANS).length, 5);
+  assert.equal(ZONE_DELIMITER_PLANS["zone_c"], "c");
 });
 
 // ---------- mock save ----------

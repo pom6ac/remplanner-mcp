@@ -16,7 +16,7 @@ import {
 } from "../model/walls.ts";
 import { levelHoleMismatches } from "../model/floorhole.ts";
 import { finishCompare } from "../model/finish.ts";
-import { zoneDelimiterCompare } from "../model/zone.ts";
+import { zoneDelimiterCompare, roomsWithNewZoneCDividers } from "../model/zone.ts";
 import { ceilingRigelCompare } from "../model/ceiling-rigels.ts";
 import { warmWallsCompare } from "../verify/warmwall.ts";
 import { demolitionMismatches } from "../model/demolition.ts";
@@ -515,6 +515,9 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         saveNormRoomsMap,
         "normalize",
         host.roomChangePolicy(),
+        // этап 318: комнаты с новым zone_c-делителем — деление зон редактором
+        // штатно сбрасывает имена/состав зон (безымянные наследники)
+        { zoneDivisionRooms: roomsWithNewZoneCDividers(host.model() as unknown as Record<string, unknown>, norm.model as unknown as Record<string, unknown>) },
       );
   const roomsNormProblems = roomsNormCheck.problems;
   if (roomsBefore > 0 && normRooms === 0) {
@@ -812,6 +815,8 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
       ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
       "save",
+      {},
+      { zoneDivisionRooms: roomsWithNewZoneCDividers(norm.model as unknown as Record<string, unknown>, after.model as unknown as Record<string, unknown>) },
     ).problems;
     if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && ceilingRigelAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
       verified = true;

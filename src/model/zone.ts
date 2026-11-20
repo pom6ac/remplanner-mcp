@@ -49,6 +49,19 @@ export {
 // от одной внешней стены до другой (обе точки — на рёбрах комнаты в 15 см магнитом
 // или на гранях потолочных ригелей в 10 см); линия не пересекает стены, колонны,
 // другие разделители комнаты и ригели/потолочные закладные; концы не внутри ригеля.
+//
+// zone_c (лист «Перегородки», кнопка plannertool_zone, этап 318): план "c",
+// контейнер комнат rooms2[rid].zones (getNameZone("c")="zones"). Делитель того же
+// формата с привязками концов к рёбрам комнаты (type "room" — живой эталон
+// ui-ref-zonec-delimiter.json, проба 318-zonec-name). Деление зон — как у
+// прочих планов: Room2.updateZones("c") режет контейнер по делителям своего
+// плана; наследники — безымянные записи {polygon, edges, exist:false}, имя
+// зоны-родителя редактор НЕ переносит (живой эталон 318: зоны именованной
+// комнаты после drag — обе name:"none"), имя помещения хранится в room.name
+// и при делении сохраняется. Пересчёт зон при add/remove MCP не дублирует —
+// его при нормализации/записи делает редактор (как у zone_floor); сверка
+// комнат допускает безымянных наследников при новом делителе комнаты
+// (roomsWithNewZoneCDividers + roomUserSig).
 
 export type ZoneDelimiterRec = {
   id: string;
@@ -927,4 +940,39 @@ export function zoneDelimiterCompare(
     }
   }
   return { problems, warnings };
+}
+
+/**
+ * Комнаты, в которых модель got получила НОВЫЙ делитель зон листа «Перегородки»
+ * (zone_c): у got есть zone_c-делитель этой комнаты, id которого отсутствует
+ * среди zone_c-делителей ожидания. Для сверки комнат: деление зон таким
+ * делителем — штатная операция редактора (Room2.updateZones("c")), наследники
+ * безымянные (эталон 318), поэтому потеря имени/состава зон объяснима только
+ * в такой комнате. Модель без zone_delimiters (rooms-only) тоже допустима.
+ */
+export function roomsWithNewZoneCDividers(
+  expectedModel: Record<string, unknown> | undefined,
+  gotModel: Record<string, unknown> | undefined,
+): Set<string> {
+  const idsOf = (model: Record<string, unknown> | undefined): Map<string, Set<string>> => {
+    const out = new Map<string, Set<string>>();
+    if (!model) return out;
+    for (const entry of Object.values(delimiterMapOf((model ?? {}) as Model))) {
+      const migrated = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
+      if (String(migrated["type"] ?? "") !== "zone_c") continue;
+      const rid = entry.roomKey ?? String(migrated["id_room"] ?? "");
+      if (!rid) continue;
+      const set = out.get(rid) ?? new Set<string>();
+      set.add(String(migrated["id"] ?? ""));
+      out.set(rid, set);
+    }
+    return out;
+  };
+  const exp = idsOf(expectedModel);
+  const out = new Set<string>();
+  for (const [rid, gotIds] of idsOf(gotModel)) {
+    const expIds = exp.get(rid);
+    if (!expIds || [...gotIds].some((id) => !expIds.has(id))) out.add(rid);
+  }
+  return out;
 }

@@ -62,6 +62,8 @@ const EXPECTED_TOOLS = [
   "zone_floor_add", "zone_floor_remove",
   "zone_hydroisolation_add", "zone_hydroisolation_remove",
   "zone_floor_cap_add", "zone_floor_cap_remove",
+  // §7.4g — зонирование на листе «Перегородки» (этап 318)
+  "zone_c_add", "zone_c_remove",
   // §7.4g — потолочные закладные (этап 303)
   "ceiling_rigel_add", "ceiling_rigel_update", "ceiling_rigel_delete",
   // §7.4h — размеры и комментарии (нижняя панель, этап 113)
