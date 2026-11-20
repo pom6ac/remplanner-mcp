@@ -24,13 +24,52 @@ export type ClientPageInfo = {
 
 const stripTags = (s: string): string => s.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 
+/** Текст активного пункта блока pro_status — целиком, после stripTags содержимого
+ *  элемента (258 №3в): «Расширенный тариф не подключён» — не pro. */
+const SENIOR_ITEM_TEXT_RE = /^расширенный тариф$/i;
+/** Явное отрицание в тексте пункта (258 №3в) — free, приоритет над описаниями PRO. */
+const ITEM_NEGATION_RE = /(^|[^\s])\s*не\s+(подключ[её]н|активен)/i;
+/** Старые тексты страницы «PRO подключен» — вся страница, без блока pro_status_item.
+ *  (?<!не\s) — не совпадать внутри отрицания «PRO не активен» (258 №3а). */
+const SENIOR_PAGE_RE = /(?<!не\s)Версия PRO:\s*подключена|(?<!не\s)PRO активен/i;
+/** Free-маркеры и явные отрицания старшего тарифа (258 №3а). */
+const FREE_RE = /Версия PRO:\s*не\s+подключ[её]на|в бесплатной верси|PRO\s+не\s+активен/i;
+/** Активный пункт блока pro_status: атрибут class (не data-class — 258 №3б) с
+ *  токеном `active` (границы слова: inactive/notactive не совпадают). */
+const PRO_STATUS_ITEM_RE = /<[^>]*\sclass="([^"]*\buser_cabinet_pro_status_item\b[^"]*)"[^>]*>/g;
+const ACTIVE_TOKEN_RE = /(^|\s)active(\s|$)/;
+
 /** Разбор HTML личного кабинета /client/ (только чтение). */
 export function parseClientPage(html: string): ClientPageInfo {
   const logged_in = /id="clientline"[^>]*is_logged/.test(html) || /id="user_cabinet_objects"/.test(html);
   const login_error = /class="pre_error"/.test(html);
+  // Этап 256 (ревью №2) + 258 №3: тариф — по нескольким сигналам. Приоритет:
+  // активный пункт блока pro_status (текст целиком после stripTags — вложенная
+  // разметка тоже читается), затем явные отрицания, затем free-маркеры, и лишь
+  // потом фразы-описания PRO на странице. Free-маркер вместе с признаком
+  // страницы — unknown (безопасный отказ гейта, не ложное «pro»/«free»).
   let tariff: ClientPageInfo["tariff"] = "unknown";
-  if (/Версия PRO:\s*(Не\s*)?подключена|в бесплатной верси/i.test(html)) tariff = "free";
-  else if (/Версия PRO:\s*подключена|PRO активен/i.test(html)) tariff = "pro";
+  const itemRe = new RegExp(PRO_STATUS_ITEM_RE.source, "g");
+  const starts = [...html.matchAll(itemRe)];
+  const items = starts.map((m, i) => {
+    const from = m.index + m[0].length;
+    const to = i + 1 < starts.length ? starts[i + 1]!.index : Math.min(from + 400, html.length);
+    const chunk = html.slice(from, to);
+    const close = /<\/div>/i.exec(chunk);
+    const text = stripTags(close ? chunk.slice(0, close.index) : chunk).trim();
+    return { cls: m[1]!, text };
+  });
+  const active = items.find((i) => ACTIVE_TOKEN_RE.test(i.cls));
+  if (active) {
+    if (SENIOR_ITEM_TEXT_RE.test(active.text)) tariff = "pro";
+    else if (ITEM_NEGATION_RE.test(active.text)) tariff = "free";
+  } else {
+    const free = FREE_RE.test(html);
+    const senior = SENIOR_PAGE_RE.test(html);
+    if (free && senior) tariff = "unknown";
+    else if (free) tariff = "free";
+    else if (senior) tariff = "pro";
+  }
   const projects: ClientProject[] = [];
   const rowRe = /<tr[^>]*\bid="object(\d+)"[^>]*>([\s\S]*?)<\/tr>/g;
   for (const match of html.matchAll(rowRe)) {

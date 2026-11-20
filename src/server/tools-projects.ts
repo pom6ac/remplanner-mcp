@@ -435,7 +435,7 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
         "в режиме account — проекты вашего аккаунта (на бесплатном тарифе только 1 проект). " +
         "Офлайн-режим (переменная REMPLANNER_OFFLINE_FIXTURE) — только для проверки инструментов без сайта.",
       {},
-      async () => ok(await ctx.authStatus()),
+      async () => ok(await ctx.authStatusFresh()),
     ),
 
     project_list: tool(

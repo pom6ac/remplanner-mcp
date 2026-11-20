@@ -34,6 +34,7 @@ import {
   pipeConnectionMismatches,
   pillarVerificationMismatches,
   rigelVerificationMismatches,
+  shieldMismatches,
   socketGroupSubsDerivedMismatches,
   socketGroupSubsUserMismatches,
   stripVertexIdRoom,
@@ -127,6 +128,7 @@ const ENTITY_DELETE_LABELS: Record<Exclude<ModelEntityCollection, "walls">, stri
   cables_conditioner: "трассы кондиционеров",
   rulers: "размеры",
   comments: "текстовые комментарии",
+  shields: "электрощитки (конструктор)",
   warm_floors: "контуры тёплого пола",
   pipes_warm_floor: "магистрали тёплого пола",
   pipes_conditioner: "дренажи кондиционеров",
@@ -401,6 +403,14 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     const connNorm = elecCableConnectionMismatches(expElecAll, expElecItems, gotElecAll, gotElecItems, coll); // ревью 241 №6
     elecNorm.push({ lost: lostElec, graph: graphNorm, conn: connNorm, coll });
   }
+  // этап 255: конструктор щитка до записи сверяется с нормализованной моделью;
+  // редактор дополняет щиток-предмет без записи записью по умолчанию
+  // (SHIELDS.restore) — авто-запись без содержимого не потеря
+  const shieldsNorm = shieldMismatches(
+    structuredClone((host.model()["shields"] ?? {}) as Record<string, never>),
+    ((norm.model as Record<string, unknown>)["shields"] ?? {}) as Record<string, never>,
+    { allowAutoCreate: true },
+  );
   // ревью 90 R1, 92 R1a: состав и пользовательские свойства под-розеток сверяются
   // до записи; производная геометрия — только после save против нормализованного ожидания
   const subsNorm = socketGroupSubsUserMismatches(
@@ -478,6 +488,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0 ||
     cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 ||
     dimsNorm.length > 0 || climateNorm.length > 0 || roomsNormProblems.length > 0 ||
+    shieldsNorm.length > 0 ||
     elecNorm.some((e) => e.lost.length > 0 || e.graph.length > 0 || e.conn.length > 0)
   ) {
     throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
@@ -516,6 +527,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         dims_mismatches: dimsNorm,
         climate_mismatches: climateNorm,
         room_mismatches: roomsNormProblems,
+        shield_mismatches: shieldsNorm,
         ...Object.fromEntries(elecNorm.flatMap((e) => [
           [`lost_${e.coll}`, e.lost],
           [`${e.coll}_mismatches`, e.graph],
@@ -700,6 +712,12 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         roomsGot: ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
       },
     );
+    // этап 255: щитки после save — нормализованное ожидание против сервера, строго
+    // (авто-записей тут быть не может: ожидание уже из нормализованной модели)
+    const shieldsAfter = shieldMismatches(
+      structuredClone(((norm.model as Record<string, unknown>)["shields"] ?? {}) as Record<string, never>),
+      ((after.model["shields"] as Record<string, unknown> | undefined) ?? {}) as Record<string, never>,
+    );
     const roomsLost = normRooms > 0 && roomsAfter === 0;
     // этап 126: комнаты после save — строго (по каноническому контуру и
     // пользовательским полям): частичная потеря N→M>0 и потеря имени/зон — не verified
@@ -708,7 +726,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
       "save",
     ).problems;
-    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
+    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
       verified = true;
       finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
       host.onVerified(toModel(structuredClone(after.model)));
@@ -759,6 +777,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
           demolition_mismatches: demolitionAfter,
           dims_mismatches: dimsAfter,
           climate_mismatches: climateAfter,
+          shield_mismatches: shieldsAfter,
           ...Object.fromEntries(elecAfter.flatMap((e) => [
             [`${e.coll}_mismatches`, e.graph],
             [`${e.coll}_connection_mismatches`, e.conn],

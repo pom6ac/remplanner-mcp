@@ -9,7 +9,7 @@ import type { Model } from "./types.ts";
  * walls/items/pillars/rulers/comments есть всегда; rigels/pipes_gas/pipes/terrace_borders/
  * territory_borders/level_holes/led_strips/stripes_light/line_strips/warm_floors/
  * pipes_warm_floor/pipes_conditioner/pipes_heat/pipes_ventilation/cables_socket/
- * cables_warm_floor/cables_conditioner — у старых моделей могут отсутствовать.
+ * cables_warm_floor/cables_conditioner/shields — у старых моделей могут отсутствовать.
  */
 export const MODEL_ENTITY_COLLECTIONS = [
   "walls",
@@ -30,6 +30,7 @@ export const MODEL_ENTITY_COLLECTIONS = [
   "cables_conditioner",
   "rulers",
   "comments",
+  "shields",
   "warm_floors",
   "pipes_warm_floor",
   "pipes_conditioner",
@@ -64,6 +65,7 @@ export const PUBLIC_COLLECTION_KEYS = {
   cables_conditioner: "cables_conditioner",
   rulers: "rulers",
   comments: "comments",
+  shields: "shields",
   warm_floors: "warm_floors",
   pipes_warm_floor: "pipes_warm_floor",
   pipes_conditioner: "pipes_conditioner",

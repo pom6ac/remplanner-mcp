@@ -1659,7 +1659,7 @@
   },
   {
    "name": "item_delete",
-   "description": "Удалить предмет (метка I<n> из model_get). Привязанные к предмету размеры (dim_add attach) сохраняются с отвязкой концов, комментарий предмета удаляется; в ответе — detached_rulers/deleted_comments.",
+   "description": "Удалить предмет (метка I<n> из model_get). Привязанные к предмету размеры (dim_add attach) сохраняются с отвязкой концов, комментарий предмета удаляется; у электрощитка конструктор удаляется вместе с предметом (deleted_shields). В ответе — deleted_shields/detached_rulers/deleted_comments.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -3278,6 +3278,192 @@
    }
   },
   {
+   "name": "shield_module_add",
+   "description": "Добавить модуль на DIN-рейку электрощитка (лист «Электрощиток», PRO). type — ключ модуля каталога UI: shield_module (автомат), shield_module_x2_simple/x3/x4_simple (2–4-полюсные автоматы), shield_module_x2/x4 (дифавтоматы), shield_module_input* (вводные), shield_module_uzo/uzo_x4/uzo_fire/uzo_fire_x4 (УЗО), shield_module_off_switch* (выключатели нагрузки), shield_module_uzip* (УЗИП), shield_module_voltage* (реле напряжения), shield_module_impulse (импульсное реле), shield_module_contactor* (контакторы), shield_module_counter (счётчик), shield_module_socket (щитовая розетка), shield_module_terminal* (клеммы), shield_module_din_bus (шина на рейку), shield_module_cross* (кросс-модули), shield_module_splitter (разделитель), shield_module_uvr (ввод резерва), shield_custom_module (произвольный, умолчания микроконструктора). subtype — номинал из списка типа («16A», «16A/30mA», …); group_number — номер группы (только у автоматов/УЗО/дифавтоматов); rail — индекс рейки (по умолчанию 0). Модуль ставится в конец рейки; лимит рейки — 48 DIN. Провода между модулями и шины пока не поддерживаются (следующий этап).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "type": {
+      "type": "string",
+      "enum": [
+       "shield_module",
+       "shield_module_x2_simple",
+       "shield_module_x3",
+       "shield_module_x4_simple",
+       "shield_module_x2",
+       "shield_module_x4",
+       "shield_module_input",
+       "shield_module_input_x4",
+       "shield_module_off_switch",
+       "shield_module_off_switch_double",
+       "shield_module_off_switch_x3",
+       "shield_module_off_switch_x4",
+       "shield_module_uzo",
+       "shield_module_uzo_x4",
+       "shield_module_uzo_fire",
+       "shield_module_uzo_fire_x4",
+       "shield_module_uzip",
+       "shield_module_uzip_2x",
+       "shield_module_uzip_4x",
+       "shield_module_voltage",
+       "shield_module_voltage_x4",
+       "shield_module_impulse",
+       "shield_module_terminal",
+       "shield_module_terminal_x2",
+       "shield_module_din_bus",
+       "shield_module_cross",
+       "shield_module_cross_4x",
+       "shield_module_contactor",
+       "shield_module_contactor_2din",
+       "shield_module_contactor_4din",
+       "shield_module_socket",
+       "shield_module_counter",
+       "shield_module_splitter",
+       "shield_module_uvr",
+       "shield_custom_module"
+      ]
+     },
+     "rail": {
+      "description": "индекс рейки (0-based, по умолчанию 0)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "subtype": {
+      "description": "номинал из списка типа (по умолчанию — умолчание типа)",
+      "type": "string",
+      "maxLength": 32
+     },
+     "group_number": {
+      "description": "номер группы 0..9999 (только у автоматов, УЗО, дифавтоматов)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "comment": {
+      "description": "подпись модуля",
+      "type": "string",
+      "maxLength": 200
+     }
+    },
+    "required": [
+     "item_id",
+     "type"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "shield_module_delete",
+   "description": "Удалить модуль щитка (module_id из model_get). Позиции модулей правее и длина щитка пересчитываются автоматически.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "module_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id модуля из model_get"
+     }
+    },
+    "required": [
+     "item_id",
+     "module_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "shield_module_update",
+   "description": "Изменить модуль щитка: номинал (subtype), номер группы, подпись (comment). module_id — id модуля из model_get shields[].modules[].module_id. Перенос модуля между рейками и изменение порядка пока не поддерживаются (следующий этап).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "module_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id модуля из model_get"
+     },
+     "subtype": {
+      "type": "string",
+      "maxLength": 32
+     },
+     "group_number": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "comment": {
+      "type": "string",
+      "maxLength": 200
+     }
+    },
+    "required": [
+     "item_id",
+     "module_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "shield_rail_add",
+   "description": "Добавить DIN-рейку в электрощиток (лист «Электрощиток», PRO). item_id — предмет-щиток (метка I<n> из model_get или id сайта; electric_shield/electric_shield_internal/electric_shield_old). Запись щитка создаётся при отсутствии (как в редакторе при открытии конструктора). После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "item_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "shield_rail_delete",
+   "description": "Удалить DIN-рейку электрощитка с модулями на ней (PRO). rail — индекс рейки (0-based, из model_get shields[].modules[].rail). Последнюю рейку удалить нельзя (как в редакторе). Индексы последующих рейк и позиции модулей пересчитываются автоматически.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка I<n> из model_get или id сайта"
+     },
+     "rail": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "индекс рейки (0-based)"
+     }
+    },
+    "required": [
+     "item_id",
+     "rail"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "stripe_add",
    "description": "Провести трековую шину (лист «Освещение», PRO): kind=recessed (встроенная, recessed_strip), kind=surface (накладная, surface_stripе), kind=pendent (подвесная, pendent_strip — опускание подвеса 20 см по умолчанию). path — ломаная по точкам (мм, не менее 2; коллекция stripes_light). Трековые споты (track_spot и др.) на шину MCP пока не ставит. После добавления вызывайте model_validate и project_save.",
    "inputSchema": {
@@ -4579,6 +4765,7 @@
    "cables_socket": [],
    "cables_warm_floor": [],
    "cables_conditioner": [],
+   "shields": [],
    "warm_floors": [],
    "pipes_warm_floor": [],
    "pipes_conditioner": [],

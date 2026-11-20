@@ -123,6 +123,7 @@
       "rooms_expected",
       "rooms_on_server",
       "server_save_id",
+      "shield_mismatches",
       "socket_group_derived_mismatches",
       "socket_group_mismatches",
       "stripes_light_mismatches",

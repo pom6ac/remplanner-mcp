@@ -17,6 +17,10 @@ import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, t
 import { addCable, deleteCable, MAX_CABLE_PATH_NODES } from "../model/electric.ts";
 import { addElecCable, updateElecCable, deleteElecCable, MAX_ELEC_PATH_NODES, SOCKET_CABLE_TOOLS, type ElecPathElement } from "../model/electric2.ts";
 import {
+  addShieldRail, deleteShieldRail, addShieldModule, updateShieldModule, deleteShieldModule,
+  SHIELD_MODULE_TYPES,
+} from "../model/shield.ts";
+import {
   addRuler, updateRuler, deleteRuler, addComment, updateComment, deleteComment,
   dimsList, commentsList, resolveRuler, resolveComment, unescapeCommentText,
 } from "../model/dims.ts";
@@ -30,6 +34,7 @@ import {
   MAX_NAME_CHARS,
   MAX_KEY_CHARS,
   MAX_QUERY_CHARS,
+  MAX_SERVICE_COMMENT_CHARS,
   SHEET_NAME_PATTERN,
 } from "../limits.ts";
 import {
@@ -99,6 +104,26 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     // комнаты — из кеша workspace (нормализованная модель), если в model.rooms2 их ещё нет
     const compact = compactModel(model, wsOf().rooms());
     return { hint: SCENARIO_HINT, entity: predicate(compact) };
+  };
+
+  // Конструктор электрощитка (лист «Электрощиток») — «старшие тарифы PRO»
+  // (анонс 24.12.2025): анонимный проект равен бесплатному тарифу (design §4),
+  // неизвестный тариф трактуется как бесплатный. На бесплатном тарифе поведение
+  // сервера не проверялось — открытый вопрос этапа 255.
+  const assertShieldAllowed = async (): Promise<void> => {
+    const ws = wsOf();
+    if (ws.project?.anon) {
+      throw new McpError("NOT_AVAILABLE_ON_TARIFF", "конструктор электрощитка доступен только на старших тарифах PRO; в анонимном проекте он недоступен", {
+        hint: "откройте проект PRO-аккаунта (project_open после входа)",
+        details: { tool: "shield_*" },
+      });
+    }
+    const st = await ctx.authStatus();
+    if (st.tariff !== "pro") {
+      throw new McpError("NOT_AVAILABLE_ON_TARIFF", "конструктор электрощитка доступен только на старших тарифах PRO (неизвестный или бесплатный тариф)", {
+        details: { tool: "shield_*", tariff: st.tariff },
+      });
+    }
   };
 
   return {
@@ -696,7 +721,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     item_delete: tool(
       "Удалить предмет (метка I<n> из model_get). Привязанные к предмету размеры (dim_add attach) " +
-        "сохраняются с отвязкой концов, комментарий предмета удаляется; в ответе — detached_rulers/deleted_comments.",
+        "сохраняются с отвязкой концов, комментарий предмета удаляется; у электрощитка конструктор " +
+        "удаляется вместе с предметом (deleted_shields). В ответе — deleted_shields/detached_rulers/deleted_comments.",
       { item_id: z.string().min(1) },
       async (a) => {
         const ws = wsOf();
@@ -1363,6 +1389,122 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           return true;
         });
         return ok({ deleted: a["wiring_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Электрощиток: конструктор (лист «Электрощиток», этап 255) ----------
+    // Ядро: рейки + модули + удаление/перенос щитка-предмета без висячих ссылок.
+    // Провода между модулями, шины, коллекторы и «Построить автоматически»
+    // (клиентский мастер) — следующий этап; при непустых проводах/шинах операции
+    // с модулями/рейками отклоняются.
+
+    shield_rail_add: tool(
+      "Добавить DIN-рейку в электрощиток (лист «Электрощиток», PRO). item_id — предмет-щиток " +
+        "(метка I<n> из model_get или id сайта; electric_shield/electric_shield_internal/electric_shield_old). " +
+        "Запись щитка создаётся при отсутствии (как в редакторе при открытии конструктора). " +
+        "После добавления вызывайте model_validate и project_save.",
+      { item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта") },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        const shield = ws.apply("shield_rail_add", (m) => addShieldRail(m, resolveItem(m, a["item_id"] as string).id));
+        return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
+      },
+    ),
+
+    shield_rail_delete: tool(
+      "Удалить DIN-рейку электрощитка с модулями на ней (PRO). rail — индекс рейки (0-based, из " +
+        "model_get shields[].modules[].rail). Последнюю рейку удалить нельзя (как в редакторе). " +
+        "Индексы последующих рейк и позиции модулей пересчитываются автоматически.",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        rail: mmInt.describe("индекс рейки (0-based)"),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        const shield = ws.apply("shield_rail_delete", (m) =>
+          deleteShieldRail(m, resolveItem(m, a["item_id"] as string).id, a["rail"] as number)).shield;
+        return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
+      },
+    ),
+
+    shield_module_add: tool(
+      "Добавить модуль на DIN-рейку электрощитка (лист «Электрощиток», PRO). type — ключ модуля " +
+        "каталога UI: shield_module (автомат), shield_module_x2_simple/x3/x4_simple (2–4-полюсные " +
+        "автоматы), shield_module_x2/x4 (дифавтоматы), shield_module_input* (вводные), " +
+        "shield_module_uzo/uzo_x4/uzo_fire/uzo_fire_x4 (УЗО), shield_module_off_switch* (выключатели " +
+        "нагрузки), shield_module_uzip* (УЗИП), shield_module_voltage* (реле напряжения), " +
+        "shield_module_impulse (импульсное реле), shield_module_contactor* (контакторы), " +
+        "shield_module_counter (счётчик), shield_module_socket (щитовая розетка), " +
+        "shield_module_terminal* (клеммы), shield_module_din_bus (шина на рейку), " +
+        "shield_module_cross* (кросс-модули), shield_module_splitter (разделитель), " +
+        "shield_module_uvr (ввод резерва), shield_custom_module (произвольный, умолчания " +
+        "микроконструктора). subtype — номинал из списка типа («16A», «16A/30mA», …); " +
+        "group_number — номер группы (только у автоматов/УЗО/дифавтоматов); rail — индекс рейки " +
+        "(по умолчанию 0). Модуль ставится в конец рейки; лимит рейки — 48 DIN. Провода между " +
+        "модулями и шины пока не поддерживаются (следующий этап).",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        type: z.enum(Object.keys(SHIELD_MODULE_TYPES) as [string, ...string[]]),
+        rail: mmInt.optional().describe("индекс рейки (0-based, по умолчанию 0)"),
+        subtype: z.string().max(32).optional().describe("номинал из списка типа (по умолчанию — умолчание типа)"),
+        group_number: mmInt.optional().describe("номер группы 0..9999 (только у автоматов, УЗО, дифавтоматов)"),
+        comment: z.string().max(MAX_SERVICE_COMMENT_CHARS).optional().describe("подпись модуля"),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        const { shield } = ws.apply("shield_module_add", (m) => addShieldModule(m, resolveItem(m, a["item_id"] as string).id, {
+          type: a["type"] as string,
+          rail: a["rail"] as number | undefined,
+          subtype: a["subtype"] as string | undefined,
+          group_number: a["group_number"] as number | undefined,
+          comment: a["comment"] as string | undefined,
+        }));
+        return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
+      },
+    ),
+
+    shield_module_update: tool(
+      "Изменить модуль щитка: номинал (subtype), номер группы, подпись (comment). module_id — id " +
+        "модуля из model_get shields[].modules[].module_id. Перенос модуля между рейками и " +
+        "изменение порядка пока не поддерживаются (следующий этап).",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        module_id: z.string().min(1).describe("id модуля из model_get"),
+        subtype: z.string().max(32).optional(),
+        group_number: mmInt.optional(),
+        comment: z.string().max(MAX_SERVICE_COMMENT_CHARS).optional(),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        const shield = ws.apply("shield_module_update", (m) =>
+          updateShieldModule(m, resolveItem(m, a["item_id"] as string).id, a["module_id"] as string, {
+            subtype: a["subtype"] as string | undefined,
+            group_number: a["group_number"] as number | undefined,
+            comment: a["comment"] as string | undefined,
+          })).shield;
+        return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
+      },
+    ),
+
+    shield_module_delete: tool(
+      "Удалить модуль щитка (module_id из model_get). Позиции модулей правее и длина щитка " +
+        "пересчитываются автоматически.",
+      {
+        item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
+        module_id: z.string().min(1).describe("id модуля из model_get"),
+      },
+      async (a) => {
+        await assertShieldAllowed();
+        const ws = wsOf();
+        ws.apply("shield_module_delete", (m) => {
+          deleteShieldModule(m, resolveItem(m, a["item_id"] as string).id, a["module_id"] as string);
+          return true;
+        });
+        return ok({ deleted: a["module_id"], hint: SCENARIO_HINT });
       },
     ),
 

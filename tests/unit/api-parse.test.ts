@@ -34,6 +34,7 @@ test("parseClientPage: вошли, тариф free, проект разобра�
 
 test("parseClientPage: аноним — не вошли", () => {
   const info = parseClientPage(ANON_HTML);
+
   assert.equal(info.logged_in, false);
   assert.equal(info.projects.length, 0);
   assert.equal(info.tariff, "unknown");
@@ -42,6 +43,119 @@ test("parseClientPage: аноним — не вошли", () => {
 test("parseClientPage: ошибка входа", () => {
   const html = `<div class="pre_error">Неверный email или пароль</div>`;
   assert.equal(parseClientPage(html).login_error, true);
+});
+
+// Этап 255: ЛК показывает активный PRO блоком user_cabinet_pro_status_item
+// («Расширенный тариф» — старший тариф; прежнего текста «Версия PRO: подключена» нет)
+test("parseClientPage: старший тариф PRO — блок pro_status_item active", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div class="user_cabinet_settings_title">Версия PRO</div>
+<div class="user_cabinet_pro_status">
+  <div class="user_cabinet_pro_status_item active color-green">Расширенный тариф</div>
+</div>`;
+  assert.equal(parseClientPage(html).tariff, "pro");
+});
+
+test("parseClientPage: free-маркер рядом с pro-блоком — free (порядок проверок)", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+в бесплатной версии доступен 1 проект
+<div class="user_cabinet_pro_status_item">Расширенный тариф</div>`;
+  assert.equal(parseClientPage(html).tariff, "free");
+});
+
+// Ревью 256 №2: «active» — отдельный токен внутри class того же элемента,
+// текст активного пункта сверяется со списком старших тарифов; всё остальное —
+// unknown (безопасный отказ гейта), а не ложное «pro»/«free».
+test("256 №2: pro_status_item inactive — не PRO (unknown)", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div class="user_cabinet_pro_status">
+  <div class="user_cabinet_pro_status_item inactive color-red">Расширенный тариф</div>
+</div>`;
+  assert.equal(parseClientPage(html).tariff, "unknown");
+});
+
+test("256 №2: data-state notactive — не PRO (unknown)", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div class="user_cabinet_pro_status_item" data-state="notactive">Расширенный тариф</div>`;
+  assert.equal(parseClientPage(html).tariff, "unknown");
+});
+
+test("256 №2: список пунктов тарифа — active у бесплатного пункта — не PRO (unknown)", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div class="user_cabinet_pro_status">
+  <div class="user_cabinet_pro_status_item">Базовый</div>
+  <div class="user_cabinet_pro_status_item active">Бесплатный</div>
+</div>`;
+  assert.equal(parseClientPage(html).tariff, "unknown");
+});
+
+test("256 №2: PRO-блок рядом с текстом «в бесплатной версии» — pro, а не free", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+Проектов в бесплатной версии: 1
+<div class="user_cabinet_pro_status">
+  <div class="user_cabinet_pro_status_item active color-green">Расширенный тариф</div>
+</div>`;
+  assert.equal(parseClientPage(html).tariff, "pro");
+});
+
+test("256 №2: пустой/незнакомый pro-блок — unknown", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div class="user_cabinet_pro_status">
+  <div class="user_cabinet_pro_status_item active">Какой-то новый тариф</div>
+</div>`;
+  assert.equal(parseClientPage(html).tariff, "unknown");
+  assert.equal(parseClientPage(`<div id="clientline" class="is_logged">x</div><div class="user_cabinet_pro_status"></div>`).tariff, "unknown");
+  assert.equal(parseClientPage(`<div id="clientline" class="is_logged">x</div>`).tariff, "unknown");
+});
+
+// Ревью 258 №3: разбор тарифа устойчив к новой разметке и отрицаниям.
+// (а) free-маркеры и явные отрицания — не «pro» на фразах-описаниях;
+// при одновременном наличии free-маркера и признака страницы — unknown.
+test("258 №3а: free-маркер и фраза-описание «Когда PRO активен…» — не pro (unknown)", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+в бесплатной версии доступен 1 проект
+<p>Подробнее о том, когда PRO активен и что он даёт, читайте в разделе «Тарифы».</p>`;
+  assert.equal(parseClientPage(html).tariff, "unknown");
+});
+
+test("258 №3а: явное «PRO не активен» — free, а не pro", () => {
+  assert.equal(parseClientPage(`<div id="clientline" class="is_logged">x</div><p>Сейчас PRO не активен.</p>`).tariff, "free");
+  assert.equal(parseClientPage(`<div id="clientline" class="is_logged">x</div><p>Сейчас PRO активен.</p>`).tariff, "pro");
+});
+
+// (б) data-class — не атрибут class: токен active в нём не признак активного пункта
+test("258 №3б: data-class с токеном active — не признак активного пункта (unknown)", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div data-class="user_cabinet_pro_status_item active">Расширенный тариф</div>`;
+  assert.equal(parseClientPage(html).tariff, "unknown");
+});
+
+// (в) текст активного пункта сравнивается целиком: «Расширенный тариф не
+// подключён» — не pro (явное отрицание — free)
+test("258 №3в: активный пункт «Расширенный тариф не подключён» — free, не pro", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div class="user_cabinet_pro_status_item active">Расширенный тариф не подключён</div>`;
+  assert.equal(parseClientPage(html).tariff, "free");
+});
+
+// обратная сторона: вложенная разметка активного пункта — тоже pro
+test("258 №3: активный пункт с вложенной разметкой (span) — pro", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div class="user_cabinet_pro_status">
+  <div class="user_cabinet_pro_status_item active color-green"><span>Расширенный тариф</span></div>
+</div>`;
+  assert.equal(parseClientPage(html).tariff, "pro");
 });
 
 test("isReloadResponse: reload:101", () => {

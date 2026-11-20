@@ -154,6 +154,7 @@ const FULL_COLLECTIONS: Pick<Model, ModelEntityCollection> = {
   cables_conditioner: { cc1: elecCable("cc1", "conditioner_wire") },
   rulers: { ru1: { id: "ru1", p1: { x: 0, y: 0 }, p2: { x: 10, y: 0 }, offset: { val: 5, side: "a" }, plan: "a", plan_: 0, prs: { room: 0, mode: 1 }, color: "#ed143d" } },
   comments: { c1: { id: "c1", pc: POINT, points: [POINT], text: "тест", label: "free", plan: "a", plan_: 0, prs: { room: 0, mode: 1 }, font_size: 10 } },
+  shields: { sh1: { id: "sh1", shield_id: "i1", on_auto_length_rails: 1, length_rails: 12, rails: { r: { id: "r", index: 0, modules: {} } }, buses: {}, collectors: {}, inputs: { i: { id: "i", ports: [], index: 0, phase: 1 } }, wires: {} } },
   warm_floors: { wf1: warmFloor("wf1") },
   pipes_warm_floor: { pwf1: pipe("pwf1", "warm_floor_pipe") },
   pipes_conditioner: { pc1: pipe("pc1", "conditioner_drainage") },

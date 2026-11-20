@@ -63,6 +63,93 @@ function migrateLegacyConditionerCable(model: Model): void {
   }
 }
 
+/**
+ * Legacy-формы конструктора щитка (этап 255): SHIELDS.restore бандла app.3.0
+ * мигрирует при restore — buses/rails/wires массивом → словари, rail.modules
+ * массивом → словарь, inputs массивом → ввод с портами (parent_id переписывается),
+ * inputs-объект с ports без группировки → стандартный ввод фаза/ноль/земля.
+ * Каноническая модель MCP хранит те же формы, что сериализует редактор (словари),
+ * иначе каждая сверка save видит ложную потерю.
+ */
+function migrateLegacyShields(model: Model): void {
+  const shields = model.shields as Record<string, Record<string, unknown>> | undefined;
+  if (!shields) return;
+  const toDict = (v: unknown): Record<string, unknown> => {
+    if (Array.isArray(v)) {
+      const out: Record<string, unknown> = {};
+      for (const e of v as Array<Record<string, unknown>>) {
+        if (e && typeof e === "object" && typeof e["id"] === "string") out[e["id"]] = e;
+      }
+      return out;
+    }
+    return (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+  };
+  for (const shield of Object.values(shields)) {
+    if (!shield || typeof shield !== "object") continue;
+    if (Array.isArray(shield["buses"])) shield["buses"] = toDict(shield["buses"]);
+    if (Array.isArray(shield["collectors"])) shield["collectors"] = toDict(shield["collectors"]);
+    if (Array.isArray(shield["wires"])) shield["wires"] = toDict(shield["wires"]);
+    if (shield["rails"] !== undefined) {
+      const rails = toDict(shield["rails"]);
+      for (const rail of Object.values(rails) as Array<Record<string, unknown>>) {
+        if (rail && typeof rail === "object" && Array.isArray(rail["modules"])) rail["modules"] = toDict(rail["modules"]);
+      }
+      shield["rails"] = rails;
+    }
+    if (shield["inputs"] !== undefined) {
+      let inputs = shield["inputs"];
+      // ревью 256 №4: редактор (ShieldInput при restore) дописывает вводу
+      // index:0 и phase:1 — миграция дописывает то же во всех ветках, иначе
+      // каждая сверка save видит ложное «содержимое изменилось»
+      const completeInput = (inp: Record<string, unknown>): Record<string, unknown> => {
+        if (inp["index"] === undefined) inp["index"] = 0;
+        if (inp["phase"] === undefined) inp["phase"] = 1;
+        return inp;
+      };
+      if (Array.isArray(inputs)) {
+        const id = `_${Math.random().toString(36).slice(2, 7)}`;
+        for (const p of inputs as Array<Record<string, unknown>>) p["parent_id"] = id;
+        inputs = { [id]: completeInput({ id, ports: inputs }) };
+      } else if (inputs && typeof inputs === "object") {
+        const rec = inputs as Record<string, unknown>;
+        if (Array.isArray(rec["ports"])) {
+          // ports без обёртки-ввода: один ввод с портами фаза/ноль/земля
+          const id = typeof rec["id"] === "string" && rec["id"] ? rec["id"] : `_${Math.random().toString(36).slice(2, 7)}`;
+          const ports = rec["ports"] as Array<Record<string, unknown>>;
+          const types = ["shield_wire_earth", "shield_wire_null", "shield_wire_phase"];
+          inputs = {
+            [id]: completeInput({
+              id,
+              ports: types.map((type, i) => ({
+                id: typeof ports[i]?.["id"] === "string" && ports[i]!["id"] ? ports[i]!["id"] : `_${Math.random().toString(36).slice(2, 7)}`,
+                parent_type: "input",
+                parent_id: id,
+                type,
+                connected: ports[i]?.["connected"] ? 1 : 0,
+              })),
+            }),
+          };
+        } else {
+          // ключи ≠ id: перегруппировать по id (SHIELDS.restore, ветка «id»===r)
+          const regrouped: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(rec)) {
+            if (v && typeof v === "object") {
+              const e = v as Record<string, unknown>;
+              const id = typeof e["id"] === "string" && e["id"] ? e["id"] : k;
+              e["id"] = id;
+              regrouped[id] = completeInput(e);
+            }
+          }
+          inputs = regrouped;
+        }
+      } else {
+        inputs = {};
+      }
+      shield["inputs"] = inputs;
+    }
+  }
+}
+
 /** Сырая модель редактора/сервера → каноническая модель: гарантированные
  *  коллекции и holes: {} у стен без проёмов. */
 export function toModel(raw: Record<string, unknown>): Model {
@@ -78,6 +165,7 @@ export function toModel(raw: Record<string, unknown>): Model {
     w.holes ??= {};
   }
   migrateLegacyConditionerCable(model);
+  migrateLegacyShields(model);
   return model;
 }
 

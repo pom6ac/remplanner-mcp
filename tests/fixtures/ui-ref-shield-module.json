@@ -1,0 +1,82 @@
+{
+ "_source": "Эталон сериализации редактора (бандл app.3.0, класс Shield.serialize; проба в dev-проекте из env без сохранения: SHIELDS.restore + $ShieldBuilder.add_rail_to_shield + Shield.add_module «Автомат. выключатель»): щиток с DIN-рейкой и одним автоматом (subtype 16A по умолчанию, group_number 0, ports ×2, custom {}). Идентификаторы обезличены (scripts/anonymize.ts).",
+ "shields": {
+  "s1": {
+   "id": "_tmp1",
+   "shield_id": "_tmpitem",
+   "on_auto_length_rails": 1,
+   "length_rails": 12,
+   "rails": {
+    "id1": {
+     "id": "id1",
+     "index": 0,
+     "modules": {
+      "id2": {
+       "id": "id2",
+       "rail_id": "id1",
+       "index": 0,
+       "width": 1,
+       "type": "shield_module",
+       "group_number": 0,
+       "subtype": "16A",
+       "comment": "",
+       "ports": [
+        {
+         "id": "id3",
+         "parent_id": "id2",
+         "parent_type": "module",
+         "connected": 0
+        },
+        {
+         "id": "id4",
+         "parent_id": "id2",
+         "parent_type": "module",
+         "connected": 0
+        }
+       ],
+       "custom": {}
+      }
+     }
+    },
+    "id5": {
+     "id": "id5",
+     "index": 1,
+     "modules": {}
+    }
+   },
+   "buses": {},
+   "collectors": {},
+   "inputs": {
+    "id6": {
+     "id": "id6",
+     "ports": [
+      {
+       "id": "id7",
+       "parent_type": "input",
+       "parent_id": "id6",
+       "type": "shield_wire_earth",
+       "connected": 0
+      },
+      {
+       "id": "id8",
+       "parent_type": "input",
+       "parent_id": "id6",
+       "type": "shield_wire_null",
+       "connected": 0
+      },
+      {
+       "id": "id9",
+       "parent_type": "input",
+       "parent_id": "id6",
+       "type": "shield_wire_phase",
+       "connected": 0
+      }
+     ],
+     "index": 0,
+     "phase": 1
+    }
+   },
+   "wires": {}
+  }
+ }
+}

@@ -825,11 +825,31 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
 - Лист «Электропроводка» (`plan_cables`): коробки electric_box/electric_box_wall/
   electric_kup (PRO) и коллекции `cables_socket`, `cables_warm_floor`,
   `cables_conditioner` (классы CableSocket/CableWarnFloor/CableConditioner) — этап 88
-  не покрывает (следующий PR). Лист «Электрощиток» (`plan_shield`): shield_din,
-  shield_module_* (38 позиций), shield_wire_* (фаза/ноль/земля) и коллекция
-  `shields` — следующий PR. Выводы проводов (группа `wires`: wire, wire_light,
-  wire_oven, wire_stove, wire_conditioner, wire_lowcurrent, floor_wire, ceiling_wire)
-  — предметы-группы того же формата на листе «Розетки» — следующий PR.
+  не покрывает (следующий PR). Лист «Электрощиток» (`plan_shield`): конструктор щитка —
+  коллекция `shields[shield_id]` (связь с предметом по `shield_id` = id предмета
+  electric_shield|electric_shield_internal|electric_shield_old; lowcurrent-щитки в
+  конструктор не входят — `isElectricShield("power")`, бандл app.3.0). Формат
+  (пробы 255-shield-scout/255-shield-classes, бандл app.3.0___684): щиток
+  `{id, shield_id, on_auto_length_rails (1 — длина реек авто), length_rails (DIN,
+  умолчание 12), rails: {railId: {id, index, modules}}, buses, collectors, inputs:
+  {inputId: {id, ports: [{id, parent_type:"input", parent_id, type:
+  shield_wire_earth|null|phase, connected}], index, phase}}, wires}`; модуль
+  `{id, rail_id, index, width (DIN), type (ключ shield_module_*), group_number
+  (номер группы, умолчание 0), subtype (номинал из subtypes типа), comment, ports:
+  [{id, parent_id, parent_type:"module", connected}], custom, point_comment?}`.
+  38 типов модулей (module_types: width 0.5–5 DIN, 0–28 портов, номиналы
+  «16A»/«16A/30mA»), лимит рейки — 48 DIN (rail.max_length; при
+  on_auto_length_rails=0 — length_rails). Модель хранит только номер группы
+  (group_number) — ссылок на группы розеток/линии в щитке нет (связь вычисляет
+  только мастер «Построить автоматически» на клиенте; FAQ 19). Legacy-формы
+  restore: buses/rails/wires — массивы → словари; inputs-массив — порт-набор
+  фаза/ноль/земля под новым id (SHIELDS.restore). Щиток без записи в `shields`
+  редактор дополняет записью по умолчанию (рейка + ввод) при restore. Связи
+  «выключатель → светильник» (`cable`) и кабели-проводка ч.2 (cables_socket/
+  cables_warm_floor/cables_conditioner) покрыты этапами 88 и 239; выводы проводов
+  (группа `wires`: wire, wire_light, wire_oven, wire_stove, wire_conditioner,
+  wire_lowcurrent, floor_wire, ceiling_wire) — предметы-группы того же формата
+  на листе «Розетки» — следующий PR.
 
 ### 7.7. Отделка: покрытия пола, стен и потолка [код + пробы 94-finish-*/94-live-check, 2026-11-17]
 

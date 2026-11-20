@@ -311,6 +311,11 @@ function fixtureEntities(name: string, root: Record<string, unknown>): [string, 
     else if (name.includes("terrace-border")) push("terrace_borders", ent);
     else if (name.includes("floorhole")) push("level_holes", ent);
   }
+  // щитки: эталоны ui-ref-shield-* несут словарь shields (этап 255)
+  const shieldDict = root["shields"];
+  if (shieldDict !== null && typeof shieldDict === "object" && !Array.isArray(shieldDict)) {
+    for (const s of Object.values(shieldDict as Record<string, unknown>)) push("shields", s);
+  }
   // свободные стены: эталоны ui-ref-free-wall-* несут словарь walls
   const walls = root["walls"];
   if (walls !== null && typeof walls === "object" && !Array.isArray(walls)) {
@@ -343,8 +348,10 @@ test("b5/171: каждый эталон сущности проходит вал
     if (env === null || typeof env !== "object" || Array.isArray(env)) continue;
     for (const [coll, entity] of fixtureEntities(f, env as Record<string, unknown>)) {
       checked++;
+      // ревью 256 №6: у щитков ключ записи = id (SHIELDS.restore перекладывает по id)
+      const key = coll === "shields" ? String((entity as { id?: unknown }).id ?? "e0") : "e0";
       assert.doesNotThrow(
-        () => parseModelImport({ ...baseModel(), [coll]: { e0: entity } }),
+        () => parseModelImport({ ...baseModel(), [coll]: { [key]: entity } }),
         `${f}: эталон коллекции ${coll} должен проходить импорт`,
       );
     }
