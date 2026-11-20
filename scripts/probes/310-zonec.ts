@@ -13,6 +13,7 @@ import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { sig } from "./probe-sig.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, type ReadonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") { console.error("запуск: run"); process.exit(0); }
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
@@ -20,9 +21,7 @@ const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"];
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
 const READONLY_PLAN_ID = process.env["REMPLANNER_PROBE_READONLY_PLAN_ID"];
 if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) { console.error("нужны env"); process.exit(1); }
-if (OBJECT_ID === READONLY_ID) { console.error("OBJECT_ID == READONLY_ID — стоп"); process.exit(1); }
-const RO_ID: string = READONLY_ID;
-const RO_PLAN_ID: string = READONLY_PLAN_ID;
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 mkdirSync(".orca-reports/tmp", { recursive: true });
 setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
 
@@ -80,18 +79,15 @@ async function restoreByCaptured(): Promise<void> {
   opened = false;
 }
 
-let roBefore: LoadedModel | null = null;
+let roGuard: ReadonlyGuard | null = null;
 
-/** Контрольный проект «после» (в finally, ревью 311 №5): семантический sig +
- *  save_id; изменение — exitCode=1. */
+/** Контрольный проект «после» (в finally, ревью 311 №5); ревью 319 №4 —
+ *  сверка с фиксированным эталоном (файл не перезаписывается). */
 async function checkReadonly(): Promise<void> {
-  if (!roBefore) return;
+  if (!roGuard) return;
   try {
-    const roAfter = await loadModel(ctx.session(), RO_ID, RO_PLAN_ID);
-    if (roAfter.data_empty) { console.error("контрольный GET после — пустой (data_empty)"); process.exitCode = 1; return; }
-    const ok = sig(roAfter.model) === sig(roBefore.model) && roAfter.save_id === roBefore.save_id;
-    console.log("контрольный (finally):", ok ? "не изменился (канон + save_id)" : "ИЗМЕНИЛСЯ — СТОП");
-    if (!ok) process.exitCode = 1;
+    const changed = await roGuard.checkFinal("finally");
+    console.log("контрольный (finally):", changed ? "ИЗМЕНИЛСЯ — СТОП" : "не изменился (канон + save_id)");
   } catch (e) {
     console.error("контрольный GET после не удался:", String((e as Error).message ?? e).slice(0, 300));
     process.exitCode = 1;
@@ -99,10 +95,11 @@ async function checkReadonly(): Promise<void> {
 }
 
 try {
-  const roBeforeLocal = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
-  if (roBeforeLocal.data_empty) throw new Error("контрольный GET пустой — отказ");
-  roBefore = roBeforeLocal;
-  writeFileSync(".orca-reports/tmp/310-get-readonly-before.json", JSON.stringify(roBeforeLocal, null, 1));
+  // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, ".orca-reports/tmp/310-readonly-ref.json");
+  await roGuard.assertUnchanged("перед записями");
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const backupPath = ".orca-reports/backup-".concat(OBJECT_ID, "-310.json");
   if (!existsSync(backupPath)) writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");

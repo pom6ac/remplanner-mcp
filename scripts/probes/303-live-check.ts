@@ -13,6 +13,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … run (ID из env)");
@@ -26,10 +27,7 @@ if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
   console.error("нужны REMPLANNER_PROBE_OBJECT_ID/PLAN_ID/READONLY_ID/READONLY_PLAN_ID");
   process.exit(1);
 }
-if (OBJECT_ID === READONLY_ID) {
-  console.error("REMPLANNER_PROBE_OBJECT_ID совпадает с READONLY_ID — стоп");
-  process.exit(1);
-}
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 
@@ -243,6 +241,10 @@ function sig(m: unknown): string {
 
 try {
   // 0. контрольный проект до (только GET, реальный plan_id)
+  // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, `${OUT}/303-readonly-ref.json`);
+  await roGuard.assertUnchanged("перед записями");
   const roBefore = await snap(READONLY_ID, READONLY_PLAN_ID, "readonly-before");
 
   // 1. бэкап dev-проекта
@@ -413,9 +415,8 @@ try {
   const png = await call("render_plan", {});
   console.log("render_plan:", JSON.stringify(Object.keys(png)).slice(0, 200));
 
-  // 10. контрольный проект после
-  const roAfter = await snap(READONLY_ID, READONLY_PLAN_ID, "readonly-after");
-  const roOk = sig(roAfter.model) === sig(roBefore.model) && roAfter.save_id === roBefore.save_id;
+  // 10. контрольный проект после — ревью 319 №4: с фиксированным эталоном (канон + save_id)
+  const roOk = !(await roGuard.checkFinal("в конце"));
   console.log("контрольный проект:", roOk ? "не изменился (канон + save_id)" : "ИЗМЕНИЛСЯ — СТОП");
   if (!roOk) throw new Error("контрольный проект изменился");
   if (!same) throw new Error("dev-проект не совпал с бэкапом");

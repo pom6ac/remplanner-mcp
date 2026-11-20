@@ -14,6 +14,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … run (REMPLANNER_PROBE_* из env)");
@@ -27,10 +28,7 @@ if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
   console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID, REMPLANNER_PROBE_READONLY_PLAN_ID");
   process.exit(1);
 }
-if (OBJECT_ID === READONLY_ID) {
-  console.error("REMPLANNER_PROBE_OBJECT_ID совпадает с REMPLANNER_PROBE_READONLY_ID — стоп");
-  process.exit(1);
-}
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -205,6 +203,10 @@ function sig(m: unknown): string {
 
 try {
   // 0. контрольный проект до (только GET, реальный plan_id, непустой)
+  // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, `${OUT}/296-readonly-ref.json`);
+  await roGuard.assertUnchanged("перед записями");
   const snapBefore = await roSnap("before");
 
   // 1. бэкап dev-проекта
@@ -358,12 +360,10 @@ try {
   // m2 ревью 299: расхождение data с бэкапом после restore — стоп (не только печать)
   if (!same) throw new Error("data после restore != бэкапу (см. 296-get-own-after.json)");
 
-  // 8. контрольный проект после: канон + save_id (ревью 298 №9г: strip его
-  // удалял — сравниваем явно)
-  const roAfter = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
-  const roSame = sig(roAfter.model) === sig(snapBefore.model) && roAfter.save_id === snapBefore.save_id;
-  console.log("контрольный проект:", roAfter.data_empty ? "ПУСТОЙ — отказ" : roSame ? "не изменился (канон + save_id)" : "ИЗМЕНИЛСЯ — СТОП");
-  if (!roSame || roAfter.data_empty) throw new Error("контрольный проект изменился или пуст");
+  // 8. контрольный проект после — ревью 319 №4: с фиксированным эталоном (канон + save_id)
+  const roChanged = await roGuard.checkFinal("в конце");
+  console.log("контрольный проект:", roChanged ? "ИЗМЕНИЛСЯ — СТОП" : "не изменился (канон + save_id)");
+  if (roChanged) throw new Error("контрольный проект изменился или пуст");
   console.log("296-live OK; png:", pngPath ?? "(не извлечён)");
 } catch (e) {
   console.error("FAIL:", String((e as Error).message ?? e).slice(0, 900));

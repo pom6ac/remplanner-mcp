@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ServerContext } from "../../src/server/context.ts";
 import { buildServer } from "../../src/server.ts";
+import { assertTargetPair } from "./probe-guard.ts";
 
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
@@ -31,13 +32,16 @@ const client = new Client({ name: "43-rooms-restore", version: "0.0.0" });
 const [a, b] = InMemoryTransport.createLinkedPair();
 await Promise.all([server.connect(b), client.connect(a)]);
 
+// ревью 319 №3: пара объект/план из env до первой записи
+await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
 await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
 const targetId = ROOM_ID || Object.keys(json(await call("model_get", { detail: "full" })).rooms2 ?? {})[0]!;
 await ctx.workspace().apply("43-restore-room", (m) => {
-  const r = (m.rooms2 ??= {})[targetId]!;
-  r.name = "none";
-  for (const z of r.zones ?? []) z.name = "none";
-  for (const f of r.floors ?? []) {
+  const roomsMap = (m.rooms2 ??= {}) as Record<string, any>;
+  const room = (roomsMap[targetId] ??= {}) as Record<string, any>;
+  room.name = "none";
+  for (const z of room.zones ?? []) z.name = "none";
+  for (const f of room.floors ?? []) {
     f.exist = false;
     delete f.cover;
     delete f.type_laying;

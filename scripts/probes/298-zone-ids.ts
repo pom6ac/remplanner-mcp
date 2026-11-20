@@ -17,6 +17,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … run (REMPLANNER_PROBE_* из env)");
@@ -30,10 +31,7 @@ if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
   console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID, REMPLANNER_PROBE_READONLY_PLAN_ID");
   process.exit(1);
 }
-if (OBJECT_ID === READONLY_ID) {
-  console.error("REMPLANNER_PROBE_OBJECT_ID совпадает с REMPLANNER_PROBE_READONLY_ID — стоп");
-  process.exit(1);
-}
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -140,6 +138,10 @@ try {
   // 0. контрольный проект до (только GET, реальный plan_id, непустой, save_id запомнен)
   const s1 = await startSession("298-zone-ids-1");
   cleanupSession = s1;
+  // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  await assertTargetPair(s1.ctx.session(), OBJECT_ID, PLAN_ID);
+  const roGuard = await readonlyGuard(s1.ctx.session(), READONLY_ID, READONLY_PLAN_ID, `${OUT}/298-readonly-ref.json`);
+  await roGuard.assertUnchanged("перед записями");
   const roBefore = await loadModel(s1.ctx.session(), READONLY_ID, READONLY_PLAN_ID);
   if (roBefore.data_empty) throw new Error("контрольный GET before пустой (data_empty) — отказ");
   writeFileSync(`${OUT}/298-get-readonly-before.json`, JSON.stringify(roBefore, null, 1));
@@ -275,11 +277,10 @@ try {
   const zonesLeft = Object.keys(delimMap(finalModel)).length;
   if (zonesLeft !== 0) throw new Error(`после restore в zone_delimiters ${zonesLeft} записей — не совпало с бэкапом`);
 
-  // 8. контрольный проект после: канон + save_id
-  const roAfter = await loadModel(s2.ctx.session(), READONLY_ID, READONLY_PLAN_ID);
-  const roSame = sig(roAfter.model) === sig(roBefore.model) && roAfter.save_id === roSaveIdBefore;
-  console.log("контрольный проект:", roAfter.data_empty ? "ПУСТОЙ — отказ" : roSame ? "не изменился (канон + save_id)" : "ИЗМЕНИЛСЯ — СТОП");
-  if (!roSame || roAfter.data_empty) {
+  // 8. контрольный проект после — ревью 319 №4: с фиксированным эталоном (канон + save_id)
+  const roChanged = await roGuard.checkFinal("в конце");
+  console.log("контрольный проект:", roChanged ? "ИЗМЕНИЛСЯ — СТОП" : "не изменился (канон + save_id)");
+  if (roChanged) {
     process.exitCode = 1;
     throw new Error("контрольный проект изменился или пуст");
   }

@@ -10,6 +10,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск: … run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
@@ -18,10 +19,12 @@ if (process.argv[2] !== "run") {
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
 const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"];
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
-if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || OBJECT_ID === READONLY_ID) {
+if (!OBJECT_ID || !PLAN_ID || !READONLY_ID) {
   console.error("нужны корректные REMPLANNER_PROBE_* (OBJECT_ID != READONLY_ID)");
   process.exit(1);
 }
+// ревью 319 №3: коллизии env с контрольным проектом (контрольный читается с планом "1")
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, "1");
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -186,6 +189,10 @@ const snapReadonly = async (tag: string): Promise<LoadedModel> => {
 };
 
 try {
+  // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, "1", `${OUT}/262-readonly-ref.json`);
+  await roGuard.assertUnchanged("перед записями");
   const snapBefore = await snapReadonly("before");
   const before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const backupPath = `.orca-reports/backup-${OBJECT_ID}-262.json`;
@@ -316,11 +323,10 @@ try {
     throw new Error("разделители проекта после restore не совпали с бэкапом — СТОП, ручная зачистка по списку выше");
   }
 
-  // контрольный проект после (ревью 263 N7)
-  const snapAfter = await loadModel(ctx.session(), READONLY_ID, "1");
-  const roSame = sig(snapAfter.model) === sig(snapBefore.model);
-  console.log("контрольный проект:", roSame ? "не изменился" : "ИЗМЕНИЛСЯ — СТОП");
-  if (!roSame) throw new Error("контрольный проект изменился");
+  // контрольный проект после (ревью 263 N7); ревью 319 №4 — с фиксированным эталоном
+  const roChanged = await roGuard.checkFinal("в конце");
+  console.log("контрольный проект:", roChanged ? "ИЗМЕНИЛСЯ — СТОП" : "не изменился");
+  if (roChanged) throw new Error("контрольный проект изменился");
   console.log("262-live-split OK");
 } catch (e) {
   console.error("FAIL:", String((e as Error).message ?? e).slice(0, 4000));

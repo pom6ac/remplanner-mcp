@@ -8,6 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ServerContext } from "../../src/server/context.ts";
 import { buildServer } from "../../src/server.ts";
+import { assertTargetPair } from "./probe-guard.ts";
 
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
@@ -45,6 +46,8 @@ const roomState = async (label: string): Promise<void> => {
   }
 };
 
+// ревью 319 №3: пара объект/план из env до первой записи
+await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
 console.log("== open ==", JSON.stringify(await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID })).slice(0, 200));
 
 // 1. имя и отделка в канонической модели
@@ -59,11 +62,12 @@ const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math
 console.log("== комната", targetId, "центр:", Math.round(cx * 10), Math.round(cy * 10));
 
 await ctx.workspace().apply("43-room-userdata", (m) => {
-  const r = (m.rooms2 ??= {})[targetId]!;
-  r.name = "Гостиная";
-  for (const z of r.zones ?? []) z.name = "Гостиная";
+  const roomsMap = (m.rooms2 ??= {}) as Record<string, any>;
+  const room = (roomsMap[targetId] ??= {}) as Record<string, any>;
+  room.name = "Гостиная";
+  for (const z of room.zones ?? []) z.name = "Гостиная";
   // отделка пола: сериализация Floor редактора (src-24: exist → cover, angle, pc, width/height, type_laying)
-  for (const f of r.floors ?? []) {
+  for (const f of room.floors ?? []) {
     f.exist = true;
     f.cover = "floor_tile";
     f.type_laying = "tile";
@@ -72,7 +76,7 @@ await ctx.workspace().apply("43-room-userdata", (m) => {
     f.width = 40;
     f.height = 40;
     f.f0offset = 0;
-    f.pc = structuredClone(r.pc ?? { x: 0, y: 0 });
+    f.pc = structuredClone(room.pc ?? { x: 0, y: 0 });
   }
   return true;
 });

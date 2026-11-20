@@ -20,6 +20,7 @@ import { loadModel, saveModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
 import { BASE_URL, HTTP_TIMEOUT_MS, USER_AGENT } from "../../src/config.ts";
 import { cookieHeader, type SessionState } from "../../src/session.ts";
 import { toModel } from "../../src/model/canonical.ts";
@@ -42,10 +43,7 @@ if (READONLY_PLAN_ID === "1") {
   console.error("REMPLANNER_PROBE_READONLY_PLAN_ID = «1» — контрольный GET должен идти по реальному plan_id рабочего проекта");
   process.exit(1);
 }
-if (OBJECT_ID === READONLY_ID) {
-  console.error("OBJECT_ID === READONLY_ID — отказ до любой записи");
-  process.exit(1);
-}
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 const BACKUP_PATH = join(".orca-reports", `backup-${OBJECT_ID}-291.json`);
@@ -169,6 +167,10 @@ try {
     _source: "GET через loadModel, dev-проект из env, scripts/probes/291-live-check.ts, до прогона; id не печатаются",
     model: ownBefore.model,
   }, null, 1));
+  // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, `${OUT}/291-live-check-readonly-ref.json`);
+  await roGuard.assertUnchanged("перед записями");
   readonlyBefore = await snap(READONLY_ID, "before");
   console.log("backup ok");
 
@@ -292,9 +294,8 @@ try {
   if (!pngPath) allOk = false;
   else copyFileSync(pngPath, `${OUT}/291-render.png`);
 
-  // 9а. контрольный GET рабочего проекта (env) после прогона — не изменился
-  const readonlyAfter = await snap(READONLY_ID, "after");
-  const sameReadonly = readonlyAfter.save_id === readonlyBefore.save_id && sameData(readonlyBefore.model, readonlyAfter.model);
+  // 9а. ревью 319 №4: контрольный проект сверяется с фиксированным эталоном
+  const sameReadonly = !(await roGuard.checkFinal("в конце"));
   console.log(sameReadonly ? "READONLY OK" : "READONLY CHANGED — СТОП");
 
   // 10. очистка: щиток-предмет по site_id + save + сверка сигнатуры
