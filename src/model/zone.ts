@@ -41,6 +41,26 @@ export type ZoneDelimiterRec = {
 };
 
 /**
+ * Типы разделителей зон одного класса ZoneDelimitering (бандл app.3.0: tools
+ * zone_c/zone_ceiling/zone_floor/zone_hydroisolation/zone_floor_cap) и план
+ * записи = лист, на котором линия нарисована (эталоны 296, проба 296-zone-ui:
+ * кнопка на листах отделки одна — plannertool_zone_floor, тип записи задаёт
+ * активный лист): zone_ceiling → plan "ceiling" («Потолки»), zone_floor →
+ * "floor" («Напольные покрытия»), zone_hydroisolation → "hydroisolation"
+ * («Гидроизоляция»), zone_floor_cap → "floor_cap" («Стяжка»). zone_c (лист
+ * «Перегородки», getNameZone "c" → zones) имеет собственную семантику
+ * зонирования перегородками — вынесен в следующий PR (этап 296, отчёт).
+ */
+export const ZONE_DELIMITER_PLANS = {
+  zone_ceiling: "ceiling",
+  zone_floor: "floor",
+  zone_hydroisolation: "hydroisolation",
+  zone_floor_cap: "floor_cap",
+} as const satisfies Record<string, string>;
+
+export type ZoneDelimiterType = keyof typeof ZONE_DELIMITER_PLANS;
+
+/**
  * Legacy-миграция (convertOld ZoneDelimiter, бандл): типы «d_zone»→«zone_c»,
  * «d_*»→«zone_*»; старая форма points:[p1,p2] без vertexes разворачивается в
  * граф из двух узлов (restore 260). Возвращает каноническую запись или исходную.
@@ -207,8 +227,10 @@ function roomRigels(model: Model, roomId: string, room: RoomRec): Array<{ id: st
 
 type Snap = { point: Point; kind: "room" | "rigel"; edgeIndex: number; pid?: string; side?: string; rigelId?: string };
 
-/** Магнит конца линии: ближайшее ребро комнаты (≤15 см) или грань ригеля (≤10 см). */
-function snapEndpoint(model: Model, roomId: string, room: RoomRec, p: Point): Snap | null {
+/** Магнит конца линии: ближайшее ребро комнаты (≤15 см), для zone_ceiling —
+ *  ещё и грань ригеля/закладной (≤10 см; в редакторе магнит к ригелям
+ *  включается только при tool zone_ceiling и plan ceiling, проба 296). */
+function snapEndpoint(model: Model, roomId: string, room: RoomRec, p: Point, plan: string): Snap | null {
   let best: { snap: Snap; d: number } | null = null;
   const edges = Array.isArray(room.edges) ? room.edges : [];
   for (let i = 0; i < edges.length; i++) {
@@ -221,27 +243,32 @@ function snapEndpoint(model: Model, roomId: string, room: RoomRec, p: Point): Sn
       best = { snap: { point: q, kind: "room", edgeIndex: i, pid: e.pid, side: e.side }, d };
     }
   }
-  for (const rg of roomRigels(model, roomId, room)) {
-    for (const e of rg.edges) {
-      const q = projOnSeg(p, e.p1, e.p2);
-      if (!q) continue;
-      const d = dist(p, q);
-      if (d <= ZONE_LIMITS.rigelSnapCm && (!best || d < best.d)) {
-        best = { snap: { point: q, kind: "rigel", edgeIndex: -1, rigelId: rg.id }, d };
+  if (plan === "ceiling") {
+    for (const rg of roomRigels(model, roomId, room)) {
+      for (const e of rg.edges) {
+        const q = projOnSeg(p, e.p1, e.p2);
+        if (!q) continue;
+        const d = dist(p, q);
+        if (d <= ZONE_LIMITS.rigelSnapCm && (!best || d < best.d)) {
+          best = { snap: { point: q, kind: "rigel", edgeIndex: -1, rigelId: rg.id }, d };
+        }
       }
     }
   }
   return best?.snap ?? null;
 }
 
-/** Другие разделители комнаты (линии для проверки пересечений): общий слой
- *  delimiterMapOf — верхнеуровневое zone_delimiters (ревью 261 №1: после e47382a
- *  запись идёт туда) + legacy per-room. */
-function roomDelimiterLines(model: Model, roomId: string, exceptId?: string): Array<{ id: string; p1: Point; p2: Point }> {
+/** Другие разделители той же комнаты и ТОГО ЖЕ плана (линии для проверки
+ *  пересечений): редактор отвергает пересечение только делителей одного plan
+ *  (check_delimiter: h.id_room===o.id && h.plan===plan — проба 296: делители
+ *  потолка и пола в одной комнате свободно пересекаются). Общий слой
+ *  delimiterMapOf — верхнеуровневое zone_delimiters + legacy per-room. */
+function roomDelimiterLines(model: Model, roomId: string, plan: string, exceptId?: string): Array<{ id: string; p1: Point; p2: Point }> {
   const out: Array<{ id: string; p1: Point; p2: Point }> = [];
   for (const [id, entry] of Object.entries(delimiterMapOf(model))) {
     if (id === exceptId || entry.roomKey !== roomId) continue;
     const rec = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
+    if (String(rec["plan"] ?? "") !== plan) continue;
     const v = (rec["vertexes"] ?? []) as Array<{ point?: Point }>;
     const q1 = v[0]?.point, q2 = v[v.length - 1]?.point;
     if (v.length >= 2 && q1 && q2) {
@@ -280,18 +307,26 @@ function segmentInsidePolygon(a: Point, b: Point, poly: Point[], tolCm = 0.5): b
 }
 
 /**
- * zone_ceiling_add: линия-разделитель зон потолка в комнате (мм; концы — точки,
- * которые магнитятся к рёбрам комнаты в 150 мм или граням потолочных ригелей
- * в 100 мм, как в UI). Линия обязана лежать внутри одной комнаты и не пересекать
- * и не идти вдоль стен, колонн, других разделителей комнаты, ригелей и потолочных
- * закладных (стандарт редактора, пробы 260-zone-ui*). Атомарно: при отказе
- * delimiters комнаты не меняются.
+ * Общий слой разделителей зон (класс ZoneDelimitering редактора): линия
+ * внутри одной комнаты от ребра до ребра (магнит 150 мм), для зоны потолка —
+ * ещё и от/до грани потолочного ригеля или закладной (магнит 100 мм). Линия
+ * не пересекает и не идёт вдоль стен, колонн, ригелей/закладных (только для
+ * plan ceiling) и других разделителей ТОГО ЖЕ плана этой комнаты (стандарт
+ * редактора: check_delimiter фильтрует ZONE_DELIMITERS по h.plan===plan;
+ * эталоны 296 — zone_floor/zone_hydroisolation/zone_floor_cap). Колонны
+ * role_ "gypsum_sm" в проверке пересечений не участвуют (бандл). Атомарно:
+ * при отказе модель не меняется.
  */
-export function addZoneCeiling(
+export function addZoneDelimiter(
   model: Model,
   roomRef: string,
-  params: { fromMm: Point; toMm: Point },
+  params: { type: ZoneDelimiterType; fromMm: Point; toMm: Point },
 ): { id: string; length_mm: number } {
+  const type = params.type;
+  const plan = ZONE_DELIMITER_PLANS[type];
+  if (!plan) {
+    throw new McpError("INVALID_ARGUMENT", `неизвестный тип разделителя зон ${type}`);
+  }
   const { id: roomId, room } = roomByRef(model, roomRef);
   const poly = roomPolygonOf(room);
   if (!poly || poly.length < 3) throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет контура`);
@@ -301,11 +336,15 @@ export function addZoneCeiling(
   if (lenCm * 10 < ZONE_LIMITS.minLineMm) {
     throw new McpError("INVALID_ARGUMENT", `длина линии ${Math.round(lenCm * 10)} мм короче минимальной ${ZONE_LIMITS.minLineMm} мм`);
   }
-  // магнит концов
-  const s1 = snapEndpoint(model, roomId, room, from);
-  const s2 = snapEndpoint(model, roomId, room, to);
-  if (!s1) throw new McpError("INVALID_ARGUMENT", "from_mm: нет ребра комнаты или грани потолочного ригеля в 150 мм — конец не магнитится");
-  if (!s2) throw new McpError("INVALID_ARGUMENT", "to_mm: нет ребра комнаты или грани потолочного ригеля в 100 мм — конец не магнитится");
+  // магнит концов (грани ригелей/закладных — только зона потолка)
+  const s1 = snapEndpoint(model, roomId, room, from, plan);
+  const s2 = snapEndpoint(model, roomId, room, to, plan);
+  if (!s1) throw new McpError("INVALID_ARGUMENT", plan === "ceiling"
+    ? "from_mm: нет ребра комнаты или грани потолочного ригеля в 150 мм — конец не магнитится"
+    : "from_mm: нет ребра комнаты в 150 мм — конец не магнитится");
+  if (!s2) throw new McpError("INVALID_ARGUMENT", plan === "ceiling"
+    ? "to_mm: нет ребра комнаты или грани потолочного ригеля в 100 мм — конец не магнитится"
+    : "to_mm: нет ребра комнаты в 100 мм — конец не магнитится");
   // концы на одном ребре комнаты — редактор отвергает (r && A && areLinesEqual)
   if (s1.kind === "room" && s2.kind === "room" && s1.edgeIndex === s2.edgeIndex) {
     throw new McpError("INVALID_ARGUMENT", "оба конца на одном ребре комнаты — проведите линию от одной внешней стены до другой");
@@ -332,8 +371,10 @@ export function addZoneCeiling(
       throw new McpError("INVALID_ARGUMENT", "линия идёт вдоль ребра/стены комнаты — проведите линию внутри комнаты от одной внешней стены до другой");
     }
   }
-  // колонны
-  for (const pillar of Object.values((model.pillars ?? {}) as Record<string, { polygon?: Point[] }>)) {
+  // колонны: gypsum_sm (ГКЛ-пятна) в проверке пересечений не участвуют (бандл:
+  // check_delimiter пропускает E.role_==="gypsum_sm")
+  for (const pillar of Object.values((model.pillars ?? {}) as Record<string, { polygon?: Point[]; role_?: string }>)) {
+    if (pillar.role_ === "gypsum_sm") continue;
     const pp = pillar.polygon;
     if (!pp || pp.length < 3) continue;
     for (let i = 0; i < pp.length; i++) {
@@ -344,18 +385,21 @@ export function addZoneCeiling(
   }
   // стены: пересечение осей проверять не нужно — рёбра комнаты уже лежат на осях
   // (проверка выше), а «пересекайте стены» в UI относится к рёбрам и колоннам
-  // ригели и закладные: концы не внутри полигона ригеля (точка на грани — не
-  // внутри, ревью 261 №3); линия не пересекает грани
-  const rigels = roomRigels(model, roomId, room);
-  for (const rg of rigels) {
-    if (strictlyInside(p1, rg.polygon) || strictlyInside(p2, rg.polygon)) {
-      throw new McpError("INVALID_ARGUMENT", `конец линии внутри ригеля ${rg.id} — конец должен быть на грани ригеля или ребре комнаты`);
-    }
-    const attached = s1.rigelId === rg.id || s2.rigelId === rg.id;
-    if (attached) continue;
-    for (const e of rg.edges) {
-      if (segsCross(p1, p2, e.p1, e.p2)) {
-        throw new McpError("INVALID_ARGUMENT", "линия пересекает ригель или потолочную закладную — не пересекайте ригели и потолочные закладные");
+  // ригели и закладные: проверяются только для зоны потолка (check_delimiter
+  // редактора целиком под plan==="ceiling"); концы не внутри полигона ригеля
+  // (точка на грани — не внутри, ревью 261 №3); линия не пересекает грани
+  if (plan === "ceiling") {
+    const rigels = roomRigels(model, roomId, room);
+    for (const rg of rigels) {
+      if (strictlyInside(p1, rg.polygon) || strictlyInside(p2, rg.polygon)) {
+        throw new McpError("INVALID_ARGUMENT", `конец линии внутри ригеля ${rg.id} — конец должен быть на грани ригеля или ребре комнаты`);
+      }
+      const attached = s1.rigelId === rg.id || s2.rigelId === rg.id;
+      if (attached) continue;
+      for (const e of rg.edges) {
+        if (segsCross(p1, p2, e.p1, e.p2)) {
+          throw new McpError("INVALID_ARGUMENT", "линия пересекает ригель или потолочную закладную — не пересекайте ригели и потолочные закладные");
+        }
       }
     }
   }
@@ -364,8 +408,10 @@ export function addZoneCeiling(
   if (!segmentInsidePolygon(p1, p2, poly)) {
     throw new McpError("INVALID_ARGUMENT", "линия проходит вне комнаты — проведите линию внутри одной комнаты от одной внешней стены до другой");
   }
-  // другие разделители комнаты (общий узел или касание в точке — соединение, не пересечение)
-  for (const other of roomDelimiterLines(model, roomId)) {
+  // другие разделители этой комнаты и этого плана (общий узел или касание в
+  // точке — соединение, не пересечение); делители других планов могут
+  // пересекаться свободно (проба 296, check_delimiter фильтрует по plan)
+  for (const other of roomDelimiterLines(model, roomId, plan)) {
     const shared =
       dist(other.p1, p1) <= 0.05 || dist(other.p1, p2) <= 0.05 || dist(other.p2, p1) <= 0.05 || dist(other.p2, p2) <= 0.05 ||
       distToSeg(other.p1, p1, p2) <= 0.05 || distToSeg(other.p2, p1, p2) <= 0.05 ||
@@ -386,10 +432,10 @@ export function addZoneCeiling(
       { id: vid2, point: { x: Math.round(p2.x * 100) / 100, y: Math.round(p2.y * 100) / 100 }, type: "node" },
     ],
     items: { [vid1]: "node", [vid2]: "node" },
-    type: "zone_ceiling",
+    type,
     length: Math.round((segLen(p1, p2) / 100) * 100) / 100,
     id_room: roomId,
-    plan: "ceiling",
+    plan,
     on_size: 1,
   };
   model.zone_delimiters ??= {};
@@ -398,10 +444,23 @@ export function addZoneCeiling(
 }
 
 /**
- * zone_ceiling_remove: удалить разделитель зон потолка по id сайта (из ответа
- * finish_get/zone_ceiling_add) или метке ZD<n> (порядок finish_get комнаты).
+ * zone_ceiling_add: линия-разделитель зон потолка (этап 260; обёртка общего
+ * слоя addZoneDelimiter с type "zone_ceiling").
  */
-export function removeZoneCeiling(model: Model, delimiterRef: string): { room_id: string | null; removed: boolean } {
+export function addZoneCeiling(
+  model: Model,
+  roomRef: string,
+  params: { fromMm: Point; toMm: Point },
+): { id: string; length_mm: number } {
+  return addZoneDelimiter(model, roomRef, { type: "zone_ceiling", fromMm: params.fromMm, toMm: params.toMm });
+}
+
+/**
+ * removeZoneDelimiter: удалить разделитель зон (любого типа — zone_ceiling /
+ * zone_floor / zone_hydroisolation / zone_floor_cap) по id сайта (из ответа
+ * finish_get/zone_*_add) или метке ZD<n> (сквозная нумерация finish_get).
+ */
+export function removeZoneDelimiter(model: Model, delimiterRef: string): { room_id: string | null; removed: boolean } {
   const map = delimiterMapOf(model);
   // по ключу хранилища или по id записи (per-room ключ может не совпадать с id)
   const hit = Object.entries(map).find(([k, e]) => k === delimiterRef || String(e.rec["id"] ?? "") === delimiterRef);
@@ -425,10 +484,15 @@ export function removeZoneCeiling(model: Model, delimiterRef: string): { room_id
   if (m) {
     const entry = zoneDelimiterList(model)[Number(m[1]) - 1];
     if (entry && String(entry["id"] ?? "") === delimiterRef && entry["site_id"] !== undefined) {
-      return removeZoneCeiling(model, String(entry["site_id"]));
+      return removeZoneDelimiter(model, String(entry["site_id"]));
     }
   }
   throw new McpError("NOT_FOUND", `разделитель ${delimiterRef} не найден`);
+}
+
+/** zone_ceiling_remove (этап 260): обёртка removeZoneDelimiter. */
+export function removeZoneCeiling(model: Model, delimiterRef: string): { room_id: string | null; removed: boolean } {
+  return removeZoneDelimiter(model, delimiterRef);
 }
 
 /** Список разделителей для finish_get (мм; метки ZD<n> сквозные по комнатам).

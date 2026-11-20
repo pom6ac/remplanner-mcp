@@ -5097,7 +5097,7 @@
   },
   {
    "name": "zone_ceiling_add",
-   "description": "Провести линию-разделитель зон потолка в комнате (лист «Потолки», инструмент «Зонировать потолок»; PRO). Линия делит потолок комнаты на зоны с разной отделкой. from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм) или к грани потолочного ригеля/закладной (в 100 мм), как в редакторе: линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны, ригели и другие разделители. id — метка ZD<n> для zone_ceiling_remove и finish_get. После правки вызывайте model_validate и project_save.",
+   "description": "Провести линию-разделитель зон потолка в комнате (лист «Потолки», инструмент «Зонировать потолок»; PRO). Линия делит потолок комнаты на зоны с разной отделкой. from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм) или к грани потолочного ригеля/закладной (в 100 мм), как в редакторе: линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны, ригели и другие разделители зон потолка. id — метка ZD<n> для zone_ceiling_remove и finish_get. После правки вызывайте model_validate и project_save.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -5162,6 +5162,252 @@
   {
    "name": "zone_ceiling_remove",
    "description": "Удалить линию-разделитель зон потолка (инструмент «ластик» на линии). delimiter_id — метка ZD<n> из finish_get или id сайта из zone_ceiling_add.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "delimiter_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка ZD<n> из finish_get или id разделителя"
+     }
+    },
+    "required": [
+     "delimiter_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "zone_floor_add",
+   "description": "Провести линию-разделитель зон пола в комнате (лист «Напольные покрытия», инструмент «Зонирование»; PRO). Линия делит пол комнаты на зоны с разным покрытием. from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм), как в редакторе: линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны и другие разделители зон пола (разделители других листов — потолка — пересекать можно). id — метка ZD<n> для zone_floor_remove и finish_get. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "from_mm": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "начало линии, мм"
+     },
+     "to_mm": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "конец линии, мм"
+     }
+    },
+    "required": [
+     "room_id",
+     "from_mm",
+     "to_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "zone_floor_cap_add",
+   "description": "Провести линию-разделитель зон стяжки в комнате (лист «Стяжка», инструмент «Зонирование»; PRO). from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм), как в редакторе: линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны и другие разделители зон стяжки (разделители других листов пересекать можно). id — метка ZD<n> для zone_floor_cap_remove и finish_get. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "from_mm": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "начало линии, мм"
+     },
+     "to_mm": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "конец линии, мм"
+     }
+    },
+    "required": [
+     "room_id",
+     "from_mm",
+     "to_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "zone_floor_cap_remove",
+   "description": "Удалить линию-разделитель зон стяжки (инструмент «ластик» на линии). delimiter_id — метка ZD<n> из finish_get или id сайта из zone_floor_cap_add.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "delimiter_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка ZD<n> из finish_get или id разделителя"
+     }
+    },
+    "required": [
+     "delimiter_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "zone_floor_remove",
+   "description": "Удалить линию-разделитель зон пола (инструмент «ластик» на линии). delimiter_id — метка ZD<n> из finish_get или id сайта из zone_floor_add.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "delimiter_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка ZD<n> из finish_get или id разделителя"
+     }
+    },
+    "required": [
+     "delimiter_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "zone_hydroisolation_add",
+   "description": "Провести линию-разделитель зон гидроизоляции в комнате (лист «Гидроизоляция», инструмент «Зонирование»; PRO). from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм), как в редакторе: линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны и другие разделители зон гидроизоляции (разделители других листов пересекать можно). id — метка ZD<n> для zone_hydroisolation_remove и finish_get. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "from_mm": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "начало линии, мм"
+     },
+     "to_mm": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "конец линии, мм"
+     }
+    },
+    "required": [
+     "room_id",
+     "from_mm",
+     "to_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "zone_hydroisolation_remove",
+   "description": "Удалить линию-разделитель зон гидроизоляции (инструмент «ластик» на линии). delimiter_id — метка ZD<n> из finish_get или id сайта из zone_hydroisolation_add.",
    "inputSchema": {
     "type": "object",
     "properties": {
