@@ -1209,19 +1209,6 @@ function roomHasFloorCeiling(room: RoomRec): boolean {
   return Boolean(floorSig(room) || ceilingFinishZones(room).length > 0);
 }
 
-/** Мультимножество exp не покрыто got: список недостающих записей (ревью 311 №2). */
-function multisetMissing(exp: string[], got: string[]): string[] {
-  const counts = new Map<string, number>();
-  for (const g of got) counts.set(g, (counts.get(g) ?? 0) + 1);
-  const missing: string[] = [];
-  for (const c of exp) {
-    const n = counts.get(c) ?? 0;
-    if (n <= 0) missing.push(c);
-    else counts.set(c, n - 1);
-  }
-  return missing;
-}
-
 /**
  * Классификация наследников при изменившейся топологии — общий слой в room-geo.ts
  * (переэкспортируется выше; используется сверкой отделки, зон потолка и комнат при save).
@@ -1294,16 +1281,38 @@ export function finishCompare(
       }
       const heirRoom = got[heir.key]!;
       if (heir.kind === "split") {
-        // split: пол/потолок наследует КАЖДАЯ часть (эталон 98: split-unequal, split-3)
-        for (const k of heir.partKeys) {
-          const part = got[k]!;
-          if (expFloor) {
-            const gf = floorSig(part);
+        // split: пол наследует КАЖДАЯ часть (эталон 98: split-unequal, split-3);
+        // потолок (ревью 313 B): отделка зон исходной комнаты расходится по частям
+        // (каждая зона уходит в часть, содержащую её полигон), поэтому требовать
+        // всё мультимножество в каждой части — ложная проблема на штатном
+        // wall_add комнаты с закладной и одинаковой отделкой зон. Правило: у
+        // каждой части отделка непуста и каждая её запись ∈ множеству исходных
+        // (как в merge), а объединение частей покрывает исходные материалы.
+        if (expFloor) {
+          for (const k of heir.partKeys) {
+            const gf = floorSig(got[k]!);
             if (!gf || !sameFloor(expFloor, gf)) problems.push(`room ${rid}: часть ${k} не унаследовала покрытие пола (${expFloor.cover}) при split`);
           }
-          if (expCeils.length > 0) {
-            const missing = multisetMissing(expCeils, ceilingSigsOf(part));
-            if (missing.length > 0) problems.push(`room ${rid}: часть ${k} не унаследовала покрытие потолка (${missing.join(" | ")}) при split`);
+        }
+        if (expCeils.length > 0) {
+          const allowed = new Set(expCeils);
+          const covered = new Set<string>();
+          for (const k of heir.partKeys) {
+            const partCeils = ceilingSigsOf(got[k]!);
+            if (partCeils.length === 0) {
+              problems.push(`room ${rid}: часть ${k} не унаследовала покрытие потолка (${expCeils.join(" | ")}) при split`);
+              continue;
+            }
+            const foreign = partCeils.filter((c) => !allowed.has(c));
+            if (foreign.length > 0) {
+              problems.push(`room ${rid}: часть ${k} получила чужое покрытие потолка (${foreign.join(" | ")}) при split`);
+              continue;
+            }
+            for (const c of partCeils) covered.add(c);
+          }
+          const uncovered = [...new Set(expCeils)].filter((c) => !covered.has(c));
+          if (uncovered.length > 0) {
+            problems.push(`room ${rid}: ни одна часть split не унаследовала покрытие потолка (${uncovered.join(" | ")})`);
           }
         }
       } else {

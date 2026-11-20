@@ -369,8 +369,51 @@ test("312 №2: split — часть не унаследовала отделк�
   });
   const ok = finishCompare(expRooms, { _p1: part(100, 250, true), _part2: part(250, 400, true) }, undefined, undefined, "normalize");
   assert.deepEqual(ok.problems, []);
-  const lost = finishCompare(expRooms, { _p1: part(100, 250, false), _part2: part(250, 400, true) }, undefined, undefined, "normalize");
-  assert.ok(lost.problems.some((p) => p.includes("не унаследовала покрытие потолка") && p.includes("stretch_ceiling")), JSON.stringify(lost.problems));
+  // потеря по-прежнему ловится: часть без отделки — problem
+  const empty = finishCompare(expRooms, { _p1: { ...part(100, 250, false), ceilings: [{ exist: false }] }, _part2: part(250, 400, true) }, undefined, undefined, "normalize");
+  assert.ok(empty.problems.some((p) => p.includes("не унаследовала покрытие потолка") && p.includes("gypsum_ceiling")), JSON.stringify(empty.problems));
+  // потеря по-прежнему ловится: материал зоны не попал ни в одну часть — problem
+  const lostEverywhere = finishCompare(expRooms, { _p1: part(100, 250, false), _part2: part(250, 400, false) }, undefined, undefined, "normalize");
+  assert.ok(
+    lostEverywhere.problems.some((p) => p.includes("ни одна часть") && p.includes("stretch_ceiling")),
+    JSON.stringify(lostEverywhere.problems),
+  );
+  // чужая запись в части — problem
+  const foreign = finishCompare(
+    expRooms,
+    { _p1: part(100, 250, true), _part2: { ...part(250, 400, true), ceilings: [...(part(250, 400, true).ceilings as unknown[]), { exist: true, id: "_cX", material: "rack_ceiling", level: 0, profile: "standard" }] } },
+    undefined, undefined, "normalize",
+  );
+  assert.ok(foreign.problems.some((p) => p.includes("чужое покрытие потолка") && p.includes("rack_ceiling")), JSON.stringify(foreign.problems));
+});
+
+// ревью 313 B: отделка зон исходной комнаты при split расходится по частям
+// (каждая зона уходит в часть, содержащую её полигон), поэтому требовать ВСЁ
+// мультимножество в КАЖДОЙ части — ложная строгость (S2: NORMALIZATION_DROPPED
+// на штатном wall_add комнаты с закладной и одинаковой отделкой зон):
+// у каждой части отделка непуста и из исходных записей, объединение частей
+// покрывает исходные материалы
+test("313 B: split зонированной комнаты с одинаковой отделкой зон — без ложной проблемы (S2)", () => {
+  const expRooms = {
+    room1: {
+      polygon: [{ x: 400, y: 100 }, { x: 400, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }],
+      ceilings: [
+        { exist: true, id: "_cA", material: "gypsum_ceiling", level: 0, profile: "standard", polygon: [{ x: 255, y: 100 }, { x: 255, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }] },
+        { exist: true, id: "_cB", material: "gypsum_ceiling", level: 0, profile: "standard", polygon: [{ x: 400, y: 100 }, { x: 400, y: 300 }, { x: 255, y: 300 }, { x: 255, y: 100 }] },
+      ],
+    },
+  };
+  const part = (xLeft: number, xRight: number, zones: number): Record<string, unknown> => ({
+    polygon: [{ x: xRight, y: 100 }, { x: xRight, y: 300 }, { x: xLeft, y: 300 }, { x: xLeft, y: 100 }],
+    ceilings: Array.from({ length: zones }, (_, k) => ({
+      exist: true, id: `_c${xLeft}_${k}`, material: "gypsum_ceiling", level: 0, profile: "standard",
+      polygon: [{ x: xRight, y: 100 }, { x: xRight, y: 300 }, { x: xLeft, y: 300 }, { x: xLeft, y: 100 }],
+    })),
+  });
+  // комната с закладной x=250 (обе зоны gypsum), стена x=150 делит её:
+  // часть 100..145 — 1 зона gypsum, часть 155..400 — 2 зоны gypsum
+  const res = finishCompare(expRooms, { _p1: part(100, 145, 1), _p2: part(155, 400, 2) }, undefined, undefined, "normalize");
+  assert.deepEqual(res.problems, [], JSON.stringify(res.problems));
 });
 
 test("312 №2: merge — объединённая комната потеряла отделку источников → problem", () => {
