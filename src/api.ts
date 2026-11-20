@@ -29,8 +29,12 @@ export function parseClientPage(html: string): ClientPageInfo {
   const logged_in = /id="clientline"[^>]*is_logged/.test(html) || /id="user_cabinet_objects"/.test(html);
   const login_error = /class="pre_error"/.test(html);
   let tariff: ClientPageInfo["tariff"] = "unknown";
+  // Этап 255: ЛК показывает активный PRO блоком user_cabinet_pro_status_item active
+  // («Расширенный тариф» и другие старшие тарифы — прежние тексты «Версия PRO:
+  // подключена» больше не встречаются). Порядок: free-маркеры первыми, чтобы
+  // «бесплатная версия» рядом с блоком PRO не читалась как PRO.
   if (/Версия PRO:\s*(Не\s*)?подключена|в бесплатной верси/i.test(html)) tariff = "free";
-  else if (/Версия PRO:\s*подключена|PRO активен/i.test(html)) tariff = "pro";
+  else if (/user_cabinet_pro_status_item[^>]*active|Версия PRO:\s*подключена|PRO активен/i.test(html)) tariff = "pro";
   const projects: ClientProject[] = [];
   const rowRe = /<tr[^>]*\bid="object(\d+)"[^>]*>([\s\S]*?)<\/tr>/g;
   for (const match of html.matchAll(rowRe)) {

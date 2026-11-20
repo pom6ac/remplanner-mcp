@@ -34,6 +34,7 @@ test("parseClientPage: вошли, тариф free, проект разобра�
 
 test("parseClientPage: аноним — не вошли", () => {
   const info = parseClientPage(ANON_HTML);
+
   assert.equal(info.logged_in, false);
   assert.equal(info.projects.length, 0);
   assert.equal(info.tariff, "unknown");
@@ -42,6 +43,26 @@ test("parseClientPage: аноним — не вошли", () => {
 test("parseClientPage: ошибка входа", () => {
   const html = `<div class="pre_error">Неверный email или пароль</div>`;
   assert.equal(parseClientPage(html).login_error, true);
+});
+
+// Этап 255: ЛК показывает активный PRO блоком user_cabinet_pro_status_item
+// («Расширенный тариф» — старший тариф; прежнего текста «Версия PRO: подключена» нет)
+test("parseClientPage: старший тариф PRO — блок pro_status_item active", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div class="user_cabinet_settings_title">Версия PRO</div>
+<div class="user_cabinet_pro_status">
+  <div class="user_cabinet_pro_status_item active color-green">Расширенный тариф</div>
+</div>`;
+  assert.equal(parseClientPage(html).tariff, "pro");
+});
+
+test("parseClientPage: free-маркер рядом с pro-блоком — free (порядок проверок)", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+в бесплатной версии доступен 1 проект
+<div class="user_cabinet_pro_status_item">Расширенный тариф</div>`;
+  assert.equal(parseClientPage(html).tariff, "free");
 });
 
 test("isReloadResponse: reload:101", () => {
