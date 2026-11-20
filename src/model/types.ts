@@ -683,6 +683,24 @@ export type Model = {
   comments?: Record<string, CommentEntity>;
   /** Конструктор электрощитка (лист «Электрощиток»); у старых моделей может отсутствовать. */
   shields?: Record<string, Shield>;
+  /**
+   * Разделители зон (зонирование пола/потолка, листы «Напольные покрытия»/«Потолки»;
+   * zone_ceiling/zone_floor/zone_c); у старых моделей может отсутствовать. Сервер
+   * хранит верхнеуровнево (project.copy: o.zone_delimiters=ZONE_DELIMITERS.copy());
+   * per-room rooms2[rid].delimiters — legacy, редактор мигрирует его при restore.
+   */
+  zone_delimiters?: Record<string, {
+    id: string;
+    matrix: ({ length: number } | null)[][];
+    vertexes: Array<{ id: string; point: Point; type: string; [k: string]: unknown }>;
+    items: Record<string, string>;
+    type: string;
+    length: number;
+    id_room: string;
+    plan: string;
+    on_size?: number;
+    [key: string]: unknown;
+  }>;
   total_height: number;
   final: boolean;
   rooms1?: Record<string, unknown>;

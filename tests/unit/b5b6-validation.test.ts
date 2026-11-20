@@ -311,6 +311,11 @@ function fixtureEntities(name: string, root: Record<string, unknown>): [string, 
     else if (name.includes("terrace-border")) push("terrace_borders", ent);
     else if (name.includes("floorhole")) push("level_holes", ent);
   }
+  // разделители зон: эталоны ui-ref-ceilzone-* несут словарь zone_delimiters (этап 260)
+  const zoneDict = root["zone_delimiters"];
+  if (zoneDict !== null && typeof zoneDict === "object" && !Array.isArray(zoneDict)) {
+    for (const z of Object.values(zoneDict as Record<string, unknown>)) push("zone_delimiters", z);
+  }
   // щитки: эталоны ui-ref-shield-* несут словарь shields (этап 255)
   const shieldDict = root["shields"];
   if (shieldDict !== null && typeof shieldDict === "object" && !Array.isArray(shieldDict)) {

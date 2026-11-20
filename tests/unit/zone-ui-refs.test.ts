@@ -53,10 +53,14 @@ const REF_V = REF_DELIM["vertexes"] as V[];
 const FROM_MM = { x: Math.round(REF_V[0]!.point.x * 10), y: Math.round(REF_V[0]!.point.y * 10) };
 const TO_MM = { x: Math.round(REF_V[1]!.point.x * 10), y: Math.round(REF_V[1]!.point.y * 10) };
 
-function refDelimiterMap(): Record<string, unknown> {
-  const room = structuredClone(REF.room) as unknown as Record<string, unknown>;
-  room["delimiters"] = structuredClone(REF.zone_delimiters);
-  return { room1: room };
+/** Модель-подобная запись: комнаты + верхнеуровневые zone_delimiters. */
+function modelLike(rooms: Record<string, unknown>, delims: Record<string, unknown>): Record<string, unknown> {
+  return { rooms2: rooms, zone_delimiters: delims };
+}
+
+function refModel(delimsKey = "zd1"): Record<string, unknown> {
+  const rooms = { room1: structuredClone(REF.room) as unknown as Record<string, unknown> };
+  return modelLike(rooms, { [delimsKey]: structuredClone(REF_DELIM) });
 }
 
 // ---------- эталон в обе стороны ----------
@@ -65,7 +69,7 @@ test("260: эталон UI — запись инструмента совпад�
   const { m, room } = modelWithRefRoom();
   const res = addZoneCeiling(m, room, { fromMm: FROM_MM, toMm: TO_MM });
   assert.equal(res.length_mm, Number(REF_DELIM["length"]) * 1000, "длина в мм по эталону");
-  const written = Object.values((roomsOf(m)[room]!["delimiters"] ?? {}) as Record<string, Record<string, unknown>>)[0]!;
+  const written = Object.values((m.zone_delimiters ?? {}) as Record<string, Record<string, unknown>>)[0]!;
   // форма — как сериализация редактора (без производной zone)
   assert.equal(written["type"], "zone_ceiling");
   assert.equal(written["plan"], "ceiling");
@@ -82,13 +86,13 @@ test("260: эталон UI — запись инструмента совпад�
     Object.keys(written["items"] as Record<string, string>).sort(),
     "items — ключи по вершинам",
   );
-  // сверка в обе стороны (этилон как сервер, запись как ожидание — и наоборот);
-  // zone — производное редактора: из эталона её убирает миграция/сверка по сигнатуре
-  const expRooms = { [room]: { polygon: REF.room.polygon, delimiters: { zd1: structuredClone(REF_DELIM) } } };
-  const gotRooms = { [room]: roomsOf(m)[room]! };
+  // сверка в обе стороны (эталон как сервер, запись как ожидание — и наоборот);
+  // zone — производное редактора: сверка по сигнатуре её не читает
+  const expModel = refModel();
+  const gotModel = modelLike({ [room]: roomsOf(m)[room]! }, structuredClone(m.zone_delimiters as Record<string, unknown>));
   for (const mode of ["normalize", "save"] as const) {
-    assert.deepEqual(zoneDelimiterCompare(expRooms, gotRooms, mode).problems, [], `expected→got ${mode}`);
-    assert.deepEqual(zoneDelimiterCompare(gotRooms, expRooms, mode).problems, [], `got→expected ${mode}`);
+    assert.deepEqual(zoneDelimiterCompare(expModel, gotModel, mode).problems, [], `expected→got ${mode}`);
+    assert.deepEqual(zoneDelimiterCompare(gotModel, expModel, mode).problems, [], `got→expected ${mode}`);
   }
 });
 
@@ -155,22 +159,29 @@ test("260: удаление — по id сайта и метке ZD<n>; чужи
 test("260: split комнаты — делитель переживает разрез (normalize: предупреждение, не отказ)", () => {
   const { m, room } = modelWithRefRoom();
   addZoneCeiling(m, room, { fromMm: FROM_MM, toMm: TO_MM });
-  const expRooms = structuredClone(roomsOf(m));
-  // got: комната разрезана на две части (левая/правая), делитель в правой части
-  const got: Record<string, Record<string, unknown>> = {
-    partL: { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 200, y: 310 }, { x: 200, y: 10 }], delimiters: {} },
-    partR: { polygon: [{ x: 200, y: 10 }, { x: 200, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }], delimiters: { zd1: structuredClone(REF_DELIM) } },
-  };
-  delete (got["partR"]!["delimiters"] as Record<string, Record<string, unknown>>)["zd1"]!["zone"];
-  const norm = zoneDelimiterCompare(roomsOf(m), got, "normalize");
+  const expModel = structuredClone(m) as unknown as Record<string, unknown>;
+  // got: комната разрезана на две части (левая/правая), делитель id_room → partR
+  const gotDelims = structuredClone(m.zone_delimiters as Record<string, Record<string, unknown>>);
+  for (const d of Object.values(gotDelims)) d["id_room"] = "partR";
+  const got: Record<string, unknown> = modelLike(
+    {
+      partL: { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 200, y: 310 }, { x: 200, y: 10 }] },
+      partR: { polygon: [{ x: 200, y: 10 }, { x: 200, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }] },
+    },
+    gotDelims,
+  );
+  const norm = zoneDelimiterCompare(m as unknown as Record<string, unknown>, got, "normalize");
   assert.deepEqual(norm.problems, [], "split — без отказов (стандарт редактора эталоном не снят)");
   assert.equal(norm.warnings.length, 0, "делитель, переживший split по геометрии, без предупреждений");
   // делитель, попавший в разрезанную комнату без наследников, — потеря (проблема)
-  const gotEmpty: Record<string, Record<string, unknown>> = {
-    partL: { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 200, y: 310 }, { x: 200, y: 10 }] },
-    partR: { polygon: [{ x: 200, y: 10 }, { x: 200, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }] },
-  };
-  const lost = zoneDelimiterCompare(roomsOf(m), gotEmpty, "normalize");
+  const gotEmpty: Record<string, unknown> = modelLike(
+    {
+      partL: { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 200, y: 310 }, { x: 200, y: 10 }] },
+      partR: { polygon: [{ x: 200, y: 10 }, { x: 200, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }] },
+    },
+    {},
+  );
+  const lost = zoneDelimiterCompare(m as unknown as Record<string, unknown>, gotEmpty, "normalize");
   assert.ok(lost.problems.some((p) => p.includes("потерян")), JSON.stringify(lost));
   void got;
   void m;
@@ -178,13 +189,21 @@ test("260: split комнаты — делитель переживает раз
 });
 
 test("260: merge комнат — делитель источника в объединённой комнате (normalize), в save строго", () => {
-  const merged: Record<string, Record<string, unknown>> = {
-    big: { polygon: structuredClone(REF.room.polygon), delimiters: { zd1: structuredClone(REF_DELIM) } },
-  };
-  const source: Record<string, Record<string, unknown>> = {
-    srcA: { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 200, y: 310 }, { x: 200, y: 10 }] },
-    srcB: { polygon: [{ x: 200, y: 10 }, { x: 200, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }], delimiters: { zd1: structuredClone(REF_DELIM) } },
-  };
+  const mergedDelims = structuredClone(REF.zone_delimiters);
+  for (const d of Object.values(mergedDelims as Record<string, Record<string, unknown>>)) d["id_room"] = "big";
+  const merged: Record<string, unknown> = modelLike(
+    { big: { polygon: structuredClone(REF.room.polygon) } },
+    mergedDelims,
+  );
+  const srcDelims = structuredClone(REF.zone_delimiters);
+  for (const d of Object.values(srcDelims as Record<string, Record<string, unknown>>)) d["id_room"] = "srcB";
+  const source: Record<string, unknown> = modelLike(
+    {
+      srcA: { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 200, y: 310 }, { x: 200, y: 10 }] },
+      srcB: { polygon: [{ x: 200, y: 10 }, { x: 200, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }] },
+    },
+    srcDelims,
+  );
   const norm = zoneDelimiterCompare(source, merged, "normalize");
   assert.deepEqual(norm.problems, [], "merge в normalize — без проблем (делитель пережил слияние по геометрии)");
   // в save-режиме — строго: делитель с id комнаты источника не совпал
@@ -195,21 +214,21 @@ test("260: merge комнат — делитель источника в объ�
 test("260: потеря делителя в той же комнате (перенос стены без split) — проблема в обоих режимах", () => {
   const { m, room } = modelWithRefRoom();
   addZoneCeiling(m, room, { fromMm: FROM_MM, toMm: TO_MM });
-  const got = structuredClone(roomsOf(m));
-  delete (got as Record<string, Record<string, unknown>>)[room]!["delimiters"];
+  const got = modelLike(structuredClone(roomsOf(m)), {});
   for (const mode of ["normalize", "save"] as const) {
-    const res = zoneDelimiterCompare(roomsOf(m), got, mode);
+    const res = zoneDelimiterCompare(m as unknown as Record<string, unknown>, got, mode);
     assert.ok(res.problems.some((p) => p.includes("потерян")), `${mode}: потеря обнаружена`);
   }
 });
 
 test("260: неожиданный делитель на сервере — SITE_ERROR (только save)", () => {
-  const rooms = structuredClone(roomsOf(modelWithRefRoom().m));
-  const got = structuredClone(rooms);
-  (got[Object.keys(rooms)[0]!]!["delimiters"] ??= {});
-  (got[Object.keys(rooms)[0]!]!["delimiters"] as Record<string, unknown>)["extra"] = structuredClone(REF_DELIM);
-  assert.deepEqual(zoneDelimiterCompare(rooms, got, "normalize").problems, []);
-  assert.ok(zoneDelimiterCompare(rooms, got, "save").problems.some((p) => p.includes("неожиданный")));
+  const base = modelWithRefRoom();
+  addZoneCeiling(base.m, base.room, { fromMm: FROM_MM, toMm: TO_MM });
+  const gotDelims = structuredClone(base.m.zone_delimiters as Record<string, Record<string, unknown>>);
+  gotDelims["extra"] = structuredClone(REF_DELIM);
+  const got = modelLike(structuredClone(roomsOf(base.m)), gotDelims);
+  assert.deepEqual(zoneDelimiterCompare(base.m as unknown as Record<string, unknown>, got, "normalize").problems, []);
+  assert.ok(zoneDelimiterCompare(base.m as unknown as Record<string, unknown>, got, "save").problems.some((p) => p.includes("неожиданный")));
 });
 
 // ---------- legacy-формы ----------
@@ -223,8 +242,8 @@ test("260: legacy-типы d_ceiling/points мигрируют (convertOld ре�
   legacy["points"] = [REF_V[0]!.point, REF_V[1]!.point];
   const mig = migrateLegacyDelimiter(legacy);
   assert.equal(mig["type"], "zone_ceiling");
-  const got = { room1: { polygon: structuredClone(REF.room.polygon), delimiters: { old: structuredClone(mig) } } };
-  const exp = { room1: { polygon: structuredClone(REF.room.polygon), delimiters: { zd1: structuredClone(REF_DELIM) } } };
+  const got = modelLike({ room1: { polygon: structuredClone(REF.room.polygon) } }, { old: structuredClone(mig) });
+  const exp = refModel();
   assert.deepEqual(zoneDelimiterCompare(exp, got, "save").problems, [], "legacy-форма совпадает с новой");
 });
 
@@ -283,8 +302,7 @@ test("260: mock save — нормализация потеряла делите�
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
   let wrote = false;
   const ws = saveMock(server, () => { wrote = true; }, (norm) => {
-    const rooms = norm["rooms2"] as Record<string, Record<string, unknown>>;
-    delete rooms[room]!["delimiters"];
+    delete norm["zone_delimiters"];
   });
   await ws.open("0", "1");
   await assert.rejects(() => ws.save(), (e: unknown) => e instanceof Error && /NORMALIZATION_DROPPED|потерял объекты/.test(e.message));
@@ -296,8 +314,7 @@ test("260: mock save — сервер потерял делитель после
   addZoneCeiling(m, room, { fromMm: FROM_MM, toMm: TO_MM });
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
   const ws = saveMock(server, (s) => {
-    const rooms = s.model["rooms2"] as Record<string, Record<string, unknown>>;
-    delete rooms[room]!["delimiters"];
+    delete s.model["zone_delimiters"];
   });
   await ws.open("0", "1");
   await assert.rejects(async () => ws.save(), (e: Error) => {

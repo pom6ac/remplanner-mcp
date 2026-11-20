@@ -135,6 +135,7 @@ const ENTITY_DELETE_LABELS: Record<Exclude<ModelEntityCollection, "walls">, stri
   pipes_conditioner: "дренажи кондиционеров",
   pipes_heat: "магистрали отопления",
   pipes_ventilation: "воздуховоды",
+  zone_delimiters: "разделители зон",
 };
 
 /**
@@ -430,8 +431,8 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
   // этап 260: разделители зон потолка до записи сверяются с нормализованной моделью
   // (режим normalize: split/merge — предупреждение, стандарт редактора эталоном не снят)
   const zoneNorm = zoneDelimiterCompare(
-    (host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, unknown> | undefined,
-    ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+    host.model() as unknown as Record<string, unknown>,
+    norm.model as unknown as Record<string, unknown>,
     "normalize",
   );
   // этап 113: размеры и комментарии до записи сверяются с нормализованной моделью
@@ -732,8 +733,8 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     // этап 260: разделители зон потолка после save — нормализованное ожидание против
     // сервера, строго (привязка узлов zone — производное редактора, не сверяется)
     const zoneAfter = zoneDelimiterCompare(
-      ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
-      ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, unknown> | undefined) ?? {},
+      norm.model as unknown as Record<string, unknown>,
+      after.model as unknown as Record<string, unknown>,
       "save",
     ).problems;
     const roomsLost = normRooms > 0 && roomsAfter === 0;

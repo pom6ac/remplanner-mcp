@@ -4840,6 +4840,7 @@
    "terrace_borders": [],
    "territory_borders": [],
    "level_holes": [],
+   "zone_delimiters": [],
    "led_strips": [],
    "stripes_light": [],
    "line_strips": [],

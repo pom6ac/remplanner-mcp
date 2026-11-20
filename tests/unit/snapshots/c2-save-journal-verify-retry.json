@@ -110,6 +110,7 @@
       "rulers": 0,
       "comments": 0,
       "shields": 0,
+      "zone_delimiters": 0,
       "warm_floors": 0,
       "pipes_warm_floor": 0,
       "pipes_conditioner": 0,

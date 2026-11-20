@@ -6,9 +6,13 @@ import { roomPolygonOf, matchRoomsByContour, roomHeirs } from "./room-geo.ts";
 
 // Зонирование потолка (лист «Потолки», инструмент «Зонировать потолок», zone_ceiling;
 // PRO; этап 260, 2026-11-20). Разделители зон — линии-графы ZoneDelimiter extends
-// GraphLines (бандл app.3.0, класс ZoneDelimitering, name_object_lines="delimiters"),
-// хранятся в rooms2[rid].delimiters (restore → ZONE_DELIMITERS). Формат записи —
-// эталон scripts/probes/260-zone-serialize.ts + tests/fixtures/ui-ref-ceilzone-delimiter.json:
+// GraphLines (бандл app.3.0, класс ZoneDelimitering), хранятся редактором ВЕРХНЕУРОВНЕВО
+// в model.zone_delimiters (project.copy("server"): o.zone_delimiters=ZONE_DELIMITERS.copy();
+// restore: ZONE_DELIMITERS.restore(e.zone_delimiters)). Per-room rooms2[rid].delimiters —
+// legacy-хранилище: Rooms2.patch при restore мигрирует его в runtime (с миграцией типов
+// d_*→zone_*), поэтому per-room используется только на чтение старых моделей.
+// Формат записи — эталон scripts/probes/260-zone-serialize.ts +
+// tests/fixtures/ui-ref-ceilzone-delimiter.json:
 //   {id, matrix ([[null,{length:1}],[{length:1},null]]), vertexes [{id, point (см), type:"node"}],
 //    items {vertexId:"node"}, type "zone_ceiling", length (м, 2 знака), id_room,
 //    plan "ceiling", on_size 1}
@@ -69,6 +73,23 @@ type RoomsMap = Record<string, RoomRec>;
 
 function roomsOf(model: Model): RoomsMap {
   return (model.rooms2 ?? model.rooms1 ?? {}) as RoomsMap;
+}
+
+/** Все разделители модели: верхнеуровневое zone_delimiters (серверный формат) +
+ *  legacy per-room delimiters (старые модели; редактор мигрирует их при restore).
+ *  Ключ — id записи; при коллизии top-level приоритетен. */
+function delimiterMapOf(model: Model): Record<string, { rec: Record<string, unknown>; roomKey: string | null }> {
+  const out: Record<string, { rec: Record<string, unknown>; roomKey: string | null }> = {};
+  const rooms = roomsOf(model);
+  for (const [rid, room] of Object.entries(rooms)) {
+    for (const [key, raw] of Object.entries((room.delimiters ?? {}) as Record<string, Record<string, unknown>>)) {
+      out[key] = { rec: raw, roomKey: rid };
+    }
+  }
+  for (const [key, raw] of Object.entries((model.zone_delimiters ?? {}) as Record<string, Record<string, unknown>>)) {
+    out[key] = { rec: raw, roomKey: String(raw["id_room"] ?? "") || null };
+  }
+  return out;
 }
 
 function roomByRef(model: Model, ref: string): { id: string; room: RoomRec } {
@@ -289,10 +310,7 @@ export function addZoneCeiling(
       throw new McpError("INVALID_ARGUMENT", "линия пересекает другой разделитель этой комнаты — соединяйте разделители в общих узлах");
     }
   }
-  // запись (атомарно)
-  const hadDelimiters = room.delimiters !== undefined;
-  const backup = hadDelimiters ? structuredClone(room.delimiters) : undefined;
-  room.delimiters ??= {};
+  // запись (атомарно) — верхнеуровневое zone_delimiters (как project.copy("server"))
   const vid1 = newId(), vid2 = newId();
   const id = newId();
   const rec: ZoneDelimiterRec = {
@@ -309,11 +327,14 @@ export function addZoneCeiling(
     plan: "ceiling",
     on_size: 1,
   };
+  const hadDelimiters = model.zone_delimiters !== undefined;
+  const backup = hadDelimiters ? structuredClone(model.zone_delimiters) : undefined;
+  model.zone_delimiters ??= {};
   try {
-    room.delimiters[id] = rec as unknown as Record<string, unknown>;
+    model.zone_delimiters[id] = rec;
   } catch (e) {
-    if (backup) room.delimiters = backup;
-    else delete room.delimiters;
+    if (backup) model.zone_delimiters = backup;
+    else delete model.zone_delimiters;
     throw e;
   }
   return { id, length_mm: cmToMm(rec.length * 100) };
@@ -323,32 +344,30 @@ export function addZoneCeiling(
  * zone_ceiling_remove: удалить разделитель зон потолка по id сайта (из ответа
  * finish_get/zone_ceiling_add) или метке ZD<n> (порядок finish_get комнаты).
  */
-export function removeZoneCeiling(model: Model, delimiterRef: string): { room_id: string; removed: boolean } {
-  const rooms = roomsOf(model);
-  // прямой id сайта
-  for (const [rid, room] of Object.entries(rooms)) {
-    if (room.delimiters && room.delimiters[delimiterRef] !== undefined) {
-      delete room.delimiters[delimiterRef];
-      if (Object.keys(room.delimiters).length === 0) delete room.delimiters;
-      return { room_id: rid, removed: true };
+export function removeZoneCeiling(model: Model, delimiterRef: string): { room_id: string | null; removed: boolean } {
+  const map = delimiterMapOf(model);
+  if (map[delimiterRef] !== undefined) {
+    delete model.zone_delimiters?.[delimiterRef];
+    const roomKey = map[delimiterRef]!.roomKey;
+    if (roomKey) {
+      const room = roomsOf(model)[roomKey];
+      if (room?.delimiters) {
+        delete room.delimiters[delimiterRef];
+        if (Object.keys(room.delimiters).length === 0) delete room.delimiters;
+      }
     }
+    return { room_id: roomKey, removed: true };
   }
-  // метка ZD<n>: сквозная нумерация по комнатам в порядке finish_get (id, vertexes[0])
+  // метка ZD<n>: сквозная нумерация по порядку zoneDelimiterList
   const m = /^ZD(\d+)$/.exec(delimiterRef);
   if (m) {
     const index = Number(m[1]) - 1;
-    const flat: Array<{ rid: string; key: string }> = [];
-    for (const [rid, room] of Object.entries(rooms)) {
-      const dels = room.delimiters ?? {};
-      for (const key of Object.keys(dels)) flat.push({ rid, key });
-    }
-    const found = flat[index];
-    if (found) {
-      const room = rooms[found.rid]!;
-      delete room.delimiters![found.key];
-      if (Object.keys(room.delimiters!).length === 0) delete room.delimiters;
-      return { room_id: found.rid, removed: true };
-    }
+    const keys = Object.keys(map).filter((k) => {
+      const v = (map[k]!.rec["vertexes"] ?? []) as Array<{ point?: Point }>;
+      return Array.isArray(v) && v.length >= 2 && v[0]?.point && v[v.length - 1]?.point;
+    });
+    const found = keys[index];
+    if (found) return removeZoneCeiling(model, found);
   }
   throw new McpError("NOT_FOUND", `разделитель ${delimiterRef} не найден`);
 }
@@ -363,26 +382,25 @@ export function zoneDelimiterList(model: Model, roomRef?: string): Array<Record<
     : null;
   const out: Array<Record<string, unknown>> = [];
   let n = 0;
-  for (const [rid, room] of Object.entries(rooms)) {
+  for (const [key, entry] of Object.entries(delimiterMapOf(model))) {
+    const rid = entry.roomKey ?? "";
     if (wanted && !wanted.has(rid)) continue;
-    for (const raw of Object.values((room.delimiters ?? {}) as Record<string, Record<string, unknown>>)) {
-      const rec = migrateLegacyDelimiter(raw);
-      const v = (rec["vertexes"] ?? []) as Array<{ point?: Point }>;
-      const p1 = v[0]?.point, p2 = v[v.length - 1]?.point;
-      if (!p1 || !p2) continue;
-      n += 1;
-      out.push({
-        id: `ZD${n}`,
-        site_id: rec["id"] ?? "",
-        room_id: rid,
-        type: rec["type"] ?? "",
-        plan: rec["plan"] ?? "",
-        from_mm: [cmToMm(p1.x), cmToMm(p1.y)],
-        to_mm: [cmToMm(p2.x), cmToMm(p2.y)],
-        length_mm: cmToMm((Number(rec["length"]) ?? 0) * 100),
-        ...(rec["on_size"] !== undefined ? { on_size: rec["on_size"] } : {}),
-      });
-    }
+    const rec = migrateLegacyDelimiter(entry.rec);
+    const v = (rec["vertexes"] ?? []) as Array<{ point?: Point }>;
+    const p1 = v[0]?.point, p2 = v[v.length - 1]?.point;
+    if (!p1 || !p2) continue;
+    n += 1;
+    out.push({
+      id: `ZD${n}`,
+      site_id: rec["id"] ?? key,
+      room_id: rid,
+      type: rec["type"] ?? "",
+      plan: rec["plan"] ?? "",
+      from_mm: [cmToMm(p1.x), cmToMm(p1.y)],
+      to_mm: [cmToMm(p2.x), cmToMm(p2.y)],
+      length_mm: cmToMm((Number(rec["length"]) ?? 0) * 100),
+      ...(rec["on_size"] !== undefined ? { on_size: rec["on_size"] } : {}),
+    });
   }
   return out;
 }
@@ -401,27 +419,26 @@ export type ZoneDelimiterSig = {
   links: number;
 };
 
-/** Сигнатуры разделителей по комнатам (полигон комнаты — только подсказка для сопоставления). */
-function delimiterSigs(rooms: Record<string, unknown> | undefined): ZoneDelimiterSig[] {
+/** Сигнатуры разделителей модели (top-level zone_delimiters + legacy per-room). */
+function delimiterSigsOf(model: Record<string, unknown> | undefined): ZoneDelimiterSig[] {
   const out: ZoneDelimiterSig[] = [];
-  for (const [rid, room] of Object.entries((rooms ?? {}) as RoomsMap)) {
-    for (const [key, raw] of Object.entries(room.delimiters ?? {})) {
-      const rec = migrateLegacyDelimiter(raw);
-      const v = (rec["vertexes"] ?? []) as Array<{ point?: Point }>;
-      const q1 = v[0]?.point, q2 = v[v.length - 1]?.point;
-      if (v.length < 2 || !q1 || !q2) continue;
-      out.push({
-        key: `${rid}/${key}`,
-        p1: q1,
-        p2: q2,
-        type: String(rec["type"] ?? ""),
-        plan: String(rec["plan"] ?? ""),
-        idRoom: rid,
-        length: Number(rec["length"] ?? 0),
-        onSize: rec["on_size"] === undefined ? undefined : Number(rec["on_size"]),
-        links: v.reduce((s, x) => s + (x.point ? 1 : 0), 0),
-      });
-    }
+  const map = delimiterMapOf((model ?? {}) as Model);
+  for (const [key, entry] of Object.entries(map)) {
+    const rec = migrateLegacyDelimiter(entry.rec);
+    const v = (rec["vertexes"] ?? []) as Array<{ point?: Point }>;
+    const q1 = v[0]?.point, q2 = v[v.length - 1]?.point;
+    if (v.length < 2 || !q1 || !q2) continue;
+    out.push({
+      key,
+      p1: q1,
+      p2: q2,
+      type: String(rec["type"] ?? ""),
+      plan: String(rec["plan"] ?? ""),
+      idRoom: String(rec["id_room"] ?? entry.roomKey ?? ""),
+      length: Number(rec["length"] ?? 0),
+      onSize: rec["on_size"] === undefined ? undefined : Number(rec["on_size"]),
+      links: v.reduce((s, x) => s + (x.point ? 1 : 0), 0),
+    });
   }
   return out;
 }
@@ -455,14 +472,16 @@ export type ZoneCompareMode = "normalize" | "save";
  * в режиме save — строго (все расхождения — проблемы).
  */
 export function zoneDelimiterCompare(
-  expectedRooms: Record<string, unknown> | undefined,
-  gotRooms: Record<string, unknown> | undefined,
+  expectedModel: Record<string, unknown> | undefined,
+  gotModel: Record<string, unknown> | undefined,
   mode: ZoneCompareMode = "normalize",
 ): { problems: string[]; warnings: string[] } {
   const problems: string[] = [];
   const warnings: string[] = [];
-  const exp = delimiterSigs(expectedRooms);
-  const got = delimiterSigs(gotRooms);
+  const exp = delimiterSigsOf(expectedModel);
+  const got = delimiterSigsOf(gotModel);
+  const expectedRooms = ((expectedModel ?? {}) as { rooms2?: Record<string, unknown>; rooms1?: Record<string, unknown> }).rooms2 ?? ((expectedModel ?? {}) as { rooms1?: Record<string, unknown> }).rooms1;
+  const gotRooms = ((gotModel ?? {}) as { rooms2?: Record<string, unknown>; rooms1?: Record<string, unknown> }).rooms2 ?? ((gotModel ?? {}) as { rooms1?: Record<string, unknown> }).rooms1;
   const { pairs: exact } = matchRoomsByContour(expectedRooms, gotRooms);
   const heirOf = roomHeirs(expectedRooms, gotRooms, exact, mode);
   const gotByRoom = new Map<string, ZoneDelimiterSig[]>();
@@ -471,8 +490,7 @@ export function zoneDelimiterCompare(
     list.push(g);
     gotByRoom.set(g.idRoom, list);
   }
-  const polygonOf = (key: string): Point[] | undefined =>
-    roomPolygonOf(((gotRooms ?? {}) as Record<string, unknown>)[key]);
+  const polygonOf = (key: string): Point[] | undefined => roomPolygonOf((gotRooms ?? {})[key]);
   const sameOf = (rid: string): string | undefined => {
     const h = heirOf.get(rid);
     return h && h.kind === "same" ? h.key : undefined;

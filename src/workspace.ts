@@ -623,8 +623,8 @@ export class Workspace {
       // этап 260: разделители зон потолка после нормализации не теряются
       // (сопоставление комнат по контуру; split/merge — предупреждение, как у отделки)
       const zoneNorm = zoneDelimiterCompare(
-        (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined,
-        ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
+        this.modelInternal! as unknown as Record<string, unknown>,
+        norm.model as unknown as Record<string, unknown>,
         "normalize",
       );
       warnings.push(...zoneNorm.warnings);
