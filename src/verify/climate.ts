@@ -53,15 +53,18 @@ export function climateGraphMismatches(
     out.push(`контуры тёплого пола: потеряны ${JSON.stringify(wfLost)}; расхождения ${JSON.stringify(wfMism)}`);
   }
   const climateColls = ["pipes_warm_floor", "pipes_conditioner", "pipes_heat", "pipes_ventilation"] as const;
-  // мягкая сверка вершин-предметов: вершина хранит pc предмета, но редактор считает
-  // длину магистралей от точки подключения на габарите (пробы 250-connect-heat) —
-  // точка вершины сверяется строго (совпадает с pc), длина — допустимым диапазоном
+  // мягкая сверка вершин-предметов: редактор считает длину магистралей от точки
+  // подключения на габарите (пробы 250-connect-heat), поэтому локальная точка
+  // (центр предмета) отличается от расчётной длины. Но точка вершины-предмета
+  // ХРАНИТСЯ как pc предмета (эталоны ui-ref-climate2-*: point = pc, pp — отдельное
+  // производное поле) — ревью 251 №6: сверяем point с pc факта (itemPointMatchesPc),
+  // длину — допустимым диапазоном
   const geom = itemGeomOf(opts.itemsGot ?? opts.itemsExpected);
   for (const coll of climateColls) {
     const ws = structuredClone((local as Record<string, unknown>)[coll] ?? {}) as Record<string, GasLineSig>;
     const normColl = ((norm as Record<string, unknown>)[coll] ?? {}) as Record<string, unknown>;
     const lost = missingIds(new Set(Object.keys(ws)), new Set(Object.keys(normColl)));
-    const graphNorm = gasLineGraphMismatches(structuredClone(ws), normColl, "труба климата", true, geom);
+    const graphNorm = gasLineGraphMismatches(structuredClone(ws), normColl, "труба климата", true, geom, { itemPointMatchesPc: true });
     if (lost.length > 0 || graphNorm.length > 0) {
       out.push(`${coll}: потеряны ${JSON.stringify(lost)}; расхождения ${JSON.stringify(graphNorm)}`);
     }

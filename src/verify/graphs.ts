@@ -142,7 +142,7 @@ export function gasLineGraphMismatches(
   entityLabel = "газовая линия",
   lenientItemVertices = false,
   itemGeom?: Record<string, { pc?: Point; width?: number; height?: number; angle?: number }>,
-  opts: { skipLength?: boolean } = {},
+  opts: { skipLength?: boolean; itemPointMatchesPc?: boolean } = {},
 ): VerificationMismatches {
   const out: string[] = [];
   const near = (a: number | undefined, b: number | undefined, tol: number): boolean =>
@@ -192,6 +192,16 @@ export function gasLineGraphMismatches(
       const loosePoint = lenientItemVertices && (e.type ?? "node") !== "node";
       if (!loosePoint && (!near(s.point?.x, e.point?.x, GAS_VERTEX_TOL_CM) || !near(s.point?.y, e.point?.y, GAS_VERTEX_TOL_CM))) {
         out.push(`${id}: узел ${i} сместился (на сервере ${s.point?.x},${s.point?.y}; ожидалось ${e.point?.x},${e.point?.y})`);
+      }
+      // ревью 251 №6: точка вершины-предмета на сервере обязана совпадать с pc
+      // предмета (эталоны редактора подтверждают point = pc, pp — отдельное поле
+      // точки подключения): мягкий режим снимает сравнение с ОЖИДАНИЕМ, но не
+      // подмену точки относительно геометрии факта
+      if (opts.itemPointMatchesPc && loosePoint) {
+        const g = typeof s.id === "string" ? itemGeom?.[s.id] : undefined;
+        if (g?.pc && (!near(s.point?.x, g.pc.x, GAS_VERTEX_TOL_CM) || !near(s.point?.y, g.pc.y, GAS_VERTEX_TOL_CM))) {
+          out.push(`${id}: точка вершины-предмета ${s.id} не совпадает с pc предмета (на сервере ${s.point?.x},${s.point?.y}; pc ${g.pc.x},${g.pc.y})`);
+        }
       }
       for (const [k, v] of Object.entries(e)) {
         if (k === "id" || k === "point" || k === "type") continue;

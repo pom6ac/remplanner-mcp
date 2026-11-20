@@ -267,6 +267,20 @@ test("250: к трассе кондиционера подключаются б�
   assert.equal(elecLinkKey("cables_conditioner", "conditioner_wire"), "conditioner_cable_id");
 });
 
+test("ревью 251 №6: сервер сдвинул точку вершины-предмета при неизменном pc → расхождение", () => {
+  const { m, radiator } = scenario();
+  const pipe = addPipe(m, { kind: "heat_hot", path: [{ itemId: radiator.id }, { x: 1500, y: -100 }] });
+  const got = structuredClone((m as { pipes_heat?: Record<string, Pipe> }).pipes_heat ?? {}) as Record<string, Pipe>;
+  const v = (got[pipe.id] as unknown as { vertexes: { id: string; point: { x: number; y: number } }[] }).vertexes[0]!;
+  v.point = { x: v.point.x + 200, y: v.point.y };
+  const mism = climateGraphMismatches(
+    { pipes_heat: structuredClone((m as { pipes_heat?: Record<string, Pipe> }).pipes_heat ?? {}) } as never,
+    { pipes_heat: got } as never,
+    { mode: "save", itemsExpected: structuredClone(m.items) as never, itemsGot: structuredClone(m.items) as never },
+  );
+  assert.notEqual(mism.length, 0, "сдвиг точки вершины-предмета при неизменном pc — расхождение");
+});
+
 // ---------- миграция legacy-ключа трассы кондиционера (ревью 251 №3) ----------
 
 import { toModel } from "../../src/model/canonical.ts";
@@ -327,6 +341,66 @@ test("ревью 251 №3: mock save — legacy-модель PR #36 сохран
   await ws.open("0", "1");
   const res = await ws.save();
   assert.equal(res.verified, true, "legacy-модель сохраняется без расхождений сверки");
+});
+
+// ---------- тесты мутаций ревью 251 №7–№9 (M1/M12/M2) ----------
+
+import { pipeConnectionMismatches } from "../../src/verify/pipes.ts";
+
+test("ревью 251 №7: mock save — сервер удалил pipes_warm_floor.pipe_warm_floor_id у контура → SITE_ERROR", async () => {
+  const { m, wf } = scenario();
+  addPipe(m, { kind: "warm_floor", path: [{ itemId: wf.id }, { x: 100, y: 100 }] });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (s) => {
+    const w = (s.model as { warm_floors?: Record<string, { props?: { pipes_warm_floor?: Record<string, unknown> } }> }).warm_floors![wf.id]!;
+    delete w.props!.pipes_warm_floor!.pipe_warm_floor_id;
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => e instanceof McpError && (e as McpError).code === "SITE_ERROR");
+});
+
+test("ревью 251 №8: у multi-предмета климата (radiator_collector) сервер записал скаляр → расхождение", () => {
+  const { m, collector } = scenario();
+  const p1 = addPipe(m, { kind: "heat_hot", path: [{ itemId: collector.id }, { x: 2100, y: 100 }] });
+  const p2 = addPipe(m, { kind: "heat_hot", path: [{ itemId: collector.id }, { x: 2500, y: 100 }] });
+  const gotItems = structuredClone(m.items) as Record<string, Record<string, Record<string, unknown>>>;
+  gotItems[collector.id]!.pipes_heat = { heat_pipe_hot_id: p1.id }; // массив → скаляр
+  const mism = pipeConnectionMismatches(
+    structuredClone(m.pipes_heat ?? {}) as never,
+    structuredClone(m.items) as never,
+    structuredClone(m.pipes_heat ?? {}) as never,
+    gotItems as never,
+    { onlyTypes: new Set(["heat_pipe_hot"]) },
+  );
+  assert.notEqual(mism.length, 0);
+  assert.ok(mism.some((s) => s.includes("должна быть массивом")), JSON.stringify(mism));
+  void p2;
+});
+
+test("ревью 251 №9: ссылка на трубу другого вида (по боксу) — расхождение, а не только «лишняя ссылка»", () => {
+  const { m, radiator } = scenario();
+  const hot = addPipe(m, { kind: "heat_hot", path: [{ itemId: radiator.id }, { x: 1500, y: -100 }] });
+  const vent = addPipe(m, { kind: "vent_out", path: [{ x: 3000, y: 2000 }, { x: 3500, y: 2000 }] });
+  // обе стороны несут ссылку heat_pipe_hot_id → на воздуховод (вид не тот):
+  // раньше golden ловил это только как «лишнюю ссылку», правило wrong-kind не проверялось
+  const expItems = structuredClone(m.items) as Record<string, Record<string, Record<string, unknown>>>;
+  const gotItems = structuredClone(m.items) as Record<string, Record<string, Record<string, unknown>>>;
+  for (const it of [expItems, gotItems]) {
+    it[radiator.id]!.pipes_heat = { heat_pipe_hot_id: vent.id };
+  }
+  const gotPipes = {
+    [hot.id]: structuredClone((m as { pipes_heat?: Record<string, Pipe> }).pipes_heat ?? {})[hot.id]!,
+    [vent.id]: (m as unknown as Record<string, Record<string, Pipe>>).pipes_ventilation![vent.id]!,
+  };
+  const mism = pipeConnectionMismatches(
+    structuredClone((m as { pipes_heat?: Record<string, Pipe> }).pipes_heat ?? {}) as never,
+    expItems as never,
+    gotPipes as never,
+    gotItems as never,
+    { onlyTypes: new Set(["heat_pipe_hot"]) },
+  );
+  assert.notEqual(mism.length, 0);
+  assert.ok(mism.some((s) => s.includes("другого вида")), JSON.stringify(mism));
 });
 
 // ---------- компакт, реестр, mock save ----------
