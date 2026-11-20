@@ -9,7 +9,6 @@ import {
   MAX_IMPORT_JSON_DEPTH,
   MAX_SERVICE_COMMENT_CHARS,
   SHIELD_MAX_WIRES,
-  SHIELD_MAX_COLLECTORS,
   MODEL_COORD_LIMIT_CM,
   MODEL_SIZE_LIMIT_CM,
 } from "../limits.ts";
@@ -235,7 +234,12 @@ const shield = z.looseObject({
     }),
     MAX_IMPORT_GRAPH_NODES,
   ).optional(),
-  // этап 291: коллектор — {id, rail_id, module_width, modules {moduleId: 1}, position}
+  // этап 291: коллектор — {id, rail_id, module_width, modules {moduleId: 1}, position}.
+  // Ревью 293 №6: лимит импорта для шин и коллекторов одинаковый —
+  // MAX_IMPORT_GRAPH_NODES (лимит импорта не ниже реалистичного: model_import
+  // не должен отвергать экспорт реального щитка); SHIELD_MAX_BUSES/SHIELD_MAX_
+  // COLLECTORS действуют только на add (src/model/shield.ts) — как в редакторе,
+  // где лимита на число шин/коллекторов нет.
   collectors: collection(
     z.looseObject({
       id: idStr,
@@ -244,7 +248,7 @@ const shield = z.looseObject({
       modules: z.record(z.string(), z.number().finite().min(0).max(9999)).optional(),
       position: shortStr.optional(),
     }),
-    SHIELD_MAX_COLLECTORS,
+    MAX_IMPORT_GRAPH_NODES,
   ).optional(),
   inputs: collection(
     z.looseObject({

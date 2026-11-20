@@ -1808,11 +1808,10 @@ test("291: импорт — коллектор с мусорной картой 
     () => parseModelImport({ ...baseModel(), shields: { [s.id]: bad } }),
     (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
   );
-  // 21 коллектор — отказ (SHIELD_MAX_COLLECTORS = 20)
+  // 21 коллектор — импорт проходит (ревью 293 №6: лимит импорта не ниже
+  // реалистичного — MAX_IMPORT_GRAPH_NODES, как у шин); SHIELD_MAX_COLLECTORS
+  // действует только на add (тест «291: лимиты»)
   const many = structuredClone(s);
   many.collectors = Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`c${i}`, { id: `c${i}`, rail_id: Object.values(many.rails)[0]!.id, module_width: 1, modules: {}, position: "T" }])) as never;
-  assert.throws(
-    () => parseModelImport({ ...baseModel(), shields: { [s.id]: many } }),
-    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
-  );
+  assert.doesNotThrow(() => parseModelImport({ ...baseModel(), shields: { [s.id]: many } }));
 });
