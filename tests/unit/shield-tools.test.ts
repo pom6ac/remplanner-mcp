@@ -111,6 +111,38 @@ test("ревью 285 №1: shield_module_update index — дробные не к
   }
 });
 
+test("ревью 287 N1: 3×1 DIN — index 2.5 переносит модуль на последнее место рейки (как get_module_slot)", async () => {
+  const client = await start();
+  try {
+    const [idA, idB, idC] = await threeModules(client);
+    // слот курсора клэмпится к «ширина рейки − 0.5» (get_module_slot редактора),
+    // поэтому перенос вправо на последнее место — index = заполнено − 0.5
+    const mv = await call(client, "shield_module_update", { item_id: "sh1", module_id: idA, index: 2.5 });
+    const mods = (mv["entity"] as { modules: { module_id: string; index: number }[] }).modules;
+    assert.equal(mods.find((m) => m.module_id === idA)!.index, 2, "модуль A последним (слот 2.5 → index 2)");
+    assert.equal(mods.find((m) => m.module_id === idB)!.index, 0, "модуль B на месте");
+    assert.equal(mods.find((m) => m.module_id === idC)!.index, 1, "модуль C на месте");
+  } finally {
+    await client.close();
+  }
+});
+
+test("ревью 287 N1: позиция за концом рейки — по-прежнему index_out_of_rail", async () => {
+  const client = await start();
+  try {
+    const [idA] = await threeModules(client);
+    for (const index of [3, 3.5]) {
+      const res = await client.callTool({ name: "shield_module_update", arguments: { item_id: "sh1", module_id: idA, index } });
+      assert.equal(res.isError, true, `index ${index} — ошибка`);
+      const payload = errPayload(res);
+      assert.equal(payload.code, "INVALID_ARGUMENT", `index ${index}`);
+      assert.equal((payload.details as { kind?: string } | undefined)?.kind, "index_out_of_rail", `index ${index}`);
+    }
+  } finally {
+    await client.close();
+  }
+});
+
 test("ревью 285 №2: shield_rail_delete — ответ с deleted_modules/deleted_wires (каскад проводов)", async () => {
   const client = await start();
   try {

@@ -495,12 +495,12 @@ export function reorderShieldModule(shield: Shield, mod: ShieldModule, index: nu
   const rail = shield.rails[mod.rail_id];
   if (!rail) throw new McpError("NOT_FOUND", `рейка модуля ${mod.rail_id} не найдена`);
   if (index === mod.index) return;
-  if (!skipRailCheck && index + mod.width > railWidthDin(rail)) {
-    // как get_module_in_slot редактора: позиция за заполненной частью рейки —
-    // модуля-соседа нет, drag в пустой слот правее конца недоступен
+  if (!skipRailCheck && index > railWidthDin(rail) - SHIELD_MODULE_SLOT_DIN) {
+    // как клэмп слота в get_module_slot редактора: курсор ограничен «заполнено − 0.5»,
+    // поэтому последний доступный слот = конец заполненной части − 0.5 (модуль встанет последним)
     throw new McpError(
       "INVALID_ARGUMENT",
-      `позиция ${index} за концом рейки (заполнено ${railWidthDin(rail)} DIN); для переноса в конец используйте rail`,
+      `позиция ${index} за концом рейки (заполнено ${railWidthDin(rail)} DIN)`,
       { details: { kind: "index_out_of_rail", index, rail_width: railWidthDin(rail) } },
     );
   }
