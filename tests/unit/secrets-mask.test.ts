@@ -220,21 +220,24 @@ test("canary 35: повтор CANARY_SECRET_7771002 без ключа тоже �
   assertMasked(maskSecrets(`ответ для ${AKV}${CANARY}; см. ${CANARY} в дампе`), "value repeat");
 });
 
-test("canary 35: маскировщик устойчив к ReDoS — 100 КБ быстрее 50 мс (медиана 5 прогонов после прогрева)", () => {
-  // ревью 280/281: единичный прогон флакает под нагрузкой CI (50.6–81 мс > 50).
-  // Порог не ослабляем: прогрев JIT + медиана 5 прогонов, как в 152 M4.
-  // Катастрофический regex на этих входах занимает секунды — медиана его
-  // не спасает, мутация по-прежнему красная.
-  const t = (str: string): number => {
+test("canary 35: маскировщик устойчив к ReDoS — не отстаёт от эталонной линейной регулярки в том же прогоне", () => {
+  // ревью 280/281: единичный прогон флакает под нагрузкой CI (50.6–81 мс > 50),
+  // после медианы 5 — тоже (ревью 293 №8: 295 мс > 200 у 152 M4), относительное
+  // удвоение — от GC-пауз. Критерий относительный и нагрузко-устойчивый:
+  // maskSecrets сравнивается с эталонной линейной регуляркой того же класса,
+  // измеренной В ТОМ ЖЕ ПРОГОНЕ (нагрузка замедляет обе); порог 100× —
+  // у реального маскировщика отношение единицы–десятки, катастрофический regex
+  // краснеет (самотест — в review152-secrets.test.ts).
+  const tmin = (fn: (s: string) => unknown, str: string, k = 3): number => {
     const times: number[] = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < k; i++) {
       const t0 = performance.now();
-      maskSecrets(str);
+      fn(str);
       times.push(performance.now() - t0);
     }
-    times.sort((a, b) => a - b);
-    return times[2]!;
+    return Math.min(...times);
   };
+  const baseline = (s: string): string => s.replace(/[a-z0-9_= :;."\/]/g, "0");
   for (const [nm, str] of [
     ["token=\"", 'token="'.repeat(12_500)],
     ["bearer ", "bearer ".repeat(15_000)],
@@ -242,9 +245,14 @@ test("canary 35: маскировщик устойчив к ReDoS — 100 КБ �
     ["authauth", "auth".repeat(25_000)],
     ["percent", "%22%3A%22".repeat(12_500)],
   ] as const) {
-    t(str.slice(0, 1000)); // прогрев JIT на дешёвом префиксе каждого входа
-    const ms = t(str);
-    assert.ok(ms < 50, `${nm}: maskSecrets на ${str.length} байтах занял ${ms.toFixed(1)} мс (медиана 5)`);
+    tmin(baseline, str.slice(0, 1000)); // прогрев JIT на дешёвом префиксе каждого входа
+    tmin(maskSecrets, str.slice(0, 1000));
+    const tBase = tmin(baseline, str);
+    const tMask = tmin(maskSecrets, str);
+    assert.ok(
+      tMask <= tBase * 100 + 1,
+      `${nm}: maskSecrets (${tMask.toFixed(1)} мс) отстаёт от эталонной линейной регулярки (${tBase.toFixed(1)} мс) больше чем в 100 раз`,
+    );
   }
 });
 
