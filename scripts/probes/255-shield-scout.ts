@@ -2,6 +2,8 @@
 // каталог shield_* (global_tools, is_pro), формат коллекции shields при рисовании
 // рейки/модулей/шин/проводов, связь щитка-предмета с содержимым, $ShieldBuilder.
 // БЕЗ сохранения: откат перезагрузкой; бэкап GET до пробы.
+// Ревью 256 №8: шаги в try/finally — при throw перезагрузка-откат и browser.close()
+// выполняются всегда; гарды открытого плана сверяют модель редактора с GET.
 // Запуск: node --experimental-strip-types scripts/probes/255-shield-scout.ts run
 import { chromium } from "playwright-core";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -108,6 +110,14 @@ writeFileSync(`${OUT}/backup-${OBJECT_ID}-255.json`, JSON.stringify({
 }, null, 1));
 console.log("backup ok");
 
+// Модель редактора == сервер (гард ревью 256 №8): copy("server") в редакторе
+// сравнивается с GET до пробы (по сериализуемой форме).
+const editorModelMatchesGet = async (get: Record<string, unknown>): Promise<boolean> => {
+  const copy = await copyServer();
+  return JSON.stringify(copy) === JSON.stringify(get);
+};
+
+const runProbe = async (): Promise<boolean> => {
 // 1. каталог shield_* и доступность листа на тарифе
 const recon = await page.evaluate(() => {
   const w: any = window as any;
@@ -215,6 +225,9 @@ writeOut("255-shield-full", { keys: Object.keys(recon.shieldTools), shields: ful
 console.log("shields keys:", Object.keys(full));
 console.log("shields:", JSON.stringify(full).slice(0, 2500));
 
+return await editorModelMatchesGet(model.model);
+}
+
 function diffOf(before: any, after: any) {
   const ids = new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})]);
   const out: any = { added: {}, changed: {} };
@@ -225,12 +238,24 @@ function diffOf(before: any, after: any) {
   return out;
 }
 
-// 6. откат: перезагрузка без сохранения
-await page.reload({ waitUntil: "domcontentloaded" });
-await page.waitForFunction(() => (window as any).WALLS && (window as any).$Project, null, { timeout: 60000 });
-await page.waitForTimeout(3000);
-const after = await loadModel(session, OBJECT_ID, PLAN_ID);
-const same = JSON.stringify(after.model) === JSON.stringify(model.model);
-console.log("GET после перезагрузки:", same ? "не изменился (откат ОК)" : "ИЗМЕНИЛСЯ");
-await browser.close();
-process.exit(0);
+let probeOk = false;
+try {
+  probeOk = await runProbe();
+  if (!probeOk) console.log("гард: модель редактора не равна GET");
+} catch (e) {
+  console.error("PROBE_ERROR:", (e as Error).message);
+} finally {
+  // откат (ревью 256 №8): перезагрузка без сохранения при любом исходе
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() => (window as any).WALLS && (window as any).$Project, null, { timeout: 60000 });
+    await page.waitForTimeout(3000);
+    const after = await loadModel(session, OBJECT_ID, PLAN_ID);
+    const same = JSON.stringify(after.model) === JSON.stringify(model.model);
+    console.log("GET после перезагрузки:", same ? "не изменился (откат ОК)" : "ИЗМЕНИЛСЯ");
+  } catch (e) {
+    console.error("ROLLBACK_ERROR:", (e as Error).message.slice(0, 300));
+  }
+  await browser.close().catch(() => {});
+}
+process.exit(probeOk ? 0 : 1);
