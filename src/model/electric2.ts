@@ -293,8 +293,9 @@ function cmPoint(pt: MmPoint): Point {
  * элемент пути может быть контуром тёплого пола (кабельный/ИК, метка WF<n> или id
  * сайта): вершина {id: id контура, point: polygon[0], type: "warm_floor"}, ссылка в
  * props контура (климат ч.3, этап 268). Правила редактора (source_items/l10n):
- * один терморегулятор на кабель, у контура одно подключение, контуры не соединяются
- * друг с другом напрямую. Повторное подключение вывода к кабелю того же вида
+ * один терморегулятор на кабель, у контура одно подключение, у кабеля не более
+ * одного контура (not_connect_two_floor — узлы пути контуры не разделяют).
+ * Повторное подключение вывода к кабелю того же вида
  * отклоняется. Кандидат-копия до записи; при ошибке модель не меняется.
  */
 export function addElecCable(model: Model, params: { tool: string; path: ElecPathElement[] }): ElecCable {
@@ -313,8 +314,11 @@ export function addElecCable(model: Model, params: { tool: string; path: ElecPat
     }
   }
   // ревью правил редактора (климат ч.3): один терморегулятор на кабель
-  // (l10n cabling_warm_floor_not_connect_two_thermo), контуры не соединяются
-  // друг с другом напрямую (not_connect_two_floor)
+  // (l10n cabling_warm_floor_not_connect_two_thermo), у кабеля не более одного
+  // контура (l10n not_connect_two_floor) — узлы и промежуточные предметы контуры
+  // не «разделяют» (ревью 269 m2: прежняя проверка соседства в specs пропускала
+  // путь «контур → терморегулятор → контур», а подсказка «добавьте узел»
+  // противоречила факту — узел разделителем не служит)
   if (coll === "cables_warm_floor") {
     const thermos = specs.filter((s) => s.subId !== undefined);
     if (thermos.length > 1) {
@@ -324,14 +328,13 @@ export function addElecCable(model: Model, params: { tool: string; path: ElecPat
         { details: { kind: "two_thermo", items: thermos.map((s) => s.itemId) } },
       );
     }
-    for (let i = 1; i < specs.length; i++) {
-      if (specs[i - 1]!.kind === "warm_floor" && specs[i]!.kind === "warm_floor") {
-        throw new McpError(
-          "INVALID_ARGUMENT",
-          "контуры тёплого пола не соединяются кабелем напрямую — добавьте между ними терморегулятор или узел",
-          { details: { kind: "contour_to_contour" } },
-        );
-      }
+    const contours = specs.filter((s) => s.kind === "warm_floor");
+    if (contours.length > 1) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `в пути кабеля тёплого пола ${contours.length} контура — у кабеля не более одного контура (not_connect_two_floor): кабель соединяет терморегулятор с одним контуром; проведите отдельный кабель для каждого контура`,
+        { details: { kind: "two_contours", items: contours.map((s) => s.itemId) } },
+      );
     }
   }
   assertScalarSlotsFree(model, coll, cableType, specs);
