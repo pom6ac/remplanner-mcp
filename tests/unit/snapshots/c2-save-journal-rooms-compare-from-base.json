@@ -94,7 +94,8 @@
       "socket_group_mismatches",
       "stripes_light_mismatches",
       "wall_property_mismatches",
-      "wall_role_mismatches"
+      "wall_role_mismatches",
+      "zone_mismatches"
     ]
   },
   {
