@@ -143,10 +143,31 @@ export async function checkPlanMembership(
 }
 
 /**
+ * Ядро сверки модели с запрошенной парой (323 N5): модель сервера несёт
+ * собственные object_id/plan_id (id и plan_id в теле модели); для непустой
+ * модели они обязаны совпадать с запрошенной парой — иначе PLAN_ID может быть
+ * планом другого объекта. Пустая модель (проект без сохранений) — пропуск.
+ * Бросает ProbeGuardError.
+ */
+export function checkTargetModelPair(objectId: string, planId: string, model: Record<string, unknown>): void {
+  const keys = Object.keys(model);
+  if (keys.length === 0) return;
+  const modelId = model["id"];
+  const modelPlanId = model["plan_id"];
+  if (String(modelId) !== objectId) {
+    throw new ProbeGuardError(`гард пары (323 N5): model.id (${String(modelId)}) не совпадает с OBJECT_ID ${objectId} — план может принадлежать другому объекту — стоп`);
+  }
+  if (String(modelPlanId) !== planId) {
+    throw new ProbeGuardError(`гард пары (323 N5): model.plan_id (${String(modelPlanId)}) не совпадает с PLAN_ID ${planId} — PLAN_ID может быть планом другого объекта — стоп`);
+  }
+}
+
+/**
  * Гард пары «объект → план» (ревью 319 №3, 322 N3а): GET(OBJECT_ID, PLAN_ID)
  * обязан вернуть object_id === OBJECT_ID и plan_id === PLAN_ID, а PLAN_ID —
  * входить в планы объекта (floors; если из GET не выводятся — объект в ЛК).
- * Любое расхождение — process.exit(1) до первой записи.
+ * Для непустой модели — model.id === OBJECT_ID и model.plan_id === PLAN_ID
+ * (323 N5). Любое расхождение — process.exit(1) до первой записи.
  */
 export async function assertTargetPair(session: SessionState, objectId: string, planId: string): Promise<LoadedModel> {
   const got = await loadModel(session, objectId, planId);
@@ -155,6 +176,7 @@ export async function assertTargetPair(session: SessionState, objectId: string, 
     process.exit(1);
   }
   try {
+    checkTargetModelPair(objectId, planId, got.model);
     await checkPlanMembership(objectId, planId, got.floors, () => listProjectsViaClientPage(session));
   } catch (e) {
     guardExit(e);
