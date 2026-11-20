@@ -279,6 +279,33 @@ test("291: shield_wire_add к шине с другим connection — bus_connec
   }
 });
 
+// 293 ревью №1: провод между гнёздами шин (разных и одной шины) редактор не даёт
+// начать (ShieldBus.port_mousedown) — через публичный инструмент тоже отказ.
+test("293 №1: shield_wire_add шина→шина и гнездо той же шины — bus_to_bus (server.callTool)", async () => {
+  const client = await start();
+  try {
+    const b1 = ((await call(client, "shield_bus_add", { item_id: "sh1", position: "T", align: "L" }))["entity"] as { bus_list: { bus_id: string }[] }).bus_list![0]!.bus_id;
+    const b2 = ((await call(client, "shield_bus_add", { item_id: "sh1", position: "T", align: "R" }))["entity"] as { bus_list: { bus_id: string }[] }).bus_list![0]!.bus_id;
+    const cases: Array<[Record<string, unknown>, Record<string, unknown>, string]> = [
+      [{ bus: b1, port: 0 }, { bus: b2, port: 0 }, "шина→шина"],
+      [{ bus: b1, port: 0 }, { bus: b1, port: 1 }, "гнездо→гнездо той же шины"],
+    ];
+    for (const [source, target, name] of cases) {
+      const res = await client.callTool({ name: "shield_wire_add", arguments: { item_id: "sh1", type: "shield_wire_phase", source, target } });
+      assert.equal(res.isError, true, name);
+      const payload = errPayload(res);
+      assert.equal(payload.code, "INVALID_ARGUMENT", name);
+      assert.equal((payload.details as { kind?: string } | undefined)?.kind, "bus_to_bus", name);
+    }
+    // атомарность: шины без проводов, connection пуст
+    const sh = ((await call(client, "model_get", {})) as unknown as { shields: { wires?: unknown[]; bus_list: { connection: string }[] }[] }).shields[0]!;
+    assert.equal(sh.wires?.length ?? 0, 0, "проводов нет");
+    assert.ok(sh.bus_list!.every((b) => b.connection === ""));
+  } finally {
+    await client.close();
+  }
+});
+
 test("291: shield_collector_add/update/delete — collector_list и валидация", async () => {
   const client = await start();
   try {

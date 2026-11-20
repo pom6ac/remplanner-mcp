@@ -1674,6 +1674,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "shields[].rails[].modules[].ports), {input: \"phase\"|\"null\"|\"earth\"} (порт ввода) или " +
         "{bus, port} (гнездо шины 0-based из bus_list; bus.connection = тип провода — как в редакторе, " +
         "к шине с другим connection провод не ставится). " +
+        "Провод между двумя гнёздами шин (шина→шина, в том числе два гнезда одной шины) — " +
+        "INVALID_ARGUMENT: в редакторе провод с порта шины начать нельзя. " +
         "Несколько разных проводов на один порт разрешено (как в редакторе); повторный идентичный " +
         "провод (те же порты и тип) — INVALID_ARGUMENT, разорванный провод (is_broken) тоже считается " +
         "дублем — сначала shield_wire_delete; тип провода и тип порта не проверяются (как " +

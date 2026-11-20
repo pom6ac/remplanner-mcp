@@ -785,6 +785,16 @@ export function addShieldWire(model: Model, itemId: string, params: ShieldWireAd
   const { shield } = shieldOfItem(model, itemId);
   const source = resolveShieldPort(shield, params.source, "source");
   const target = resolveShieldPort(shield, params.target, "target");
+  // ревью 293 №1: провод между гнёздами шин (разных и одной) редактор не даёт
+  // начать — ShieldBus.port_mousedown/port_mouseover отклоняют клик, если
+  // temp_wire_source_type === "bus"
+  if (source.parentType === "bus" && target.parentType === "bus") {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "провод между гнёздами шин не ставится (шина→шина, в том числе два гнезда одной шины) — в редакторе провод с порта шины начать нельзя (ShieldBus.port_mousedown)",
+      { details: { kind: "bus_to_bus" } },
+    );
+  }
   // шина: как в редакторе (ShieldBus.port_mousedown/port_mouseover) — к шине с
   // connection можно подключать только провод того же типа; голая шина ("")
   // принимает любой тип и запоминает его (connection = тип провода)

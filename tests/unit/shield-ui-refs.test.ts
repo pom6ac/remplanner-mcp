@@ -1475,6 +1475,37 @@ test("291: шина delete — deleted_wires по проводам к её гн�
   );
 });
 
+// 293 ревью №1: провод «шина → шина» и «гнездо шины → другое гнездо той же
+// шины» редактор запрещает (ShieldBus.port_mousedown/port_mouseover отклоняют
+// клик, если temp_wire_source_type === "bus") — MCP должен отказывать так же.
+test("293 №1: провод шина→шина и гнездо→гнездо той же шины — INVALID_ARGUMENT bus_to_bus", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  const { bus: bus1 } = addShieldBus(m, shield.id, { position: "T", align: "L" });
+  const { bus: bus2 } = addShieldBus(m, shield.id, { position: "T", align: "R" });
+  const busToBus = (source: { bus: string; port: number }, target: { bus: string; port: number }) =>
+    addShieldWire(m, shield.id, { type: "shield_wire_phase", source, target });
+  // две разные шины
+  assert.throws(
+    () => busToBus({ bus: bus1.id, port: 0 }, { bus: bus2.id, port: 0 }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT" && ((e as McpError).details as { kind?: string }).kind === "bus_to_bus",
+  );
+  // два гнезда одной шины
+  assert.throws(
+    () => busToBus({ bus: bus1.id, port: 0 }, { bus: bus1.id, port: 1 }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT" && ((e as McpError).details as { kind?: string }).kind === "bus_to_bus",
+  );
+  // атомарность: шины не изменены (connection пуст), проводов нет;
+  // провод модуль→шина по-прежнему разрешён
+  const mod = Object.values(Object.values(findShieldByItem(m, shield.id)!.rails)[0]!.modules)[0]!;
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mod.id, port: 0 }, target: { bus: bus1.id, port: 0 } });
+  const s = findShieldByItem(m, shield.id)!;
+  assert.equal(Object.keys(s.wires).length, 1);
+  assert.equal(s.buses[bus1.id]!.connection, "shield_wire_phase");
+  assert.equal(s.buses[bus2.id]!.connection, "");
+});
+
 // ---------- 291: коллекторы (shield_collector_*) ----------
 
 test("291: эталон ui-ref-shield-collector — маскированная форма щитка с коллектором и шиной воспроизводится операциями MCP", () => {
