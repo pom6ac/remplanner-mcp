@@ -313,4 +313,75 @@ test("303: mock save — сервер потерял закладную посл
   });
 });
 
+// ---------- 307 (повторное ревью 306): N1 — сверка без ложных problem из-за id_room ----------
+
+/** Нормализация редактора, эмулирующая CeilingRigel.serialize: у записи остаются
+ *  только id/p1/p2/width/ceiling_type/polygon — id_room редактор не выводит
+ *  (бандл 268: serialize(){return copy.object({id,p1,p2,width,ceiling_type,polygon})}). */
+function normalizeLikeSerialize(norm: Record<string, unknown>): void {
+  const rooms = (norm["rooms2"] ?? norm["rooms1"]) as Record<string, Record<string, unknown>> | undefined;
+  if (!rooms) return;
+  for (const r of Object.values(rooms)) {
+    const rigels = r["rigels"] as Record<string, Record<string, unknown>> | undefined;
+    if (!rigels) continue;
+    for (const [k, rec] of Object.entries(rigels)) {
+      rigels[k] = {
+        id: rec["id"],
+        p1: rec["p1"],
+        p2: rec["p2"],
+        width: rec["width"],
+        ceiling_type: rec["ceiling_type"],
+        polygon: rec["polygon"],
+      };
+    }
+  }
+}
+
+test("307 N1: id_room только у одной стороны (serialize без id_room) — без problem в normalize и save", () => {
+  const exp = refModelLike(); // эталон с id_room (как раньше писала MCP / restore редактора)
+  const got = structuredClone(exp) as Record<string, Record<string, unknown>>;
+  for (const r of Object.values(((got["rooms2"] as Record<string, Record<string, unknown>>)["room1"])!["rigels"] as Record<string, Record<string, unknown>>)) {
+    delete r["id_room"]; // так отдаёт CeilingRigel.serialize
+  }
+  for (const mode of ["normalize", "save"] as const) {
+    assert.deepEqual(ceilingRigelCompare(exp["rooms2"], got["rooms2"], mode).problems, [], `id_room у одной стороны не судится (${mode})`);
+    assert.deepEqual(ceilingRigelCompare(got["rooms2"], exp["rooms2"], mode).problems, [], `обратное направление (${mode})`);
+  }
+});
+
+test("307 N1/N6: add → normalize как CeilingRigel.serialize (без id_room) → save verified, без NORMALIZATION_DROPPED", async () => {
+  const { m, room } = modelWithRefRoom(); // сервер без закладной
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, normalizeLikeSerialize);
+  await ws.open("0", "1");
+  ws.apply("ceiling_rigel_add", (mm) => {
+    addCeilingRigel(mm, room, { start: START_MM, end: END_MM });
+    return true;
+  });
+  const res = await ws.save();
+  assert.equal(res.verified, true, `save verified, warnings: ${JSON.stringify(res.warnings ?? [])}`);
+});
+
+test("307 N1: запись MCP не содержит id_room (формат CeilingRigel.serialize редактора)", () => {
+  const { m, room } = modelWithRefRoom();
+  addCeilingRigel(m, room, { start: START_MM, end: END_MM });
+  const written = Object.values((roomsOf(m)[room]!["rigels"] ?? {}) as Record<string, Record<string, unknown>>)[0]!;
+  assert.ok(!("id_room" in written), `id_room не пишется (serialize редактора его не выводит): ${Object.keys(written).join(",")}`);
+});
+
+test("307 N1: правка стен в проекте с MCP-закладной — без отката (нормализация без id_room)", async () => {
+  const { m } = mockModelWithRigel();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, normalizeLikeSerialize);
+  await ws.open("0", "1");
+  // свободная стена вдали от комнаты с закладной — правка стен в режиме редактора
+  await ws.applyWalls("wall_add", (mm) => {
+    mm.walls["new1"] = {
+      id: "new1", plan: "a", role: "wall", child: 0, archive: 0, demount: 0, depth: 20, height: 270,
+      p1: { x: 600, y: 500, role: "p1", link: 0 }, p2: { x: 640, y: 500, role: "p2", link: 0 },
+    } as unknown as Wall;
+    return "new1";
+  });
+});
+
 void refModelLike;

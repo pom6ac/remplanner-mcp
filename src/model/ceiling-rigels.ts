@@ -13,9 +13,10 @@ import { roomPolygonOf, roomsMapOf, matchRoomsByContour, roomHeirs, overlapShare
  * Потолочные закладные (ceiling_rigel, лист «Потолки», инструмент «Потолочная
  * закладная»; PRO; этап 303, 2026-11-20). Класс CeilingRigel редактора, хранится
  * per-room в rooms2[rid].rigels (внутри описания комнаты, как отделка). Формат
- * записи — живой эталон probes/303-ceiling-rigel.ts + fixtures/ui-ref-ceiling-rigel.json:
- *   {id, id_room, p1 {x,y,link {ot:"wall"|"pillar", id, z1}}, p2 {…}, width (см),
- *    ceiling_type, polygon [l1,l2,r2,r1]}
+ * записи — как CeilingRigel.serialize редактора (бандл 268, проба 303 + N1 ревью
+ * 306): {id, p1 {x,y,link {ot:"wall"|"pillar", id, z1}}, p2 {…}, width (см),
+ * ceiling_type, polygon [l1,l2,r2,r1]}; id_room MCP не пишет (serialize его
+ * не выводит; поле ставит сам редактор при restore/updateZones).
  * Связи концов — к боковым граням стен (l/r), торцам стен (s/e) и граням колонн
  * (t/r/b/l) — ХРАНИМОЕ поле записи (M6 ревью 304: CeilingRigel.calc связи только
  * читает, restoreRigels их не вычисляет — связь ставит mouseup при создании; от
@@ -392,7 +393,9 @@ export function addCeilingRigel(
   const id = newId(10);
   const rec: CeilingRigelRec = {
     id,
-    id_room: roomId,
+    // N1 ревью 306: без id_room — CeilingRigel.serialize редактора его не выводит
+    // (бандл 268: copy.object({id,p1,p2,width,ceiling_type,polygon})), а запись MCP
+    // с id_room давала ложные problem в сверке (undefined ≠ "self")
     p1: { ...snap1.pt, link: links.p1 },
     p2: { ...snap2.pt, link: links.p2 },
     width: r2(width),
@@ -588,7 +591,9 @@ function sameSig(a: CeilingRigelSig, b: CeilingRigelSig, ctx?: CeilingRigelLinkC
   if (Math.abs(a.width - b.width) > COORD_TOL_CM) return false;
   if (a.ceilingType !== b.ceilingType) return false;
   if (!sameLink(a.p1Link, b.p1Link, ctx) || !sameLink(a.p2Link, b.p2Link, ctx)) return false;
-  if (a.idRoomRef !== b.idRoomRef) return false;
+  // N1 ревью 306: id_room сверяется только при наличии с обеих сторон — редактор
+  // не выводит его (CeilingRigel.serialize), односторонее наличие не расхождение
+  if (a.idRoomRef !== undefined && b.idRoomRef !== undefined && a.idRoomRef !== b.idRoomRef) return false;
   const fwd = samePt(a.p1, b.p1) && samePt(a.p2, b.p2);
   const rev = samePt(a.p1, b.p2) && samePt(a.p2, b.p1);
   if (!fwd && !rev) return false;
