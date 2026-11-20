@@ -1,7 +1,7 @@
 // 260: разведка зонирования потолка кликами в dev-проекте (env). КЛИКИ БЕЗ СОХРАНЕНИЯ:
 // инструмент zone_ceiling, концы на рёбрах комнаты; снимок room-данных (delimiters,
 // ceilings, zones) и ZONE_DELIMITERS после каждого шага. Откат — перезагрузкой;
-// GET-сверка с бэкапом .orca-reports/backup-7887657-260.json (создаётся при отсутствии).
+// GET-сверка с бэкапом .orca-reports/backup-<OBJECT_ID>-260.json (создаётся при отсутствии).
 // node scripts/probes/260-zone-ui.ts run
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { openEditor } from "../../src/editor/adapter.ts";
