@@ -1028,6 +1028,61 @@ export type ShieldCollectorAddParams = {
 };
 
 /**
+ * Общая валидация набора модулей коллектора (ревью 293 №2 — одно правило для
+ * add и update): дубликаты, существование, коллекторный тип, одна рейка, одна
+ * ширина, чужой коллектор; «модули подряд» — диапазон по min/max ВСЕХ модулей
+ * (Math.min(...mods.map(m=>m.index))), а не по первому и последнему элементу
+ * списка: иначе неупорядоченный список проходит с разрывом, а calc() редактора
+ * забрал бы в коллектор все модули диапазона, включая чужие.
+ */
+function validateCollectorModules(shield: Shield, ids: string[], itemId: string, exceptCollectorId?: string): ShieldModule[] {
+  if (new Set(ids).size !== ids.length) {
+    throw new McpError("INVALID_ARGUMENT", "в списке модулей коллектора есть дубликаты", { details: { kind: "collector_duplicate_module" } });
+  }
+  const mods = ids.map((mid) => {
+    const mod = findShieldModule(shield, mid);
+    if (!mod) throw new McpError("NOT_FOUND", `модуль ${mid} не найден в щитке`);
+    return mod;
+  });
+  const railId = mods[0]!.rail_id;
+  for (const mod of mods) {
+    if (!SHIELD_COLLECTOR_MODULE_TYPES.has(mod.type)) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `модуль ${mod.id} (${mod.type}) не коллекторный (в редакторе коллектор ставится на модули типов: ${[...SHIELD_COLLECTOR_MODULE_TYPES].join(", ")})`,
+        { details: { kind: "not_collector_module", module: mod.id, type: mod.type, allowed: [...SHIELD_COLLECTOR_MODULE_TYPES] } },
+      );
+    }
+    if (mod.rail_id !== railId) {
+      throw new McpError("INVALID_ARGUMENT", "модули коллектора должны быть на одной рейке", { details: { kind: "collector_rail_mismatch" } });
+    }
+    if (mod.width !== mods[0]!.width) {
+      throw new McpError("INVALID_ARGUMENT", "модули коллектора должны быть одной ширины", { details: { kind: "collector_width_mismatch", module_width: mods[0]!.width } });
+    }
+    const inAnother = Object.entries(shield.collectors ?? {}).some(([cid, c]) => cid !== exceptCollectorId && mod.id in (c.modules ?? {}));
+    if (inAnother) {
+      throw new McpError("INVALID_ARGUMENT", `модуль ${mod.id} уже входит в другой коллектор`, { details: { kind: "module_in_collector" } });
+    }
+  }
+  const min = Math.min(...mods.map((m) => m.index));
+  const max = Math.max(...mods.map((m) => m.index));
+  const rail = shield.rails[railId]!;
+  // в диапазоне [min..max] не должно быть чужих модулей (calc() редактора
+  // собирает только подряд идущие модули одной ширины)
+  const wanted = new Set(mods.map((m) => m.id));
+  for (const m of Object.values(rail.modules)) {
+    if (m.index >= min && m.index <= max && !wanted.has(m.id)) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `модули коллектора должны идти подряд: в диапазоне ${min}..${max} DIN есть чужой модуль ${m.id}`,
+        { details: { kind: "collector_gap", module: m.id } },
+      );
+    }
+  }
+  return mods;
+}
+
+/**
  * shield_collector_add: коллектор через карту модулей (add_collector_start +
  * add_collector_end редактора — тот же путь, что drag по портам; проба
  * 291-shield3-ui3): модули — подряд на одной рейке, одной ширины; position —
@@ -1049,53 +1104,11 @@ export function addShieldCollector(model: Model, itemId: string, params: ShieldC
   if (Object.keys(shield.collectors ?? {}).length >= SHIELD_MAX_COLLECTORS) {
     throw new McpError("INVALID_ARGUMENT", `коллекторов в щитке уже ${SHIELD_MAX_COLLECTORS} (лимит)`, { details: { kind: "collectors_limit" } });
   }
-  if (new Set(ids).size !== ids.length) {
-    throw new McpError("INVALID_ARGUMENT", "в списке модулей коллектора есть дубликаты", { details: { kind: "collector_duplicate_module" } });
-  }
-  const mods = ids.map((mid) => {
-    const mod = findShieldModule(shield, mid);
-    if (!mod) throw new McpError("NOT_FOUND", `модуль ${mid} не найден в щитке предмета ${itemId}`);
-    return mod;
-  });
-  const railId = mods[0]!.rail_id;
-  for (const mod of mods) {
-    if (!SHIELD_COLLECTOR_MODULE_TYPES.has(mod.type)) {
-      throw new McpError(
-        "INVALID_ARGUMENT",
-        `модуль ${mod.id} (${mod.type}) не коллекторный (в редакторе коллектор ставится на модули типов: ${[...SHIELD_COLLECTOR_MODULE_TYPES].join(", ")})`,
-        { details: { kind: "not_collector_module", module: mod.id, type: mod.type, allowed: [...SHIELD_COLLECTOR_MODULE_TYPES] } },
-      );
-    }
-    if (mod.rail_id !== railId) {
-      throw new McpError("INVALID_ARGUMENT", "модули коллектора должны быть на одной рейке", { details: { kind: "collector_rail_mismatch" } });
-    }
-    if (mod.width !== mods[0]!.width) {
-      throw new McpError("INVALID_ARGUMENT", "модули коллектора должны быть одной ширины", { details: { kind: "collector_width_mismatch", module_width: mods[0]!.width } });
-    }
-    if (moduleInCollector(shield, mod.id)) {
-      throw new McpError("INVALID_ARGUMENT", `модуль ${mod.id} уже входит в другой коллектор`, { details: { kind: "module_in_collector" } });
-    }
-  }
+  const mods = validateCollectorModules(shield, ids, itemId);
   const first = mods[0]!;
-  const last = mods[mods.length - 1]!;
-  const min = Math.min(first.index, last.index);
-  const max = Math.max(first.index, last.index);
-  const rail = shield.rails[railId]!;
-  // в диапазоне [min..max] не должно быть чужих модулей (calc() редактора
-  // собирает только подряд идущие модули одной ширины)
-  const wanted = new Set(mods.map((m) => m.id));
-  for (const m of Object.values(rail.modules)) {
-    if (m.index >= min && m.index <= max && !wanted.has(m.id)) {
-      throw new McpError(
-        "INVALID_ARGUMENT",
-        `модули коллектора должны идти подряд: в диапазоне ${min}..${max} DIN есть чужой модуль ${m.id}`,
-        { details: { kind: "collector_gap", module: m.id } },
-      );
-    }
-  }
   const collector: ShieldCollector = {
     id: newId(10),
-    rail_id: railId,
+    rail_id: first.rail_id,
     module_width: first.width,
     modules: Object.fromEntries(mods.map((m) => [m.id, 1])),
     position: railIsLowerRow(shield, first) ? "B" : "T",
@@ -1139,49 +1152,9 @@ export function updateShieldCollector(model: Model, itemId: string, collectorId:
         { details: { kind: "collector_too_small", modules: ids?.length ?? 0 } },
       );
     }
-    if (new Set(ids).size !== ids.length) {
-      throw new McpError("INVALID_ARGUMENT", "в списке модулей коллектора есть дубликаты", { details: { kind: "collector_duplicate_module" } });
-    }
-    const mods = ids.map((mid) => {
-      const mod = findShieldModule(shield, mid);
-      if (!mod) throw new McpError("NOT_FOUND", `модуль ${mid} не найден в щитке предмета ${itemId}`);
-      return mod;
-    });
-    const railId = mods[0]!.rail_id;
+    const mods = validateCollectorModules(shield, ids, itemId, collectorId);
     const width = mods[0]!.width;
-    for (const mod of mods) {
-      if (!SHIELD_COLLECTOR_MODULE_TYPES.has(mod.type)) {
-        throw new McpError(
-          "INVALID_ARGUMENT",
-          `модуль ${mod.id} (${mod.type}) не коллекторный (в редакторе коллектор ставится на модули типов: ${[...SHIELD_COLLECTOR_MODULE_TYPES].join(", ")})`,
-          { details: { kind: "not_collector_module", module: mod.id, type: mod.type, allowed: [...SHIELD_COLLECTOR_MODULE_TYPES] } },
-        );
-      }
-      if (mod.rail_id !== railId) {
-        throw new McpError("INVALID_ARGUMENT", "модули коллектора должны быть на одной рейке", { details: { kind: "collector_rail_mismatch" } });
-      }
-      if (mod.width !== width) {
-        throw new McpError("INVALID_ARGUMENT", "модули коллектора должны быть одной ширины", { details: { kind: "collector_width_mismatch", module_width: width } });
-      }
-      const inAnother = Object.entries(shield.collectors ?? {}).some(([cid, c]) => cid !== collectorId && mod.id in (c.modules ?? {}));
-      if (inAnother) {
-        throw new McpError("INVALID_ARGUMENT", `модуль ${mod.id} уже входит в другой коллектор`, { details: { kind: "module_in_collector" } });
-      }
-    }
-    const rail = shield.rails[railId]!;
-    const min = Math.min(mods[0]!.index, mods[mods.length - 1]!.index);
-    const max = Math.max(mods[0]!.index, mods[mods.length - 1]!.index);
-    const wanted = new Set(mods.map((m) => m.id));
-    for (const m of Object.values(rail.modules)) {
-      if (m.index >= min && m.index <= max && !wanted.has(m.id)) {
-        throw new McpError(
-          "INVALID_ARGUMENT",
-          `модули коллектора должны идти подряд: в диапазоне ${min}..${max} DIN есть чужой модуль ${m.id}`,
-          { details: { kind: "collector_gap", module: m.id } },
-        );
-      }
-    }
-    collector.rail_id = railId;
+    collector.rail_id = mods[0]!.rail_id;
     collector.module_width = width;
     collector.modules = Object.fromEntries(mods.map((m) => [m.id, 1]));
   }

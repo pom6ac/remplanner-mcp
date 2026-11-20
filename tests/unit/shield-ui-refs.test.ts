@@ -1525,6 +1525,28 @@ test("291: эталон ui-ref-shield-collector — маскированная �
   assert.deepEqual(maskedUnordered(structuredClone(got)), maskedUnordered(structuredClone(ref)), "форма щитка с коллектором ≠ эталону UI");
 });
 
+// 293 ревью №2: «модули подряд» — диапазон по min/max ВСЕХ модулей (а не по
+// первому и последнему элементу списка): неупорядоченный список с разрывом
+// оставил бы внутри диапазона чужие модули, которые calc() редактора забрал бы
+// в коллектор. Правило одно для add и update.
+test("293 №2: коллектор — неупорядоченный список с разрывом — отказ; без разрыва — ок (add и update)", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  for (let i = 0; i < 6; i++) addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  const gap = (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT" && ((e as McpError).details as { kind?: string }).kind === "collector_gap";
+  // [m0, m5, m1]: диапазон 0..5, внутри чужие m2..m4
+  assert.throws(() => addShieldCollector(m, shield.id, { modules: [mods[0]!.id, mods[5]!.id, mods[1]!.id] }), gap);
+  // неупорядоченный без разрыва — проходит (calc() редактора дал бы тот же набор)
+  const col = addShieldCollector(m, shield.id, { modules: [mods[2]!.id, mods[0]!.id, mods[1]!.id] });
+  assert.deepEqual(Object.keys(col.collector.modules).sort(), [mods[0]!.id, mods[1]!.id, mods[2]!.id].sort());
+  // update — то же правило
+  assert.throws(() => updateShieldCollector(m, shield.id, col.collector.id, { modules: [mods[0]!.id, mods[5]!.id] }), gap);
+  const u = updateShieldCollector(m, shield.id, col.collector.id, { modules: [mods[4]!.id, mods[3]!.id] });
+  assert.deepEqual(Object.keys(u.collector.modules).sort(), [mods[3]!.id, mods[4]!.id].sort());
+});
+
 test("291: collector add — position по ряду, module_width по модулю; модуль не из collector.types — отказ", () => {
   const { m, shield } = scenario();
   ensureShieldForItem(m, shield);
