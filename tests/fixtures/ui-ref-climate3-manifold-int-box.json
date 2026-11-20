@@ -1,0 +1,31 @@
+{
+  "_source": "клик по UI dev-проекта (headless Chromium, проба 268-recon4, КЛИК БЕЗ СОХРАНЕНИЯ): коллекторный узел (якорь wall, клик у стены); model project.copy(\"server\"); id предмета/комнаты/стены обезличены (\"0\"), wall_line/id_room/id_room_zone/wall_direction удалены (производные геометрии), координаты синтетические.",
+  "menu_title": "int_manifold_box",
+  "model_object": {
+    "name": "int_manifold_box",
+    "id": "0",
+    "pc": {
+      "x": 930.81,
+      "y": 156.21
+    },
+    "width": 60,
+    "height": 15,
+    "self_height": 65,
+    "angle": -90,
+    "plan": {
+      "radiators": 26,
+      "warm_floor": 11
+    },
+    "item_id": 1678,
+    "over_floor": {
+      "value": 0,
+      "display": false
+    },
+    "dimensions": {
+      "display": true
+    },
+    "comment": {
+      "id": ""
+    }
+  }
+}

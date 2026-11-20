@@ -1,0 +1,277 @@
+{
+  "_source": "клик по UI dev-проекта (headless Chromium, пробы 268-recon4/268-recon5, КЛИК БЕЗ СОХРАНЕНИЯ): кабель тёплого пола warm_floor_wire от терморегулятора (socket_thermo) к кабельному контуру warm_floor; model project.copy(\"server\"); id контура/вершин/предметов обезличены (id1…), ID проекта/плана обезличены, координаты синтетические (смещения сохранены). Вершина-контур: {id: id контура, point: polygon[0], type: \"warm_floor\"}; pp {i, d} — производное протяжки (проекция точки захвата мышью на ребро полигона контура), в сверке не участвует. Водяной контур (warm_floor_water) к проводу НЕ подключается (source_items редактора), к нему — магистраль pipe_add.",
+  "warm_floors": {
+    "id1": {
+      "id": "id1",
+      "polygon": [
+        {
+          "x": 535.03,
+          "y": 200.67
+        },
+        {
+          "x": 622.52,
+          "y": 200.67
+        },
+        {
+          "x": 622.52,
+          "y": 288.16
+        },
+        {
+          "x": 535.03,
+          "y": 288.16
+        }
+      ],
+      "matrix": [
+        [
+          null,
+          {
+            "length": 1
+          },
+          null,
+          {
+            "length": 1
+          }
+        ],
+        [
+          {
+            "length": 1
+          },
+          null,
+          {
+            "length": 1
+          },
+          null
+        ],
+        [
+          null,
+          {
+            "length": 1
+          },
+          null,
+          {
+            "length": 1
+          }
+        ],
+        [
+          {
+            "length": 1
+          },
+          null,
+          {
+            "length": 1
+          },
+          null
+        ]
+      ],
+      "vertexes": [
+        {
+          "id": "id2",
+          "point": {
+            "x": 535.03,
+            "y": 200.67
+          },
+          "type": "node"
+        },
+        {
+          "id": "id3",
+          "point": {
+            "x": 622.52,
+            "y": 200.67
+          },
+          "type": "node"
+        },
+        {
+          "id": "id4",
+          "point": {
+            "x": 622.52,
+            "y": 288.16
+          },
+          "type": "node"
+        },
+        {
+          "id": "id5",
+          "point": {
+            "x": 535.03,
+            "y": 288.16
+          },
+          "type": "node"
+        }
+      ],
+      "items": {
+        "id2": "node",
+        "id3": "node",
+        "id4": "node",
+        "id5": "node"
+      },
+      "type": "warm_floor",
+      "length": 3.5,
+      "id_room": "id6",
+      "props": {
+        "id": "id1",
+        "name": "warm_floor",
+        "cables_warm_floor": {
+          "cable_warm_floor_id": "id7"
+        }
+      },
+      "area": 0.77
+    },
+    "id8": {
+      "id": "id8",
+      "polygon": [
+        {
+          "x": 100,
+          "y": 100
+        },
+        {
+          "x": 240.22,
+          "y": 100
+        },
+        {
+          "x": 240.22,
+          "y": 240.22
+        },
+        {
+          "x": 100,
+          "y": 240.22
+        }
+      ],
+      "matrix": [
+        [
+          null,
+          {
+            "length": 1
+          },
+          null,
+          {
+            "length": 1
+          }
+        ],
+        [
+          {
+            "length": 1
+          },
+          null,
+          {
+            "length": 1
+          },
+          null
+        ],
+        [
+          null,
+          {
+            "length": 1
+          },
+          null,
+          {
+            "length": 1
+          }
+        ],
+        [
+          {
+            "length": 1
+          },
+          null,
+          {
+            "length": 1
+          },
+          null
+        ]
+      ],
+      "vertexes": [
+        {
+          "id": "id9",
+          "point": {
+            "x": 100,
+            "y": 100
+          },
+          "type": "node"
+        },
+        {
+          "id": "id10",
+          "point": {
+            "x": 240.22,
+            "y": 100
+          },
+          "type": "node"
+        },
+        {
+          "id": "id11",
+          "point": {
+            "x": 240.22,
+            "y": 240.22
+          },
+          "type": "node"
+        },
+        {
+          "id": "id12",
+          "point": {
+            "x": 100,
+            "y": 240.22
+          },
+          "type": "node"
+        }
+      ],
+      "items": {
+        "id9": "node",
+        "id10": "node",
+        "id11": "node",
+        "id12": "node"
+      },
+      "type": "warm_floor_ir",
+      "length": 5.61,
+      "id_room": "id13",
+      "props": {
+        "id": "id8",
+        "name": "warm_floor_ir"
+      },
+      "area": 1.97
+    }
+  },
+  "model_object": {
+    "id": "id7",
+    "matrix": [
+      [
+        null,
+        {
+          "length": 1
+        }
+      ],
+      [
+        {
+          "length": 1
+        },
+        null
+      ]
+    ],
+    "vertexes": [
+      {
+        "id": "id14|s|id15",
+        "point": {
+          "x": 918.29,
+          "y": 155.18
+        },
+        "type": "socket_thermo"
+      },
+      {
+        "id": "id1",
+        "point": {
+          "x": 535.03,
+          "y": 200.67
+        },
+        "type": "warm_floor",
+        "pp": {
+          "id14|s|id15": {
+            "i": 0,
+            "d": 0.4932
+          }
+        }
+      }
+    ],
+    "items": {
+      "id14|s|id15": "socket_thermo",
+      "id1": "warm_floor"
+    },
+    "type": "warm_floor_wire",
+    "length": 3.86
+  }
+}

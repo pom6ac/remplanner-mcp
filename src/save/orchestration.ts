@@ -20,6 +20,7 @@ import { zoneDelimiterCompare } from "../model/zone.ts";
 import { demolitionMismatches } from "../model/demolition.ts";
 import { roomsSaveCompare, zoneAffectedRoomIds, type RoomsChangePolicy } from "../model/rooms-save.ts";
 import { dimsMismatches } from "../model/dims.ts";
+import { elecLinkHolders } from "../model/electric2.ts";
 import {
   balconyWallPropertyMismatches,
   cableConnectionMismatches,
@@ -400,8 +401,8 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       },
       itemsOverride ?? ((src.items ?? {}) as unknown as Record<string, ElecLinkItem>),
     ];
-    const [expElecAll, expElecItems] = elecAll(host.model(), host.model().items as unknown as Record<string, ElecLinkItem>);
-    const [gotElecAll, gotElecItems] = elecAll(norm.model as Model, ((norm.model as { items?: Record<string, ElecLinkItem> }).items ?? {}) as Record<string, ElecLinkItem>);
+    const [expElecAll, expElecItems] = elecAll(host.model(), elecLinkHolders(host.model()));
+    const [gotElecAll, gotElecItems] = elecAll(norm.model as Model, elecLinkHolders(norm.model as Model));
     const connNorm = elecCableConnectionMismatches(expElecAll, expElecItems, gotElecAll, gotElecItems, coll); // ревью 241 №6
     elecNorm.push({ lost: lostElec, graph: graphNorm, conn: connNorm, coll });
   }
@@ -658,13 +659,13 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         graph: gasLineGraphMismatches(stripVertexIdRoom(structuredClone(expectedElec[coll] ?? {})) as Record<string, GasLineSig>, elecCollAfter, "кабель-проводка", false, undefined, { skipLength: true }),
         conn: elecCableConnectionMismatches(
           structuredClone(expectedElec),
-          (expectedItems as Record<string, ElecLinkItem>) ?? {},
+          elecLinkHolders(norm.model as Model),
           {
             cables_socket: structuredClone(((after.model["cables_socket"] as Record<string, unknown> | undefined) ?? {}) as Record<string, GasLineSig>),
             cables_warm_floor: structuredClone(((after.model["cables_warm_floor"] as Record<string, unknown> | undefined) ?? {}) as Record<string, GasLineSig>),
             cables_conditioner: structuredClone(((after.model["cables_conditioner"] as Record<string, unknown> | undefined) ?? {}) as Record<string, GasLineSig>),
           },
-          (itemsAfter as Record<string, ElecLinkItem>) ?? {},
+          elecLinkHolders({ items: itemsAfter, warm_floors: (after.model["warm_floors"] ?? {}) as Model["warm_floors"] } as Model),
           coll, // ревью 241 №6: только текущая коллекция — без дублей под чужими ключами
         ),
       });

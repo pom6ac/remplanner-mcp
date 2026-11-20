@@ -26,6 +26,7 @@ import { zoneDelimiterCompare } from "./model/zone.ts";
 import { demolitionMismatches } from "./model/demolition.ts";
 import { roomsSaveCompare, roomsChangePolicy, zoneAffectedRoomIds, type RoomsChangePolicy } from "./model/rooms-save.ts";
 import { dimsMismatches } from "./model/dims.ts";
+import { elecLinkHolders } from "./model/electric2.ts";
 import {
   cableConnectionMismatches,
   elecCableConnectionMismatches,
@@ -529,11 +530,13 @@ export class Workspace {
           cables_warm_floor: structuredClone((src.cables_warm_floor ?? {}) as Record<string, GasLineSig>),
           cables_conditioner: structuredClone((src.cables_conditioner ?? {}) as Record<string, GasLineSig>),
         });
+        // климат ч.3: держатели ссылок включают контуры тёплого пола
+        // (props.cables_warm_floor) — иначе кабель-контур сверяется только в одну сторону
         const elecConnNorm = elecCableConnectionMismatches(
           elecAll(this.modelInternal!),
-          this.modelInternal!.items as Record<string, ElecLinkItem>,
+          elecLinkHolders(this.modelInternal!),
           elecAll(norm.model as Model),
-          ((norm.model as { items?: Record<string, ElecLinkItem> }).items ?? {}) as Record<string, ElecLinkItem>,
+          elecLinkHolders(norm.model as Model),
           coll, // ревью 241 №6: только текущая коллекция — без дублей под чужими ключами
         );
         if (lostElec.length > 0 || elecGraphNorm.length > 0 || elecConnNorm.length > 0) {

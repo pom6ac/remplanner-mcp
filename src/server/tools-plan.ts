@@ -625,6 +625,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "radiator_tubular_horizontal, vertical_radiator, floor_convector, convector_on_floor, electro_convector — у стены), " +
         "вентиляция листа «Вентиляция» — вентиляторы fan, fan_wall, fan_channel (свободно; решётки ventilation_gate*, " +
         "диффузоры ventilation_diffusor*, приточно-вытяжная установка ventilation_system и др. — PRO-группа). " +
+        "Коллекторные узлы (PRO-группа меню «Коллекторные узлы», климат ч.3): отопительный коллектор radiator_collector, " +
+        "коллекторный шкаф внешний ext_manifold_box и встроенный int_manifold_box (листы «Радиаторы» и «Тёплые полы») — " +
+        "предметы каталога, ставятся только у стены (against_wall); подключаются к магистралям отопления и тёплого пола " +
+        "(pipe_add, у коллектора несколько подключений — multi). " +
         "Контуры тёплого пола и трубы климата — НЕ предметы: warm_floor/warm_floor_ir/warm_floor_water → warm_floor_add, " +
         "warm_floor_pipe/conditioner_drainage/heat_pipe_hot/heat_pipe_cold/ventpipe_out/ventpipe_in → pipe_add.",
       {
@@ -1295,14 +1299,17 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "(мм; элементы {x, y} — узел или {item_id} — предмет: электрощиток, распредел. коробка/КУП, " +
         "розетка или вывод провода; не менее 2). kind — ключ кабеля из каталога UI: " +
         "wire_2_05…wire_5_100 (2–5 жил), wire_earth_* (заземление), wire_tv/utp/hdmi/audio/phone/optical " +
-        "(слаботочные; коллекция cables_socket), warm_floor_wire (cables_warm_floor), " +
-        "conditioner_wire (cables_conditioner) — связывает блоки кондиционера: внутренний/внешний " +
-        "блок, канальные/кассетные блоки, клапан, бризер, рекуператор, щиток (коробки, розетки " +
-        "и выводы проводов не подключаются — ревью 253 Н2, проба 250-connect4). " +
-        "У multi-предметов (щиток, коробки) допускается несколько " +
-        "кабелей; у розеток/выводов — один кабель на тип (повторное подключение отклоняется). " +
-        "Обратные ссылки на предметах ставятся автоматически. Длину с опусками до точек пересчитывает " +
-        "редактор. После добавления вызывайте model_validate и project_save.",
+        "(слаботочные; коллекция cables_socket), warm_floor_wire (cables_warm_floor) — соединяет " +
+        "терморегулятор (socket_thermo) с контуром тёплого пола: кабельным или инфракрасным " +
+        "({item_id: \"<WF<n> или id контура>\"}; вершина-контур {id, point: polygon[0], type: warm_floor}, " +
+        "ссылка в props контура; водяной контур к проводу не подключается — у него магистрали " +
+        "pipe_add kind=warm_floor; один терморегулятор на кабель), conditioner_wire (cables_conditioner) — " +
+        "связывает блоки кондиционера: внутренний/внешний блок, канальные/кассетные блоки, клапан, " +
+        "бризер, рекуператор, щиток (коробки, розетки и выводы проводов не подключаются — ревью 253 Н2, " +
+        "проба 250-connect4). У multi-предметов (щиток, коробки) допускается несколько " +
+        "кабелей; у розеток/выводов/контуров — один кабель на тип (повторное подключение отклоняется). " +
+        "Обратные ссылки на предметах и контурах ставятся автоматически. Длину с опусками до точек " +
+        "пересчитывает редактор. После добавления вызывайте model_validate и project_save.",
       {
         kind: z.enum([...SOCKET_CABLE_TOOLS, "warm_floor_wire", "conditioner_wire"])
           .describe("ключ кабеля из каталога UI (wire_3_25, warm_floor_wire, conditioner_wire и др.)"),
@@ -1316,9 +1323,17 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const toolKey = a["kind"] as string;
         const cable = ws.apply("wiring_add", (m) => addElecCable(m, {
           tool: toolKey,
-          // DTO: {item_id} публичного API → {itemId} модельного слоя
-          path: (a["path"] as Array<{ x?: number; y?: number; item_id?: string }>).map((p) =>
-            p["item_id"] !== undefined ? { itemId: resolveItem(m, p["item_id"]!).id } : { x: p.x!, y: p.y! }),
+          // DTO: {item_id} публичного API → {itemId} модельного слоя; у
+          // warm_floor_wire элемент пути может быть контуром тёплого пола
+          // (климат ч.3): метка WF<n> или id контура
+          path: (a["path"] as Array<{ x?: number; y?: number; item_id?: string }>).map((p) => {
+            if (p["item_id"] === undefined) return { x: p.x!, y: p.y! };
+            const ref = String(p["item_id"]);
+            if (toolKey === "warm_floor_wire" && ((m.warm_floors ?? {})[ref] || /^WF\d+$/.test(ref))) {
+              return { itemId: resolveWarmFloor(m, ref).id };
+            }
+            return { itemId: resolveItem(m, ref).id };
+          }),
         }));
         return ok(compactEntity(ws.model, (c) => {
           for (const key of ["cables_socket", "cables_warm_floor", "cables_conditioner"] as const) {
