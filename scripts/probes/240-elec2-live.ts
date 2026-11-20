@@ -13,6 +13,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
@@ -26,6 +27,8 @@ if (!OBJECT_ID || !PLAN_ID || !READONLY_ID) {
   console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID и REMPLANNER_PROBE_READONLY_ID");
   process.exit(1);
 }
+// ревью 319 №3: коллизии env с контрольным проектом (контрольный читается с планом "1")
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, "1");
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 
@@ -67,11 +70,14 @@ type Compact = {
 };
 const mg = async (): Promise<Compact> => (await call("model_get", {})) as unknown as Compact;
 
-const created: Record<string, string[]> = { walls: [], items: [], led_strips: [], cables: [], wiring: [] };
-let readonlyBefore: LoadedModel | null = null;
+const created = { walls: [] as string[], items: [] as string[], led_strips: [] as string[], cables: [] as string[], wiring: [] as string[] };
+let readonlyUnchanged = true;
 let verified = false;
 try {
-  readonlyBefore = await snap(READONLY_ID, "before");
+  // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, "1", `${OUT}/240-readonly-ref.json`);
+  await roGuard.assertUnchanged("перед записями");
   // свой план dev-проекта до прогона (после очистки должен совпасть)
   const ownBefore = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   writeFileSync(`${OUT}/get-own-live-before.json`, JSON.stringify(ownBefore, null, 1));
@@ -189,8 +195,9 @@ try {
 
   // 8. GET рабочего проекта (env) после прогона — не изменился;
   // свой план dev-проекта после очистки — как до прогона
-  const readonlyAfter = await snap(READONLY_ID, "after");
-  const sameReadonly = JSON.stringify(readonlyBefore.model) === JSON.stringify(readonlyAfter.model);
+  // ревью 319 №4: сверка контрольного проекта с фиксированным эталоном в конце
+  readonlyUnchanged = !(await roGuard.checkFinal("в конце"));
+  const sameReadonly = readonlyUnchanged;
   console.log(sameReadonly ? "READONLY OK" : "READONLY CHANGED — СТОП");
   const ownAfter = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   writeFileSync(`${OUT}/get-own-live-after.json`, JSON.stringify(ownAfter, null, 1));

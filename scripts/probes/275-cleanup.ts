@@ -7,6 +7,7 @@ import { loadModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertTargetPair } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу run");
@@ -34,6 +35,9 @@ const created = JSON.parse(readFileSync(".orca-reports/tmp/275-created.json", "u
 };
 console.log("created:", JSON.stringify(created));
 
+// ревью 319 №3: пара объект/план из env до первой записи (275-cleanup READONLY
+// env не задаёт — гард контрольного проекта у него отсутствует по построению)
+await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
 await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
 const mg = (await call("model_get", {})) as unknown as Record<string, Array<{ id?: string; site_id?: string }>>;
 const present = (coll: string, siteId: string): boolean => (mg[coll] ?? []).some((o) => o.site_id === siteId);

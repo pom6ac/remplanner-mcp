@@ -12,6 +12,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
@@ -24,10 +25,7 @@ if (!OBJECT_ID || !PLAN_ID || !READONLY_ID) {
   console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID и REMPLANNER_PROBE_READONLY_ID");
   process.exit(1);
 }
-if (OBJECT_ID === READONLY_ID) {
-  console.error("REMPLANNER_PROBE_OBJECT_ID совпадает с REMPLANNER_PROBE_READONLY_ID — запись ушла бы в читаемый проект; проверьте env");
-  process.exit(1);
-}
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, "1");
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 
@@ -221,7 +219,10 @@ const restoreWrites = async (): Promise<void> => {
 };
 
 try {
-  // 0. контрольный проект до (только GET)
+  // 0. ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  const roGuard = READONLY_ID ? await readonlyGuard(ctx.session(), READONLY_ID, "1", `${OUT}/247-readonly-ref.json`) : null;
+  if (roGuard) await roGuard.assertUnchanged("перед записями");
   const snapBefore = READONLY_ID ? await snap(READONLY_ID, "before") : null;
   // 1. бэкап dev-проекта
   const before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
@@ -372,11 +373,10 @@ try {
   );
   if (!same) writeFileSync(`${OUT}/get-own-after-247.json`, JSON.stringify(after, null, 1));
 
-  // 8. контрольный проект после
-  if (READONLY_ID) {
-    const snapAfter = await loadModel(ctx.session(), READONLY_ID, "1");
-    console.log("контрольный проект:", sig(snapAfter.model) === sig(snapBefore?.model) ? "не изменился" : "ИЗМЕНИЛСЯ — СТОП");
-    if (sig(snapAfter.model) !== sig(snapBefore?.model)) throw new Error("контрольный проект изменился");
+  // 8. ревью 319 №4: контрольный проект сверяется с фиксированным эталоном
+  if (roGuard) {
+    const roChanged = await roGuard.checkFinal("в конце");
+    if (roChanged) throw new Error("контрольный проект изменился");
   }
   console.log("247-live OK");
 } catch (e) {

@@ -12,6 +12,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
@@ -24,10 +25,7 @@ if (!OBJECT_ID || !PLAN_ID || !READONLY_ID) {
   console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID и REMPLANNER_PROBE_READONLY_ID");
   process.exit(1);
 }
-if (OBJECT_ID === READONLY_ID) {
-  console.error("REMPLANNER_PROBE_OBJECT_ID совпадает с REMPLANNER_PROBE_READONLY_ID — стоп");
-  process.exit(1);
-}
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, "1");
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 
@@ -210,7 +208,10 @@ function sig(m: unknown): string {
 }
 
 try {
-  // 0. контрольный проект до (только GET)
+  // 0. ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  const roGuard = READONLY_ID ? await readonlyGuard(ctx.session(), READONLY_ID, "1", `${OUT}/260-readonly-ref.json`) : null;
+  if (roGuard) await roGuard.assertUnchanged("перед записями");
   const snapBefore = READONLY_ID ? await snap(READONLY_ID, "before") : null;
 
   // 1. бэкап dev-проекта (только если ещё нет — иначе сверка)
@@ -235,7 +236,7 @@ try {
   const ox = Math.ceil(maxX) + 300;
   const oy = 0;
   const w = 200, h = 150;
-  const rect = [
+  const rect: Array<[{ x: number; y: number }, { x: number; y: number }]> = [
     [{ x: ox, y: oy }, { x: ox + w, y: oy }],
     [{ x: ox + w, y: oy }, { x: ox + w, y: oy + h }],
     [{ x: ox + w, y: oy + h }, { x: ox, y: oy + h }],
@@ -370,11 +371,10 @@ try {
   console.log("полная семантическая сверка data с бэкапом:", same ? "OK — модель совпала" : "РАСХОЖДЕНИЕ");
   if (!same) writeFileSync(`${OUT}/get-own-after-260.json`, JSON.stringify(finalModel, null, 1));
 
-  // 8. контрольный проект после
-  if (READONLY_ID) {
-    const snapAfter = await loadModel(ctx.session(), READONLY_ID, "1");
-    console.log("контрольный проект:", sig(snapAfter.model) === sig(snapBefore?.model) ? "не изменился" : "ИЗМЕНИЛСЯ — СТОП");
-    if (sig(snapAfter.model) !== sig(snapBefore?.model)) throw new Error("контрольный проект изменился");
+  // 8. ревью 319 №4: контрольный проект сверяется с фиксированным эталоном
+  if (roGuard) {
+    const roChanged = await roGuard.checkFinal("в конце");
+    if (roChanged) throw new Error("контрольный проект изменился");
   }
   console.log("260-live OK");
 } catch (e) {

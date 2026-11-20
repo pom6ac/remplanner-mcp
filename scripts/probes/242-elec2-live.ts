@@ -15,6 +15,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID, REMPLANNER_PROBE_READONLY_PLAN_ID из env)");
@@ -29,12 +30,10 @@ if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
   console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID и REMPLANNER_PROBE_READONLY_PLAN_ID");
   process.exit(1);
 }
-// ревью 243 N3: запись идёт в OBJECT_ID, READONLY_ID только читается — ошибка в
-// env не должна направить save в рабочий проект (отказ до запуска браузера)
-if (OBJECT_ID === READONLY_ID) {
-  console.error("REMPLANNER_PROBE_OBJECT_ID совпадает с REMPLANNER_PROBE_READONLY_ID — запись ушла бы в читаемый проект; проверьте env");
-  process.exit(1);
-}
+// ревью 243 N3 + ревью 319 №3: запись идёт в OBJECT_ID, READONLY_ID только
+// читается — ошибка в env не должна направить save в рабочий проект (отказ до
+// запуска браузера), включая коллизию PLAN_ID с планом контрольного проекта
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -84,7 +83,6 @@ const shieldVertex = (m: FullModel, wiringSiteId: string): { itemId: string; pc:
   return { itemId, pc: item.pc, vertex: v.point };
 };
 
-let readonlyBefore: LoadedModel | null = null;
 const created: Record<string, string[]> = { walls: [], items: [], wiring: [] };
 let allOk = true;
 try {
@@ -93,9 +91,10 @@ try {
   writeFileSync(`.orca-reports/backup-${OBJECT_ID}-242.json`, JSON.stringify(ownBefore, null, 1));
   console.log("backup written:", `backup-${OBJECT_ID}-242.json`, "walls:", Object.keys(ownBefore.model.walls ?? {}).length);
 
-  // GET readonly-проекта до прогона (только чтение)
-  readonlyBefore = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
-  writeFileSync(`${OUT}/get-readonly-242-before.json`, JSON.stringify(readonlyBefore, null, 1));
+  // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, `${OUT}/242-readonly-ref.json`);
+  await roGuard.assertUnchanged("перед записями");
 
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
   const wallsBefore = new Set((await mg()).walls.map((w) => w.id));
@@ -189,10 +188,8 @@ try {
   console.log("cleanup walls ok:", cleanupWalls, "walls back:", wallsClean);
   allOk = allOk && cleanupWalls && wallsClean;
 
-  // 6. GET readonly после прогона — не изменился; свой план после очистки — как бэкап
-  const readonlyAfter = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
-  writeFileSync(`${OUT}/get-readonly-242-after.json`, JSON.stringify(readonlyAfter, null, 1));
-  const sameReadonly = JSON.stringify(readonlyBefore.model) === JSON.stringify(readonlyAfter.model);
+  // 6. ревью 319 №4: контрольный проект сверяется с фиксированным эталоном; свой план после очистки — как бэкап
+  const sameReadonly = !(await roGuard.checkFinal("в конце"));
   console.log(sameReadonly ? "READONLY OK" : "READONLY CHANGED — СТОП");
   const ownAfter = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const sig = (m: Record<string, unknown>): string => {
