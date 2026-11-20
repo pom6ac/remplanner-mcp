@@ -221,6 +221,9 @@ function subtypeOf(type: string, subtype: string | undefined): string {
   const def = SHIELD_MODULE_TYPES[type]!;
   if (subtype === undefined) return defaultSubtypeOf(type);
   const clean = subtypeClean(subtype);
+  // пустой/пробельный номинал — умолчание типа по цепочке редактора (258 №6):
+  // RailModule ctor при restore делает e.subtype || default_subtype, «» в модель не попадает
+  if (clean === "") return defaultSubtypeOf(type);
   if (def.subtypes && !def.subtypes.includes(clean)) {
     throw new McpError(
       "INVALID_ARGUMENT",
@@ -357,7 +360,7 @@ export function addShieldModule(model: Model, itemId: string, params: ShieldModu
   }
   if (params.type === "shield_custom_module") {
     module.width = CUSTOM_MODULE_DEFAULTS.width;
-    module.subtype = params.subtype !== undefined ? subtypeClean(params.subtype) : CUSTOM_MODULE_DEFAULTS.subtype;
+    module.subtype = params.subtype !== undefined ? (subtypeClean(params.subtype) || CUSTOM_MODULE_DEFAULTS.subtype) : CUSTOM_MODULE_DEFAULTS.subtype;
     module.custom = { ports: CUSTOM_MODULE_DEFAULTS.ports, type: CUSTOM_MODULE_DEFAULTS.type, label: CUSTOM_MODULE_DEFAULTS.label };
   }
   rail.modules[module.id] = module;
@@ -384,15 +387,17 @@ export function updateShieldModule(model: Model, itemId: string, moduleId: strin
   const def = SHIELD_MODULE_TYPES[mod.type];
   if (params.subtype !== undefined) {
     const clean = subtypeClean(params.subtype);
-    if (def?.subtypes && !def.subtypes.includes(clean)) {
+    // пустой/пробельный номинал — умолчание типа (258 №6, как в add)
+    const next = clean === "" ? defaultSubtypeOf(mod.type) : clean;
+    if (def?.subtypes && !def.subtypes.includes(next)) {
       throw new McpError(
         "INVALID_ARGUMENT",
-        `номинал «${params.subtype}» не из списка типа ${mod.type} (${def.subtypes.join(", ")})`,
-        { details: { kind: "bad_subtype", type: mod.type, allowed: def.subtypes } },
-      );
-    }
-    mod.subtype = clean;
+      `номинал «${params.subtype}» не из списка типа ${mod.type} (${def.subtypes.join(", ")})`,
+      { details: { kind: "bad_subtype", type: mod.type, allowed: def.subtypes } },
+    );
   }
+  mod.subtype = next;
+}
   if (params.group_number !== undefined) {
     if (!def?.group) {
       throw new McpError(

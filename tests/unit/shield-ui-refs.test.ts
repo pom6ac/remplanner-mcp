@@ -13,7 +13,7 @@ import { addRoomRect, moveWall } from "../../src/model/walls.ts";
 import { addItem, deleteItem } from "../../src/model/items.ts";
 import {
   addShieldRail, deleteShieldRail, addShieldModule, updateShieldModule, deleteShieldModule,
-  ensureShieldForItem, deleteShieldsForItem, findShieldByItem, shieldProjection,
+  ensureShieldForItem, deleteShieldsForItem, findShieldByItem, shieldProjection, findShieldModule,
   SHIELD_MODULE_TYPES, SHIELD_ITEM_NAMES, SHIELD_RAIL_MIN_DIN, SHIELD_RAIL_MAX_DIN,
 } from "../../src/model/shield.ts";
 import { compactModel } from "../../src/model/compact.ts";
@@ -298,6 +298,28 @@ test("255: shield_module_update — номинал/группа/подпись; 
   assert.deepEqual(findShieldByItem(m, shield.id), snapshot);
 });
 
+// Ревью 258 №6: пустой/пробельный номинал после чистки — не «», а умолчание по
+// цепочке редактора (RailModule ctor: e.subtype || default_subtype; типы без
+// списка — "5A"): иначе сверка save видит изменение и блокирует NORMALIZATION_DROPPED.
+test("258 №6: пустой/пробельный subtype нормализуется в умолчание типа (add/update/custom)", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  // тип без списка номиналов: редактор даёт "5A"
+  const counter = addShieldModule(m, shield.id, { type: "shield_module_counter", subtype: " \n " });
+  assert.equal(counter.module.subtype, "5A");
+  // тип со списком: default_subtype ?? subtypes[0]
+  const auto = addShieldModule(m, shield.id, { type: "shield_module", subtype: "" });
+  assert.equal(auto.module.subtype, "16A");
+  const custom = addShieldModule(m, shield.id, { type: "shield_custom_module", subtype: " \n " });
+  assert.equal(custom.module.subtype, "16A");
+  // update: пустая строка — тоже умолчание, а не ""
+  const { module: mod } = addShieldModule(m, shield.id, { type: "shield_module_terminal" });
+  updateShieldModule(m, shield.id, mod.id, { subtype: "" });
+  const s = findShieldByItem(m, shield.id)!;
+  const updated = findShieldModule(s, mod.id)!;
+  assert.equal(updated.subtype, "5A");
+});
+
 test("255: shield_module_delete — позиции правее уменьшаются на ширину; несуществующий — NOT_FOUND", () => {
   const { m, shield } = scenario();
   const { module: m1 } = addShieldModule(m, shield.id, { type: "shield_module" });
@@ -548,6 +570,7 @@ test("256 №5: мутации проекции — порты, inputs, comment,
     ["порт модуля изменён", (s) => { const mod2 = Object.values(Object.values(s.rails)[0]!.modules)[0]!; mod2.ports[0]!.connected = 1; }],
     ["inputs потеряны", (s) => { s.inputs = {}; }],
     ["порт ввода изменён", (s) => { Object.values(s.inputs)[0]!.ports[0]!.connected = 1; }],
+    ["phase ввода потеряна (258 №5)", (s) => { (Object.values(s.inputs)[0] as { phase?: number }).phase = undefined; }],
     ["comment модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.comment = "кухня"; }],
     ["group_number модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.group_number = 9; }],
     ["subtype модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.subtype = "63A"; }],
