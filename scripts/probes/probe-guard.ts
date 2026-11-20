@@ -94,8 +94,8 @@ export async function assertTargetPair(session: SessionState, objectId: string, 
 export type ReadonlyGuard = {
   /** Проверка контрольного проекта перед фазой записи: «ИЗМЕНИЛСЯ» → process.exit(1). */
   assertUnchanged(tag: string): Promise<void>;
-  /** Финальная сверка (finally): «ИЗМЕНИЛСЯ» → process.exitCode = 1. */
-  checkFinal(tag: string): Promise<void>;
+  /** Финальная сверка (finally): «ИЗМЕНИЛСЯ» → process.exitCode = 1; true — изменился. */
+  checkFinal(tag: string): Promise<boolean>;
   /** Снимок-эталон контрольного проекта (для лога). */
   reference: LoadedModel;
 };
@@ -140,7 +140,9 @@ export async function readonlyGuard(session: SessionState, readonlyId: string, r
       if (await changed(tag)) process.exit(1);
     },
     checkFinal: async (tag) => {
-      if (await changed(tag)) process.exitCode = 1;
+      const isChanged = await changed(tag);
+      if (isChanged) process.exitCode = 1;
+      return isChanged;
     },
     reference,
   };
