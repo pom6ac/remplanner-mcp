@@ -90,8 +90,11 @@ const authKeyFor = async (session: SessionState, objectId: string): Promise<stri
     headers: { cookie: cookieHeader(session, "remplanner.ru"), "user-agent": USER_AGENT, referer: `${BASE_URL}/client/` },
     signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
   });
-  const m = new RegExp(`data-object="${objectId}" data-authkey="([0-9a-f]+)"`).exec(await res.text());
-  if (!m) throw new Error(`в ЛК нет authkey для объекта (restore невозможен)`);
+  const html = await res.text();
+  const i = html.indexOf(`data-object="${objectId}"`);
+  if (i < 0) throw new Error("в ЛК нет объекта dev-проекта (restore невозможен)");
+  const m = /data-auth\S+="([0-9a-f]+)"/.exec(html.slice(i, i + 400));
+  if (!m) throw new Error("в ЛК нет authkey для объекта (restore невозможен)");
   return m[1]!;
 };
 
