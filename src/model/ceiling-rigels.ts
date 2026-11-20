@@ -24,13 +24,15 @@ import { roomPolygonOf, roomsMapOf, matchRoomsByContour, roomHeirs, overlapShare
  *
  * Стандарт редактора (бандл app.3.0, mousedown/mouseup cursor ceiling_rigels +
  * пробы 303): закладная — полоса «от стены до стены» внутри одной комнаты; оба
- * конца на боковых гранях стен (или гранях колонн), магнит конца 10 см в UI
- * (MCP — консервативные 30 мм, как у rigel_add); угол оси к грани конца 45..135°;
- * концы не ближе width/2 к углам грани; оба конца не на одной грани одного объекта
- * (l10n ceiling_rigel_wall_in_room); ось не пересекает разделители зон потолка
- * (zone_ceiling) и боковые грани потолочных ригелей (l10n
- * no_cross_ceiling_rigel_and_delimiter); пересечение с другими закладными редактор
- * НЕ проверяет (MCP — так же). Перенос закладной редактором не поддержан
+ * конца на боковых гранях стен (или гранях колонн), радиус магнита конца в UI —
+ * ширина полосы (умолчание 10 см, до 100 см; MCP — консервативные 30 мм, как у
+ * rigel_add); угол оси к грани конца 45..135°; концы не ближе width/2 к углам
+ * грани; оба конца не на одном объекте (ot+id, грань не важна — l10n
+ * ceiling_rigel_wall_in_room); ось не пересекает разделители зон потолка
+ * (zone_ceiling), боковые грани потолочных ригелей (l10n
+ * no_cross_ceiling_rigel_and_delimiter) и оси других закладных той же комнаты —
+ * пересекающуюся закладную редактор удаляет при restore (restoreRigels), поэтому
+ * MCP отказывает сразу (ревью 304 M2/M3). Перенос закладной редактором не поддержан
  * (контекстное меню: ширина, удалить, сбросить отделку) — ceiling_rigel_update
  * меняет только width/ceiling_type; перенос = удалить и создать заново.
  */
@@ -269,13 +271,27 @@ function assertAxisChecks(model: Model, roomId: string, p1: Point, p2: Point, li
     throw new McpError("INVALID_ARGUMENT", "оба конца на одной грани одного объекта — проведите закладную от одной стены до другой");
   }
   const room = ((model.rooms2 ?? model.rooms1 ?? {}) as Record<string, Record<string, unknown>>)[roomId];
-  const poly = room ? roomPolygonOf(room) : undefined;
+  if (!room) throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomId} нет контура`);
+  const poly = roomPolygonOf(room);
   if (!poly || poly.length < 3) throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomId} нет контура`);
   // пересечение с разделителями зон потолка (mouseup редактора: ZONE_DELIMITERS
   // типа zone_ceiling; пересечение отрезков)
   for (const line of zoneCeilingDelimiterLines(model)) {
     if (segmentsCross(p1, p2, line.p1, line.p2)) {
       throw new McpError("INVALID_ARGUMENT", "закладная пересекает разделитель зон потолка — не пересекайте разделители зон");
+    }
+  }
+  // пересечение с осями других закладных той же комнаты (ревью 304 M3):
+  // restore редактора (restoreRigels) удаляет пересекающуюся закладную —
+  // после такого save падает NORMALIZATION_DROPPED или закладная пропадает
+  const rigelsOfRoom = (room["rigels"] ?? {}) as Record<string, { p1?: Point; p2?: Point }>;
+  for (const other of Object.values(rigelsOfRoom)) {
+    if (!other.p1 || !other.p2) continue;
+    if (segmentsCross(p1, p2, other.p1, other.p2)) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        "закладная пересекает другую потолочную закладную этой комнаты — редактор при открытии удалит пересекающуюся закладную",
+      );
     }
   }
   // пересечение с боковыми гранями потолочных ригелей (eds.l/eds.r)
