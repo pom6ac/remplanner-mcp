@@ -227,6 +227,27 @@ export function polygonInsidePolygon(inner: Polygon, outer: Polygon): boolean {
 }
 
 /**
+ * Длина коллинеарного перекрытия двух отрезков, см: отрезки лежат на одной
+ * прямой (отклонение концов a от прямой b не больше tolCm) и перекрываются
+ * на ненулевой длине. Не коллинеарны или касаются концом — 0.
+ * (ревью 263 N1/N5: ребро комнаты на изменённой стене, делитель вдоль ребра.)
+ */
+export function collinearOverlapCm(a: Segment, b: Segment, tolCm = 0.5): number {
+  const bvx = b.p2.x - b.p1.x;
+  const bvy = b.p2.y - b.p1.y;
+  const blen = Math.hypot(bvx, bvy);
+  if (blen < 1e-9) return 0;
+  const d1 = (bvx * (a.p1.y - b.p1.y) - bvy * (a.p1.x - b.p1.x)) / blen;
+  const d2 = (bvx * (a.p2.y - b.p1.y) - bvy * (a.p2.x - b.p1.x)) / blen;
+  if (Math.abs(d1) > tolCm || Math.abs(d2) > tolCm) return 0;
+  const t1 = ((a.p1.x - b.p1.x) * bvx + (a.p1.y - b.p1.y) * bvy) / (blen * blen);
+  const t2 = ((a.p2.x - b.p1.x) * bvx + (a.p2.y - b.p1.y) * bvy) / (blen * blen);
+  const lo = Math.max(0, Math.min(t1, t2));
+  const hi = Math.min(1, Math.max(t1, t2));
+  return hi > lo ? (hi - lo) * blen : 0;
+}
+
+/**
  * Площадь пересечения двух полигонов, см² (Sutherland–Hodgman: subject режется
  * внутренностью clip; clip ожидается выпуклым — тело стены, прямоугольник колонны).
  * Касание даёт ~0.

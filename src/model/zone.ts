@@ -2,7 +2,8 @@ import type { Model, Point } from "./types.ts";
 import { newId } from "./types.ts";
 import { mmToCm, cmToMm } from "./units.ts";
 import { McpError } from "../errors.ts";
-import { roomPolygonOf, matchRoomsByContour, roomHeirs, pointInPolygon } from "./room-geo.ts";
+import { roomPolygonOf, matchRoomsByContour, overlapShare, roomHeirs, pointInPolygon, roomsMapOf } from "./room-geo.ts";
+import { collinearOverlapCm } from "./geometry.ts";
 
 // Зонирование потолка (лист «Потолки», инструмент «Зонировать потолок», zone_ceiling;
 // PRO; этап 260, 2026-11-20). Разделители зон — линии-графы ZoneDelimiter extends
@@ -43,31 +44,43 @@ export type ZoneDelimiterRec = {
  * Legacy-миграция (convertOld ZoneDelimiter, бандл): типы «d_zone»→«zone_c»,
  * «d_*»→«zone_*»; старая форма points:[p1,p2] без vertexes разворачивается в
  * граф из двух узлов (restore 260). Возвращает каноническую запись или исходную.
+ * Поля on_size/length дописываются только legacy-записям (points-форма, per-room
+ * storage, старый тип d_*) — ревью 263 N3: дописывание верхнеуровневой записи
+ * сервера маскирует потерю полей (сверка перестаёт видеть, что сервер потерял
+ * on_size или обнулил/удалил length).
  */
-export function migrateLegacyDelimiter(rec: Record<string, unknown>): Record<string, unknown> {
+export function migrateLegacyDelimiter(
+  rec: Record<string, unknown>,
+  opts: { legacy?: boolean } = {},
+): Record<string, unknown> {
   const out = structuredClone(rec);
   const t = String(out["type"] ?? "");
+  const legacyType = t === "d_zone" || t.startsWith("d_");
   if (t === "d_zone") out["type"] = "zone_c";
   else if (t.startsWith("d_")) out["type"] = `zone_${t.slice(2)}`;
+  let builtFromPoints = false;
   if (!Array.isArray(out["vertexes"]) || (out["vertexes"] as unknown[]).length === 0) {
     const points = out["points"] as Array<Point> | undefined;
     if (Array.isArray(points) && points.length >= 2) {
       out["vertexes"] = points.slice(0, 2).map((p, i) => ({ id: `p${i}`, point: p, type: "node" }));
       out["items"] = { ...((out["items"] ?? {}) as Record<string, string>), v0: "node", v1: "node" };
       out["matrix"] = [[null, { length: 1 }], [{ length: 1 }, null]];
+      builtFromPoints = true;
     }
   }
-  // ревью 261 №6: restore редактора дополняет записи полями on_size 1 и length
+  // ревью 261 №6: restore редактора дополняет записи полей on_size 1 и length
   // (м, по геометрии линии) — дописываем их миграции, чтобы старая модель (points-
   // форма, per-room без length/on_size) сверялась с нормализованной в обе стороны
-  // и не блокировала save
-  const v = (out["vertexes"] ?? []) as Array<{ point?: Point }>;
-  if (v.length >= 2 && v[0]?.point && v[v.length - 1]?.point) {
-    if (out["on_size"] === undefined) out["on_size"] = 1;
-    const len = Number(out["length"] ?? 0);
-    if (!(len > 0)) {
-      const p1 = v[0]!.point!, p2 = v[v.length - 1]!.point!;
-      out["length"] = Math.round((Math.hypot(p2.x - p1.x, p2.y - p1.y) / 100) * 100) / 100;
+  // и не блокировала save. ревью 263 N3: только legacy-записям.
+  if (builtFromPoints || legacyType || opts.legacy) {
+    const v = (out["vertexes"] ?? []) as Array<{ point?: Point }>;
+    if (v.length >= 2 && v[0]?.point && v[v.length - 1]?.point) {
+      if (out["on_size"] === undefined) out["on_size"] = 1;
+      const len = Number(out["length"] ?? 0);
+      if (!(len > 0)) {
+        const p1 = v[0]!.point!, p2 = v[v.length - 1]!.point!;
+        out["length"] = Math.round((Math.hypot(p2.x - p1.x, p2.y - p1.y) / 100) * 100) / 100;
+      }
     }
   }
   return out;
@@ -90,17 +103,18 @@ function roomsOf(model: Model): RoomsMap {
 
 /** Все разделители модели: верхнеуровневое zone_delimiters (серверный формат) +
  *  legacy per-room delimiters (старые модели; редактор мигрирует их при restore).
- *  Ключ — id записи; при коллизии top-level приоритетен. */
-function delimiterMapOf(model: Model): Record<string, { rec: Record<string, unknown>; roomKey: string | null }> {
-  const out: Record<string, { rec: Record<string, unknown>; roomKey: string | null }> = {};
+ *  Ключ — id записи; при коллизии top-level приоритетен. legacy — запись пришла
+ *  из per-room хранилища (ревью 263 N3: ей можно дописывать on_size/length). */
+function delimiterMapOf(model: Model): Record<string, { rec: Record<string, unknown>; roomKey: string | null; legacy: boolean }> {
+  const out: Record<string, { rec: Record<string, unknown>; roomKey: string | null; legacy: boolean }> = {};
   const rooms = roomsOf(model);
   for (const [rid, room] of Object.entries(rooms)) {
     for (const [key, raw] of Object.entries((room.delimiters ?? {}) as Record<string, Record<string, unknown>>)) {
-      out[key] = { rec: raw, roomKey: rid };
+      out[key] = { rec: raw, roomKey: rid, legacy: true };
     }
   }
   for (const [key, raw] of Object.entries((model.zone_delimiters ?? {}) as Record<string, Record<string, unknown>>)) {
-    out[key] = { rec: raw, roomKey: String(raw["id_room"] ?? "") || null };
+    out[key] = { rec: raw, roomKey: String(raw["id_room"] ?? "") || null, legacy: false };
   }
   return out;
 }
@@ -227,7 +241,7 @@ function roomDelimiterLines(model: Model, roomId: string, exceptId?: string): Ar
   const out: Array<{ id: string; p1: Point; p2: Point }> = [];
   for (const [id, entry] of Object.entries(delimiterMapOf(model))) {
     if (id === exceptId || entry.roomKey !== roomId) continue;
-    const rec = migrateLegacyDelimiter(entry.rec);
+    const rec = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
     const v = (rec["vertexes"] ?? []) as Array<{ point?: Point }>;
     const q1 = v[0]?.point, q2 = v[v.length - 1]?.point;
     if (v.length >= 2 && q1 && q2) {
@@ -251,8 +265,9 @@ function strictlyInside(p: Point, poly: Point[]): boolean {
 /** Ревью 261 №2: линия обязана лежать внутри комнаты. Общий предикат вложенности
  *  (как в отделке ч.2 — pointInPolygon с допуском): середина и контрольные точки
  *  отрезка внутри полигона (концы на рёбрах — на границе в допуске магнита),
- *  пересечений рёбер вне концов нет, включая касание в вершине вогнутого контура
- *  (хорда через выемку проходит мимо комнаты — отвергается). */
+ *  пересечений рёбер вне концов нет. Хорда, проходящая мимо комнаты через
+ *  выемку, отвергается; касание линии в вершине вогнутого контура (общая точка
+ *  рёбер) допустимо — поведение закреплено тестом (ревью 263 N6). */
 function segmentInsidePolygon(a: Point, b: Point, poly: Point[], tolCm = 0.5): boolean {
   const len = segLen(a, b);
   const steps = Math.max(2, Math.ceil(len / 25) + 1);
@@ -268,9 +283,9 @@ function segmentInsidePolygon(a: Point, b: Point, poly: Point[], tolCm = 0.5): b
  * zone_ceiling_add: линия-разделитель зон потолка в комнате (мм; концы — точки,
  * которые магнитятся к рёбрам комнаты в 150 мм или граням потолочных ригелей
  * в 100 мм, как в UI). Линия обязана лежать внутри одной комнаты и не пересекать
- * стены, колонны, другие разделители комнаты, ригели и потолочные закладные
- * (стандарт редактора, пробы 260-zone-ui*). Атомарно: при отказе delimiters
- * комнаты не меняются.
+ * и не идти вдоль стен, колонн, других разделителей комнаты, ригелей и потолочных
+ * закладных (стандарт редактора, пробы 260-zone-ui*). Атомарно: при отказе
+ * delimiters комнаты не меняются.
  */
 export function addZoneCeiling(
   model: Model,
@@ -305,6 +320,16 @@ export function addZoneCeiling(
     if (distToSeg(p1, e.p1, e.p2) <= 0.05 || distToSeg(p2, e.p1, e.p2) <= 0.05) continue;
     if (segsCross(p1, p2, e.p1, e.p2)) {
       throw new McpError("INVALID_ARGUMENT", "линия пересекает ребро/стену комнаты — не пересекайте стены или колонны");
+    }
+  }
+  // ревью 263 N5: линия, коллинеарно лежащая на ребре комнаты на ненулевой
+  // длине (частично или полностью вдоль стены), — отказ (точки на ребре в
+  // допуске 0,5 см вложенность не видит, а пересечением касание не считается)
+  for (let i = 0; i < edges.length; i++) {
+    const e = edges[i]!;
+    if (!e.p1 || !e.p2) continue;
+    if (collinearOverlapCm({ p1, p2 }, { p1: e.p1, p2: e.p2 }) > 0.5) {
+      throw new McpError("INVALID_ARGUMENT", "линия идёт вдоль ребра/стены комнаты — проведите линию внутри комнаты от одной внешней стены до другой");
     }
   }
   // колонны
@@ -419,7 +444,7 @@ export function zoneDelimiterList(model: Model, roomRef?: string): Array<Record<
   for (const [key, entry] of Object.entries(delimiterMapOf(model))) {
     const rid = entry.roomKey ?? "";
     if (wanted && !wanted.has(rid)) continue;
-    const rec = migrateLegacyDelimiter(entry.rec);
+    const rec = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
     const v = (rec["vertexes"] ?? []) as Array<{ point?: Point }>;
     const p1 = v[0]?.point, p2 = v[v.length - 1]?.point;
     if (!p1 || !p2) continue;
@@ -463,7 +488,7 @@ function delimiterSigsOf(model: Record<string, unknown> | undefined): ZoneDelimi
   const out: ZoneDelimiterSig[] = [];
   const map = delimiterMapOf((model ?? {}) as Model);
   for (const [key, entry] of Object.entries(map)) {
-    const rec = migrateLegacyDelimiter(entry.rec);
+    const rec = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
     const v = (rec["vertexes"] ?? []) as Array<{ point?: Point; type?: string }>;
     const q1 = v[0]?.point, q2 = v[v.length - 1]?.point;
     if (v.length < 2 || !q1 || !q2) continue;
@@ -538,8 +563,12 @@ export type ZoneCompareMode = "normalize" | "save";
 
 export type ZoneCompareOpts = {
   /** Комнаты ожидания, затронутые изменёнными пользователем стенами
-   *  (ревью 261 №5): их исчезновение при нормализации — штатный случай
-   *  (ревью 127), делитель при этом не «потеря». Только режим normalize. */
+   *  (ревью 261 №5). В режиме normalize (ревью 263 N2: опция действует только
+   *  там) их исчезновение при нормализации — штатный случай (ревью 127),
+   *  сверка нестрогая: переопределение/пропажа делителя — предупреждение.
+   *  В режиме save комната сверяется строго (пропажа и смена типа — проблема),
+   *  допустим только сдвиг концов до магнита — предупреждение (живой эталон
+   *  262: редактор перепривязывает конец к новой стене). */
   affectedRooms?: Set<string>;
 };
 
@@ -551,10 +580,11 @@ export type ZoneCompareOpts = {
  * делитель, переживший разрез/слияние по геометрии середины, — норма; пропажа
  * при смене топологии — проблема. Комната, затронутая изменёнными стенами
  * (ревью 261 №5/№8, живой эталон 262: редактор перепривязывает концы
- * разделителей к новой стене и пересоздаёт id комнат), — нестрогая:
- * совпадение по полной проекции или с точностью до магнита — предупреждение,
- * пропажа — предупреждение с подсказкой; в режиме save сервер не имеет права
- * терять делитель незатронутой комнаты (строго).
+ * разделителей к новой стене и пересоздаёт id комнат): в normalize — нестрогая
+ * (совпадение по полной проекции или с точностью до магнита — предупреждение,
+ * пропажа — предупреждение с подсказкой); в save — строго (ревью 263 N2):
+ * пропажа и смена типа — проблема, допустим только сдвиг концов до магнита —
+ * предупреждение. Сервер не имеет права терять делитель незатронутой комнаты.
  */
 export function zoneDelimiterCompare(
   expectedModel: Record<string, unknown> | undefined,
@@ -566,8 +596,8 @@ export function zoneDelimiterCompare(
   const warnings: string[] = [];
   const exp = delimiterSigsOf(expectedModel);
   const got = delimiterSigsOf(gotModel);
-  const expectedRooms = ((expectedModel ?? {}) as { rooms2?: Record<string, unknown>; rooms1?: Record<string, unknown> }).rooms2 ?? ((expectedModel ?? {}) as { rooms1?: Record<string, unknown> }).rooms1;
-  const gotRooms = ((gotModel ?? {}) as { rooms2?: Record<string, unknown>; rooms1?: Record<string, unknown> }).rooms2 ?? ((gotModel ?? {}) as { rooms1?: Record<string, unknown> }).rooms1;
+  const expectedRooms = roomsMapOf(expectedModel);
+  const gotRooms = roomsMapOf(gotModel);
   const { pairs: exact } = matchRoomsByContour(expectedRooms, gotRooms);
   const heirOf = roomHeirs(expectedRooms, gotRooms, exact, mode);
   const gotByRoom = new Map<string, ZoneDelimiterSig[]>();
@@ -583,6 +613,34 @@ export function zoneDelimiterCompare(
   };
   const midpoint = (e: ZoneDelimiterSig): Point => ({ x: (e.p1.x + e.p2.x) / 2, y: (e.p1.y + e.p2.y) / 2 });
   const used = new Set<string>();
+  // ревью 263 N4: пул нестрогого поиска — только делители комнат got,
+  // пересекающих полигон затронутой комнаты (наследники split/merge лежат
+  // внутри её полигона и покрыты пересечением); комната без контура не
+  // отсекается (консервативно). Строгие комнаты сопоставляются раньше.
+  // Делитель, чья комната исчезла (id_room не разрешается в got), судится
+  // по геометрии: середина в полигоне затронутой комнаты (ревью 261 №5:
+  // редактор пересоздаёт id комнат).
+  const intersectingPool = (rid: string): ZoneDelimiterSig[] => {
+    const expPoly = roomPolygonOf((expectedRooms ?? {})[rid]);
+    if (!expPoly) return [...gotByRoom.values()].flat();
+    const intersectingRooms = new Set(
+      Object.entries(gotRooms ?? {})
+        .filter(([, r]) => {
+          const gp = roomPolygonOf(r);
+          return !gp || overlapShare(expPoly, gp) > 0 || overlapShare(gp, expPoly) > 0;
+        })
+        .map(([k]) => k),
+    );
+    return got.filter((g) => {
+      if (gotRooms && g.idRoom in gotRooms) return intersectingRooms.has(g.idRoom);
+      return pointInPolygon(midpoint(g), expPoly, 0.5);
+    });
+  };
+  // сдвиг концов до магнита (≤15 см) при том же типе и плане (живой эталон 262)
+  const magnetShift = (e: ZoneDelimiterSig, g: ZoneDelimiterSig): boolean =>
+    g.type === e.type && g.plan === e.plan &&
+    ((dist(e.p1, g.p1) <= ZONE_LIMITS.edgeSnapCm && dist(e.p2, g.p2) <= ZONE_LIMITS.edgeSnapCm) ||
+      (dist(e.p1, g.p2) <= ZONE_LIMITS.edgeSnapCm && dist(e.p2, g.p1) <= ZONE_LIMITS.edgeSnapCm));
   for (const e of exp) {
     const gid = exact.get(e.idRoom) ?? sameOf(e.idRoom);
     const strictList = (gid ? gotByRoom.get(gid) : undefined) ?? [];
@@ -591,23 +649,22 @@ export function zoneDelimiterCompare(
       used.add(found.key);
       continue;
     }
+    const affected = opts.affectedRooms?.has(e.idRoom) ?? false;
     // ревью 261 №5/№8, живой эталон 262: комната затронута изменёнными стенами —
     // редактор вправе переопределить разделитель (живой эталон: конец, попавший
     // в узел разреза, перепривязывается к новой стене со сдвигом точки до
     // величины магнита). Разделитель, совпавший по полной проекции, — норма;
     // совпавший по типу/плану с точностью до магнита, — предупреждение;
     // отсутствующий — предупреждение с подсказкой. Не блок.
-    if (opts.affectedRooms?.has(e.idRoom)) {
-      const pool = [...gotByRoom.values()].flat().filter((g) => !used.has(g.key));
+    // (только normalize — ревью 263 N2)
+    if (affected && mode === "normalize") {
+      const pool = intersectingPool(e.idRoom).filter((g) => !used.has(g.key));
       const same = pool.find((g) => sameSig(e, g));
       if (same) {
         used.add(same.key);
         continue;
       }
-      const shifted = pool.find((g) =>
-        g.type === e.type && g.plan === e.plan &&
-        ((dist(e.p1, g.p1) <= ZONE_LIMITS.edgeSnapCm && dist(e.p2, g.p2) <= ZONE_LIMITS.edgeSnapCm) ||
-          (dist(e.p1, g.p2) <= ZONE_LIMITS.edgeSnapCm && dist(e.p2, g.p1) <= ZONE_LIMITS.edgeSnapCm)));
+      const shifted = pool.find((g) => magnetShift(e, g));
       if (shifted) {
         used.add(shifted.key);
         warnings.push(`zone_topology_changed: room ${e.idRoom}: редактор переопределил разделитель зон ${e.key} при изменении стен (${e.type}, ${Math.round(e.length * 100)} см → ${Math.round(shifted.length * 100)} см) — проверьте зоны потолка`);
@@ -615,6 +672,18 @@ export function zoneDelimiterCompare(
       }
       warnings.push(`zone_topology_changed: room ${e.idRoom}: комната изменена стенами, редактор не сохранил разделитель зон ${e.key} (${e.type}, ${Math.round(e.length * 100)} см) — при переносе или удалении стен сначала удалите разделители (zone_ceiling_remove)`);
       continue;
+    }
+    // ревью 263 N2: в save затронутая комната сверяется строго (редактор уже
+    // отработал), допустим только сдвиг концов до магнита — предупреждение;
+    // пропажа и смена типа уходят в общий строгий путь ниже — проблема
+    if (affected && mode === "save") {
+      const pool = intersectingPool(e.idRoom).filter((g) => !used.has(g.key));
+      const shifted = pool.find((g) => magnetShift(e, g));
+      if (shifted) {
+        used.add(shifted.key);
+        warnings.push(`zone_topology_changed: room ${e.idRoom}: редактор переопределил разделитель зон ${e.key} при изменении стен (${e.type}, ${Math.round(e.length * 100)} см → ${Math.round(shifted.length * 100)} см) — проверьте зоны потолка`);
+        continue;
+      }
     }
     const near = strictList.filter((g) => !used.has(g.key)).find((g) => (samePointTol(e.p1, g.p1) && samePointTol(e.p2, g.p2)) || (samePointTol(e.p1, g.p2) && samePointTol(e.p2, g.p1)));
     if (near) {

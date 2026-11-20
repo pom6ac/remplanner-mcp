@@ -293,14 +293,23 @@ test("262 №5: wall_delete, редактор удалил делитель вм
   );
 });
 
-test("262 №5: незатронутая комната с делителем исчезла — по-прежнему отказ", async () => {
+test("262 №5: незатронутая комната с делителем исчезла — по-прежнему отказ (ревью 263 N8: по details, не regex)", async () => {
   const { server, room } = wallDeleteModel();
   const ws = wsMock(server, (norm) => {
     delete (norm["rooms2"] as Record<string, unknown>)[room];
   });
   await ws.open("0", "1");
-  // стены не менялись — комната исчезла без причины
-  await assert.rejects(() => ws.applyWalls("noop", () => "ok"), /INVALID_GEOMETRY|потерял/);
+  // стены не менялись — комната исчезла без причины; проверяем детали отказа,
+  // а не общий regex (ревью 263 N8): отказ именно от сверки разделителей —
+  // zone_mismatches непуст и объясняет потерю делителя исчезнувшей комнаты
+  await assert.rejects(() => ws.applyWalls("noop", () => "ok"), (e: unknown) => {
+    const err = e as { code?: string; details?: Record<string, unknown> };
+    assert.equal(err.code, "INVALID_GEOMETRY", `код: ${err.code}`);
+    const details = err.details ?? {};
+    const zm = details["zone_mismatches"] as string[] | undefined;
+    assert.ok(Array.isArray(zm) && zm.some((p) => p.includes("потерян")), JSON.stringify(details).slice(0, 400));
+    return true;
+  });
 });
 
 // ---------- №6: legacy points-форма vs нормализованная — обе стороны ----------

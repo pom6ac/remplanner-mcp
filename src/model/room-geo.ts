@@ -83,6 +83,13 @@ function roomPolygon(room: GeoRoomRec): Point[] | undefined {
   return (room.polygon ?? room.points) as Point[] | undefined;
 }
 
+/** Комнаты модели (rooms2 ?? rooms1) — общий слой сверов (упрощение ревью 263). */
+export function roomsMapOf(
+  model: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  return ((model?.["rooms2"] ?? model?.["rooms1"]) ?? undefined) as Record<string, unknown> | undefined;
+}
+
 /** Полигон комнаты записи (polygon ?? points) — для сопоставления по каноническому контуру. */
 export function roomPolygonOf(room: unknown): Point[] | undefined {
   return roomPolygon((room ?? {}) as GeoRoomRec);

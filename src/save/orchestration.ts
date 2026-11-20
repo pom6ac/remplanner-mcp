@@ -18,7 +18,7 @@ import { levelHoleMismatches } from "../model/floorhole.ts";
 import { finishCompare } from "../model/finish.ts";
 import { zoneDelimiterCompare } from "../model/zone.ts";
 import { demolitionMismatches } from "../model/demolition.ts";
-import { roomsSaveCompare, affectedRoomIds, type RoomsChangePolicy } from "../model/rooms-save.ts";
+import { roomsSaveCompare, zoneAffectedRoomIds, type RoomsChangePolicy } from "../model/rooms-save.ts";
 import { dimsMismatches } from "../model/dims.ts";
 import {
   balconyWallPropertyMismatches,
@@ -431,11 +431,11 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
   // этап 260: разделители зон потолка до записи сверяются с нормализованной моделью
   // (режим normalize: ревью 261 №5 — комната, затронутая изменёнными стенами
   // и исчезнувшая, — предупреждение, не отказ; живой эталон 262: id комнат
-  // редактор пересоздаёт, затронутость — по геометрии комнат ожидания)
+  // редактор пересоздаёт, затронутость — по геометрии комнат ожидания;
+  // ревью 263 N1: затронутость строже affectedRoomIds — Т-примыкание новой
+  // стены к оси общей стены не делает соседа затронутым)
   const zoneWallPolicy = host.roomChangePolicy();
-  const zoneAffected = zoneWallPolicy.changedWalls
-    ? affectedRoomIds((host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, unknown> | undefined, zoneWallPolicy.changedWalls)
-    : undefined;
+  const zoneAffected = zoneAffectedRoomIds(host.model() as unknown as Record<string, unknown>, zoneWallPolicy);
   const zoneNorm = zoneDelimiterCompare(
     host.model() as unknown as Record<string, unknown>,
     norm.model as unknown as Record<string, unknown>,
@@ -738,17 +738,10 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       ((after.model["shields"] as Record<string, unknown> | undefined) ?? {}) as Record<string, never>,
     );
     // этап 260: разделители зон потолка после save — нормализованное ожидание против
-    // сервера, строго (привязка узлов zone — производное редактора, не сверяется)
-    // этап 260: разделители зон потолка после save — нормализованное ожидание против
-    // сервера (привязка узлов zone — производное редактора, не сверяется).
-    // Ревью 261 №5/№8, живой эталон 262: комнаты, затронутые изменёнными стенами,
-    // — нестрогие (редактор перепривязывает концы к новой стене и пересоздаёт id)
-    const zoneAffectedAfter = zoneWallPolicy.changedWalls
-      ? affectedRoomIds(
-          ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, unknown> | undefined,
-          zoneWallPolicy.changedWalls,
-        )
-      : undefined;
+    // сервера, строго (привязка узлов zone — производное редактора, не сверяется;
+    // ревью 263 N2: затронутые комнаты в save сверяются строго, допустим только
+    // сдвиг концов до магнита — предупреждение)
+    const zoneAffectedAfter = zoneAffectedRoomIds(norm.model as unknown as Record<string, unknown>, zoneWallPolicy);
     const zoneAfterCheck = zoneDelimiterCompare(
       norm.model as unknown as Record<string, unknown>,
       after.model as unknown as Record<string, unknown>,

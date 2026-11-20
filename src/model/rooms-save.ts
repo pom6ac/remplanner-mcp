@@ -1,6 +1,7 @@
 import type { Point } from "./types.ts";
-import { closestPoint, dist, pointInPolygon, polygonArea, segmentsCross, type Segment } from "./geometry.ts";
+import { closestPoint, collinearOverlapCm, dist, pointInPolygon, polygonArea, segmentsCross, type Segment } from "./geometry.ts";
 import { matchRoomsByContour, roomHeirs, roomPolygonOf, type FinishMode } from "./finish.ts";
+import { roomsMapOf } from "./room-geo.ts";
 
 // Надёжность save по комнатам (этап 126, урок ревью 46): прежняя сверка ловила только
 // полное исчезновение комнат (N→0). Частичная потеря N→M>0 и потеря пользовательских
@@ -276,6 +277,61 @@ export function roomsChangePolicy(
   const changed = changedWallSegments(baseWalls, nowWalls);
   if (changed.length === 0) return {};
   return { changedWalls: changed, affectedRoomIds: affectedRoomIds(baseRooms, changed) };
+}
+
+/** Комнаты модели (rooms2 ?? rooms1) — общий слой сверов; сама функция в room-geo
+ *  (листовом модуле, чтобы zone→rooms-save→finish→zone не замыкалась). */
+
+/** Расстояние от точки до контура (минимум по рёбрам). */
+function pointPolygonDistance(p: Point, poly: Point[]): number {
+  let best = Infinity;
+  for (let i = 0; i < poly.length; i++) {
+    const d = pointSegmentDistance(p, { p1: poly[i]!, p2: poly[(i + 1) % poly.length]! });
+    if (d < best) best = d;
+    if (best <= 0) break;
+  }
+  return best;
+}
+
+/**
+ * Затронутость комнат для сверки разделителей зон (ревью 263 N1) — строже,
+ * чем affectedRoomIds (та рассчитана на исчезновение комнат при нормализации
+ * и с допуском захвата соседа через общую стену). Комната затронута, только
+ * если изменённая стена проходит через её внутренность или её ребро лежит
+ * коллинеарно на изменённой стене на ненулевой длине. Т-примыкание конца
+ * новой стены к оси общей стены соседнюю комнату не затрагивает (обычный
+ * wall_add при split). undefined — стены не менялись.
+ */
+export function zoneAffectedRoomIds(
+  model: Record<string, unknown> | undefined,
+  policy: RoomsChangePolicy,
+): Set<string> | undefined {
+  const changed = policy.changedWalls;
+  if (!changed || changed.length === 0) return undefined;
+  const rooms = roomsMapOf(model) ?? {};
+  const out = new Set<string>();
+  for (const [rid, room] of Object.entries(rooms)) {
+    const poly = roomPolygonCm(room);
+    if (!poly) continue;
+    for (const w of changed) {
+      // стена проходит через внутренность комнаты (точки стены строго внутри,
+      // не на границе — касание ребром считает коллинеарная проверка ниже)
+      let through = false;
+      for (let k = 0; k <= 4 && !through; k++) {
+        const t = k / 4;
+        const p = { x: w.p1.x + (w.p2.x - w.p1.x) * t, y: w.p1.y + (w.p2.y - w.p1.y) * t };
+        if (pointInPolygon(poly, p, 1e-6) && pointPolygonDistance(p, poly) > 0.5) through = true;
+      }
+      if (through) { out.add(rid); break; }
+      // ребро комнаты лежит на изменённой стене (коллинеарное перекрытие)
+      let onEdge = false;
+      for (let i = 0; i < poly.length && !onEdge; i++) {
+        if (collinearOverlapCm(w, { p1: poly[i]!, p2: poly[(i + 1) % poly.length]! }) > 0.5) onEdge = true;
+      }
+      if (onEdge) { out.add(rid); break; }
+    }
+  }
+  return out;
 }
 
 /**

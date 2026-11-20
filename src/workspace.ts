@@ -24,7 +24,7 @@ import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./rend
 import { finishCompare } from "./model/finish.ts";
 import { zoneDelimiterCompare } from "./model/zone.ts";
 import { demolitionMismatches } from "./model/demolition.ts";
-import { roomsSaveCompare, roomsChangePolicy, affectedRoomIds, type RoomsChangePolicy } from "./model/rooms-save.ts";
+import { roomsSaveCompare, roomsChangePolicy, zoneAffectedRoomIds, type RoomsChangePolicy } from "./model/rooms-save.ts";
 import { dimsMismatches } from "./model/dims.ts";
 import {
   cableConnectionMismatches,
@@ -625,10 +625,10 @@ export class Workspace {
       // (сопоставление комнат по контуру; ревью 261 №5: комната, затронутая
       // изменёнными стенами и исчезнувшая, — штатный случай, предупреждение;
       // живой эталон 262: id комнат редактор пересоздаёт при перестройке —
-      // затронутость считается по геометрии комнат ожидания)
-      const zoneAffected = wallPolicy.changedWalls
-        ? affectedRoomIds((this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined, wallPolicy.changedWalls)
-        : undefined;
+      // затронутость считается по геометрии комнат ожидания; ревью 263 N1:
+      // затронутость строже affectedRoomIds — сосед через общую стену при
+      // Т-примыкании не затронут)
+      const zoneAffected = zoneAffectedRoomIds(this.modelInternal as unknown as Record<string, unknown>, wallPolicy);
       const zoneNorm = zoneDelimiterCompare(
         this.modelInternal! as unknown as Record<string, unknown>,
         norm.model as unknown as Record<string, unknown>,
