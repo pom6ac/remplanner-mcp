@@ -16,12 +16,13 @@ import { mkdirSync, writeFileSync, copyFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { loadModel, type LoadedModel } from "../../src/api.ts";
+import { loadModel, saveModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { BASE_URL, HTTP_TIMEOUT_MS, USER_AGENT } from "../../src/config.ts";
+import { cookieHeader, type SessionState } from "../../src/session.ts";
 import { toModel } from "../../src/model/canonical.ts";
-import { HOME_DIR, PLANS_DIR } from "../../src/config.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … " + process.argv[1] + " run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
@@ -48,9 +49,51 @@ function countsOk(c: Compact, walls: number, items: number, shields: number): bo
   return c.walls.length === walls && c.items.length === items && (c.shields?.length ?? 0) === shields;
 }
 
-/** Строгая сверка модели (data) с бэкапом: обе стороны через toModel. */
+/** Строгая сверка модели (data) — гард «план в редакторе == сервер» ДО первой записи
+ *  (там данные обязаны совпасть байт в байт после toModel). */
 const canon = (m: Record<string, unknown>): string => JSON.stringify(toModel(structuredClone(m) as never));
 const sameData = (before: Record<string, unknown>, after: Record<string, unknown>): boolean => canon(before) === canon(after);
+
+/**
+ * Семантическая сигнатура плана — сверка ПОСЛЕ записи (урок 256-прогона): любой
+ * save через редактор перегенерирует id рёбер стен/комнат и id_room предметов
+ * (eds[].l[].id, rooms1/rooms2 ключи, items.id_room) при неизменной геометрии —
+ * строгий JSON сравнивать нельзя. Сигнатура: осевые отрезки стен (координаты,
+ * толщина, материал, роль) + число сущностей каждой коллекции + комнаты по
+ * полигону/площади.
+ */
+const ownSig = (m: Record<string, unknown>): string => {
+  const walls = Object.values((m["walls"] ?? {}) as Record<string, Record<string, unknown>>)
+    .map((w) => {
+      const p1 = w["p1"] as { x: number; y: number }, p2 = w["p2"] as { x: number; y: number };
+      return [p1.x, p1.y, p2.x, p2.y, w["depth"], w["material"], w["role"] ?? ""].join(":");
+    })
+    .sort()
+    .join("|");
+  const rooms = (m["rooms2"] ?? m["rooms1"] ?? {}) as Record<string, Record<string, unknown>>;
+  const roomSig = Object.values(rooms)
+    .map((r) => JSON.stringify([(r["polygon"] ?? []).map((p: { x: number; y: number }) => [p.x, p.y]), r["area"] ?? null]))
+    .sort()
+    .join("|");
+  const colls = Object.keys(m)
+    .filter((k) => !["v", "id", "plan_id", "session"].includes(k))
+    .map((k) => `${k}=${Object.keys(m[k] ?? {}).length}`)
+    .sort()
+    .join(",");
+  return `${walls}#${roomSig}#${colls}`;
+};
+const samePlan = (before: Record<string, unknown>, after: Record<string, unknown>): boolean => ownSig(before) === ownSig(after);
+
+/** authkey проекта из ЛК (для restore через A-транспорт; не печатается). */
+const authKeyFor = async (session: SessionState, objectId: string): Promise<string> => {
+  const res = await fetch(`${BASE_URL}/client/`, {
+    headers: { cookie: cookieHeader(session, "remplanner.ru"), "user-agent": USER_AGENT, referer: `${BASE_URL}/client/` },
+    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+  });
+  const m = new RegExp(`data-object="${objectId}" data-authkey="([0-9a-f]+)"`).exec(await res.text());
+  if (!m) throw new Error(`в ЛК нет authkey для объекта (restore невозможен)`);
+  return m[1]!;
+};
 
 const ctx = new ServerContext();
 const server = buildServer(ctx);
@@ -100,6 +143,7 @@ let ownBefore: LoadedModel | null = null;
 let shieldItemSiteId: string | null = null;
 let verified = false;
 let restoreOk = false;
+let mainOk = false;
 try {
   // 0. бэкап GET dev-проекта + контрольный GET рабочего
   ownBefore = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
@@ -127,25 +171,25 @@ try {
   // пробный щиток у существующей стены (по захваченному id стены из model_get)
   const wall = before.walls[0]!;
   const addRes = (await call("item_add", { name: "electric_shield", position: { against_wall: { wall_id: wall.id, offset_mm: 500 } } })) as Record<string, unknown>;
-  entityId(addRes);
-  // захват site_id созданного предмета: разница ключей items GET до/после (без
-  // лексической фильтрации меток — ревью 256 №3а)
-  const itemsAfterAdd = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const keysBefore = new Set(Object.keys((ownBefore.model["items"] ?? {}) as Record<string, unknown>));
-  const added = Object.keys((itemsAfterAdd.model["items"] ?? {}) as Record<string, unknown>).filter((k) => !keysBefore.has(k));
-  if (added.length !== 1) throw new Error(`ожидался 1 новый предмет, по GET найдено ${added.length}`);
-  shieldItemSiteId = added[0]!;
   const shieldItemLabel = entityId(addRes);
+  // захват site_id созданного предмета: compact-щиток несёт item = id сайта
+  // (до save модель на сервере ещё не изменилась — GET-диф тут не работает)
+  const railRes = await call("shield_rail_add", { item_id: shieldItemLabel });
+  shieldItemSiteId = String((railRes["entity"] as { item?: string } | undefined)?.item ?? "");
+  if (!shieldItemSiteId) throw new Error("shield_rail_add: в compact-щитке нет item (site_id предмета)");
   console.log("shield item:", shieldItemLabel, "site_id captured");
 
-  // 1. конструктор: рейка + два модуля + update
-  const railRes = await call("shield_rail_add", { item_id: shieldItemLabel });
+  // 1. конструктор: рейка + 5 модулей (в т.ч. типы без default_subtype — ревью 256 №1)
   console.log("rail add ok, shields:", JSON.stringify(railRes["entity"]));
   await call("shield_module_add", { item_id: shieldItemLabel, type: "shield_module", subtype: "25A", group_number: 1, comment: "проба 255" });
   const mod2 = await call("shield_module_add", { item_id: shieldItemLabel, type: "shield_module_x2", rail: 0 });
   const mods = (mod2["entity"] as { modules?: { module_id: string }[] }).modules ?? [];
   if (mods.length !== 2) throw new Error(`модулей ${mods.length}, ожидалось 2`);
   await call("shield_module_update", { item_id: shieldItemLabel, module_id: mods[1]!.module_id, subtype: "16A/30mA", group_number: 2 });
+  // uzip/terminal/uvr — без subtype: MCP обязан поставить subtype как в редакторе
+  await call("shield_module_add", { item_id: shieldItemLabel, type: "shield_module_uzip" });
+  await call("shield_module_add", { item_id: shieldItemLabel, type: "shield_module_terminal" });
+  await call("shield_module_add", { item_id: shieldItemLabel, type: "shield_module_uvr" });
   console.log("modules:", mods.map((x) => x.module_id).join(" "));
 
   // 2. validate → save
@@ -163,9 +207,12 @@ try {
   const checks: [string, boolean][] = [
     ["щиток в model_get (1 запись, привязка к предмету)", !!sh && sh.item.length > 0],
     ["рейки: 2 (умолчание + добавленная)", !!sh && sh.rails === 2],
-    ["модули: 2 (автомат 25A + дифавтомат 16A/30mA)", !!sh && sh.modules.length === 2
+    ["модули: 5 (автомат 25A, диф 16A/30mA, uzip 5A, terminal 5A, uvr 63A)", !!sh && sh.modules.length === 5
       && sh.modules[0]!.type === "shield_module" && sh.modules[0]!.subtype === "25A"
-      && sh.modules[1]!.type === "shield_module_x2" && sh.modules[1]!.subtype === "16A/30mA"],
+      && sh.modules[1]!.type === "shield_module_x2" && sh.modules[1]!.subtype === "16A/30mA"
+      && sh.modules[2]!.type === "shield_module_uzip" && sh.modules[2]!.subtype === "5A"
+      && sh.modules[3]!.type === "shield_module_terminal" && sh.modules[3]!.subtype === "5A"
+      && sh.modules[4]!.type === "shield_module_uvr" && sh.modules[4]!.subtype === "63A"],
     ["щиток-предмет на месте", after.items.some((i) => i.id === shieldItemLabel)],
   ];
   let allOk = true;
@@ -200,20 +247,21 @@ try {
   const readonlyAfter = await snap(READONLY_ID, "after");
   const sameReadonly = JSON.stringify(readonlyBefore.model) === JSON.stringify(readonlyAfter.model);
   console.log(sameReadonly ? "READONLY OK" : "READONLY CHANGED — СТОП");
-  // свой план dev-проекта после очистки — как до прогона (сверка data с бэкапом)
+  // свой план dev-проекта после очистки — как до прогона (семантическая сигнатура)
   const ownAfter = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const sameOwn = sameData(ownBefore.model, ownAfter.model);
-  if (!sameOwn) console.log("OWN PLAN CHANGED (данные после очистки не равны бэкапу)");
+  const sameOwn = samePlan(ownBefore.model, ownAfter.model);
+  if (!sameOwn) console.log("OWN PLAN CHANGED (сигнатура плана отличается от бэкапа)");
   console.log(sameOwn ? "OWN PLAN OK (после очистки как до прогона)" : "OWN PLAN CHANGED");
 
-  console.log("RESULT:", allOk && verified && sameReadonly && sameOwn && restoreOk ? "LIVE_OK" : "LIVE_FAIL");
+  mainOk = allOk && verified && sameReadonly && sameOwn;
 } catch (e) {
   console.error("PROBE_ERROR:", (e as Error).message);
-  console.log("RESULT: LIVE_FAIL");
+  mainOk = false;
 } finally {
   // ревью 256 №3б: восстановление при ЛЮБОМ исходе — удалить свои объекты по
-  // захваченному site_id (метка из свежей модели), при расхождении с бэкапом —
-  // вернуть бэкап (project_import_plan + save), затем сверить data.
+  // захваченному site_id (метка из свежей модели), при расхождении сигнатуры
+  // плана с бэкапом — вернуть бэкап точной записью data (A-транспорт), затем
+  // сверить сигнатуру.
   try {
     if (ownBefore) {
       if (shieldItemSiteId) {
@@ -226,20 +274,23 @@ try {
         }
       }
       const afterModel = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-      if (!sameData(ownBefore.model, afterModel.model)) {
-        console.log("finally: данные отличаются от бэкапа — возврат бэкапа");
-        const planFile = `backup-${OBJECT_ID}-257.plan`;
-        writeFileSync(join(HOME_DIR, "plans", planFile), JSON.stringify({ model: ownBefore.model, saved_at: new Date().toISOString() }, null, 1));
-        await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
-        await call("project_import_plan", { path: planFile, replace: true });
-        const sv = (await call("project_save", {})) as { verified?: boolean };
-        console.log("finally: бэкап возвращён, save verified:", sv.verified === true);
+      if (!samePlan(ownBefore.model, afterModel.model)) {
+        console.log("finally: сигнатура плана отличается от бэкапа — возврат бэкапа");
+        const fresh = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+        const sv = await saveModel(ctx.session(), {
+          objectId: OBJECT_ID,
+          planId: PLAN_ID,
+          authkey: await authKeyFor(ctx.session(), OBJECT_ID),
+          saveId: fresh.save_id,
+          model: ownBefore.model,
+        });
+        console.log("finally: бэкап возвращён (A-транспорт), ok:", sv.ok, "conflict:", sv.conflict);
         const restored = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-        restoreOk = sameData(ownBefore.model, restored.model);
-        console.log("finally: сверка data после восстановления:", restoreOk ? "OK" : "MISMATCH");
+        restoreOk = samePlan(ownBefore.model, restored.model);
+        console.log("finally: сверка сигнатуры после восстановления:", restoreOk ? "OK" : "MISMATCH");
       } else {
         restoreOk = true;
-        console.log("finally: данные проекта равны бэкапу");
+        console.log("finally: сигнатура плана равна бэкапу");
       }
     }
   } catch (e) {
@@ -248,4 +299,6 @@ try {
   }
   await closeBrowser().catch(() => {});
 }
-process.exit(0);
+// итог — после восстановительного finally: ядро пробы + состояние проекта
+console.log("RESULT:", mainOk && restoreOk ? "LIVE_OK" : "LIVE_FAIL");
+process.exit(mainOk && restoreOk ? 0 : 1);
