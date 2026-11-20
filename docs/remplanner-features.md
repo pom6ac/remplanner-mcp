@@ -1133,8 +1133,11 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
   дописывает props сразу при соединении). source_items CablingWarnFloor: от
   терморегулятора — кабельный/ИК контур, узлы; **водяной контур к проводу не
   подключается**; один терморегулятор на кабель (l10n
-  cabling_warm_floor_not_connect_two_thermo); у кабеля не более одного контура
-  (not_connect_two_floor — узлы пути контуры не разделяют); повторная связь
+  cabling_warm_floor_not_connect_two_thermo); MCP строже редактора: в редакторе
+  запрещён прямой штрих контур–контур (not_connect_two_floor), терморегулятор
+  с двумя контурами MCP не строит (ревью 271 N3; по коду бандла второй штрих
+  терморегулятор → контур проверяется только по same_floor/two_thermo);
+  повторная связь
   контура — cabling_warm_floor_not_connect_same_floor. warm_floor_update
   пересчитывает вершины-контуры кабелей; warm_floor_delete с кабелем — отказ.
   **Коллекторные узлы** — предметы каталога `radiator_collector` (48×10,

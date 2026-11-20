@@ -185,21 +185,22 @@ test("268: один терморегулятор на кабель (l10n cabling
   );
 });
 
-test("ревью 269 m2: у кабеля тёплого пола не более одного контура (not_connect_two_floor) — оба пути из репро", () => {
+test("ревью 269 m2: у кабеля тёплого пола не более одного контура — оба пути из репро (отказ сохранён, ревью 271 N3)", () => {
   const { m, wfc } = scenario();
   const wfi = addWarmFloor(m, { kind: "infrared", corner1: { x: 5500, y: 500 }, corner2: { x: 6500, y: 1500 } });
   const thermo2 = addItem(m, { name: "socket_thermo", position: { againstWall: { wallId: topWall(m), offsetMm: 3000 } }, catalogEntry: entry("socket_thermo") } as never);
   // путь C: контур → узел → контур
   assert.throws(
     () => addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: wfc.id }, { x: 2000, y: 2000 }, { itemId: wfi.id }] }),
-    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("одного контура"),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("MCP не строит"),
   );
-  // путь C2: контур → терморегулятор → контур — тоже отклоняется: узлы и
-  // промежуточные предметы контуры не «разделяют» (l10n not_connect_two_floor:
-  // у кабеля один контур); прежнее сообщение «добавьте узел» противоречило факту
+  // путь C2: контур → терморегулятор → контур — тоже отклоняется: MCP строже
+  // редактора — в редакторе запрещён прямой штрих контур–контур
+  // (not_connect_two_floor), терморегулятор с двумя контурами MCP не строит;
+  // прежнее сообщение «добавьте узел» противоречило факту
   assert.throws(
     () => addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: wfc.id }, { itemId: thermo2.id }, { itemId: wfi.id }] }),
-    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("одного контура"),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT" && String((e as McpError).message).includes("MCP не строит"),
   );
   // один контур с терморегулятором и узлами — допустим
   const wire = addElecCable(m, { tool: "warm_floor_wire", path: [{ itemId: thermo2.id }, { x: 2000, y: 2000 }, { itemId: wfc.id }] });
