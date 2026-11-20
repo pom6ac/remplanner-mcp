@@ -143,6 +143,26 @@ test("ревью 287 N1: позиция за концом рейки — по-п
   }
 });
 
+test("ревью 287 N2: bad_slot при переносе вправо подсказывает expected_index (конец соседа − 0.5)", async () => {
+  const client = await start();
+  try {
+    // A (2 DIN) на 0, B (1 DIN) на 2; перенос A на начало соседа B (index 2) —
+    // ожидаемая позиция drag: 2 + 1 − 0.5 = 2.5
+    const add = await call(client, "shield_module_add", { item_id: "sh1", type: "shield_module_uzo", subtype: "16A/30mA" });
+    const idA = (add["entity"] as { modules: { module_id: string; index: number }[] }).modules.find((m) => m.index === 0)!.module_id;
+    await threeModules(client);
+    const res = await client.callTool({ name: "shield_module_update", arguments: { item_id: "sh1", module_id: idA, index: 2 } });
+    assert.equal(res.isError, true, "index 2 — ошибка (начало соседа, не конец − 0.5)");
+    const payload = errPayload(res);
+    assert.equal(payload.code, "INVALID_ARGUMENT");
+    const details = payload.details as { kind?: string; expected_index?: number } | undefined;
+    assert.equal(details?.kind, "bad_slot");
+    assert.equal(details?.expected_index, 2.5, "подсказка: конец соседа − 0.5");
+  } finally {
+    await client.close();
+  }
+});
+
 test("ревью 285 №2: shield_rail_delete — ответ с deleted_modules/deleted_wires (каскад проводов)", async () => {
   const client = await start();
   try {

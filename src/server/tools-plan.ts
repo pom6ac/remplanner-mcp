@@ -1614,7 +1614,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       "Изменить модуль щитка: номинал (subtype), номер группы, подпись (comment), перенос между " +
         "рейками (rail — индекс 0-based, модуль ставится в конец рейки, как drag в редакторе) и " +
         "изменение порядка (index — целевая DIN-позиция на сетке 0.5, как drag; модуль шире 0.5 DIN " +
-        "ставится только к началу соседа). module_id — id модуля из model_get shields[].modules[].module_id. " +
+        "ставится только к началу соседа, а вправо — index = конец соседа − 0.5, модуль встанет " +
+        "сразу за соседом; в bad_slot ошибка подсказывает expected_index). module_id — id модуля " +
+        "из model_get shields[].modules[].module_id. " +
         "Провода модуля сохраняются (порты переезжают вместе с модулем).",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),

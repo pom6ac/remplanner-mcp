@@ -540,7 +540,7 @@ export function reorderShieldModule(shield: Shield, mod: ShieldModule, index: nu
       throw new McpError(
         "INVALID_ARGUMENT",
         `модуль шире ${SHIELD_MODULE_SLOT_DIN} DIN нельзя поставить в позицию ${index} (сосед занимает ${e}..${e + w}) — как в редакторе`,
-        { details: { kind: "bad_slot", index, neighbor_index: e, neighbor_width: w } },
+        { details: { kind: "bad_slot", index, neighbor_index: e, neighbor_width: w, expected_index: e + w - SHIELD_MODULE_SLOT_DIN } },
       );
     }
     for (const other of Object.values(rail.modules)) {
