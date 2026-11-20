@@ -355,6 +355,8 @@ try {
   const same = sig(finalModel.model) === sig(before.model);
   console.log("полная семантическая сверка data с бэкапом:", same ? "OK — модель совпала" : "РАСХОЖДЕНИЕ");
   if (!same) writeFileSync(`${OUT}/296-get-own-after.json`, JSON.stringify(finalModel, null, 1));
+  // m2 ревью 299: расхождение data с бэкапом после restore — стоп (не только печать)
+  if (!same) throw new Error("data после restore != бэкапу (см. 296-get-own-after.json)");
 
   // 8. контрольный проект после: канон + save_id (ревью 298 №9г: strip его
   // удалял — сравниваем явно)

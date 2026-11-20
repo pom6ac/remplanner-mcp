@@ -270,6 +270,8 @@ try {
   const same = sig(finalModel.model) === sig(before.model);
   console.log("полная семантическая сверка data с бэкапом:", same ? "OK — модель совпала" : "РАСХОЖДЕНИЕ");
   if (!same) writeFileSync(`${OUT}/298-get-own-after.json`, JSON.stringify(finalModel, null, 1));
+  // m2 ревью 299: расхождение data с бэкапом после restore — стоп (не только печать)
+  if (!same) throw new Error("data после restore != бэкапу (см. 298-get-own-after.json)");
   const zonesLeft = Object.keys(delimMap(finalModel)).length;
   if (zonesLeft !== 0) throw new Error(`после restore в zone_delimiters ${zonesLeft} записей — не совпало с бэкапом`);
 
