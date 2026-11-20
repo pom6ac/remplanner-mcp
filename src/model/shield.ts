@@ -24,11 +24,11 @@ export const SHIELD_RAIL_MIN_DIN = 12;
 export const SHIELD_RAIL_MAX_DIN = 48;
 
 /**
- * Минимальный слот модуля в DIN (ShieldDimensions.module.slot, бандл app.3.0):
- * порог reorder_modules — модуль шире слота ставится только к началу соседа.
- * Проверяется живой пробой 284 (shield dims).
+ * Минимальный слот модуля в DIN (ShieldDimensions.module.slot, бандл app.3.0,
+ * живая проба 284-dims: 0.5): порог reorder_modules — модуль шире слота ставится
+ * только к началу соседа (вправо — только на позицию «конец соседа − слот»).
  */
-export const SHIELD_MODULE_SLOT_DIN = 1;
+export const SHIELD_MODULE_SLOT_DIN = 0.5;
 
 /**
  * Типы проводов (инструменты shield_wire_* каталога UI; эталон 284):
@@ -481,8 +481,9 @@ export function moveShieldModuleToRail(shield: Shield, mod: ShieldModule, railIn
  * совпадает с началом модуля-соседа при ширине > 1 DIN и позиция за концом рейки.
  */
 export function reorderShieldModule(shield: Shield, mod: ShieldModule, index: number, skipRailCheck = false): void {
-  if (!Number.isFinite(index) || index < 0 || !Number.isInteger(index)) {
-    throw new McpError("INVALID_ARGUMENT", `index — целое число DIN ≥ 0, получено ${index}`);
+  // слоты редактора — сетка 0.5 DIN (ShieldDimensions.module.slot, проба 284-dims)
+  if (!Number.isFinite(index) || index < 0 || Math.abs(index * 2 - Math.round(index * 2)) > 1e-9) {
+    throw new McpError("INVALID_ARGUMENT", `index — позиция на сетке 0.5 DIN ≥ 0, получено ${index}`);
   }
   if (moduleInCollector(shield, mod.id)) {
     throw new McpError(

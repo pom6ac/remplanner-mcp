@@ -1151,10 +1151,11 @@ test("284: reorder — сдвиг соседей в обе стороны; мо�
   const rail = Object.values(s.rails)[0]!;
   const mods = () => Object.values(rail.modules).sort((x, y) => x.index - y.index);
   const [a, b, c, d] = mods() as [ReturnType<typeof mods>[number], ReturnType<typeof mods>[number], ReturnType<typeof mods>[number], ReturnType<typeof mods>[number]];
-  // рейка: a(0, 1 DIN), b(1, 2 DIN), c(3, 1 DIN), d(4, 1 DIN); слот 2 — внутри b,
-  // его последний DIN → 1-полюсный a ставится туда, b сдвигается влево (алгоритм
-  // reorder_modules редактора)
-  reorderShieldModule(s, a, 2);
+  // рейка: a(0, 1 DIN), b(1, 2 DIN), c(3, 1 DIN), d(4, 1 DIN); слоты — сетка 0.5 DIN
+  // (ShieldDimensions.module.slot, проба 284-dims). a на позицию 2 — отказ:
+  // модуль шире слота вправо ставится только на «конец соседа − слот» (2.5)
+  assert.throws(() => reorderShieldModule(s, a, 2), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
+  reorderShieldModule(s, a, 2.5);
   assert.deepEqual(mods().map((x) => x.id), [b!.id, a!.id, c!.id, d!.id]);
   assert.deepEqual(mods().map((x) => x.index), [0, 2, 3, 4]);
   // обратно: a (index 2) на позицию 0 — b сдвигается вправо
@@ -1165,11 +1166,13 @@ test("284: reorder — сдвиг соседей в обе стороны; мо�
   assert.deepEqual(mods().map((x) => x.id), [b!.id, a!.id, c!.id, d!.id]);
   assert.deepEqual(mods().map((x) => x.index), [0, 2, 3, 4]);
   // позиция внутри самого модуля — no-op (как reorder_modules редактора)
-  reorderShieldModule(s, b, 1);
+  reorderShieldModule(s, b, 0.5);
   assert.deepEqual(mods().map((x) => x.index), [0, 2, 3, 4]);
-  // позиция не начало соседа (3 занята c, «внутри» нельзя для b?) — c 1 DIN:
-  // позиция 3 = начало c — разрешено; позиция 4 = начало d — разрешено;
-  // несуществующий слот (1 — внутри b) — no-op выше; за концом — отказ
+  // не начало соседа (1 — внутри b) для узкого c — отказ (как guard редактора)
+  assert.throws(() => reorderShieldModule(s, Object.values(rail.modules).find((x) => x.type === "shield_module" && x.index === 3)!, 1), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
+  // не на сетке 0.5 — отказ
+  assert.throws(() => reorderShieldModule(s, a, 1.25), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
+  // позиция за концом рейки → INVALID_ARGUMENT
   assert.throws(() => reorderShieldModule(s, a, 9), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
   assert.equal(Object.keys(s.wires ?? {}).length, 0);
 });

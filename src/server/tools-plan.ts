@@ -1597,8 +1597,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     shield_module_update: tool(
       "Изменить модуль щитка: номинал (subtype), номер группы, подпись (comment), перенос между " +
         "рейками (rail — индекс 0-based, модуль ставится в конец рейки, как drag в редакторе) и " +
-        "изменение порядка (index — целевая DIN-позиция, как drag; модуль шире 1 DIN ставится только " +
-        "к началу соседа). module_id — id модуля из model_get shields[].modules[].module_id. " +
+        "изменение порядка (index — целевая DIN-позиция на сетке 0.5, как drag; модуль шире 0.5 DIN " +
+        "ставится только к началу соседа). module_id — id модуля из model_get shields[].modules[].module_id. " +
         "Провода модуля сохраняются (порты переезжают вместе с модулем).",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
