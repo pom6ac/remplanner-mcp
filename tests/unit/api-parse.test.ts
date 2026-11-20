@@ -115,6 +115,49 @@ test("256 №2: пустой/незнакомый pro-блок — unknown", () 
   assert.equal(parseClientPage(`<div id="clientline" class="is_logged">x</div>`).tariff, "unknown");
 });
 
+// Ревью 258 №3: разбор тарифа устойчив к новой разметке и отрицаниям.
+// (а) free-маркеры и явные отрицания — не «pro» на фразах-описаниях;
+// при одновременном наличии free-маркера и признака страницы — unknown.
+test("258 №3а: free-маркер и фраза-описание «Когда PRO активен…» — не pro (unknown)", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+в бесплатной версии доступен 1 проект
+<p>Подробнее о том, когда PRO активен и что он даёт, читайте в разделе «Тарифы».</p>`;
+  assert.equal(parseClientPage(html).tariff, "unknown");
+});
+
+test("258 №3а: явное «PRO не активен» — free, а не pro", () => {
+  assert.equal(parseClientPage(`<div id="clientline" class="is_logged">x</div><p>Сейчас PRO не активен.</p>`).tariff, "free");
+  assert.equal(parseClientPage(`<div id="clientline" class="is_logged">x</div><p>Сейчас PRO активен.</p>`).tariff, "pro");
+});
+
+// (б) data-class — не атрибут class: токен active в нём не признак активного пункта
+test("258 №3б: data-class с токеном active — не признак активного пункта (unknown)", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div data-class="user_cabinet_pro_status_item active">Расширенный тариф</div>`;
+  assert.equal(parseClientPage(html).tariff, "unknown");
+});
+
+// (в) текст активного пункта сравнивается целиком: «Расширенный тариф не
+// подключён» — не pro (явное отрицание — free)
+test("258 №3в: активный пункт «Расширенный тариф не подключён» — free, не pro", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div class="user_cabinet_pro_status_item active">Расширенный тариф не подключён</div>`;
+  assert.equal(parseClientPage(html).tariff, "free");
+});
+
+// обратная сторона: вложенная разметка активного пункта — тоже pro
+test("258 №3: активный пункт с вложенной разметкой (span) — pro", () => {
+  const html = `
+<div id="clientline" class="is_logged">user</div>
+<div class="user_cabinet_pro_status">
+  <div class="user_cabinet_pro_status_item active color-green"><span>Расширенный тариф</span></div>
+</div>`;
+  assert.equal(parseClientPage(html).tariff, "pro");
+});
+
 test("isReloadResponse: reload:101", () => {
   assert.equal(isReloadResponse({ reload: 101 }), true);
   assert.equal(isReloadResponse({ result: "success" }), false);

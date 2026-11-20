@@ -4,7 +4,7 @@ import { STATE_PATH, STATE_ANON_PATH, CACHE_DIR } from "../config.ts";
 import { TOOL_COORD_LIMIT_MM } from "../limits.ts";
 import { McpError, errorToPayload } from "../errors.ts";
 import { loadSession, hasLiveCookies, type SessionState } from "../session.ts";
-import { createAnonProject, loadModel, renameProject, checkStatus, type LoadedModel } from "../api.ts";
+import { createAnonProject, loadModel, renameProject, checkStatus, type ClientPageInfo, type LoadedModel } from "../api.ts";
 import { openEditor, type EditorHandle } from "../editor/adapter.ts";
 import { loadCachedTools, fetchTools, extractToolsBundleName, applyToolFixes, searchTools, toToolEntry, type ToolsBundle, type ToolEntry } from "../catalog.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike, type OpenProject } from "../workspace.ts";
@@ -29,8 +29,10 @@ export type AuthStatusInfo = {
 /**
  * Кеш статуса ЛК (ревью 256 №9): authStatus() делает GET страницы ЛК, а гейты
  * shield_* и PRO-материалов зовут его на каждый вызов инструмента — серия из
- * 30 модулей даёт +30 запросов при лимите 30/мин (AGENTS.md п.5). Статус
- * кешируется на сессию (по ссылке объекта сессии) с TTL; ошибки не кешируются.
+ * 30 модулей даёт +30 запросов при лимите 30/мин (AGENTS.md п.5). Честный ключ —
+ * только TTL (258 №4): объект сессии создаётся один раз и не заменяется, поэтому
+ * «на сессию» не работает; ошибки, SESSION_TAKEN_OVER и logged_in:false не
+ * кешируются, явный auth_status читает без кеша (authStatusFresh).
  */
 export class AuthStatusCache {
   private entry: { session: SessionState; at: number; value: AuthStatusInfo } | null = null;
@@ -65,13 +67,16 @@ export class ServerContext {
   /** Последний открытый проект — target по умолчанию для чтения/рендера. */
   fixturePath: string | null;
   private depsOverride: Partial<WorkspaceDeps> | null = null;
-  /** Кеш статуса ЛК (ревью 256 №9): тариф на сессию с TTL. */
+  /** Кеш статуса ЛК (ревью 256 №9): тариф для гейтов с TTL (258 №4). */
   private authStatusCache = new AuthStatusCache();
+  /** Подменяемый источник статуса ЛК (тесты 258 №4). */
+  private readonly statusFn: (session: SessionState) => Promise<ClientPageInfo>;
 
-  constructor(options: { offlineFixture?: string; deps?: Partial<WorkspaceDeps> } = {}) {
+  constructor(options: { offlineFixture?: string; deps?: Partial<WorkspaceDeps>; status?: (session: SessionState) => Promise<ClientPageInfo> } = {}) {
     this.depsOverride = options.deps ?? null;
     this.fixturePath = options.offlineFixture ?? null;
     this.mode = options.offlineFixture ? "offline" : "anon";
+    this.statusFn = options.status ?? checkStatus;
   }
 
   session(): SessionState {
@@ -81,6 +86,8 @@ export class ServerContext {
     if (this.sessionState === null) {
       if (!process.env["REMPLANNER_ANON"] && existsSync(STATE_PATH) && hasLiveCookies(loadSession(STATE_PATH))) {
         this.mode = "account";
+        // смена режима — кеш статуса ЛК anon-значений невалиден (258 №4)
+        this.authStatusCache.clear();
         // помечаем сессию как аккаунтную: анонимные потоки с ней запрещены
         // (инцидент 2026-11-15: запись в проект пользователя через редактор)
         this.sessionState = { ...loadSession(STATE_PATH), account: true };
@@ -216,18 +223,44 @@ export class ServerContext {
     }));
   }
 
+  /** Статус ЛК для гейтов shield_* и PRO: кеш с TTL, промах — свежий GET. */
   async authStatus(): Promise<AuthStatusInfo> {
     if (this.mode === "offline") {
       return { logged_in: false, tariff: "unknown", mode: "offline", projects_limit: null, account_email_masked: null };
     }
+    // сессия инициализирует режим (auth_status — первый вызов инструмента, 258 №4)
+    const session = this.session();
     if (process.env["REMPLANNER_ANON"] || this.mode !== "account") {
       return { logged_in: false, tariff: "unknown", mode: "anon", projects_limit: null, account_email_masked: null };
     }
-    const session = this.session();
     // ревью 256 №9: один GET ЛК на TTL, а не на каждый вызов shield_*/PRO-гейта
     const cached = this.authStatusCache.get(session);
     if (cached) return cached;
-    const info = await checkStatus(session);
+    return this.authStatusFresh();
+  }
+
+  /**
+   * Свежий статус ЛК без кеша (258 №4): явный auth_status, обновление после
+   * ошибок сессии. logged_in:false (logout) и ошибки SESSION_TAKEN_OVER/
+   * SESSION_EXPIRED сбрасывают кеш.
+   */
+  async authStatusFresh(): Promise<AuthStatusInfo> {
+    if (this.mode === "offline") {
+      return { logged_in: false, tariff: "unknown", mode: "offline", projects_limit: null, account_email_masked: null };
+    }
+    const session = this.session();
+    if (process.env["REMPLANNER_ANON"] || this.mode !== "account") {
+      return { logged_in: false, tariff: "unknown", mode: "anon", projects_limit: null, account_email_masked: null };
+    }
+    let info: ClientPageInfo;
+    try {
+      info = await this.statusFn(session);
+    } catch (e) {
+      if (e instanceof McpError && (e.code === "SESSION_TAKEN_OVER" || e.code === "SESSION_EXPIRED")) {
+        this.authStatusCache.clear();
+      }
+      throw e;
+    }
     const value: AuthStatusInfo = {
       logged_in: info.logged_in,
       tariff: info.tariff,
@@ -235,7 +268,8 @@ export class ServerContext {
       projects_limit: info.tariff === "free" ? 1 : null,
       account_email_masked: null,
     };
-    this.authStatusCache.set(session, value);
+    if (value.logged_in) this.authStatusCache.set(session, value);
+    else this.authStatusCache.clear();
     return value;
   }
 
