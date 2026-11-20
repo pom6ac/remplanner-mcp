@@ -14,12 +14,20 @@
 // перезаписывается), assertUnchanged перед КАЖДОЙ записью, «ИЗМЕНИЛСЯ» →
 // exit(1) до следующих записей; захват только своих id (drag — разность
 // наборов до/после, не ровно один → стоп); restore в finally; closeBrowser.
+// Правка 326 (разбор FAIL 325 по (C)): drag в 318 шёл после restore+draw в
+// странице (normalize из wall_add/page save), в 325 — сразу после render_plan;
+// в (C) добавлен editor.normalize (restore+draw) после openAndGuard, активация
+// plannertool_zone проверяется по классу .active (до 3 попыток), добавлены
+// диагностика viewBox/экранных координат/px-длины drag и скриншоты листа
+// до/после drag (.orca-reports/tmp/326-drag-*.png); (A) validate печатает
+// полный ответ (ok:false в дев-объекте — не по zone_c, см. отчёт 326).
 // node scripts/probes/325-zonec-named.ts run
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
+import { prepareForRestore } from "../../src/model/walls.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { sig } from "./probe-sig.ts";
@@ -234,7 +242,8 @@ try {
   const zSiteId = String(add["site_id"] ?? "");
   if (!zSiteId) throw new Error("(A) zone_c_add без site_id");
   const vRes = await call("model_validate", {});
-  console.log("(A) validate:", JSON.stringify({ ok: vRes["ok"] }));
+  // полный ответ: в 325 печатали только ok:false и не видели список проблем
+  console.log("(A) validate:", JSON.stringify(vRes));
   await assertUnchanged("перед (A) save");
   const saveA = await call("project_save", {});
   console.log("(A) save:", JSON.stringify({ verified: saveA["verified"], warnings: saveA["warnings"] }));
@@ -265,19 +274,41 @@ try {
   //         правка не по зонам → save MCP → делитель НЕ удалён ----
   await assertUnchanged("перед (C) drag");
   await openAndGuard();
+  // Причина FAIL 325: в 318 между render_plan (openAndGuard) и drag'ом были
+  // wall_add×4 и page save — каждый делает editor.normalize ($Project.restore +
+  // draw в странице), т.е. drag шёл по состоянию «после restore», а не «после
+  // render_plan» (переключение листа init + $Project.focus). Воспроизводим то же
+  // состояние: restore+draw текущей модели страницы, затем активация листа/инструмента.
+  {
+    const edN = (ctx.workspaceOrNull?.editorOrNull() ?? null) as unknown as { normalize(m: unknown): Promise<unknown> } | null;
+    const cur = await loadModel(ctx.session(), OBJECT_ID!, PLAN_ID!);
+    const prepared = structuredClone(cur.model as import("../../src/model/types.ts").Model);
+    prepareForRestore(prepared);
+    if (!edN) throw new Error("(C) редактор недоступен для restore+draw");
+    await edN.normalize(prepared);
+  }
   const p = page();
-  await p.evaluate(() => {
+  // лист «Перегородки»: клик с проверкой активации (один повтор)
+  const sheetClick = await p.evaluate(() => {
     const el: any = document.querySelector(".groups_navi_item.plan_create_walls") ??
       Array.from(document.querySelectorAll(".groups_navi_item")).find((e: any) => String(e.className).includes("plan_c"));
-    if (el) el.click();
-  });
-  await p.waitForTimeout(2500);
-  const zoneBtn = await p.evaluate(() => {
-    const el: any = document.querySelector("#plannertool_zone");
-    if (el && el.offsetParent !== null) { el.click(); return true; }
+    if (el) { el.click(); return true; }
     return false;
   });
-  if (!zoneBtn) throw new Error("(C) plannertool_zone не найден");
+  if (!sheetClick) throw new Error("(C) nav «Перегородки» (plan_create_walls) не найден");
+  await p.waitForTimeout(2500);
+  // инструмент «Зонировать»: кликаем, пока кнопка не станет .active (до 3 попыток)
+  let zoneActive = false;
+  for (let i = 0; i < 3 && !zoneActive; i++) {
+    await p.evaluate(() => {
+      const el: any = document.querySelector("#plannertool_zone");
+      if (el && el.offsetParent !== null && !el.classList.contains("active")) el.click();
+    });
+    await p.waitForTimeout(800);
+    zoneActive = await p.evaluate(() => Boolean((document.querySelector("#plannertool_zone") as HTMLElement | null)?.classList.contains("active")));
+  }
+  console.log("(C) plannertool_zone active:", zoneActive);
+  if (!zoneActive) throw new Error("(C) plannertool_zone не активировался (3 клика)");
   const toScreen = (pt: { x: number; y: number }) => p.evaluate((pp) => {
     const svg: any = document.querySelector("#main_svg");
     const r = svg.getBoundingClientRect();
@@ -291,6 +322,15 @@ try {
     return Object.keys(w.project.copy("server").zone_delimiters ?? {}) as string[];
   }));
   const sa = await toScreen(aPt), sb = await toScreen(bPt);
+  // диагностика 326: масштаб/видимость — оба конца внутри вьюпорта, drag не короче 30 px
+  const vp = p.viewportSize();
+  const onScreen = [sa, sb].every((q) => q.x >= 0 && q.y >= 0 && (vp?.width ?? 0) >= q.x && (vp?.height ?? 0) >= q.y);
+  const distPx = Math.hypot(sb.x - sa.x, sb.y - sa.y);
+  const viewBox = await p.evaluate(() => (document.querySelector("#main_svg") as SVGElement | null)?.getAttribute("viewBox") ?? null);
+  console.log("(C) drag-координаты:", JSON.stringify({ sa, sb, distPx: Math.round(distPx), viewBox, vp }));
+  if (!onScreen) throw new Error("(C) концы drag вне вьюпорта — пробная комната не в видимой области");
+  if (distPx < 30) throw new Error(`(C) drag на экране ${Math.round(distPx)} px (<30) — комната слишком мелкая/не видна`);
+  await p.screenshot({ path: ".orca-reports/tmp/326-drag-before.png" });
   await p.mouse.move(sa.x, sa.y, { steps: 5 });
   await p.waitForTimeout(300);
   await p.mouse.down();
@@ -299,6 +339,7 @@ try {
   await p.waitForTimeout(300);
   await p.mouse.up();
   await p.waitForTimeout(1200);
+  await p.screenshot({ path: ".orca-reports/tmp/326-drag-after.png" });
   const dragDelims = (await p.evaluate(() => {
     const w: any = window as any;
     return Object.keys(w.project.copy("server").zone_delimiters ?? {}) as string[];
