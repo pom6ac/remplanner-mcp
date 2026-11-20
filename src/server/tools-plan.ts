@@ -722,7 +722,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     item_delete: tool(
       "Удалить предмет (метка I<n> из model_get). Привязанные к предмету размеры (dim_add attach) " +
         "сохраняются с отвязкой концов, комментарий предмета удаляется; у электрощитка конструктор " +
-        "удаляется вместе с предметом (deleted_shields). В ответе — detached_rulers/deleted_comments.",
+        "удаляется вместе с предметом (deleted_shields). В ответе — deleted_shields/detached_rulers/deleted_comments.",
       { item_id: z.string().min(1) },
       async (a) => {
         const ws = wsOf();

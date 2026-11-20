@@ -1,8 +1,10 @@
 // Конструктор электрощитка (лист «Электрощиток», план shield, часть 3, 2026-11-20).
 // Модель model.shields[shield.id] — рейки с модулями, ввод, шины/провода (провода
 // и шины — следующий PR: MCP их не пишет, операции с ними отклоняет). Формат —
-// эталоны tests/fixtures/ui-ref-shield-*.json (пробы 255-shield-scout,
-// 255-shield-classes, бандл app.3.0: классы Shield/Rail/RailModule/ShieldInput).
+// эталоны tests/fixtures/ui-ref-shield-*.json; исходники классов Shield/Rail/
+// RailModule/ShieldInput — дампы разведки 255 (.orca-reports/tmp/255-*.json,
+// вне git: 255-shield-scout/255-live-check в репозитории, 255-shield-classes —
+// офлайн-дамп бандла app.3.0).
 // Связь с предметом-щитком — shields[].shield_id = items[].id; предмет без записи
 // редактор дополняет записью по умолчанию при restore (SHIELDS.restore) — модельный
 // слой делает то же (ensureShield), чтобы сверка save не видела ложную потерю.
@@ -151,14 +153,15 @@ function shieldOfItem(model: Model, itemId: string): { shield: Shield; item: Ite
   return { shield: ensureShieldForItem(model, item), item };
 }
 
-function railWidthMm(rail: ShieldRail): number {
+/** Ширина рейки в DIN (сумма ширин модулей; поле хранится в DIN — Shield.calc_rail_width). */
+function railWidthDin(rail: ShieldRail): number {
   return Object.values(rail.modules).reduce((n, mod) => n + mod.width, 0);
 }
 
 /** Длина щитка в DIN при авто-режиме: максимум ширин рейки и минимума (редактор,
  *  переключение auto_length_rails: Math.max(...widths, min_length)). */
 function autoLengthRails(shield: Shield): number {
-  const widths = Object.values(shield.rails).map((r) => railWidthMm(r));
+  const widths = Object.values(shield.rails).map((r) => railWidthDin(r));
   return Math.max(...widths, SHIELD_RAIL_MIN_DIN);
 }
 
@@ -208,17 +211,24 @@ function defaultSubtypeOf(type: string): string {
   return def.default_subtype ?? def.subtypes?.[0] ?? SHIELD_MODULE_DEFAULT_SUBTYPE;
 }
 
+/** Чистка номинала от управляющих символов (как у comment; редактор сериализует
+ *  subtype строкой без переводов строк — ревью 256 №10). */
+function subtypeClean(subtype: string): string {
+  return subtype.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+}
+
 function subtypeOf(type: string, subtype: string | undefined): string {
   const def = SHIELD_MODULE_TYPES[type]!;
   if (subtype === undefined) return defaultSubtypeOf(type);
-  if (def.subtypes && !def.subtypes.includes(subtype)) {
+  const clean = subtypeClean(subtype);
+  if (def.subtypes && !def.subtypes.includes(clean)) {
     throw new McpError(
       "INVALID_ARGUMENT",
       `номинал «${subtype}» не из списка типа ${type} (${def.subtypes.join(", ")})`,
       { details: { kind: "bad_subtype", type, allowed: def.subtypes } },
     );
   }
-  return subtype;
+  return clean;
 }
 
 /** railId по индексу (0-based, сортировка по полю index). */
@@ -307,7 +317,7 @@ export function addShieldModule(model: Model, itemId: string, params: ShieldModu
   assertNoWiresOrBuses(shield);
   const railIndex = params.rail ?? 0;
   const rail = railByIndex(shield, railIndex);
-  const width = railWidthMm(rail);
+  const width = railWidthDin(rail);
   if (width + def.width > railMaxLength(shield)) {
     throw new McpError(
       "INVALID_ARGUMENT",
@@ -347,7 +357,7 @@ export function addShieldModule(model: Model, itemId: string, params: ShieldModu
   }
   if (params.type === "shield_custom_module") {
     module.width = CUSTOM_MODULE_DEFAULTS.width;
-    module.subtype = params.subtype ?? CUSTOM_MODULE_DEFAULTS.subtype;
+    module.subtype = params.subtype !== undefined ? subtypeClean(params.subtype) : CUSTOM_MODULE_DEFAULTS.subtype;
     module.custom = { ports: CUSTOM_MODULE_DEFAULTS.ports, type: CUSTOM_MODULE_DEFAULTS.type, label: CUSTOM_MODULE_DEFAULTS.label };
   }
   rail.modules[module.id] = module;
@@ -373,14 +383,15 @@ export function updateShieldModule(model: Model, itemId: string, moduleId: strin
   if (!mod) throw new McpError("NOT_FOUND", `модуль ${moduleId} не найден в щитке предмета ${itemId}`);
   const def = SHIELD_MODULE_TYPES[mod.type];
   if (params.subtype !== undefined) {
-    if (def?.subtypes && !def.subtypes.includes(params.subtype)) {
+    const clean = subtypeClean(params.subtype);
+    if (def?.subtypes && !def.subtypes.includes(clean)) {
       throw new McpError(
         "INVALID_ARGUMENT",
         `номинал «${params.subtype}» не из списка типа ${mod.type} (${def.subtypes.join(", ")})`,
         { details: { kind: "bad_subtype", type: mod.type, allowed: def.subtypes } },
       );
     }
-    mod.subtype = params.subtype;
+    mod.subtype = clean;
   }
   if (params.group_number !== undefined) {
     if (!def?.group) {

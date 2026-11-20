@@ -25,7 +25,10 @@
   (рейка + ввод фаза/ноль/земля) — то же делает редактор при restore;
   item_delete электрощитка удаляет записи конструктора каскадно
   (deleted_shields в ответе) — без висячих shield_id. В model_get —
-  `shields[]` (метки SH<n>, id модулей для update/delete).
+  `shields[]` (метки SH<n>, id модулей для update/delete). Аддитивные
+  публичные ключи этого этапа: `will_delete.shields`,
+  `revision.editor.shields` (render_plan) и `details.shield_mismatches`
+  в NORMALIZATION_DROPPED/SITE_ERROR/INVALID_GEOMETRY.
 - **Тариф по новому ЛК**: активный PRO разбирается из блока
   `user_cabinet_pro_status_item active` («Расширенный тариф» и другие старшие
   тарифы — прежнего текста «Версия PRO: подключена» в ЛК больше нет). Инструменты

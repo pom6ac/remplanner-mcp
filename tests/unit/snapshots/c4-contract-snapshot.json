@@ -1659,7 +1659,7 @@
   },
   {
    "name": "item_delete",
-   "description": "Удалить предмет (метка I<n> из model_get). Привязанные к предмету размеры (dim_add attach) сохраняются с отвязкой концов, комментарий предмета удаляется; у электрощитка конструктор удаляется вместе с предметом (deleted_shields). В ответе — detached_rulers/deleted_comments.",
+   "description": "Удалить предмет (метка I<n> из model_get). Привязанные к предмету размеры (dim_add attach) сохраняются с отвязкой концов, комментарий предмета удаляется; у электрощитка конструктор удаляется вместе с предметом (deleted_shields). В ответе — deleted_shields/detached_rulers/deleted_comments.",
    "inputSchema": {
     "type": "object",
     "properties": {
