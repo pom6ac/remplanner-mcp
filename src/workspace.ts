@@ -676,13 +676,25 @@ export class Workspace {
         },
       );
       warnings.push(...zoneNorm.warnings);
-      // ревью 319 №8: нормализация не воскрешает zone_c-делители, удалённые через MCP
-      const zoneResurrected = resurrectedZoneCDividers(this.modelInternal as unknown as Record<string, unknown>, norm.model as unknown as Record<string, unknown>);
+      // ревью 319 №8: нормализация не воскрешает zone_c-делители, удалённые через MCP;
+      // ревью 321 N2: в затронутых стенами комнатах — предупреждение (сверка по
+      // roomSaveBase — был ли делитель в базе), вне затронутых — отказ
+      const zoneResurrected = resurrectedZoneCDividers(
+        this.modelInternal as unknown as Record<string, unknown>,
+        norm.model as unknown as Record<string, unknown>,
+        {
+          baseModel: this.roomSaveBase
+            ? ({ rooms2: this.roomSaveBase.rooms, zone_delimiters: this.roomSaveBase.zoneDelimiters } as unknown as Record<string, unknown>)
+            : undefined,
+          affectedRooms: zoneAffected,
+        },
+      );
+      warnings.push(...zoneResurrected.warnings);
       warnings.push(...warmNorm.warnings);
       warnings.push(...ceilingRigelNorm.warnings);
-      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0 || zoneNorm.problems.length > 0 || zoneResurrected.length > 0 || warmNorm.problems.length > 0 || ceilingRigelNorm.problems.length > 0) {
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0 || zoneNorm.problems.length > 0 || zoneResurrected.problems.length > 0 || warmNorm.problems.length > 0 || ceilingRigelNorm.problems.length > 0) {
         throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, пометки демонтажа, размеры/комментарии, сущности климата, щитки, разделители зон потолка или тёплые стены — мутация отменена`, {
-          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm, shield_mismatches: shieldsNorm, zone_mismatches: [...zoneNorm.problems, ...zoneResurrected], warmwall_mismatches: warmNorm.problems, ceiling_rigel_mismatches: ceilingRigelNorm.problems },
+          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm, shield_mismatches: shieldsNorm, zone_mismatches: [...zoneNorm.problems, ...zoneResurrected.problems], warmwall_mismatches: warmNorm.problems, ceiling_rigel_mismatches: ceilingRigelNorm.problems },
         });
       }
       // нормализованная копия становится канонической

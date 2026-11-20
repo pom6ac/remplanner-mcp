@@ -1005,20 +1005,34 @@ export function roomsWithChangedZoneCDividers(
  * ожидания — нормализация «воскресила» делитель, удалённый через MCP, или
  * придумала новый. Легитимная смена id (та же проекция) не считается — её
  * ловит zoneDelimiterCompare (предупреждение «сменил id»).
+ * ревью 321 N2: в комнате, затронутой изменёнными стенами (affectedRooms),
+ * результат понижается до предупреждения — при переносе стены редактор может
+ * перепривязать делитель с новым id и сдвинутыми концами (живого эталона
+ * split/merge с zone_c при переносе стены нет); делителя не было и в базе
+ * (roomSaveBase) — в сообщении помечается. Вне затронутых комнат — отказ.
  */
 export function resurrectedZoneCDividers(
   expectedModel: Record<string, unknown> | undefined,
   gotModel: Record<string, unknown> | undefined,
-): string[] {
+  opts?: { baseModel?: Record<string, unknown>; affectedRooms?: Set<string> },
+): { problems: string[]; warnings: string[] } {
   const zoneCOf = (model: Record<string, unknown> | undefined): ZoneDelimiterSig[] =>
     delimiterSigsOf(model).filter((s) => s.type === "zone_c");
   const exp = zoneCOf(expectedModel);
   const expIds = new Set(exp.map((s) => s.id));
-  const out: string[] = [];
+  const base = opts?.baseModel ? zoneCOf(opts.baseModel) : [];
+  const problems: string[] = [];
+  const warnings: string[] = [];
   for (const g of zoneCOf(gotModel)) {
     if (expIds.has(g.id)) continue;
     if (exp.some((e) => e.idRoom === g.idRoom && sameSig(e, g))) continue;
-    out.push(`room ${g.idRoom}: нормализация вернула zone_c-делитель, которого не было в рабочей копии (id ${g.id}, ${Math.round(g.length * 100)} см) — удалённые через MCP делители не воскрешаются`);
+    const inBase = base.some((b) => b.idRoom === g.idRoom && sameSig(b, g));
+    const msg = `room ${g.idRoom}: нормализация вернула zone_c-делитель, которого не было в рабочей копии (id ${g.id}, ${Math.round(g.length * 100)} см) — удалённые через MCP делители не воскрешаются${inBase ? "; делитель был в базе (roomSaveBase)" : "; в базе (roomSaveBase) его не было"}`;
+    if (opts?.affectedRooms?.has(g.idRoom)) {
+      warnings.push(`${msg} — комната затронута изменением стен: перепривязка делителя редактором при переносе стены допускается с предупреждением (ревью 321 N2, живой эталон отсутствует)`);
+    } else {
+      problems.push(msg);
+    }
   }
-  return out;
+  return { problems, warnings };
 }

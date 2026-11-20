@@ -448,11 +448,20 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     "normalize",
     { affectedRooms: zoneAffected },
   );
-  // ревью 319 №8: нормализация не воскрешает zone_c-делители, удалённые через MCP
+  // ревью 319 №8: нормализация не воскрешает zone_c-делители, удалённые через MCP;
+  // ревью 321 N2: в затронутых стенами комнатах — предупреждение (сверка по
+  // roomSaveBase — был ли делитель в базе), вне затронутых — отказ
   const zoneResurrected = resurrectedZoneCDividers(
     host.model() as unknown as Record<string, unknown>,
     norm.model as unknown as Record<string, unknown>,
+    {
+      baseModel: host.roomSaveBase()
+        ? ({ rooms2: host.roomSaveBase()!.rooms, zone_delimiters: host.roomSaveBase()!.zoneDelimiters } as unknown as Record<string, unknown>)
+        : undefined,
+      affectedRooms: zoneAffected,
+    },
   );
+  warnings.push(...zoneResurrected.warnings);
   // этап 273: тёплые стены до записи сверяются с нормализованной моделью
   // (затронутость комнат — по грани стены, zoneAffectedRoomIds; части редактор
   // мигрирует при пересчёте комнат — сверка по геометрии, не по id)
@@ -551,7 +560,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     dimsNorm.length > 0 || climateNorm.length > 0 || roomsNormProblems.length > 0 ||
     shieldsNorm.length > 0 ||
     zoneNorm.problems.length > 0 ||
-    zoneResurrected.length > 0 ||
+    zoneResurrected.problems.length > 0 ||
     warmNorm.problems.length > 0 ||
     ceilingRigelNorm.problems.length > 0 ||
     elecNorm.some((e) => e.lost.length > 0 || e.graph.length > 0 || e.conn.length > 0)
@@ -593,7 +602,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         climate_mismatches: climateNorm,
         room_mismatches: roomsNormProblems,
         shield_mismatches: shieldsNorm,
-        zone_mismatches: [...zoneNorm.problems, ...zoneResurrected],
+        zone_mismatches: [...zoneNorm.problems, ...zoneResurrected.problems],
         warmwall_mismatches: warmNorm.problems,
         ceiling_rigel_mismatches: ceilingRigelNorm.problems,
         ...Object.fromEntries(elecNorm.flatMap((e) => [

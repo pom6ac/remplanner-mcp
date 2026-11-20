@@ -72,3 +72,45 @@ test("321 N1 C: post-save — сервер потерял именованную
     "ожидался SITE_ERROR с расхождением зон, получено verified (сервер испортил зоны незамеченным)",
   );
 });
+
+// ---------- 322 N2: воскрешённые zone_c в затронутых стенами комнатах ----------
+
+const delimEntry = (id: string, idRoom: string, x1: number, y1: number, x2: number, y2: number): Record<string, unknown> => ({
+  id, id_room: idRoom, type: "zone_c", plan: "c", length: 1,
+  vertexes: [
+    { id: `${id}v1`, point: { x: x1, y: y1 }, zone: { type: "split" } },
+    { id: `${id}v2`, point: { x: x2, y: y2 }, zone: { type: "split" } },
+  ],
+  items: {},
+});
+const modelWith = (entries: Record<string, unknown>[]): Record<string, unknown> => ({
+  zone_delimiters: Object.fromEntries(entries.map((e) => [String(e["id"]), e])),
+  rooms2: {},
+});
+
+test("321 N2: воскрешённый zone_c в затронутой стенами комнате — предупреждение, не отказ", () => {
+  const base = modelWith([delimEntry("D1", "R1", 0, 0, 0, 100)]);
+  const expected = modelWith([]);
+  const got = modelWith([delimEntry("D1-new", "R1", 0, 0, 0, 100)]);
+  const res = resurrectedZoneCDividers(expected, got, { baseModel: base, affectedRooms: new Set(["R1"]) });
+  assert.deepEqual(res.problems, [], JSON.stringify(res.problems));
+  assert.ok(res.warnings.length === 1 && res.warnings[0]!.includes("затронута изменением стен"), JSON.stringify(res.warnings));
+});
+
+test("321 N2: воскрешённый zone_c вне затронутых комнат — отказ (319 №8)", () => {
+  const base = modelWith([delimEntry("D1", "R1", 0, 0, 0, 100)]);
+  const expected = modelWith([]);
+  const got = modelWith([delimEntry("D1-new", "R1", 0, 0, 0, 100)]);
+  const res = resurrectedZoneCDividers(expected, got, { baseModel: base, affectedRooms: new Set(["R2"]) });
+  assert.deepEqual(res.warnings, [], JSON.stringify(res.warnings));
+  assert.ok(res.problems.length === 1 && res.problems[0]!.includes("не было в рабочей копии"), JSON.stringify(res.problems));
+});
+
+test("321 N2: воскрешённый zone_c в затронутой комнате, в базе его не было, — помечается, предупреждение", () => {
+  const base = modelWith([]);
+  const expected = modelWith([]);
+  const got = modelWith([delimEntry("DX", "R1", 5, 5, 5, 105)]);
+  const res = resurrectedZoneCDividers(expected, got, { baseModel: base, affectedRooms: new Set(["R1"]) });
+  assert.deepEqual(res.problems, [], JSON.stringify(res.problems));
+  assert.ok(res.warnings.length === 1 && res.warnings[0]!.includes("в базе (roomSaveBase) его не было"), JSON.stringify(res.warnings));
+});
