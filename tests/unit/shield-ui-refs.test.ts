@@ -16,6 +16,8 @@ import {
   addShieldWire, deleteShieldWire, moveShieldModuleToRail, reorderShieldModule,
   validateShieldDerived,
   ensureShieldForItem, deleteShieldsForItem, findShieldByItem, shieldProjection, findShieldModule,
+  addShieldBus, updateShieldBus, deleteShieldBus,
+  addShieldCollector, updateShieldCollector, deleteShieldCollector,
   SHIELD_MODULE_TYPES, SHIELD_ITEM_NAMES, SHIELD_RAIL_MIN_DIN, SHIELD_RAIL_MAX_DIN, SHIELD_WIRE_TYPES,
 } from "../../src/model/shield.ts";
 import { compactModel } from "../../src/model/compact.ts";
@@ -111,6 +113,11 @@ function maskedUnordered(v: unknown, key = ""): unknown {
     if (entries.length > 0 && entries.every(([, x]) => x !== null && typeof x === "object")) {
       entries.sort((p, q) => JSON.stringify(p[1]).localeCompare(JSON.stringify(q[1])));
       return entries.map(([, x]) => x);
+    }
+    // 291: карта модулей коллектора {moduleId: 1} — ключи случайные id сайта:
+    // маскируем ключи (порядок не значим), значения сравниваем
+    if (key === "modules" && entries.length > 0) {
+      return entries.map(([, x]) => x).sort((p, q) => JSON.stringify(p).localeCompare(JSON.stringify(q)));
     }
     return Object.fromEntries(entries);
   }
@@ -1367,4 +1374,363 @@ test("ревью 285 №9: port обязателен при module_id — без
   );
   const s = findShieldByItem(m, shield.id)!;
   assert.equal(Object.keys(s.wires).length, 0, "провод без порта не создан");
+});
+
+// ---------- 291: шины (shield_bus_*) ----------
+
+test("291: шина add — 6 гнёзд по умолчанию, формат как в живом эталоне (TC, distance 157.5)", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  const { bus } = addShieldBus(m, shield.id, { position: "T" });
+  const s = findShieldByItem(m, shield.id)!;
+  const got = Object.values(s.buses)[0]!;
+  // ширина щитка на пустой рейке — 12 DIN → 393 px; TC → distance 157.5 (проба 291-shield3-ui3)
+  assert.equal(got.type, "TC");
+  assert.equal(got.distance, 157.5);
+  assert.equal(got.connection, "");
+  assert.equal(got.ports.length, 6);
+  for (const p of got.ports) {
+    assert.equal(p.parent_type, "bus");
+    assert.equal(p.parent_id, bus.id);
+    assert.equal(p.connected, 0);
+  }
+  assert.deepEqual(Object.keys(s.buses), [bus.id]);
+});
+
+test("291: шина add — привязка L/R и sockets 4..25; за пределами INVALID_ARGUMENT", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  const width = 6 * 6 + 12; // 48
+  const maxDistance = 393 - 2 * 15 - width; // 315 (проба 291-shield3-ui7)
+  assert.equal(addShieldBus(m, shield.id, { position: "T", align: "L" }).bus.distance, 0);
+  assert.equal(addShieldBus(m, shield.id, { position: "B", align: "R" }).bus.distance, maxDistance);
+  assert.equal(addShieldBus(m, shield.id, { position: "T", sockets: 4 }).bus.ports.length, 4);
+  assert.equal(addShieldBus(m, shield.id, { position: "T", sockets: 25 }).bus.ports.length, 25);
+  assert.throws(
+    () => addShieldBus(m, shield.id, { position: "T", sockets: 3 }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  assert.throws(
+    () => addShieldBus(m, shield.id, { position: "T", sockets: 26 }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  assert.throws(
+    () => addShieldBus(m, shield.id, { position: "X" as never }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+});
+
+test("291: шина update — align/position меняют type и distance как в редакторе; NOT_FOUND", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  const { bus } = addShieldBus(m, shield.id, { position: "T", align: "C" });
+  assert.equal(bus.distance, 157.5);
+  const u1 = updateShieldBus(m, shield.id, bus.id, { align: "L" });
+  assert.equal(u1.bus.type, "TL");
+  assert.equal(u1.bus.distance, 0);
+  const u2 = updateShieldBus(m, shield.id, bus.id, { position: "B", align: "R" });
+  assert.equal(u2.bus.type, "BR");
+  assert.equal(u2.bus.distance, 315);
+  assert.throws(
+    () => updateShieldBus(m, shield.id, "no_such", { align: "L" }),
+    (e: unknown) => (e as McpError).code === "NOT_FOUND",
+  );
+});
+
+test("291: шина update sockets — добавление в конец, удаление с конца; провод к удалённому гнезду чистится (deleted_wires)", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  const { bus } = addShieldBus(m, shield.id, { position: "T" });
+  const mod = Object.values(Object.values(findShieldByItem(m, shield.id)!.rails)[0]!.modules)[0]!;
+  const tailPortId = bus.ports[bus.ports.length - 1]!.id;
+  const s = findShieldByItem(m, shield.id)!;
+  s.wires["wt"] = { id: "wt", id_source: mod.ports[0]!.id, id_target: tailPortId, type: "shield_wire_earth", thickness: 0, is_broken: 0 } as never;
+  // сократить до 4 гнёзд: хвостовое гнездо удаляется, провод с ним — тоже
+  const u = updateShieldBus(m, shield.id, bus.id, { sockets: 4 });
+  assert.equal(u.bus.ports.length, 4);
+  assert.deepEqual(u.deleted_wires, ["wt"]);
+  // расширение: 4 → 8, новые гнёзда с connected 0
+  const u2 = updateShieldBus(m, shield.id, bus.id, { sockets: 8 });
+  assert.equal(u2.bus.ports.length, 8);
+  assert.equal(u2.deleted_wires.length, 0);
+  assert.ok(u2.bus.ports.slice(4).every((p) => p.connected === 0));
+});
+
+test("291: шина delete — deleted_wires по проводам к её гнёздам; NOT_FOUND", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  const { bus } = addShieldBus(m, shield.id, { position: "T" });
+  const mod = Object.values(Object.values(findShieldByItem(m, shield.id)!.rails)[0]!.modules)[0]!;
+  const s = findShieldByItem(m, shield.id)!;
+  s.wires["wb"] = { id: "wb", id_source: mod.ports[0]!.id, id_target: bus.ports[2]!.id, type: "shield_wire_null", thickness: 0, is_broken: 0 } as never;
+  const res = deleteShieldBus(m, shield.id, bus.id);
+  assert.deepEqual(res.deleted_wires, ["wb"]);
+  assert.equal(Object.keys(findShieldByItem(m, shield.id)!.buses).length, 0);
+  assert.throws(
+    () => deleteShieldBus(m, shield.id, bus.id),
+    (e: unknown) => (e as McpError).code === "NOT_FOUND",
+  );
+});
+
+// ---------- 291: коллекторы (shield_collector_*) ----------
+
+test("291: эталон ui-ref-shield-collector — маскированная форма щитка с коллектором и шиной воспроизводится операциями MCP", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-shield-collector.json"), "utf8")) as { shields: Record<string, Shield> };
+  const ref = Object.values(fx.shields)[0]!;
+  // эталон проходит импорт
+  assert.doesNotThrow(() => parseModelImport({ ...baseModel(), shields: { [ref.id]: structuredClone(ref) } }));
+  // воспроизводится операциями MCP: 5 модулей по 1 DIN → коллектор на первых 4, шина TC
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  for (let i = 0; i < 5; i++) addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  addShieldCollector(m, shield.id, { modules: mods.slice(0, 4).map((x) => x.id) });
+  addShieldBus(m, shield.id, { position: "T" });
+  const got = findShieldByItem(m, shield.id)!;
+  assert.deepEqual(maskedUnordered(structuredClone(got)), maskedUnordered(structuredClone(ref)), "форма щитка с коллектором ≠ эталону UI");
+});
+
+test("291: collector add — position по ряду, module_width по модулю; модуль не из collector.types — отказ", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  // shield_module_uvr не в dims.collector.types
+  addShieldModule(m, shield.id, { type: "shield_module_uvr", subtype: "63A" });
+  addShieldModule(m, shield.id, { type: "shield_module_uvr", subtype: "63A" });
+  assert.throws(
+    () => addShieldCollector(m, shield.id, { modules: (() => { const s = findShieldByItem(m, shield.id)!; return Object.values(Object.values(s.rails)[0]!.modules).map((x) => x.id); })() }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+});
+
+test("291: collector add — один модуль, разрыв, разные ширины, разные рейки, чужой коллектор — INVALID_ARGUMENT", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldRail(m, shield.id);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "32A" });
+  addShieldModule(m, shield.id, { type: "shield_module_x2", subtype: "16A/30mA" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "10A", rail: 1 });
+  const s = findShieldByItem(m, shield.id)!;
+  const rail0 = Object.values(s.rails).find((r) => r.index === 0)!;
+  const rail1 = Object.values(s.rails).find((r) => r.index === 1)!;
+  const mods = Object.values(rail0.modules).sort((a, b) => a.index - b.index);
+  const lastMod = mods[mods.length - 1]!;
+  const rail1mod = Object.values(rail1.modules)[0]!;
+  // один модуль
+  assert.throws(() => addShieldCollector(m, shield.id, { modules: [mods[0]!.id] }), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
+  // пусто
+  assert.throws(() => addShieldCollector(m, shield.id, { modules: [] }), (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT");
+  // несуществующий модуль
+  assert.throws(() => addShieldCollector(m, shield.id, { modules: [mods[0]!.id, "no_such"] }), (e: unknown) => (e as McpError).code === "NOT_FOUND");
+  // разрыв: модули 0 и 2 — между ними чужой модуль 1
+  assert.throws(
+    () => addShieldCollector(m, shield.id, { modules: [mods[0]!.id, mods[2]!.id] }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // разные ширины: 1 DIN + x2 (2 DIN, последний на рейке)
+  assert.throws(
+    () => addShieldCollector(m, shield.id, { modules: [mods[0]!.id, lastMod.id] }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // дубликат модуля в списке
+  assert.throws(
+    () => addShieldCollector(m, shield.id, { modules: [mods[0]!.id, mods[0]!.id] }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // разные рейки
+  assert.throws(
+    () => addShieldCollector(m, shield.id, { modules: [mods[0]!.id, rail1mod.id] }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // атомарность: коллекторов нет
+  assert.equal(Object.keys(s.collectors).length, 0);
+  // чужой коллектор: создать на 0 и 1, затем добавить 1 в новый
+  addShieldCollector(m, shield.id, { modules: [mods[0]!.id, mods[1]!.id] });
+  assert.throws(
+    () => addShieldCollector(m, shield.id, { modules: [mods[1]!.id, mods[2]!.id] }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+});
+
+test("291: collector update — замена набора модулей; валидация та же; NOT_FOUND", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "32A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  const { collector } = addShieldCollector(m, shield.id, { modules: [mods[0]!.id, mods[1]!.id] });
+  const u = updateShieldCollector(m, shield.id, collector.id, { modules: [mods[1]!.id, mods[2]!.id] });
+  assert.deepEqual(Object.keys(u.collector.modules), [mods[1]!.id, mods[2]!.id]);
+  assert.equal(u.collector.rail_id, mods[1]!.rail_id);
+  // один модуль — отказ, коллектор не меняется
+  assert.throws(
+    () => updateShieldCollector(m, shield.id, collector.id, { modules: [mods[0]!.id] }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  assert.equal(Object.keys(findShieldByItem(m, shield.id)!.collectors[collector.id]!.modules).length, 2);
+  // разрыв — отказ
+  assert.throws(
+    () => updateShieldCollector(m, shield.id, collector.id, { modules: [mods[0]!.id, mods[2]!.id] }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  assert.throws(
+    () => updateShieldCollector(m, shield.id, "no_such", { modules: [mods[0]!.id, mods[1]!.id] }),
+    (e: unknown) => (e as McpError).code === "NOT_FOUND",
+  );
+});
+
+test("291: collector delete — модули и провода живы; NOT_FOUND", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  const { collector } = addShieldCollector(m, shield.id, { modules: [mods[0]!.id, mods[1]!.id] });
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mods[0]!.id, port: 0 }, target: { module_id: mods[1]!.id, port: 0 } });
+  deleteShieldCollector(m, shield.id, collector.id);
+  const after = findShieldByItem(m, shield.id)!;
+  assert.equal(Object.keys(after.collectors).length, 0);
+  assert.equal(Object.keys(after.wires).length, 1, "провод жив");
+  assert.equal(Object.keys(Object.values(after.rails)[0]!.modules).length, 2, "модули живы");
+  assert.throws(
+    () => deleteShieldCollector(m, shield.id, collector.id),
+    (e: unknown) => (e as McpError).code === "NOT_FOUND",
+  );
+});
+
+test("291: лимиты — шин и коллекторов не больше SHIELD_MAX_BUSES/SHIELD_MAX_COLLECTORS", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  for (let i = 0; i < 20; i++) addShieldBus(m, shield.id, { position: "T" });
+  assert.throws(
+    () => addShieldBus(m, shield.id, { position: "T" }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+});
+
+// ---------- 291: mock save с шиной и коллектором ----------
+
+test("291: mock save — шина и коллектор сохраняются verified", async () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  addShieldCollector(m, shield.id, { modules: [mods[0]!.id, mods[1]!.id] });
+  addShieldBus(m, shield.id, { position: "T" });
+  addShieldWire(m, shield.id, { type: "shield_wire_phase", source: { module_id: mods[0]!.id, port: 0 }, target: { bus: Object.values(findShieldByItem(m, shield.id)!.buses)[0]!.id, port: 3 } });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {});
+  await ws.open("0", "1");
+  const res = await ws.save();
+  assert.equal(res.verified, true, JSON.stringify(res).slice(0, 500));
+  const saved = Object.values(server.model.shields as Record<string, Shield>)[0]!;
+  assert.equal(Object.keys(saved.buses).length, 1);
+  assert.equal(Object.keys(saved.collectors).length, 1);
+  assert.equal(Object.keys(saved.wires).length, 1);
+});
+
+test("291: mock save — нормализатор потерял коллектор → NORMALIZATION_DROPPED с непустыми shield_mismatches", async () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  addShieldCollector(m, shield.id, { modules: [mods[0]!.id, mods[1]!.id] });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    for (const sh of Object.values(norm.shields as Record<string, Shield>)) sh.collectors = {};
+  });
+  await ws.open("0", "1");
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const err = e as McpError;
+    if (!(err instanceof McpError && err.code === "NORMALIZATION_DROPPED")) return false;
+    const list = (err.details as Record<string, unknown>)["shield_mismatches"] as string[] | undefined;
+    return Array.isArray(list) && list.length > 0;
+  });
+});
+
+test("291: mock save — сервер испортил distance шины → SITE_ERROR с shield_mismatches", async () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  const { bus } = addShieldBus(m, shield.id, { position: "T" });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, (srv) => {
+    const saved = Object.values(srv.model.shields as Record<string, Shield>)[0]!;
+    Object.values(saved.buses)[0]!.distance = 100;
+  });
+  await ws.open("0", "1");
+  void bus;
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    const err = e as McpError;
+    if (!(err instanceof McpError && err.code === "SITE_ERROR")) return false;
+    const list = (err.details as Record<string, unknown>)["shield_mismatches"] as string[] | undefined;
+    return Array.isArray(list) && list.length > 0;
+  });
+});
+
+// ---------- 291: компакт, импорт ----------
+
+test("291: компакт — bus_list (гнёзда, connection, distance) и collector_list (рейка, модули, position)", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  const { collector } = addShieldCollector(m, shield.id, { modules: [mods[0]!.id, mods[1]!.id] });
+  const { bus } = addShieldBus(m, shield.id, { position: "T" });
+  addShieldWire(m, shield.id, { type: "shield_wire_earth", source: { module_id: mods[0]!.id, port: 0 }, target: { bus: bus.id, port: 1 } });
+  const c = compactModel(m, []) as unknown as { shields: { buses: number; bus_list: { bus_id: string; type: string; sockets: number; distance: number; connection: string; sockets_list: { port: number; connected: number }[] }[]; collectors: number; collector_list: { collector_id: string; rail: number; module_width: number; module_ids: string[]; position: string }[] }[] };
+  const sh = c.shields[0]!;
+  assert.equal(sh.buses, 1);
+  assert.equal(sh.bus_list!.length, 1);
+  const b = sh.bus_list![0]!;
+  assert.equal(b.bus_id, bus.id);
+  assert.equal(b.type, "TC");
+  assert.equal(b.sockets, 6);
+  assert.equal(b.distance, 157.5);
+  assert.equal(b.connection, "shield_wire_earth");
+  assert.equal(b.sockets_list[1]!.connected, 1);
+  assert.equal(sh.collectors, 1);
+  const col = sh.collector_list![0]!;
+  assert.equal(col.collector_id, collector.id);
+  assert.equal(col.rail, 0);
+  assert.equal(col.module_width, 1);
+  assert.deepEqual(col.module_ids, [mods[0]!.id, mods[1]!.id]);
+  assert.equal(col.position, "T");
+});
+
+test("291: импорт — коллектор с мусорной картой modules и лишние коллекторы сверх лимита отклоняются", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "25A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const mods = Object.values(Object.values(s.rails)[0]!.modules).sort((a, b) => a.index - b.index);
+  // строковое значение в modules — отказ (живой эталон: значения 1)
+  const bad = structuredClone(s);
+  bad.collectors = { c1: { id: "c1", rail_id: Object.values(bad.rails)[0]!.id, module_width: 1, modules: { [mods[0]!.id]: mods[0]!.id }, position: "T" } as never };
+  assert.throws(
+    () => parseModelImport({ ...baseModel(), shields: { [s.id]: bad } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // 21 коллектор — отказ (SHIELD_MAX_COLLECTORS = 20)
+  const many = structuredClone(s);
+  many.collectors = Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`c${i}`, { id: `c${i}`, rail_id: Object.values(many.rails)[0]!.id, module_width: 1, modules: {}, position: "T" }])) as never;
+  assert.throws(
+    () => parseModelImport({ ...baseModel(), shields: { [s.id]: many } }),
+    (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+  );
 });
