@@ -7,7 +7,7 @@ import { loadModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { assertTargetPair } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу run");
@@ -15,7 +15,14 @@ if (process.argv[2] !== "run") {
 }
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
-if (!OBJECT_ID || !PLAN_ID) { console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID"); process.exit(1); }
+const READONLY_ID = process.env.REMPLANNER_PROBE_READONLY_ID;
+const READONLY_PLAN_ID = process.env.REMPLANNER_PROBE_READONLY_PLAN_ID;
+if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
+  console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID и REMPLANNER_PROBE_READONLY_PLAN_ID (322 N3в)");
+  process.exit(1);
+}
+// 322 N3в: коллизии env с контрольным проектом — отказ до любых запросов
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 
 const ctx = new ServerContext();
 const server = buildServer(ctx);
@@ -35,9 +42,11 @@ const created = JSON.parse(readFileSync(".orca-reports/tmp/275-created.json", "u
 };
 console.log("created:", JSON.stringify(created));
 
-// ревью 319 №3: пара объект/план из env до первой записи (275-cleanup READONLY
-// env не задаёт — гард контрольного проекта у него отсутствует по построению)
+// ревью 319 №3: пара объект/план из env до первой записи; 322 N3в: гард
+// контрольного проекта (эталон общий на пару READONLY) перед записью
 await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+await roGuard.assertUnchanged("перед зачисткой");
 await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
 const mg = (await call("model_get", {})) as unknown as Record<string, Array<{ id?: string; site_id?: string }>>;
 const present = (coll: string, siteId: string): boolean => (mg[coll] ?? []).some((o) => o.site_id === siteId);
@@ -67,10 +76,12 @@ for (const siteId of [...created.warm_walls].reverse()) {
 }
 await deleteBySite(created.items, "item_delete", "item_id");
 await deleteBySite(created.walls, "wall_delete", "wall_id");
+await roGuard.assertUnchanged("перед save зачистки");
 await new Promise((r) => setTimeout(r, 6000));
 const s = await call("project_save", {});
 console.log("save:", JSON.stringify(s).slice(0, 200));
 if (s["verified"] !== true) throw new Error("save не verified");
+await roGuard.checkFinal("после зачистки");
 
 if (!process.env.REMPLANNER_PROBE_BACKUP) { console.error("нужен REMPLANNER_PROBE_BACKUP"); process.exit(1); }
 const backup = JSON.parse(readFileSync(process.env.REMPLANNER_PROBE_BACKUP, "utf8")) as { model: Record<string, unknown> };

@@ -7,15 +7,19 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ServerContext } from "../../src/server/context.ts";
 import { buildServer } from "../../src/server.ts";
-import { assertTargetPair } from "./probe-guard.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
+const READONLY_ID = process.env.REMPLANNER_PROBE_READONLY_ID;
+const READONLY_PLAN_ID = process.env.REMPLANNER_PROBE_READONLY_PLAN_ID;
 const ROOM_ID = process.env.REMPLANNER_PROBE_ROOM_ID ?? "";
-if (!OBJECT_ID || !PLAN_ID) {
-  console.error("Задайте REMPLANNER_PROBE_OBJECT_ID и REMPLANNER_PROBE_PLAN_ID");
+if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
+  console.error("Задайте REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID и REMPLANNER_PROBE_READONLY_PLAN_ID (322 N3в)");
   process.exit(1);
 }
+// 322 N3в: коллизии env с контрольным проектом — отказ до любых запросов
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 
 type Res = { isError?: boolean; content?: { type: string; text?: string }[] };
 const text = (r: unknown): string => ((r as Res).content as { text: string }[])[0]!.text;
@@ -32,8 +36,11 @@ const client = new Client({ name: "43-rooms-restore", version: "0.0.0" });
 const [a, b] = InMemoryTransport.createLinkedPair();
 await Promise.all([server.connect(b), client.connect(a)]);
 
-// ревью 319 №3: пара объект/план из env до первой записи
+// ревью 319 №3: пара объект/план из env до первой записи; 322 N3в: гард
+// контрольного проекта (эталон общий на пару READONLY) перед записью
 await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(OBJECT_ID, READONLY_ID, READONLY_PLAN_ID));
+await roGuard.assertUnchanged("перед restore save");
 await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
 const targetId = ROOM_ID || Object.keys(json(await call("model_get", { detail: "full" })).rooms2 ?? {})[0]!;
 await ctx.workspace().apply("43-restore-room", (m) => {
@@ -54,6 +61,7 @@ await ctx.workspace().apply("43-restore-room", (m) => {
   return true;
 });
 console.log("restore save:", JSON.stringify(await call("project_save", {})));
+await roGuard.checkFinal("после restore save");
 
 // сверка с бэкапом
 await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
