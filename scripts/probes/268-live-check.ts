@@ -46,10 +46,13 @@ const client = new Client({ name: "268-live-check", version: "0.0.0" });
 const [a, b] = InMemoryTransport.createLinkedPair();
 await Promise.all([server.connect(b), client.connect(a)]);
 
+// ревью 269 m4: тип ответа callTool приведён явно — tsc --strict по пробе без ошибок
+type ToolCallResult = { isError?: boolean; content?: { type: string; text?: string }[] };
+
 const call = async (name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
-  const res = await client.callTool({ name, arguments: args });
-  if ((res as { isError?: boolean }).isError) throw new Error(`${name}: ${res.content?.map((c) => ("text" in c ? c.text : "")).join("")?.slice(0, 500)}`);
-  return JSON.parse(res.content?.find((c) => "text" in c)?.text ?? "{}") as Record<string, unknown>;
+  const res = (await client.callTool({ name, arguments: args })) as ToolCallResult;
+  if (res.isError) throw new Error(`${name}: ${(res.content ?? []).map((c) => c.text ?? "").join("").slice(0, 500)}`);
+  return JSON.parse((res.content ?? []).find((c) => typeof c.text === "string")?.text ?? "{}") as Record<string, unknown>;
 };
 const entitySiteId = (res: Record<string, unknown>, what: string): string => {
   const e = res["entity"] as { site_id?: string } | undefined;
@@ -96,13 +99,17 @@ const deleteCreated = async (entries: { coll: string; site_id: string }[], tool:
   let n = 0;
   for (const { coll, site_id } of [...entries].reverse()) {
     if (coll === "items") {
-      const raw = ((await loadModel(ctx.session(), OBJECT_ID, PLAN_ID)) as unknown as Raw).model;
-      const idx = Object.keys(raw.items ?? {}).indexOf(site_id);
-      if (idx < 0) {
-        console.log(`пропуск: item ${site_id} не найден в свежей модели — ничего не удалено`);
+      // ревью 269 М3: метка резолвится из РАБОЧЕЙ модели MCP (model_get, у
+      // CompactItem есть site_id), а не по позиции site_id в сыром GET сервера —
+      // после несохранённых правок порядок model.items и GET мог разойтись.
+      // Не нашёл (site_id не в рабочей модели) — не удалять.
+      const mgNow = (await call("model_get", {})) as unknown as { items?: { id?: string; site_id?: string }[] };
+      const found = (mgNow.items ?? []).find((o) => o.site_id === site_id);
+      if (!found?.id) {
+        console.log(`пропуск: item ${site_id} не найден в рабочей модели (model_get) — ничего не удалено`);
         continue;
       }
-      await call(tool, { [arg]: `I${idx + 1}` });
+      await call(tool, { [arg]: found.id });
     } else {
       const mgNow = (await call("model_get", {})) as unknown as Record<string, { id?: string; site_id?: string }[]>;
       const found = (mgNow[coll] ?? []).find((o) => o.site_id === site_id);
@@ -127,6 +134,11 @@ const cleanupCreated = async (): Promise<void> => {
   await deleteCreated(created.walls.map((site_id) => ({ coll: "walls", site_id })), "wall_delete", "wall_id");
   writeCreated();
 };
+
+// ревью 269 m5: ошибка основного сценария не выходит раньше восстановления —
+// очистка и сверка контрольного проекта выполняются в finally
+let failed: Error | null = null;
+let readonlyUnchanged = false;
 
 try {
   const ownNow = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
@@ -302,49 +314,56 @@ try {
   // 10. render PNG
   const png = await call("render_plan", { sheet: "init" });
   console.log("render:", (png["path"] as string) ?? JSON.stringify(png).slice(0, 160));
-
-  // 11. очистка по захваченным site_id
-  await pause();
-  await cleanupCreated();
-  await pause();
-  const s5 = await call("project_save", {});
-  console.log("save#5 (очистка):", JSON.stringify(s5).slice(0, 240));
-  if (s5["verified"] !== true) throw new Error("save#5 (очистка) не verified");
-  const rawLeft = ((await loadModel(ctx.session(), OBJECT_ID, PLAN_ID)) as unknown as Raw).model;
-  const leftoverPairs: [string, string][] = [
-    ...created.wiring.map((w) => [w.coll, w.site_id] as [string, string]),
-    ...created.pipes.map((p) => [p.coll, p.site_id] as [string, string]),
-    ...created.warm_floors.map((s) => ["warm_floors", s] as [string, string]),
-    ...created.items.map((s) => ["items", s] as [string, string]),
-    ...created.walls.map((s) => ["walls", s] as [string, string]),
-  ];
-  const leftovers = leftoverPairs.filter(([coll, s]) => Object.keys(rawLeft[coll] ?? {}).includes(s));
-  if (leftovers.length > 0) throw new Error(`очистка неполна: ${leftovers.map(([c, s]) => `${c}:${s}`).join(", ")}`);
 } catch (e) {
-  console.error("FAIL:", (e as Error).message);
+  failed = e as Error;
+  console.error("FAIL:", failed.message);
+} finally {
+  // ревью 269 m5: восстановление — в finally (и при сбое, и при успехе);
+  // в ветке ошибки контрольный проект сверяется с GET «до»
   try {
-    // item_add живёт в workspace до project_save — сброс, чтобы очистка видела объекты
-    try { await call("project_save", {}); } catch { /* проект мог не открыться */ }
+    if (failed) {
+      // item_add живёт в workspace до project_save — сброс, чтобы очистка видела объекты
+      try { await call("project_save", {}); } catch { /* проект мог не открыться */ }
+    }
+    await pause();
     await cleanupCreated();
-    await call("project_save", {});
-    console.error("cleanup после сбоя выполнен");
+    await pause();
+    const s5 = await call("project_save", {});
+    console.log("save#5 (очистка):", JSON.stringify(s5).slice(0, 240));
+    if (s5["verified"] !== true) throw new Error("save#5 (очистка) не verified");
+    if (!failed) {
+      const rawLeft = ((await loadModel(ctx.session(), OBJECT_ID, PLAN_ID)) as unknown as Raw).model;
+      const leftoverPairs: [string, string][] = [
+        ...created.wiring.map((w) => [w.coll, w.site_id] as [string, string]),
+        ...created.pipes.map((p) => [p.coll, p.site_id] as [string, string]),
+        ...created.warm_floors.map((s) => ["warm_floors", s] as [string, string]),
+        ...created.items.map((s) => ["items", s] as [string, string]),
+        ...created.walls.map((s) => ["walls", s] as [string, string]),
+      ];
+      const leftovers = leftoverPairs.filter(([coll, s]) => Object.keys(rawLeft[coll] ?? {}).includes(s));
+      if (leftovers.length > 0) throw new Error(`очистка неполна: ${leftovers.map(([c, s]) => `${c}:${s}`).join(", ")}`);
+    } else {
+      console.error("cleanup после сбоя выполнен");
+    }
   } catch (ce) {
-    console.error("cleanup после сбоя не удался (объекты в 268-created.json):", (ce as Error).message);
+    console.error("cleanup не удался (объекты в 268-created.json):", (ce as Error).message);
     writeCreated();
   }
-  const ro = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN);
-  writeFileSync(`${OUT}/268-get-readonly-after-fail.json`, JSON.stringify(ro, null, 1) + "\n");
-  await closeBrowser().catch(() => {});
-  process.exit(1);
-} finally {
+  try {
+    // контрольный проект: сравнение с GET «до» — и при успехе, и в ветке ошибки
+    const ro = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN);
+    writeFileSync(`${OUT}/268-get-readonly-${failed ? "after-fail" : "after"}.json`, JSON.stringify(ro, null, 1) + "\n");
+    const roSame = strip(ro.model) === strip(roBefore.model);
+    console.log(failed ? "контрольный проект после сбоя" : "контрольный проект", "не изменился:", roSame ? "OK" : "ИЗМЕНИЛСЯ");
+    readonlyUnchanged = roSame;
+  } catch (ce) {
+    console.error("контрольный GET после прогона не удался:", (ce as Error).message);
+  }
   await closeBrowser().catch(() => {});
 }
 
-const roAfter = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN);
-writeFileSync(`${OUT}/268-get-readonly-after.json`, JSON.stringify(roAfter, null, 1) + "\n");
-console.log("контрольный проект не изменился:", strip(roAfter.model) === strip(roBefore.model) ? "OK" : "ИЗМЕНИЛСЯ");
 const ownAfter = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
 writeFileSync(`${OUT}/268-get-own-after.json`, JSON.stringify(ownAfter, null, 1) + "\n");
 const same = strip(ownAfter.model) === strip(backup.model);
 console.log("data dev == бэкап:", same ? "OK — восстановлен" : "РАСХОЖДЕНИЕ (сверить производные пути)");
-process.exit(same ? 0 : 2);
+process.exit(failed || !readonlyUnchanged || !same ? 1 : 0);
