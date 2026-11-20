@@ -335,7 +335,7 @@ try {
 
   // 5. validate → save (без NORMALIZATION_DROPPED) → reopen → сверка
   const v = await call("model_validate", {});
-  console.log("validate: проблем", (v["problems"] ?? []).length);
+  console.log("validate: проблем", ((v["problems"] ?? []) as unknown[]).length);
   written = true; // с этого места сервер может получить изменения — в finally восстановление
   const saveRes = await call("project_save", {});
   console.log("save:", JSON.stringify({ verified: saveRes["verified"], rounds: saveRes["rounds"] }));

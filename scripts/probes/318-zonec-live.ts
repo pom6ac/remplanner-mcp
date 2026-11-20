@@ -4,10 +4,14 @@
 // 2) делитель, поставленный руками в UI (drag) и сохранённый страницей,
 //    попадает в рабочую копию при project_open → MCP save его не теряет;
 // 3) zone_c_remove → save verified;
-// Гарды полные (285 №3): ID из env, OBJECT_ID != READONLY_ID до любой записи,
-// план в редакторе == серверу (compat), бэкап + семантическая сверка sig(),
-// контрольный GET read-only по реальному плану (непустой, канон + save_id)
-// до и после, restore в finally по захваченным site_id, closeBrowser.
+// Гарды полные (285 №3 + ревью 319 №3/№4): ID из env, OBJECT_ID != READONLY_ID,
+// PLAN_ID != READONLY_PLAN_ID, GET(OBJECT_ID, PLAN_ID) возвращает пару
+// object_id/plan_id из env и PLAN_ID в планах объекта (probe-guard), план в
+// редакторе == серверу (compat), бэкап + семантическая сверка sig(),
+// контрольный проект — ФИКСИРОВАННЫЙ эталон (файл не перезаписывается), проверка
+// перед КАЖДОЙ фазой записи и в finally, «ИЗМЕНИЛСЯ» → exit(1) до следующих
+// записей; restore в finally по захваченным site_id (после drag — только НОВЫЕ
+// id делителей: разность наборов до/после, не ровно один → стоп), closeBrowser.
 // node scripts/probes/318-zonec-live.ts run
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -17,6 +21,7 @@ import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { sig } from "./probe-sig.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, type ReadonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") { console.error("запуск: run"); process.exit(0); }
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
@@ -24,9 +29,7 @@ const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"];
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
 const READONLY_PLAN_ID = process.env["REMPLANNER_PROBE_READONLY_PLAN_ID"];
 if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) { console.error("нужны env"); process.exit(1); }
-if (OBJECT_ID === READONLY_ID) { console.error("OBJECT_ID == READONLY_ID — стоп"); process.exit(1); }
-const RO_ID: string = READONLY_ID;
-const RO_PLAN_ID: string = READONLY_PLAN_ID;
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 mkdirSync(".orca-reports/tmp", { recursive: true });
 setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
 
@@ -85,26 +88,19 @@ async function restoreByCaptured(): Promise<void> {
   opened = false;
 }
 
-let roBefore: LoadedModel | null = null;
+let roGuard: ReadonlyGuard | null = null;
 async function checkReadonly(): Promise<void> {
-  if (!roBefore) return;
-  try {
-    const roAfter = await loadModel(ctx.session(), RO_ID, RO_PLAN_ID);
-    if (roAfter.data_empty) { console.error("контрольный GET после — пустой (data_empty)"); process.exitCode = 1; return; }
-    const ok = sig(roAfter.model) === sig(roBefore.model) && roAfter.save_id === roBefore.save_id;
-    console.log("контрольный (finally):", ok ? "не изменился (канон + save_id)" : "ИЗМЕНИЛСЯ — СТОП");
-    if (!ok) process.exitCode = 1;
-  } catch (e) {
-    console.error("контрольный GET после не удался:", String((e as Error).message ?? e).slice(0, 300));
-    process.exitCode = 1;
-  }
+  if (!roGuard) return;
+  await roGuard.checkFinal("finally");
 }
 
-/** Пробная комната: 4 стены 220×160, толщина 100, правее пользовательской геометрии. */
+/** Пробная комната: 4 стены 220×160, толщина 100, правее пользовательской геометрии.
+ *  ревью 319 №5: maxX по ВСЕМ стенам, комната ищется по полному bbox (X и Y). */
 async function makeTrialRoom(beforeModel: LoadedModel): Promise<{ roomId: string; poly: Array<{ x: number; y: number }> }> {
   const rawWalls = (beforeModel.model["walls"] ?? {}) as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>;
-  const maxX = Math.max(...Object.values(rawWalls).filter((w) => w.p1.x < 1400 && w.p2.x < 1400).flatMap((w) => [w.p1.x, w.p2.x]));
-  const ox = Math.ceil(maxX) + 300, oy = 0, w = 220, h = 160;
+  const maxX = Math.max(...Object.values(rawWalls).flatMap((w) => [w.p1.x, w.p2.x]));
+  const maxY = Math.max(...Object.values(rawWalls).flatMap((w) => [w.p1.y, w.p2.y]));
+  const ox = Math.ceil(maxX) + 300, oy = Math.ceil(maxY) + 300, w = 220, h = 160;
   type Pt = { x: number; y: number };
   for (const [p1, p2] of [
     [{ x: ox, y: oy }, { x: ox + w, y: oy }],
@@ -121,7 +117,12 @@ async function makeTrialRoom(beforeModel: LoadedModel): Promise<{ roomId: string
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
   const afterRoom = await loadModel(ctx.session(), OBJECT_ID!, PLAN_ID!);
   const roomsAfter = (afterRoom.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }> }>;
-  const entry = Object.entries(roomsAfter).find(([, r]) => (r.polygon ?? []).length >= 3 && (r.polygon ?? []).every((q) => q.x >= ox - 1 && q.x <= ox + w + 1));
+  // ревью 319 №5: полный bbox — и по X, и по Y; геометрия комнаты обязана лечь
+  // на прямоугольник из захваченных (созданных пробой) стен
+  const entry = Object.entries(roomsAfter).find(([, r]) => {
+    const p = r.polygon ?? [];
+    return p.length >= 3 && p.every((q) => q.x >= ox - 1 && q.x <= ox + w + 1 && q.y >= oy - 1 && q.y <= oy + h + 1);
+  });
   if (!entry) throw new Error("пробная комната не появилась");
   return { roomId: entry[0], poly: entry[1].polygon! };
 }
@@ -140,10 +141,11 @@ async function openAndGuard(): Promise<void> {
 }
 
 try {
-  const roBeforeLocal = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
-  if (roBeforeLocal.data_empty) throw new Error("контрольный GET пустой — отказ");
-  roBefore = roBeforeLocal;
-  writeFileSync(".orca-reports/tmp/318-get-readonly-before.json", JSON.stringify(roBeforeLocal, null, 1));
+  // ревью 319 №4: эталон контрольного проекта фиксированный — файл создаётся,
+  // только если его нет, и не перезаписывается; сверка перед каждой фазой записи
+  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, ".orca-reports/tmp/318-zonec-readonly-ref.json");
+  // ревью 319 №3: пара объект/план из env и PLAN_ID в планах объекта
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
   before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const backupPath = ".orca-reports/backup-".concat(OBJECT_ID, "-318.json");
   if (!existsSync(backupPath)) writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
@@ -155,6 +157,7 @@ try {
   }
 
   // ---- часть 1: MCP zone_c_add → validate → save → reopen → сверка → render ----
+  await roGuard.assertUnchanged("перед частью 1");
   await openAndGuard();
   const { roomId, poly } = await makeTrialRoom(before);
   console.log("пробная комната:", roomId);
@@ -209,6 +212,7 @@ try {
   }
 
   // ---- часть 2: делитель руками в UI → page save → project_open (ингест) → MCP save ----
+  await roGuard.assertUnchanged("перед частью 2");
   await openAndGuard();
   const trial2 = await makeTrialRoom(await loadModel(ctx.session(), OBJECT_ID, PLAN_ID));
   console.log("пробная комната 2:", trial2.roomId);
@@ -236,6 +240,11 @@ try {
   const tp = trial2.poly;
   const a = { x: tp[3]!.x + 3, y: (tp[3]!.y + tp[2]!.y) / 2 };
   const bpt = { x: tp[0]!.x - 3, y: (tp[0]!.y + tp[1]!.y) / 2 };
+  // ревью 319 №2: захватываем только НОВЫЕ id делителей — набор ДО drag, разность ПОСЛЕ
+  const delimIdsBefore = new Set(await page.evaluate(() => {
+    const w: any = window as any;
+    return Object.keys(w.project.copy("server").zone_delimiters ?? {}) as string[];
+  }));
   const sa = await toScreen(a), sb = await toScreen(bpt);
   await page.mouse.move(sa.x, sa.y, { steps: 5 });
   await page.waitForTimeout(300);
@@ -245,11 +254,13 @@ try {
   await page.waitForTimeout(300);
   await page.mouse.up();
   await page.waitForTimeout(1200);
-  const dragDelims = await page.evaluate(() => {
+  const dragDelims = (await page.evaluate(() => {
     const w: any = window as any;
-    return Object.keys(w.project.copy("server").zone_delimiters ?? {});
-  });
-  console.log("drag: делителей в редакторе:", JSON.stringify(dragDelims));
+    return Object.keys(w.project.copy("server").zone_delimiters ?? {}) as string[];
+  })).filter((id) => !delimIdsBefore.has(id));
+  console.log("drag: новых делителей:", JSON.stringify(dragDelims), "(всего в редакторе:", delimIdsBefore.size + dragDelims.length, ")");
+  // инцидент 240: чужие делители пользователя не трогаем — новых не ровно один → стоп
+  if (dragDelims.length !== 1) throw new Error(`после drag новых делителей не ровно один (${dragDelims.length}) — стоп`);
   for (const id of dragDelims) created.push({ kind: "delimiter", siteId: id });
   const pageSave = await page.evaluate(async () => {
     const w: any = window as any;
