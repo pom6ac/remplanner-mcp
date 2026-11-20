@@ -291,6 +291,41 @@ function assertFiniteAndDepth(value: unknown, path: string, depth: number): void
 }
 
 /**
+ * Связь «предмет ↔ содержимое» щитков однозначна (ревью 256 №6): SHIELDS.restore
+ * перекладывает щитки по s.id и дополняет предметам записи по умолчанию. Поэтому:
+ * ключ записи ≠ id и два щитка на один предмет — INVALID_ARGUMENT (иначе сверка
+ * до записи видит ложные «потерян/лишняя» и блокирует save); щиток-сирота
+ * (shield_id не из items, в том числе без shield_id) отбрасывается — редактор
+ * сам создаёт предметам-щиткам записи при restore.
+ */
+function normalizeShields(data: Record<string, unknown>): void {
+  const shields = data["shields"] as Record<string, Record<string, unknown>> | undefined;
+  if (!shields) return;
+  const items = data["items"] as Record<string, unknown> | undefined;
+  const byShieldId = new Map<string, string>();
+  for (const [key, s] of Object.entries(shields)) {
+    if (s["id"] !== key) {
+      throw new McpError("INVALID_ARGUMENT", `модель не прошла валидацию (model.shields.${key}): ключ записи ≠ id (${String(s["id"])})`);
+    }
+  }
+  for (const [key, s] of Object.entries(shields)) {
+    const sid = s["shield_id"];
+    if (typeof sid !== "string" || sid === "") continue;
+    const prev = byShieldId.get(sid);
+    if (prev !== undefined) {
+      throw new McpError("INVALID_ARGUMENT", `модель не прошла валидацию (model.shields.${key}): shield_id «${sid}» уже у записи ${prev} — два щитка на один предмет`);
+    }
+    byShieldId.set(sid, key);
+  }
+  for (const [key, s] of Object.entries(shields)) {
+    const sid = s["shield_id"];
+    if (typeof sid !== "string" || !(items !== undefined && sid in items)) {
+      delete shields[key];
+    }
+  }
+}
+
+/**
  * Разобрать модель импорта: Zod-схема + проверка чисел/вложенности.
  * Ошибка — McpError INVALID_ARGUMENT с путём к полю (без содержимого файла).
  */
@@ -305,5 +340,6 @@ export function parseModelImport(value: unknown): unknown {
     );
   }
   assertFiniteAndDepth(res.data, "model", 0);
+  normalizeShields(res.data as Record<string, unknown>);
   return res.data;
 }

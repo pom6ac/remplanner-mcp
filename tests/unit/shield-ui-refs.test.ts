@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Model, ItemProps, Shield } from "../../src/model/types.ts";
-import { addRoomRect } from "../../src/model/walls.ts";
+import { addRoomRect, moveWall } from "../../src/model/walls.ts";
 import { addItem, deleteItem } from "../../src/model/items.ts";
 import {
   addShieldRail, deleteShieldRail, addShieldModule, updateShieldModule, deleteShieldModule,
@@ -85,6 +85,20 @@ test("255: лимиты типов — ширина в DIN и порты как 
 
 // ---------- эталоны UI в обе стороны ----------
 
+/** Ревью 256 №7: маскированная форма целиком — id-поля заменены на «<id>»,
+ *  ключи отсортированы; сравнение deepEqual, а не по выбранным полям. */
+function maskedForm(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(maskedForm);
+  if (v !== null && typeof v === "object") {
+    return Object.fromEntries(
+      Object.entries(v as Record<string, unknown>)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([k, x]) => [k, /^(id|shield_id|rail_id|parent_id|module_id)$/.test(k) ? "<id>" : maskedForm(x)]),
+    );
+  }
+  return v;
+}
+
 test("255: эталон ui-ref-shield-empty — форма щитка по умолчанию (рейка + ввод с 3 портами)", () => {
   const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-shield-empty.json"), "utf8")) as { shields: Record<string, Shield> };
   const s = Object.values(fx.shields)[0]!;
@@ -98,12 +112,15 @@ test("255: эталон ui-ref-shield-empty — форма щитка по ум�
   const types = inputs[0]!.ports.map((p) => p.type).sort();
   assert.deepEqual(types, ["shield_wire_earth", "shield_wire_null", "shield_wire_phase"]);
   // эталон проходит импорт в коллекцию shields
-  assert.doesNotThrow(() => parseModelImport({ ...baseModel(), shields: { s1: structuredClone(s) } }));
-  // и воспроизводится ensureShieldForItem как семантическая проекция
+  // эталон проходит импорт в коллекцию shields (ключ = id записи — ревью 256 №6)
+  assert.doesNotThrow(() => parseModelImport({ ...baseModel(), shields: { [s.id]: structuredClone(s) } }));
+  // и воспроизводится ensureShieldForItem как маскированная форма ЦЕЛИКОМ
+  // (ревью 256 №7: не по выбранным полям)
   const { m, shield } = scenario();
   const made = ensureShieldForItem(m, shield);
   assert.equal(isDefaultEmptyShield(made), true);
   assert.equal(isDefaultEmptyShield(structuredClone(s)), true);
+  assert.deepEqual(maskedForm(shieldProjection(made)), maskedForm(shieldProjection(s)), "форма ensureShieldForItem ≅ эталон");
 });
 
 test("255: эталон ui-ref-shield-module — форма модуля воспроизводится addShieldModule (обе стороны)", () => {
@@ -135,8 +152,12 @@ test("255: эталон ui-ref-shield-module — форма модуля вос�
   }
   assert.equal(mod.rail_id, Object.keys(findShieldByItem(m, shield.id)!.rails)[0]);
   assert.equal(mod.index, 0);
-  // эталон в импорте проходит
-  assert.doesNotThrow(() => parseModelImport({ ...baseModel(), shields: { s1: structuredClone(ref) } }));
+  // эталон снят после add_rail_to_shield + add_module: две рейки (с модулем и пустая)
+  addShieldRail(m, shield.id);
+  // маскированная форма ЦЕЛИКОМ (ревью 256 №7): наш щиток ≅ эталону
+  assert.deepEqual(maskedForm(shieldProjection(findShieldByItem(m, shield.id)!)), maskedForm(shieldProjection(ref)), "форма щитка с модулем ≅ эталон");
+  // эталон в импорте проходит (ключ = id записи — ревью 256 №6)
+  assert.doesNotThrow(() => parseModelImport({ ...baseModel(), shields: { [ref.id]: structuredClone(ref) } }));
 });
 
 // ---------- add/update/delete ----------
@@ -384,6 +405,44 @@ test("255: импорт — щиток с модулями проходит; м�
   );
 });
 
+// Ревью 256 №6: связь «предмет ↔ содержимое» при импорте однозначна —
+// ключ записи = id, один щиток на предмет; щитки-сироты (item не существует)
+// отбрасываются — редактор сам создаёт предметам записи по умолчанию.
+test("256 №6: импорт отклоняет ключ ≠ id, дубль shield_id; сирота отбрасывается", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  // ключ ≠ id
+  const badKey = structuredClone(m);
+  const s = structuredClone(findShieldByItem(m, shield.id)!);
+  s.id = "other";
+  badKey.shields = { k1: s } as never;
+  assert.throws(
+    () => parseModelImport(badKey),
+    (e: unknown) => e instanceof McpError && (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // два щитка на один предмет
+  const dup = structuredClone(m);
+  const a1 = structuredClone(findShieldByItem(m, shield.id)!);
+  const a2 = structuredClone(findShieldByItem(m, shield.id)!);
+  a1.id = "s1";
+  a2.id = "s2";
+  dup.shields = { s1: a1, s2: a2 } as never;
+  assert.throws(
+    () => parseModelImport(dup),
+    (e: unknown) => e instanceof McpError && (e as McpError).code === "INVALID_ARGUMENT",
+  );
+  // сирота: shield_id не из items — не ошибка, запись отбрасывается
+  const orphan = structuredClone(m);
+  const os = structuredClone(findShieldByItem(m, shield.id)!);
+  os.id = "s1";
+  os.shield_id = "ghost_item";
+  orphan.shields = { s1: os } as never;
+  const parsed = parseModelImport(structuredClone(orphan)) as { shields?: Record<string, unknown> };
+  assert.equal(Object.keys(parsed.shields ?? {}).length, 0);
+  // предмет без записи проходит — редактор дополнит сам
+  assert.doesNotThrow(() => parseModelImport(structuredClone(m)));
+});
+
 test("255: toModel мигрирует legacy-формы — rails/buses массивом, inputs-массив, ports без обёртки", () => {  const raw = {
     v: 3, walls: {}, items: {}, pillars: {},
     shields: {
@@ -475,6 +534,44 @@ test("256 №4: mock save — модель с legacy-щитком (массив�
 });
 
 // ---------- сверка shieldMismatches ----------
+
+// Ревью 256 №5: каждое поле семантической проекции участвует в сверке —
+// изменение поля X в «фактической» модели даёт ровно 1 расхождение
+// (мутации проверок не должны выживать).
+test("256 №5: мутации проекции — порты, inputs, comment, group_number, shield_id, buses, index, custom", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  const { module: mod } = addShieldModule(m, shield.id, { type: "shield_module", comment: "зал" });
+  const expected = m.shields!;
+  const mutate: [string, (s: Shield) => void][] = [
+    ["порт модуля удалён", (s) => { const mod2 = Object.values(Object.values(s.rails)[0]!.modules)[0]!; mod2.ports = mod2.ports.slice(1); }],
+    ["порт модуля изменён", (s) => { const mod2 = Object.values(Object.values(s.rails)[0]!.modules)[0]!; mod2.ports[0]!.connected = 1; }],
+    ["inputs потеряны", (s) => { s.inputs = {}; }],
+    ["порт ввода изменён", (s) => { Object.values(s.inputs)[0]!.ports[0]!.connected = 1; }],
+    ["comment модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.comment = "кухня"; }],
+    ["group_number модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.group_number = 9; }],
+    ["subtype модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.subtype = "63A"; }],
+    ["type модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.type = "shield_module_x2"; }],
+    ["width модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.width = 2; }],
+    ["shield_id перепривязан", (s) => { s.shield_id = "other_item"; }],
+    ["buses изменены", (s) => { s.buses = { b1: { id: "b1" } }; }],
+    ["wires изменены", (s) => { s.wires = { w1: { id: "w1" } }; }],
+    ["collectors изменены", (s) => { s.collectors = { c1: { id: "c1" } }; }],
+    ["index модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.index = 5; }],
+    ["rail_id модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.rail_id = "other_rail"; }],
+    ["custom модуля", (s) => { Object.values(Object.values(s.rails)[0]!.modules)[0]!.custom = { ports: 1 }; }],
+    ["index рейки", (s) => { Object.values(s.rails)[0]!.index = 3; }],
+    ["on_auto_length_rails", (s) => { s.on_auto_length_rails = 0; }],
+    ["рейка удалена", (s) => { s.rails = {}; }],
+    ["модуль удалён", (s) => { delete Object.values(s.rails)[0]!.modules[mod.id]; }],
+  ];
+  for (const [label, fn] of mutate) {
+    const got = structuredClone(expected);
+    fn(Object.values(got)[0]!);
+    const list = shieldMismatches(expected, got);
+    assert.equal(list.length, 1, `мутация «${label}» не поймана сверкой`);
+  }
+});
 
 test("255: shieldMismatches — потеря, изменение содержимого, лишняя запись, авто-запись по умолчанию", () => {
   const { m, shield, internal } = scenario();
@@ -630,9 +727,35 @@ test("255: mock save — нормализатор потерял щиток → 
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
   const ws = saveMock(server, () => {}, (norm) => { delete norm.shields; });
   await ws.open("0", "1");
-  await assert.rejects(() => ws.save(), (e: unknown) => e instanceof McpError && (e as McpError).code === "NORMALIZATION_DROPPED");
+  await assert.rejects(() => ws.save(), (e: unknown) => {
+    if (!(e instanceof McpError) || e.code !== "NORMALIZATION_DROPPED") return false;
+    // ревью 256 №5: details.shield_mismatches непустой
+    const list = (e.details as Record<string, unknown>)["shield_mismatches"] as string[] | undefined;
+    return Array.isArray(list) && list.length > 0;
+  });
   // записи не было: серверная модель осталась в состоянии открытия
   assert.equal(Object.keys((server.model.shields ?? {}) as Record<string, unknown>).length, 1);
+});
+
+// Ревью 256 №5: мутация стен, при которой нормализатор теряет щиток, отменяется
+// (INVALID_GEOMETRY с непустым shield_mismatches) — сверка shieldMismatches в
+// applyWalls покрыта тестом.
+test("256 №5: wall_move при потере щитка нормализатором — INVALID_GEOMETRY, shield_mismatches", async () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module" });
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => { delete norm.shields; });
+  await ws.open("0", "1");
+  const wallId = Object.values(ws.model.walls)[0]!.id;
+  await assert.rejects(
+    () => ws.applyWalls("wall_move", (mm) => moveWall(mm, { wallId, offsetMm: 100 })),
+    (e: unknown) => {
+      if (!(e instanceof McpError) || e.code !== "INVALID_GEOMETRY") return false;
+      const list = (e.details as Record<string, unknown>)["shield_mismatches"] as string[] | undefined;
+      return Array.isArray(list) && list.length > 0;
+    },
+  );
 });
 
 test("255: mock save — сервер испортил номинал модуля → SITE_ERROR с shield_mismatches", async () => {
