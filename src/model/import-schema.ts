@@ -221,12 +221,17 @@ const shield = z.looseObject({
     MAX_IMPORT_GRAPH_NODES,
   ).optional(),
   // ревью 285 №7: у шины проверяются ports (массив портов) и connection (строка) —
-  // раньше looseObject({id}) пропускал ports: 5, на котором падали операции с модулями
+  // раньше looseObject({id}) пропускал ports: 5, на котором падали операции с модулями.
+  // Ревью 293 №3: ports и type ОБЯЗАТЕЛЬНЫ (редактор всегда их сериализует) —
+  // раньше шина без них проходила импорт, и compactModel падал на b.ports.length
+  // (model_get не работал), а shield_bus_update — на bus.type.startsWith.
   buses: collection(
     z.looseObject({
       id: idStr,
-      ports: z.array(shieldPort).max(MAX_IMPORT_GRAPH_NODES).optional(),
+      type: shortStr,
+      ports: z.array(shieldPort).max(MAX_IMPORT_GRAPH_NODES),
       connection: shortStr.optional(),
+      distance: z.number().finite().optional(),
     }),
     MAX_IMPORT_GRAPH_NODES,
   ).optional(),

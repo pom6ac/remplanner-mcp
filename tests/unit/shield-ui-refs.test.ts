@@ -1349,6 +1349,35 @@ test("ревью 285 №7: схема импорта — id_source/id_target/typ
   );
 });
 
+// 293 ревью №3: у шины ports и type обязательны (редактор всегда их
+// сериализует) — раньше схема пускала шину без них, и compactModel падал
+// на b.ports.length (model_get не работал), а shield_bus_update — на bus.type.
+test("293 №3: импорт шины без ports или type — отказ; валидная шина проходит, compact жив", () => {
+  const { m, shield } = scenario();
+  ensureShieldForItem(m, shield);
+  addShieldModule(m, shield.id, { type: "shield_module", subtype: "16A" });
+  const s = findShieldByItem(m, shield.id)!;
+  const bus = { id: "b1", type: "TC", connection: "", distance: 157.5, ports: [{ id: "p1", parent_id: "b1", parent_type: "bus", connected: 0 }] };
+  for (const key of ["ports", "type"] as const) {
+    const bad = structuredClone(s) as never as { buses: Record<string, typeof bus> };
+    bad.buses = { b1: { ...bus } };
+    delete bad.buses["b1"]![key];
+    assert.throws(
+      () => parseModelImport({ ...baseModel(), shields: { [s.id]: bad } }),
+      (e: unknown) => (e as McpError).code === "INVALID_ARGUMENT",
+      `шина без ${key} — отказ`,
+    );
+  }
+  // валидная шина проходит импорт, compactModel/model_get не падает
+  const ok = structuredClone(s) as never as { buses: Record<string, typeof bus> };
+  ok.buses = { b1: { ...bus } };
+  const parsed = parseModelImport({ ...structuredClone(m), shields: { [s.id]: ok } }) as { shields: Record<string, unknown> };
+  const compact = compactModel(parsed as never, []) as unknown as { shields: { bus_list: { bus_id: string; type: string; sockets: number }[] }[] };
+  assert.equal(compact.shields[0]!.bus_list![0]!.bus_id, "b1");
+  assert.equal(compact.shields[0]!.bus_list![0]!.type, "TC");
+  assert.equal(compact.shields[0]!.bus_list![0]!.sockets, 1);
+});
+
 test("ревью 285 №8: перенос модуля между рейками пересчитывает авто-длину щитка (refreshAutoLength)", () => {
   const { m, shield } = scenario();
   ensureShieldForItem(m, shield);
