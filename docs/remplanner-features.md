@@ -1133,15 +1133,19 @@ Ctrl+C/Ctrl+V — копировать предметы; Delete **[код]** —
   дописывает props сразу при соединении). source_items CablingWarnFloor: от
   терморегулятора — кабельный/ИК контур, узлы; **водяной контур к проводу не
   подключается**; один терморегулятор на кабель (l10n
-  cabling_warm_floor_not_connect_two_thermo); контуры не соединяются напрямую
-  (not_connect_two_floor); повторная связь контура —
-  cabling_warm_floor_not_connect_same_floor. warm_floor_update пересчитывает
-  вершины-контуры кабелей; warm_floor_delete с кабелем — отказ.
+  cabling_warm_floor_not_connect_two_thermo); у кабеля не более одного контура
+  (not_connect_two_floor — узлы пути контуры не разделяют); повторная связь
+  контура — cabling_warm_floor_not_connect_same_floor. warm_floor_update
+  пересчитывает вершины-контуры кабелей; warm_floor_delete с кабелем — отказ.
   **Коллекторные узлы** — предметы каталога `radiator_collector` (48×10,
   «Отопительный коллектор»), `ext_manifold_box`/`int_manifold_box` (60×15,
   self_height 65, «Коллекторный шкаф внешний/встроенный»): anchor wall, план
   `{radiators: 26, warm_floor: 11}`, `over_floor {value:0, display:false}` —
-  ставятся item_add у стены, подключаются к магистралям (multi).
+  ставятся item_add у стены; точка привязки по виду (ревью 269 М1, дампы
+  кликов 268): `ext_manifold_box` вплотную к внутренней грани, встроенный
+  `int_manifold_box` утоплен в стену (pc на 5.5 см в стену от грани, wall_line
+  редактор не пишет), `radiator_collector` на 4.55 см от грани; подключаются
+  к магистралям (multi).
   **Тёплая стена** `warm_wall_cable` — декоративные линии `warms_walls` в
   rooms2 (WarmLine: `line`, height 135, height_from_floor 15, части по рёбрам
   комнаты — механика tool_group wall_elements) + кабель в cables_warm_floor

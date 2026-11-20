@@ -179,7 +179,7 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 | Вентиляция | Воздуховоды (`ventpipe_out`, `ventpipe_in`) | `pipes_ventilation` — граф с сечением рёбер (width/type/height) и spots {}; вершины вентиляторов/установки, ссылка `props.pipes_ventilation.ventpipe_*_id` | **да**: `pipe_add kind=vent_out/vent_in` (климат ч.2) | да (`ui-ref-climate2-vent-pipe-fan`) | **да** |
 | Радиаторы | 9 радиаторов/конвекторов | `items` (у стены) | **да**: `item_add` | да | нет |
 | Радиаторы | Магистрали отопления (`heat_pipe_hot`, `heat_pipe_cold`) | `pipes_heat` — граф; вершины радиаторов type "waterspot" (point = pc), ссылки `props.pipes_heat.heat_pipe_hot_id/heat_pipe_cold_id`; коллекторы multi | **да**: `pipe_add kind=heat_hot/heat_cold` (климат ч.2: радиатор к подаче и обратке) | да (`ui-ref-climate2-heat-pipe`) | **да** |
-| Радиаторы | Коллекторные узлы (`radiator_collector`, `ext_manifold_box`, `int_manifold_box` — группа меню «Коллекторные узлы») | `items` (multi; anchor wall, plan {radiators, warm_floor}, у шкафов self_height 65) | **да**: `item_add` against_wall (климат ч.3, эталон `ui-ref-climate3-manifold-*`); подключение к магистралям — `pipe_add` (multi) | да (`ui-ref-climate3-manifold-*`) | **да** |
+| Радиаторы | Коллекторные узлы (`radiator_collector`, `ext_manifold_box`, `int_manifold_box` — группа меню «Коллекторные узлы») | `items` (multi; anchor wall, plan {radiators, warm_floor}, у шкафов self_height 65; pc по виду: ext вплотную, int утоплен в стену (−5.5 от грани), collector 4.55 от грани — ревью 269 М1) | **да**: `item_add` against_wall (климат ч.3, эталон `ui-ref-climate3-manifold-*`); подключение к магистралям — `pipe_add` (multi) | да (`ui-ref-climate3-manifold-*`) | **да** |
 
 ### 4.4 Отделка, размеры, подписи, развёртки
 
