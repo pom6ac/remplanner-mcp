@@ -5,6 +5,8 @@ import { openEditor } from "../../src/editor/adapter.ts";
 import { loadSession } from "../../src/session.ts";
 import { STATE_PATH } from "../../src/config.ts";
 import { clearFog, clickAt, escape, pickTool, switchSheet, toScreen } from "./phase2-lib.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;

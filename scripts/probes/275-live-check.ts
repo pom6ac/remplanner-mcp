@@ -13,6 +13,7 @@ import { loadModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу run (ID из env)");
@@ -21,15 +22,12 @@ if (process.argv[2] !== "run") {
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
 const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"];
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
-const READONLY_PLAN = process.env["REMPLANNER_PROBE_READONLY_PLAN"];
-if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN) {
-  console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID, REMPLANNER_PROBE_READONLY_PLAN");
+const READONLY_PLAN_ID = process.env["REMPLANNER_PROBE_READONLY_PLAN_ID"];
+if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
+  console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID, REMPLANNER_PROBE_READONLY_PLAN_ID");
   process.exit(1);
 }
-if (OBJECT_ID === READONLY_ID) {
-  console.error("OBJECT_ID === READONLY_ID — отказ до любой записи");
-  process.exit(1);
-}
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 25 * 60_000).unref();
@@ -79,8 +77,10 @@ const writeCreated = (): void => {
   writeFileSync(`${OUT}/275-created.json`, JSON.stringify(created, null, 1) + "\n");
 };
 
-const roBefore = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN);
-writeFileSync(`${OUT}/275-get-readonly-before.json`, JSON.stringify(roBefore, null, 1) + "\n");
+// ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
+await roGuard.assertUnchanged("перед записями");
 
 const captureNewWalls = async (known: Set<string>): Promise<void> => {
   const mgNow = (await call("model_get", {})) as unknown as { walls: { site_id?: string }[] };
@@ -112,6 +112,7 @@ const guessColl = (tool: string): string =>
   tool === "wiring_delete" ? "cables_warm_floor" : tool === "item_delete" ? "items" : "walls";
 
 const saveLog = async (tag: string): Promise<Record<string, unknown>> => {
+  await roGuard.assertUnchanged("{tag}");
   const s = await call("project_save", {});
   console.log(`${tag}: verified =`, s["verified"], "; will_delete =", JSON.stringify(s["will_delete"] ?? null), "; warnings =", JSON.stringify(s["warnings"] ?? null));
   if (s["verified"] !== true) throw new Error(`${tag} не verified`);
@@ -277,6 +278,7 @@ try {
 } finally {
   try {
     if (failed) {
+      await roGuard.assertUnchanged("{tag}");
       try { await call("project_save", {}); } catch { /* проект мог не открыться */ }
     }
     await pause();
@@ -324,13 +326,12 @@ try {
     writeCreated();
   }
   try {
-    const ro = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN);
-    writeFileSync(`${OUT}/275-get-readonly-${failed ? "after-fail" : "after"}.json`, JSON.stringify(ro, null, 1) + "\n");
-    const roSame = strip(ro.model) === strip(roBefore.model);
-    console.log(failed ? "контрольный проект после сбоя" : "контрольный проект", "не изменился:", roSame ? "OK" : "ИЗМЕНИЛСЯ");
-    readonlyUnchanged = roSame;
+    // ревью 319 №4: сверка контрольного проекта с фиксированным эталоном — и при успехе, и в ветке ошибки
+    const roChanged = await roGuard.checkFinal(failed ? "после сбоя" : "в конце");
+    readonlyUnchanged = !roChanged;
   } catch (ce) {
-    console.error("контрольный GET после прогона не удался:", (ce as Error).message);
+    console.error("контрольная сверка после прогона не удалась:", (ce as Error).message);
+    readonlyUnchanged = false;
   }
   await closeBrowser().catch(() => {});
 }

@@ -5250,6 +5250,88 @@
    }
   },
   {
+   "name": "zone_c_add",
+   "description": "Провести линию-разделитель зон комнаты (лист «Перегородки», инструмент «Зонирование»). Линия делит зоны комнаты (rooms2[].zones); имя помещения хранится в комнате и не теряется, а имена/флаги зон-родителей редактор при делении сбрасывает (безымянные зоны-наследники — стандарт редактора). from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм), как в редакторе: линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны и другие разделители зон того же листа (разделители других листов пересекать можно). id — метка ZD<n> для zone_c_remove и finish_get. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "from_mm": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "начало линии, мм"
+     },
+     "to_mm": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "конец линии, мм"
+     }
+    },
+    "required": [
+     "room_id",
+     "from_mm",
+     "to_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "zone_c_remove",
+   "description": "Удалить линию-разделитель зон комнаты (инструмент «ластик» на линии, лист «Перегородки»). delimiter_id — метка ZD<n> из finish_get или id сайта из zone_c_add.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "delimiter_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка ZD<n> из finish_get или id разделителя"
+     }
+    },
+    "required": [
+     "delimiter_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "zone_ceiling_add",
    "description": "Провести линию-разделитель зон потолка в комнате (лист «Потолки», инструмент «Зонировать потолок»; PRO). Линия делит потолок комнаты на зоны с разной отделкой. from_mm/to_mm — концы линии (мм); каждый конец магнитится к ребру комнаты (в 150 мм) или к грани потолочного ригеля/закладной (в 100 мм), как в редакторе: линия строится внутри одной комнаты от одной внешней стены до другой и не пересекает стены, колонны, ригели и другие разделители зон потолка. id — метка ZD<n> для zone_ceiling_remove и finish_get. После правки вызывайте model_validate и project_save.",
    "inputSchema": {

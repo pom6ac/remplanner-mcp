@@ -21,6 +21,8 @@ import { openEditor } from "../../src/editor/adapter.ts";
 import { loadSession } from "../../src/session.ts";
 import { STATE_PATH } from "../../src/config.ts";
 import { loadModel } from "../../src/api.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
@@ -156,7 +158,7 @@ function roomByContour(model: any, roomId: string, refModel: any = model): strin
 /** Смена имени комнаты как в UI (проба 43): zones[0].name/zone_name + localSave + editor.save. */
 async function renameViaEditor(roomId: string, newName: string): Promise<void> {
   const session = loadSession(STATE_PATH);
-  const editor = await withTimeout(openEditor(session, OBJECT_ID, PLAN_ID), 120_000, "openEditor");
+  const editor = await withTimeout(openEditor(session, OBJECT_ID!, PLAN_ID!), 120_000, "openEditor");
   try {
     const page = (editor as unknown as { page: import("playwright-core").Page }).page;
     const res = await withTimeout(page.evaluate(({ roomId, newName }: { roomId: string; newName: string }) => {
@@ -187,9 +189,9 @@ async function renameViaEditor(roomId: string, newName: string): Promise<void> {
 async function roomNameOnServer(roomId: string, expect: string, refModel?: any, attempts = 12): Promise<string | null> {
   for (let i = 0; i < attempts; i++) {
     await new Promise((res) => setTimeout(res, 5000));
-    const model = await loadModel(loadSession(STATE_PATH), OBJECT_ID, PLAN_ID);
+    const model = await loadModel(loadSession(STATE_PATH), OBJECT_ID!, PLAN_ID!);
     const currentId = roomByContour(model.model, roomId, refModel ?? model.model) ?? roomId;
-    const name = ((model.model.rooms2 ?? {})[currentId]?.zones ?? [])[0]?.name ?? null;
+    const name = (((model.model.rooms2 ?? {}) as Record<string, any>)[currentId]?.zones ?? [])[0]?.name ?? null;
     if (name === expect) return name;
     console.log(`  чтение ${i + 1}: имя "${name}" (ждём "${expect}")`);
   }

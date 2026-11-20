@@ -61,16 +61,60 @@ export function roomUserSig(room: unknown): { name: string | null; zones: string
   return { name, zones };
 }
 
-function sigMismatch(exp: { name: string | null; zones: string[] }, got: { name: string | null; zones: string[] }): string | null {
+/** Умолчательное имя зоны редактора (эталон 318: зоны пробной комнаты name:"none"). */
+const DEFAULT_ZONE_NAME = "none";
+
+function userZoneKey(zoneSig: string): string | null {
+  const [name, micro] = (JSON.parse(zoneSig) as [string, boolean]);
+  if (micro) return zoneSig;
+  if (name !== "" && name !== DEFAULT_ZONE_NAME) return zoneSig;
+  return null;
+}
+
+function zoneSigMismatch(
+  exp: { zones: string[] },
+  got: { zones: string[] },
+  divisionExplained: boolean,
+): string | null {
+  // Сверка состава зон (этап 318): делитель зон листа «Перегородки» (zone_c)
+  // режет контейнер zones редактора (Room2.updateZones("c")), наследники —
+  // безымянные записи (живой эталон 318-zonec-name: обе зоны name:"none"),
+  // поэтому: безымянные зоны в got сверх ожидания и безымянные в ожидании,
+  // которых нет в got, — норма; именованные/микрозоны ожидания обязаны
+  // сохраниться, кроме комнаты, получившей новый zone_c-делитель (деление
+  // сбрасывает имена — стандарт редактора); новые именованные/микрозоны в got
+  // редактор сам не создаёт — потеря/подмена.
+  const expUser = exp.zones.map(userZoneKey).filter((k): k is string => k !== null);
+  const gotUser = got.zones.map(userZoneKey).filter((k): k is string => k !== null);
+  const counts = (keys: string[]): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (const k of keys) m.set(k, (m.get(k) ?? 0) + 1);
+    return m;
+  };
+  const expCount = counts(expUser);
+  const gotCount = counts(gotUser);
+  if (!divisionExplained) {
+    for (const [k, n] of expCount) {
+      if ((gotCount.get(k) ?? 0) < n) return `зоны (имя/микро) ${JSON.stringify(exp.zones)} → ${JSON.stringify(got.zones)}`;
+    }
+  }
+  for (const [k, n] of gotCount) {
+    if ((expCount.get(k) ?? 0) < n) return `зоны (имя/микро) ${JSON.stringify(exp.zones)} → ${JSON.stringify(got.zones)}`;
+  }
+  return null;
+}
+
+function sigMismatch(
+  exp: { name: string | null; zones: string[] },
+  got: { name: string | null; zones: string[] },
+  divisionExplained = false,
+): string | null {
   // имя: отсутствие поля/зон на ожидаемой стороне не блокирует (редактор вправе
   // достроить зону-классификатор), явное имя/состав обязаны сохраниться
   if (exp.name !== null && got.name !== exp.name) {
     return `имя помещения «${exp.name}» → «${got.name}»`;
   }
-  if (exp.zones.length > 0 && JSON.stringify(exp.zones) !== JSON.stringify(got.zones)) {
-    return `зоны (имя/микро) ${JSON.stringify(exp.zones)} → ${JSON.stringify(got.zones)}`;
-  }
-  return null;
+  return zoneSigMismatch(exp, got, divisionExplained);
 }
 
 export type RoomsSaveCompareResult = { problems: string[]; warnings: string[] };
@@ -281,6 +325,11 @@ export function roomsChangePolicy(
 
 /** Комнаты модели (rooms2 ?? rooms1) — общий слой сверов; сама функция в room-geo
  *  (листовом модуле, чтобы zone→rooms-save→finish→zone не замыкалась). */
+export type RoomsCompareOpts = {
+  /** Комнаты, получившие новый zone_c-делитель (этап 318): деление зон
+   *  редактором штатно сбрасывает имена/состав зон (безымянные наследники). */
+  zoneDivisionRooms?: Set<string>;
+};
 /**
  * Затронутость комнат для сверки разделителей зон (ревью 263 N1, 265 R1) —
  * строже, чем affectedRoomIds (та рассчитана на исчезновение комнат при
@@ -332,6 +381,7 @@ export function roomsSaveCompare(
   gotRooms: Record<string, unknown> | undefined,
   mode: FinishMode,
   policy: RoomsChangePolicy = {},
+  opts: RoomsCompareOpts = {},
 ): RoomsSaveCompareResult {
   const exp = roomsOf(expectedRooms);
   const got = roomsOf(gotRooms);
@@ -364,7 +414,7 @@ export function roomsSaveCompare(
       problems.push(`room ${rid}: комната исчезла или изменилась при ${mode === "save" ? "сохранении (сервер)" : "нормализации"}`);
       continue;
     }
-    const mismatch = sigMismatch(roomUserSig(room), roomUserSig(got[gid]));
+    const mismatch = sigMismatch(roomUserSig(room), roomUserSig(got[gid]), opts.zoneDivisionRooms?.has(rid) ?? false);
     if (mismatch) problems.push(`room ${rid}: ${mismatch}`);
   }
 

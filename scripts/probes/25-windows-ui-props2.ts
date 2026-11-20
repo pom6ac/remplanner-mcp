@@ -8,6 +8,8 @@ import { closeBrowser } from "../../src/browser.ts";
 import { STATE_PATH } from "../../src/config.ts";
 import { loadSession } from "../../src/session.ts";
 import { clearFog, clickAt, escape, pickTool, switchSheet, arg } from "./phase2-lib.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 const TYPES = ["windowway", "window", "window_balcony", "window_door", "french_window", "french_window_coupe", "french_window_double"];
 const OUT = ".orca-reports/25-windows-ui";

@@ -91,12 +91,17 @@ test("126: mock server удаляет одну комнату из четырё�
 
 test("126: сервер стёр имя/тип комнаты (zones) — SITE_ERROR", async () => {
   const m = corridorModel();
+  // этап 318: безымянные зоны (умолчание name "none") не считаются
+  // пользовательскими — именуем зону явно, чтобы стирание было потерей
+  const rooms = roomsOf(m);
+  const first = rooms[Object.keys(rooms)[0]!]!;
+  ((first["zones"] as Array<Record<string, unknown>>)[0] as Record<string, unknown>)["name"] = "Гостиная";
   const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
   const ws = saveMock(server, (s) => {
-    const rooms = roomsOf(s.model);
-    const first = rooms[Object.keys(rooms)[0]!]!;
-    first["zones"] = [];
-    first["name"] = "none";
+    const gotRooms = roomsOf(s.model);
+    const gotFirst = gotRooms[Object.keys(rooms)[0]!]!;
+    gotFirst["zones"] = [];
+    gotFirst["name"] = "none";
   });
   await ws.open("0", "1");
   await assert.rejects(ws.save(), (e: unknown) => {
@@ -281,12 +286,21 @@ test("126 rooms-save: нормализация с переносом стены 
   got["moved"] = rec;
   // та же комната (kind=same): имя сохранено — пусто
   assert.deepEqual(roomsNormalizeMismatches(rooms, got), []);
-  // имя потеряно — расхождение
-  const recNoName = structuredClone(rec);
+  // имя потеряно — расхождение (этап 318: безымянные зоны с умолчанием name
+  // "none" не считаются пользовательскими, поэтому зона именуется явно
+  // и на стороне ожидания, и на стороне got)
+  const recNamed = structuredClone(rec);
+  const baseNamed = structuredClone(rooms);
+  ((baseNamed[rid] as Record<string, unknown>)["zones"] as Array<Record<string, unknown>>)[0]!["name"] = "Гостиная";
+  ((recNamed["zones"] as Array<Record<string, unknown>>)[0] as Record<string, unknown>)["name"] = "Гостиная";
+  const gotNamed = structuredClone(got);
+  gotNamed["moved"] = recNamed;
+  assert.deepEqual(roomsNormalizeMismatches(baseNamed, gotNamed), []);
+  const recNoName = structuredClone(recNamed);
   recNoName["zones"] = [];
-  const gotNoName = structuredClone(got);
+  const gotNoName = structuredClone(gotNamed);
   gotNoName["moved"] = recNoName;
-  const problems = roomsNormalizeMismatches(rooms, gotNoName);
+  const problems = roomsNormalizeMismatches(baseNamed, gotNoName);
   assert.ok(problems.some((x) => x.includes("зоны")), JSON.stringify(problems));
 });
 

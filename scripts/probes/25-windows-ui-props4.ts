@@ -6,6 +6,8 @@ import { closeBrowser } from "../../src/browser.ts";
 import { STATE_PATH } from "../../src/config.ts";
 import { loadSession } from "../../src/session.ts";
 import { clearFog, clickAt, escape, pickTool, switchSheet } from "./phase2-lib.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 const copyS = (page: Page) => page.evaluate(() => JSON.parse(JSON.stringify((window as any).project.copy("server"))));
 const OUT = ".orca-reports/25-windows-ui";

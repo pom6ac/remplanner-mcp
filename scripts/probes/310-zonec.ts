@@ -13,6 +13,7 @@ import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { sig } from "./probe-sig.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath, type ReadonlyGuard } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") { console.error("запуск: run"); process.exit(0); }
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
@@ -20,9 +21,7 @@ const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"];
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
 const READONLY_PLAN_ID = process.env["REMPLANNER_PROBE_READONLY_PLAN_ID"];
 if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) { console.error("нужны env"); process.exit(1); }
-if (OBJECT_ID === READONLY_ID) { console.error("OBJECT_ID == READONLY_ID — стоп"); process.exit(1); }
-const RO_ID: string = READONLY_ID;
-const RO_PLAN_ID: string = READONLY_PLAN_ID;
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 mkdirSync(".orca-reports/tmp", { recursive: true });
 setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
 
@@ -59,6 +58,7 @@ async function restoreByCaptured(): Promise<void> {
         if (d) { try { d.deleteFull(); } catch { try { d.delete(); } catch { /* уже нет */ } } }
       }
     }, created.filter((c) => c.kind === "delimiter").map((c) => c.siteId!));
+    await roGuard?.assertUnchanged("{tag}");
     try { await call("project_save", {}); } catch (e) { console.log("restore save:", String((e as Error).message).slice(0, 200)); }
   }
   const mg2 = await call("model_get", {});
@@ -74,24 +74,22 @@ async function restoreByCaptured(): Promise<void> {
     walls.length = 0;
     walls.push(...fw);
   }
+  await roGuard?.assertUnchanged("{tag}");
   const saveRes = await call("project_save", {});
   console.log("restore save:", JSON.stringify({ verified: saveRes["verified"] }));
   created = [];
   opened = false;
 }
 
-let roBefore: LoadedModel | null = null;
+let roGuard: ReadonlyGuard | null = null;
 
-/** Контрольный проект «после» (в finally, ревью 311 №5): семантический sig +
- *  save_id; изменение — exitCode=1. */
+/** Контрольный проект «после» (в finally, ревью 311 №5); ревью 319 №4 —
+ *  сверка с фиксированным эталоном (файл не перезаписывается). */
 async function checkReadonly(): Promise<void> {
-  if (!roBefore) return;
+  if (!roGuard) return;
   try {
-    const roAfter = await loadModel(ctx.session(), RO_ID, RO_PLAN_ID);
-    if (roAfter.data_empty) { console.error("контрольный GET после — пустой (data_empty)"); process.exitCode = 1; return; }
-    const ok = sig(roAfter.model) === sig(roBefore.model) && roAfter.save_id === roBefore.save_id;
-    console.log("контрольный (finally):", ok ? "не изменился (канон + save_id)" : "ИЗМЕНИЛСЯ — СТОП");
-    if (!ok) process.exitCode = 1;
+    const changed = await roGuard.checkFinal("finally");
+    console.log("контрольный (finally):", changed ? "ИЗМЕНИЛСЯ — СТОП" : "не изменился (канон + save_id)");
   } catch (e) {
     console.error("контрольный GET после не удался:", String((e as Error).message ?? e).slice(0, 300));
     process.exitCode = 1;
@@ -99,10 +97,11 @@ async function checkReadonly(): Promise<void> {
 }
 
 try {
-  const roBeforeLocal = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
-  if (roBeforeLocal.data_empty) throw new Error("контрольный GET пустой — отказ");
-  roBefore = roBeforeLocal;
-  writeFileSync(".orca-reports/tmp/310-get-readonly-before.json", JSON.stringify(roBeforeLocal, null, 1));
+  // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
+  await roGuard.assertUnchanged("перед записями");
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const backupPath = ".orca-reports/backup-".concat(OBJECT_ID, "-310.json");
   if (!existsSync(backupPath)) writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
@@ -143,6 +142,7 @@ try {
     if (!sid) throw new Error("wall_add без site_id");
     created.push({ kind: "wall", siteId: sid });
   }
+  await roGuard?.assertUnchanged("{tag}");
   await call("project_save", {});
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
   const afterRoom = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
@@ -209,6 +209,7 @@ try {
     const rec = Object.values<any>(dump.top ?? {})[0];
     if (rec) console.log("запись zone_c:", JSON.stringify(rec).slice(0, 400));
     // чистое сохранение страницей (без MCP-пайплайна): переживает ли zone_c save редактора
+    await roGuard?.assertUnchanged("{tag}");
     const pageSave = await page.evaluate(async () => {
       const w: any = window as any;
       const ret = await Promise.resolve(w.project.save(false, true)).then((r: unknown) => String(r).slice(0, 60)).catch((e: unknown) => `ERR ${String(e).slice(0, 60)}`);
@@ -220,6 +221,7 @@ try {
     const afterPageSave = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
     console.log("GET после page.save: zone_delimiters:", Object.keys((afterPageSave.model["zone_delimiters"] ?? {}) as Record<string, unknown>).length);
     // MCP save (гарды активны)
+    await roGuard?.assertUnchanged("{tag}");
     const saveRes = await call("project_save", {});
     console.log("save zone_c:", JSON.stringify({ verified: saveRes["verified"], rounds: saveRes["rounds"], warnings: saveRes["warnings"] }));
     if (!saveRes["verified"]) throw new Error("save zone_c не verified");

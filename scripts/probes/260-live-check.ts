@@ -12,6 +12,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, assertUnchangedRef, newGuardRef, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу: … run (REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID из env)");
@@ -20,14 +21,12 @@ if (process.argv[2] !== "run") {
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
 const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"];
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
-if (!OBJECT_ID || !PLAN_ID || !READONLY_ID) {
-  console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID и REMPLANNER_PROBE_READONLY_ID");
+const READONLY_PLAN_ID = process.env["REMPLANNER_PROBE_READONLY_PLAN_ID"];
+if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
+  console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID и REMPLANNER_PROBE_READONLY_PLAN_ID (322 N3б)");
   process.exit(1);
 }
-if (OBJECT_ID === READONLY_ID) {
-  console.error("REMPLANNER_PROBE_OBJECT_ID совпадает с REMPLANNER_PROBE_READONLY_ID — стоп");
-  process.exit(1);
-}
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 
@@ -48,7 +47,7 @@ const call = async (name: string, args: Record<string, unknown> = {}): Promise<R
   return JSON.parse(text(res)) as Record<string, unknown>;
 };
 const snap = async (objectId: string, tag: string): Promise<LoadedModel> => {
-  const m = await loadModel(ctx.session(), objectId, "1");
+  const m = await loadModel(ctx.session(), objectId, READONLY_PLAN_ID);
   writeFileSync(`${OUT}/get-${objectId}-${tag}.json`, JSON.stringify(m, null, 1));
   return m;
 };
@@ -83,6 +82,7 @@ const cleanup = async (): Promise<void> => {
         await call("wall_delete", { wall_id: label });
         left.shift();
       }
+      await assertUnchangedRef(roRef, "{tag}");
       await call("project_save", {});
       console.log("cleanup save: OK");
     }
@@ -209,9 +209,14 @@ function sig(m: unknown): string {
   return JSON.stringify(aliasAll(c));
 }
 
+const roRef = newGuardRef();
 try {
-  // 0. контрольный проект до (только GET)
-  const snapBefore = READONLY_ID ? await snap(READONLY_ID, "before") : null;
+  // 0. ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
+  roRef.current = roGuard;
+  await roGuard.assertUnchanged("перед записями");
+  const snapBefore = await snap(READONLY_ID, "before");
 
   // 1. бэкап dev-проекта (только если ещё нет — иначе сверка)
   const before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
@@ -235,7 +240,7 @@ try {
   const ox = Math.ceil(maxX) + 300;
   const oy = 0;
   const w = 200, h = 150;
-  const rect = [
+  const rect: Array<[{ x: number; y: number }, { x: number; y: number }]> = [
     [{ x: ox, y: oy }, { x: ox + w, y: oy }],
     [{ x: ox + w, y: oy }, { x: ox + w, y: oy + h }],
     [{ x: ox + w, y: oy + h }, { x: ox, y: oy + h }],
@@ -252,6 +257,7 @@ try {
     created.push({ kind: "wall", siteId: sid });
   }
   console.log("стены пробной комнаты:", created.length);
+  await assertUnchangedRef(roRef, "{tag}");
   const saveRoom = await call("project_save", {});
   console.log("save пробной комнаты:", JSON.stringify({ verified: saveRoom["verified"], rounds: saveRoom["rounds"] }));
   if (!saveRoom["verified"]) throw new Error("save пробной комнаты не verified");
@@ -278,6 +284,7 @@ try {
   if (partIds.length !== 2) throw new Error("wall_split не вернул две части");
   created.push({ kind: "wall", siteId: partIds[0] }, { kind: "wall", siteId: partIds[1] });
   console.log("split:", partIds);
+  await assertUnchangedRef(roRef, "{tag}");
   const saveSplit = await call("project_save", {});
   console.log("save после split:", JSON.stringify({ verified: saveSplit["verified"], rounds: saveSplit["rounds"], warnings: saveSplit["warnings"] }));
   if (!saveSplit["verified"]) throw new Error("save после split не verified");
@@ -295,6 +302,7 @@ try {
   const reAddId = (reAdd as { entity?: { site_id?: string } }).entity?.site_id;
   if (!reAddId) throw new Error("wall_add (merge) не вернул site_id");
   created.push({ kind: "wall", siteId: reAddId });
+  await assertUnchangedRef(roRef, "{tag}");
   const saveMerge = await call("project_save", {});
   console.log("save после merge:", JSON.stringify({ verified: saveMerge["verified"], rounds: saveMerge["rounds"], warnings: saveMerge["warnings"] }));
   if (!saveMerge["verified"]) throw new Error("save после merge не verified");
@@ -316,6 +324,7 @@ try {
   });
   console.log("zd2:", JSON.stringify({ id: zd2["id"], site_id: zd2["site_id"], length_mm: zd2["length_mm"] }));
   created.push({ kind: "delimiter", siteId: String(zd2["site_id"] ?? ""), roomRef });
+  await assertUnchangedRef(roRef, "{tag}");
   const saved = await call("project_save", {});
   console.log("save:", JSON.stringify({ verified: saved["verified"], rounds: saved["rounds"], warnings: saved["warnings"] }));
   if (!saved["verified"]) throw new Error("save не verified");
@@ -334,6 +343,7 @@ try {
     const topLabel = await freshLabel("walls", created.find((c) => c.kind === "wall" && c.siteId !== bottomSite && c.siteId !== reAddId)?.siteId ?? "");
     if (topLabel) {
       await call("wall_move", { wall_id: topLabel, offset_mm: 30 });
+      await assertUnchangedRef(roRef, "{tag}");
       const saveMove = await call("project_save", {});
       console.log("wall_move:", JSON.stringify({ verified: saveMove["verified"], rounds: saveMove["rounds"], warnings: saveMove["warnings"] }));
       await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
@@ -358,6 +368,7 @@ try {
     await call("wall_delete", { wall_id: label });
     left.shift();
   }
+  await assertUnchangedRef(roRef, "{tag}");
   const saveRes2 = await call("project_save", {});
   console.log("restore save:", JSON.stringify({ verified: saveRes2["verified"], rounds: saveRes2["rounds"] }));
   if (!saveRes2["verified"]) throw new Error("restore save не verified");
@@ -370,11 +381,10 @@ try {
   console.log("полная семантическая сверка data с бэкапом:", same ? "OK — модель совпала" : "РАСХОЖДЕНИЕ");
   if (!same) writeFileSync(`${OUT}/get-own-after-260.json`, JSON.stringify(finalModel, null, 1));
 
-  // 8. контрольный проект после
-  if (READONLY_ID) {
-    const snapAfter = await loadModel(ctx.session(), READONLY_ID, "1");
-    console.log("контрольный проект:", sig(snapAfter.model) === sig(snapBefore?.model) ? "не изменился" : "ИЗМЕНИЛСЯ — СТОП");
-    if (sig(snapAfter.model) !== sig(snapBefore?.model)) throw new Error("контрольный проект изменился");
+  // 8. ревью 319 №4: контрольный проект сверяется с фиксированным эталоном
+  {
+    const roChanged = await roGuard.checkFinal("в конце");
+    if (roChanged) throw new Error("контрольный проект изменился");
   }
   console.log("260-live OK");
 } catch (e) {

@@ -15,6 +15,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 if (process.argv[2] !== "run") {
   console.error("запуск по явному аргументу run (ID из env)");
@@ -23,14 +24,12 @@ if (process.argv[2] !== "run") {
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"];
 const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"];
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"];
-if (!OBJECT_ID || !PLAN_ID || !READONLY_ID) {
-  console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID");
+const READONLY_PLAN_ID = process.env["REMPLANNER_PROBE_READONLY_PLAN_ID"];
+if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
+  console.error("нужны REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID и REMPLANNER_PROBE_READONLY_PLAN_ID (322 N3б)");
   process.exit(1);
 }
-if (OBJECT_ID === READONLY_ID) {
-  console.error("OBJECT_ID === READONLY_ID — отказ до любой записи");
-  process.exit(1);
-}
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
@@ -42,9 +41,9 @@ const [a, b] = InMemoryTransport.createLinkedPair();
 await Promise.all([server.connect(b), client.connect(a)]);
 
 const call = async (name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
-  const res = await client.callTool({ name, arguments: args });
-  if ((res as { isError?: boolean }).isError) throw new Error(`${name}: ${res.content?.map((c) => ("text" in c ? c.text : "")).join("")?.slice(0, 500)}`);
-  return JSON.parse(res.content?.find((c) => "text" in c)?.text ?? "{}") as Record<string, unknown>;
+  const res = (await client.callTool({ name, arguments: args })) as { isError?: boolean; content?: { type: string; text?: string }[] };
+  if (res.isError) throw new Error(`${name}: ${(res.content ?? []).map((c) => c.text ?? "").join("").slice(0, 500)}`);
+  return JSON.parse((res.content ?? []).find((c) => typeof c.text === "string")?.text ?? "{}") as Record<string, unknown>;
 };
 const entitySiteId = (res: Record<string, unknown>, what: string): string => {
   // ревью 253 Н1: захватываем site_id (id сайта), а не позиционную метку компакта
@@ -87,9 +86,11 @@ const writeCreated = (): void => {
   writeFileSync(CREATED_FILE, JSON.stringify(created, null, 1) + "\n");
 };
 
-// контрольный проект читается ДО любых записей — с ним сверяем в конце (ревью 251 №5)
-const roBefore = await loadModel(ctx.session(), READONLY_ID, "1");
-writeFileSync(`${OUT}/250-get-readonly-before.json`, JSON.stringify(roBefore, null, 1) + "\n");
+// ревью 319 №4: эталон контрольного проекта фиксированный (файл не перезаписывается),
+// сверка перед записями и в конце; пара объект/план из env — ревью 319 №3
+await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
+await roGuard.assertUnchanged("перед записями");
 
 /**
  * Удаление строго по захваченным при создании site_id (ревью 251 №4, 253 Н1,
@@ -197,6 +198,7 @@ try {
   const v1 = await call("model_validate", {});
   console.log("validate:", JSON.stringify(v1).slice(0, 200));
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s1 = await call("project_save", {});
   console.log("save#1:", JSON.stringify(s1).slice(0, 240));
   if (s1["verified"] !== true) throw new Error("save#1 не verified");
@@ -291,6 +293,7 @@ try {
   created.walls.push(partSite);
   console.log("split: перегородка", partSite);
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s2 = await call("project_save", {});
   console.log("save#2 (split):", JSON.stringify(s2).slice(0, 240));
   if (s2["verified"] !== true) throw new Error("save#2 (split) не verified");
@@ -303,6 +306,7 @@ try {
   await call("wall_delete", { wall_id: partSite });
   created.walls = created.walls.filter((w) => w !== partSite);
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s3 = await call("project_save", {});
   console.log("save#3 (merge):", JSON.stringify(s3).slice(0, 240));
   if (s3["verified"] !== true) throw new Error("save#3 (merge) не verified");
@@ -321,6 +325,7 @@ try {
   await pause();
   await cleanupCreated();
   await pause();
+  await roGuard.assertUnchanged("{tag}");
   const s4 = await call("project_save", {});
   console.log("save#4 (очистка):", JSON.stringify(s4).slice(0, 240));
   if (s4["verified"] !== true) throw new Error("save#4 (очистка) не verified");
@@ -342,24 +347,23 @@ try {
   // даже при сбое (best effort; список ID в 250-created.json остаётся для 250-cleanup)
   try {
     await cleanupCreated();
+    await roGuard.assertUnchanged("{tag}");
     await call("project_save", {});
     console.error("cleanup после сбоя выполнен");
   } catch (ce) {
     console.error("cleanup после сбоя не удался (объекты останутся в 250-created.json):", (ce as Error).message);
     writeCreated();
   }
-  const ro = await loadModel(ctx.session(), READONLY_ID, "1");
-  writeFileSync(`${OUT}/250-get-readonly-after-fail.json`, JSON.stringify(ro, null, 1) + "\n");
+  if (roGuard) await roGuard.checkFinal("после сбоя");
   await closeBrowser().catch(() => {});
   process.exit(1);
 } finally {
   await closeBrowser().catch(() => {});
 }
 
-const roAfter = await loadModel(ctx.session(), READONLY_ID, "1");
-writeFileSync(`${OUT}/250-get-readonly-after.json`, JSON.stringify(roAfter, null, 1) + "\n");
-// ревью 251 №5: сверка с roBefore (GET до пробы), а не с повторным GET того же проекта
-console.log("контрольный проект не изменился:", strip(roAfter.model) === strip(roBefore.model) ? "OK" : "ИЗМЕНИЛСЯ");
+// ревью 319 №4: сверка контрольного проекта с фиксированным эталоном в конце
+const roChangedEnd = await roGuard.checkFinal("в конце");
+console.log("контрольный проект не изменился:", roChangedEnd ? "ИЗМЕНИЛСЯ — СТОП" : "OK");
 const ownAfter = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
 writeFileSync(`${OUT}/250-get-own-after.json`, JSON.stringify(ownAfter, null, 1) + "\n");
 const same = strip(ownAfter.model) === strip(backup.model);

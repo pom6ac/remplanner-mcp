@@ -49,6 +49,19 @@ export {
 // от одной внешней стены до другой (обе точки — на рёбрах комнаты в 15 см магнитом
 // или на гранях потолочных ригелей в 10 см); линия не пересекает стены, колонны,
 // другие разделители комнаты и ригели/потолочные закладные; концы не внутри ригеля.
+//
+// zone_c (лист «Перегородки», кнопка plannertool_zone, этап 318): план "c",
+// контейнер комнат rooms2[rid].zones (getNameZone("c")="zones"). Делитель того же
+// формата с привязками концов к рёбрам комнаты (type "room" — живой эталон
+// ui-ref-zonec-delimiter.json, проба 318-zonec-name). Деление зон — как у
+// прочих планов: Room2.updateZones("c") режет контейнер по делителям своего
+// плана; наследники — безымянные записи {polygon, edges, exist:false}, имя
+// зоны-родителя редактор НЕ переносит (живой эталон 318: зоны именованной
+// комнаты после drag — обе name:"none"), имя помещения хранится в room.name
+// и при делении сохраняется. Пересчёт зон при add/remove MCP не дублирует —
+// его при нормализации/записи делает редактор (как у zone_floor); сверка
+// комнат допускает безымянных наследников при новом делителе комнаты
+// (roomsWithNewZoneCDividers + roomUserSig).
 
 export type ZoneDelimiterRec = {
   id: string;
@@ -924,6 +937,108 @@ export function zoneDelimiterCompare(
   if (mode === "save") {
     for (const g of got) {
       if (!used.has(g.key)) problems.push(`room ${g.idRoom}: неожиданный разделитель ${g.key} на сервере (${g.type}, ${Math.round(g.length * 100)} см)`);
+    }
+  }
+  return { problems, warnings };
+}
+
+/**
+ * Комнаты с ИЗМЕНЁННЫМ набором zone_c-делителей (ревью 319 №1): база — та же,
+ * что у сверки комнат (roomSaveBase: модель с сервера / после последнего
+ * успешного save), а не рабочая копия — иначе делитель, добавленный через MCP
+ * (он уже в обеих моделях), или удалённый (он ни в одной) не считается
+ * изменением. В набор входят добавленные И удалённые делители (симметричная
+ * разность id по комнате), а также делители с изменившейся геометрией (концы
+ * p1/p2 — при изменении стен). Для сверки комнат: деление/слияние зон — штатная
+ * операция редактора (Room2.updateZones("c")), наследники безымянные (эталон
+ * 318), поэтому потеря/смена имени/состава зон объяснима только в такой
+ * комнате. Модель без zone_delimiters (rooms-only) тоже допустима.
+ */
+export function roomsWithChangedZoneCDividers(
+  baseModel: Record<string, unknown> | undefined,
+  gotModel: Record<string, unknown> | undefined,
+): Set<string> {
+  const divsOf = (model: Record<string, unknown> | undefined): Map<string, Map<string, string>> => {
+    const out = new Map<string, Map<string, string>>();
+    if (!model) return out;
+    for (const entry of Object.values(delimiterMapOf((model ?? {}) as Model))) {
+      const migrated = migrateLegacyDelimiter(entry.rec, { legacy: entry.legacy });
+      if (String(migrated["type"] ?? "") !== "zone_c") continue;
+      const rid = entry.roomKey ?? String(migrated["id_room"] ?? "");
+      if (!rid) continue;
+      const v = (migrated["vertexes"] ?? []) as Array<{ point?: { x: number; y: number } }>;
+      const p1 = v[0]?.point, p2 = v[v.length - 1]?.point;
+      const geom = p1 && p2 ? `${Math.round(p1.x * 10)},${Math.round(p1.y * 10)};${Math.round(p2.x * 10)},${Math.round(p2.y * 10)}` : "?";
+      const set = out.get(rid) ?? new Map<string, string>();
+      set.set(String(migrated["id"] ?? ""), geom);
+      out.set(rid, set);
+    }
+    return out;
+  };
+  const base = divsOf(baseModel);
+  const got = divsOf(gotModel);
+  const out = new Set<string>();
+  for (const [rid, gotIds] of got) {
+    const baseIds = base.get(rid);
+    if (!baseIds) {
+      if (gotIds.size > 0) out.add(rid);
+      continue;
+    }
+    let changed = gotIds.size !== baseIds.size;
+    for (const [id, geom] of gotIds) {
+      if (baseIds.get(id) !== geom) {
+        changed = true;
+        break;
+      }
+    }
+    if (changed) out.add(rid);
+  }
+  for (const [rid, baseIds] of base) {
+    if (!got.has(rid) && baseIds.size > 0) out.add(rid);
+  }
+  return out;
+}
+
+/**
+ * ревью 319 №8: zone_c-делители, которых НЕ БЫЛО в ожидании (рабочей копии):
+ * id новый, а полная проекция (sameSig) не совпадает ни с одним zone_c-делителем
+ * ожидания — нормализация «воскресила» делитель, удалённый через MCP, или
+ * придумала новый. Легитимная смена id (та же проекция) не считается — её
+ * ловит zoneDelimiterCompare (предупреждение «сменил id»).
+ * ревью 321 N2: в комнате, затронутой изменёнными стенами (affectedRooms),
+ * результат понижается до предупреждения — при переносе стены редактор может
+ * перепривязать делитель с новым id и сдвинутыми концами (живого эталона
+ * split/merge с zone_c при переносе стены нет); делителя не было и в базе
+ * (roomSaveBase) — в сообщении помечается. Вне затронутых комнат — отказ.
+ * ревью 323 N7: понижение до предупреждения — только для делителя с id,
+ * которого НЕТ в базе: перепривязка редактором по определению даёт новый id,
+ * а тот же id из базы (удалён через MCP, нормализация вернула) — воскрешение,
+ * отказ даже в затронутой комнате.
+ */
+export function resurrectedZoneCDividers(
+  expectedModel: Record<string, unknown> | undefined,
+  gotModel: Record<string, unknown> | undefined,
+  opts?: { baseModel?: Record<string, unknown>; affectedRooms?: Set<string> },
+): { problems: string[]; warnings: string[] } {
+  const zoneCOf = (model: Record<string, unknown> | undefined): ZoneDelimiterSig[] =>
+    delimiterSigsOf(model).filter((s) => s.type === "zone_c");
+  const exp = zoneCOf(expectedModel);
+  const expIds = new Set(exp.map((s) => s.id));
+  const base = opts?.baseModel ? zoneCOf(opts.baseModel) : [];
+  const baseIds = new Set(base.map((b) => b.id));
+  const problems: string[] = [];
+  const warnings: string[] = [];
+  for (const g of zoneCOf(gotModel)) {
+    if (expIds.has(g.id)) continue;
+    if (exp.some((e) => e.idRoom === g.idRoom && sameSig(e, g))) continue;
+    const inBase = base.some((b) => b.idRoom === g.idRoom && sameSig(b, g));
+    const msg = `room ${g.idRoom}: нормализация вернула zone_c-делитель, которого не было в рабочей копии (id ${g.id}, ${Math.round(g.length * 100)} см) — удалённые через MCP делители не воскрешаются${inBase ? "; делитель был в базе (roomSaveBase)" : "; в базе (roomSaveBase) его не было"}${baseIds.has(g.id) ? "; id есть в базе (roomSaveBase) — это воскрешение удалённого делителя, не перепривязка (323 N7)" : ""}`;
+    // ревью 323 N7: в затронутой комнате — предупреждение только для id,
+    // которого нет в базе (перепривязка даёт новый id); тот же id из базы — отказ
+    if (opts?.affectedRooms?.has(g.idRoom) && !baseIds.has(g.id)) {
+      warnings.push(`${msg} — комната затронута изменением стен: перепривязка делителя редактором при переносе стены допускается с предупреждением (ревью 321 N2, живой эталон отсутствует)`);
+    } else {
+      problems.push(msg);
     }
   }
   return { problems, warnings };

@@ -8,6 +8,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { copyFileSync, readFileSync } from "node:fs";
 import { ServerContext } from "../../src/server/context.ts";
 import { buildServer } from "../../src/server.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
@@ -138,7 +140,7 @@ function wallFace(minLen = 200): { wallId: string; face: { x: number; y: number 
       return { wallId: w.id, face, away };
     }
   }
-  fail("нет подходящей стены для against_wall");
+  return fail("нет подходящей стены для against_wall");
 }
 
 // 1. ladder_march с нестандартными размерами (3000×800 мм) и поворотом 15°

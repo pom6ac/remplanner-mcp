@@ -8,14 +8,19 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ServerContext } from "../../src/server/context.ts";
 import { buildServer } from "../../src/server.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 
 const OBJECT_ID = process.env.REMPLANNER_PROBE_OBJECT_ID;
 const PLAN_ID = process.env.REMPLANNER_PROBE_PLAN_ID;
+const READONLY_ID = process.env.REMPLANNER_PROBE_READONLY_ID;
+const READONLY_PLAN_ID = process.env.REMPLANNER_PROBE_READONLY_PLAN_ID;
 const ROOM_ID = process.env.REMPLANNER_PROBE_ROOM_ID ?? "";
-if (!OBJECT_ID || !PLAN_ID) {
-  console.error("Задайте REMPLANNER_PROBE_OBJECT_ID и REMPLANNER_PROBE_PLAN_ID");
+if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
+  console.error("Задайте REMPLANNER_PROBE_OBJECT_ID, REMPLANNER_PROBE_PLAN_ID, REMPLANNER_PROBE_READONLY_ID и REMPLANNER_PROBE_READONLY_PLAN_ID (322 N3в)");
   process.exit(1);
 }
+// 322 N3в: коллизии env с контрольным проектом — отказ до любых запросов
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 
 type Res = { isError?: boolean; content?: { type: string; text?: string }[] };
 const text = (r: unknown): string => ((r as Res).content as { text: string }[])[0]!.text;
@@ -45,6 +50,11 @@ const roomState = async (label: string): Promise<void> => {
   }
 };
 
+// ревью 319 №3: пара объект/план из env до первой записи; 322 N3в: гард
+// контрольного проекта (эталон общий на пару READONLY) перед каждой записью
+await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+const roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
+await roGuard.assertUnchanged("перед save #1");
 console.log("== open ==", JSON.stringify(await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID })).slice(0, 200));
 
 // 1. имя и отделка в канонической модели
@@ -59,11 +69,12 @@ const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math
 console.log("== комната", targetId, "центр:", Math.round(cx * 10), Math.round(cy * 10));
 
 await ctx.workspace().apply("43-room-userdata", (m) => {
-  const r = (m.rooms2 ??= {})[targetId]!;
-  r.name = "Гостиная";
-  for (const z of r.zones ?? []) z.name = "Гостиная";
+  const roomsMap = (m.rooms2 ??= {}) as Record<string, any>;
+  const room = (roomsMap[targetId] ??= {}) as Record<string, any>;
+  room.name = "Гостиная";
+  for (const z of room.zones ?? []) z.name = "Гостиная";
   // отделка пола: сериализация Floor редактора (src-24: exist → cover, angle, pc, width/height, type_laying)
-  for (const f of r.floors ?? []) {
+  for (const f of room.floors ?? []) {
     f.exist = true;
     f.cover = "floor_tile";
     f.type_laying = "tile";
@@ -72,11 +83,12 @@ await ctx.workspace().apply("43-room-userdata", (m) => {
     f.width = 40;
     f.height = 40;
     f.f0offset = 0;
-    f.pc = structuredClone(r.pc ?? { x: 0, y: 0 });
+    f.pc = structuredClone(room.pc ?? { x: 0, y: 0 });
   }
   return true;
 });
 
+await roGuard.assertUnchanged("перед save #1");
 console.log("== save #1 ==", JSON.stringify(await call("project_save", {})));
 await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
 await roomState("после save+reopen");
@@ -101,6 +113,7 @@ for (const [dx, dy] of [[0, 0], [15, 0], [-15, 0], [0, 15], [0, -15], [30, 0], [
 }
 if (!placed) throw new Error("не удалось поставить колонну в комнате");
 
+await roGuard.assertUnchanged("перед save #2");
 console.log("== save #2 (с колонной) ==", JSON.stringify(await call("project_save", {})));
 await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
 await roomState("после pillar_add+save+reopen");
@@ -111,9 +124,11 @@ const mineFromModel = Object.keys(full3.pillars ?? {}).find((id) => full3.pillar
 const pillarId = (placed as { site_id?: string })?.site_id ?? mineFromModel;
 console.log("== удаляем колонну:", pillarId);
 await call("pillar_delete", { pillar_id: pillarId });
+await roGuard.assertUnchanged("перед save #3");
 console.log("== save #3 ==", JSON.stringify(await call("project_save", {})));
 await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
 await roomState("после pillar_delete+save+reopen");
 
+await roGuard.checkFinal("в конце");
 await ctx.workspaceOrNull?.close().catch(() => {});
 process.exit(0);

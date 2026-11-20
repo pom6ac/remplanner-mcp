@@ -14,6 +14,7 @@ import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath, type ReadonlyGuard } from "./probe-guard.ts";
 import { sig } from "./probe-sig.ts";
 
 if (process.argv[2] !== "run") {
@@ -28,10 +29,7 @@ if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) {
   console.error("нужны REMPLANNER_PROBE_OBJECT_ID/PLAN_ID/READONLY_ID/READONLY_PLAN_ID");
   process.exit(1);
 }
-if (OBJECT_ID === READONLY_ID) {
-  console.error("REMPLANNER_PROBE_OBJECT_ID совпадает с READONLY_ID — стоп");
-  process.exit(1);
-}
+assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
 const OUT = ".orca-reports/tmp";
 mkdirSync(OUT, { recursive: true });
 setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
@@ -61,6 +59,7 @@ const snap = async (objectId: string, planId: string, tag: string): Promise<Load
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const save = async (label: string): Promise<Record<string, unknown>> => {
   await sleep(5100); // сохранение не чаще раза в 5 с
+  await roGuard?.assertUnchanged("{tag}");
   const res = await call("project_save", {});
   console.log(`${label}: save`, JSON.stringify({ verified: res["verified"], warnings: res["warnings"] }));
   return res;
@@ -124,9 +123,14 @@ const ceilBrief = (model: Record<string, unknown>, trialId: string): string => {
 
 let trialId = "";
 let trialRef = "";
+let roGuard: ReadonlyGuard | null = null;
 
 try {
   // 0. контрольный проект до (только GET)
+  // ревью 319 №3/№4: пара объект/план из env; эталон контрольного проекта фиксированный
+  await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
+  roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
+  await roGuard.assertUnchanged("перед записями");
   roBefore = await snap(READONLY_ID, READONLY_PLAN_ID, "readonly-before");
 
   // 1. бэкап dev-проекта (бэкап → запись → проверка → восстановление)
@@ -359,20 +363,14 @@ try {
       process.exitCode = 1;
     }
   }
-  // контрольный GET «после» — в finally
-  if (roBefore) {
-    try {
-      const roAfter = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
-      if (roAfter.data_empty) { console.error("finally: контрольный GET пустой"); process.exitCode = 1; }
-      else {
-        const roOk = sig(roAfter.model) === sig(roBefore.model) && roAfter.save_id === roBefore.save_id;
-        console.log("finally: контрольный проект:", roOk ? "не изменился (канон + save_id)" : "ИЗМЕНИЛСЯ — СТОП");
-        if (!roOk) process.exitCode = 1;
-      }
-    } catch (re) {
-      console.error("finally: контрольный GET не удался:", String((re as Error).message ?? re).slice(0, 300));
-      process.exitCode = 1;
-    }
+  // контрольный GET «после» — в finally; ревью 319 №4: с фиксированным эталоном
+  try {
+    if (!roGuard) throw new Error("гард контрольного проекта не создан");
+    const roOk = !(await roGuard.checkFinal("finally"));
+    console.log("finally: контрольный проект:", roOk ? "не изменился (канон + save_id)" : "ИЗМЕНИЛСЯ — СТОП");
+  } catch (re) {
+    console.error("finally: контрольная сверка не удалась:", String((re as Error).message ?? re).slice(0, 300));
+    process.exitCode = 1;
   }
   await closeBrowser();
 }

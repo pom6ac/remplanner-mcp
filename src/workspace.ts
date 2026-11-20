@@ -22,7 +22,7 @@ import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmat
 import { dist } from "./model/geometry.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { finishCompare } from "./model/finish.ts";
-import { zoneDelimiterCompare } from "./model/zone.ts";
+import { zoneDelimiterCompare, roomsWithChangedZoneCDividers, resurrectedZoneCDividers } from "./model/zone.ts";
 import { ceilingRigelCompare } from "./model/ceiling-rigels.ts";
 import { warmWallsCompare } from "./verify/warmwall.ts";
 import { demolitionMismatches } from "./model/demolition.ts";
@@ -196,20 +196,22 @@ export class Workspace {
   /** База сверки комнат (этап 128, ревью 127 R1/R2/R4): модель с сервера / после
    *  последнего успешного save. Комнаты в normalize сравниваются с ней, а не с
    *  локальной моделью после операции; изменённые пользователем стены = разница
-   *  «база → рабочая копия». */
-  private roomSaveBase: { rooms: Record<string, unknown>; walls: Record<string, { p1: Point; p2: Point; depth?: number }> } | null = null;
+   *  «база → рабочая копия». С ревью 319 №1 — и снимок zone_c-делителей: комнаты
+   *  с изменённым набором делителей считаются от той же базы. */
+  private roomSaveBase: { rooms: Record<string, unknown>; walls: Record<string, { p1: Point; p2: Point; depth?: number }>; zoneDelimiters: Record<string, unknown> } | null = null;
 
   constructor(deps: WorkspaceDeps, options: { offline?: boolean } = {}) {
     this.deps = deps;
     this.offline = options.offline ?? false;
   }
 
-  /** Комнаты и стены базы сверки комнат (модель с сервера / после последнего save). */
-  private captureRoomBase(): { rooms: Record<string, unknown>; walls: Record<string, { p1: Point; p2: Point; depth?: number }> } {
+  /** Комнаты, стены и zone_c-делители базы сверки комнат (модель с сервера / после последнего save). */
+  private captureRoomBase(): { rooms: Record<string, unknown>; walls: Record<string, { p1: Point; p2: Point; depth?: number }>; zoneDelimiters: Record<string, unknown> } {
     const m = this.modelInternal! as unknown as Record<string, unknown>;
     return {
       rooms: structuredClone(((m["rooms2"] ?? m["rooms1"]) ?? {}) as Record<string, unknown>),
       walls: structuredClone((m["walls"] ?? {}) as Record<string, { p1: Point; p2: Point; depth?: number }>),
+      zoneDelimiters: structuredClone((m["zone_delimiters"] ?? {}) as Record<string, unknown>),
     };
   }
 
@@ -619,6 +621,18 @@ export class Workspace {
             normRoomsMap,
             "normalize",
             wallPolicy,
+            // этап 318, ревью 319 №1: комнаты с изменённым набором zone_c-делителей —
+            // от базы сверки (сервер / последний save), а не от рабочей копии:
+            // добавленные И удалённые делители, деление/слияние зон редактором
+            // штатно сбрасывает имена/состав зон
+            {
+              zoneDivisionRooms: roomsWithChangedZoneCDividers(
+                (this.roomSaveBase
+                  ? ({ rooms2: this.roomSaveBase.rooms, zone_delimiters: this.roomSaveBase.zoneDelimiters } as unknown as Record<string, unknown>)
+                  : (this.modelInternal! as unknown as Record<string, unknown>)),
+                norm.model as unknown as Record<string, unknown>,
+              ),
+            },
           );
       warnings.push(...roomsNormCheck.warnings);
       if (roomsNormCheck.problems.length > 0) {
@@ -662,11 +676,25 @@ export class Workspace {
         },
       );
       warnings.push(...zoneNorm.warnings);
+      // ревью 319 №8: нормализация не воскрешает zone_c-делители, удалённые через MCP;
+      // ревью 321 N2: в затронутых стенами комнатах — предупреждение (сверка по
+      // roomSaveBase — был ли делитель в базе), вне затронутых — отказ
+      const zoneResurrected = resurrectedZoneCDividers(
+        this.modelInternal as unknown as Record<string, unknown>,
+        norm.model as unknown as Record<string, unknown>,
+        {
+          baseModel: this.roomSaveBase
+            ? ({ rooms2: this.roomSaveBase.rooms, zone_delimiters: this.roomSaveBase.zoneDelimiters } as unknown as Record<string, unknown>)
+            : undefined,
+          affectedRooms: zoneAffected,
+        },
+      );
+      warnings.push(...zoneResurrected.warnings);
       warnings.push(...warmNorm.warnings);
       warnings.push(...ceilingRigelNorm.warnings);
-      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0 || zoneNorm.problems.length > 0 || warmNorm.problems.length > 0 || ceilingRigelNorm.problems.length > 0) {
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0 || zoneNorm.problems.length > 0 || zoneResurrected.problems.length > 0 || warmNorm.problems.length > 0 || ceilingRigelNorm.problems.length > 0) {
         throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, пометки демонтажа, размеры/комментарии, сущности климата, щитки, разделители зон потолка или тёплые стены — мутация отменена`, {
-          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm, shield_mismatches: shieldsNorm, zone_mismatches: zoneNorm.problems, warmwall_mismatches: warmNorm.problems, ceiling_rigel_mismatches: ceilingRigelNorm.problems },
+          details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm, shield_mismatches: shieldsNorm, zone_mismatches: [...zoneNorm.problems, ...zoneResurrected.problems], warmwall_mismatches: warmNorm.problems, ceiling_rigel_mismatches: ceilingRigelNorm.problems },
         });
       }
       // нормализованная копия становится канонической

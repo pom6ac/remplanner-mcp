@@ -14,25 +14,27 @@ import type { Model, Point } from "./types.ts";
  * кнопка на листах отделки одна — plannertool_zone_floor, тип записи задаёт
  * активный лист): zone_ceiling → plan "ceiling" («Потолки»), zone_floor →
  * "floor" («Напольные покрытия»), zone_hydroisolation → "hydroisolation"
- * («Гидроизоляция»), zone_floor_cap → "floor_cap" («Стяжка»). zone_c (лист
- * «Перегородки», getNameZone "c" → zones) имеет собственную семантику
- * зонирования перегородками — вынесен в следующий PR (этап 296, отчёт).
+ * («Гидроизоляция»), zone_floor_cap → "floor_cap" («Стяжка»), zone_c → "c"
+ * (лист «Перегородки», кнопка plannertool_zone, этап 318; контейнер комнат
+ * rooms2[rid].zones — по getNameZone("c")="zones"; живой эталон
+ * ui-ref-zonec-delimiter.json).
  */
 export const ZONE_DELIMITER_PLANS = {
   zone_ceiling: "ceiling",
   zone_floor: "floor",
   zone_hydroisolation: "hydroisolation",
   zone_floor_cap: "floor_cap",
+  zone_c: "c",
 } as const satisfies Record<string, string>;
 
 export type ZoneDelimiterType = keyof typeof ZONE_DELIMITER_PLANS;
 
 /** План записи по типу (ревью 298 №1): редактор восстанавливает legacy-делитель
  *  по типу (restoreTotal: updateZones("ceiling","zone_ceiling")), то есть plan
- *  выводится из type; zone_c (лист «Перегородки») — план "c". */
+ *  выводится из type; zone_c — план "c" (лист «Перегородки»). */
 export function planOfDelimiterType(type: string): string {
   if (type in ZONE_DELIMITER_PLANS) return ZONE_DELIMITER_PLANS[type as ZoneDelimiterType];
-  return type === "zone_c" ? "c" : "";
+  return "";
 }
 
 /**

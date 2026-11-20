@@ -6,6 +6,8 @@ import { closeBrowser } from "../../src/browser.ts";
 import { STATE_PATH } from "../../src/config.ts";
 import { loadSession } from "../../src/session.ts";
 import { clearFog, switchSheet } from "./phase2-lib.ts";
+import { refuseLegacyProbe } from "./probe-guard.ts";
+refuseLegacyProbe(); // 322 N3г: старая пишущая проба без гардов — запуск запрещён
 
 // Проект для пробы задаётся env: проба открывает указанный проект, а 25-live-check
 // ещё и сохраняет в него (project_save). Без env — отказ (ревью 26, №5).
