@@ -81,9 +81,11 @@ test("305 m4: оба конца на одном объекте (разные т�
   );
 });
 
-// ---------- m8: подсказка «сначала удалите закладную» в warning затронутой комнаты ----------
+// ---------- m8: подсказка «сначала удалите закладную» ----------
+// (обновлено 307 по ревью 306 m8 — решение координатора: пропажа закладной
+// затронутой комнаты в normalize — отказ, не предупреждение)
 
-test("305 m8: пропажа закладной у затронутой комнаты — warning с подсказкой ceiling_rigel_delete", () => {
+test("305 m8: пропажа закладной у затронутой комнаты — отказ с подсказкой ceiling_rigel_delete (см. 306 m8)", () => {
   const rg = {
     id: "rg1", id_room: "room1",
     p1: { x: 200, y: 10, link: { ot: "wall", id: "wall4", z1: "r" } },
@@ -92,11 +94,11 @@ test("305 m8: пропажа закладной у затронутой комн
   };
   const exp = { room1: { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }], rigels: { rg1: structuredClone(rg) } } };
   const got = { room1: { polygon: [{ x: 390, y: 10 }, { x: 390, y: 310 }, { x: 10, y: 310 }, { x: 10, y: 10 }] } };
+  // ревью 306 m8: пропажа в normalize — отказ до записи
   const norm = ceilingRigelCompare(exp, got, "normalize", { affectedRooms: new Set(["room1"]) });
-  assert.deepEqual(norm.problems, []);
   assert.ok(
-    norm.warnings.some((w) => w.includes("не найдена") && w.includes("ceiling_rigel_delete")),
-    `подсказка в warning: ${JSON.stringify(norm.warnings)}`,
+    norm.problems.some((p) => p.includes("удалила закладную") && p.includes("ceiling_rigel_delete")),
+    `отказ с подсказкой: ${JSON.stringify(norm.problems)}`,
   );
   const save = ceilingRigelCompare(exp, got, "save", { affectedRooms: new Set(["room1"]) });
   assert.ok(

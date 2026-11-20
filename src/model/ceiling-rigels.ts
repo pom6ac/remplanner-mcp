@@ -293,19 +293,22 @@ function assertAxisChecks(model: Model, roomId: string, p1: Point, p2: Point, li
   const poly = roomPolygonOf(room);
   if (!poly || poly.length < 3) throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomId} нет контура`);
   // пересечение с разделителями зон потолка (mouseup редактора: ZONE_DELIMITERS
-  // типа zone_ceiling; пересечение отрезков)
+  // типа zone_ceiling; пересечение отрезков; N3 ревью 306: общий конец —
+  // пересечение, как LIB.twoLinesIntersection режим 0)
   for (const line of zoneCeilingDelimiterLines(model)) {
-    if (segmentsCross(p1, p2, line.p1, line.p2)) {
+    if (segmentsCrossInclusive(p1, p2, line.p1, line.p2)) {
       throw new McpError("INVALID_ARGUMENT", "закладная пересекает разделитель зон потолка — не пересекайте разделители зон");
     }
   }
   // пересечение с осями других закладных той же комнаты (ревью 304 M3):
   // restore редактора (restoreRigels) удаляет пересекающуюся закладную —
-  // после такого save падает NORMALIZATION_DROPPED или закладная пропадает
+  // после такого save падает NORMALIZATION_DROPPED или закладная пропадает.
+  // N3 ревью 306: общий конец — пересечение (twoLinesIntersection режим 0):
+  // V-пара закладных из одной точки грани теряет одну при открытии
   const rigelsOfRoom = (room["rigels"] ?? {}) as Record<string, { p1?: Point; p2?: Point }>;
   for (const other of Object.values(rigelsOfRoom)) {
     if (!other.p1 || !other.p2) continue;
-    if (segmentsCross(p1, p2, other.p1, other.p2)) {
+    if (segmentsCrossInclusive(p1, p2, other.p1, other.p2)) {
       throw new McpError(
         "INVALID_ARGUMENT",
         "закладная пересекает другую потолочную закладную этой комнаты — редактор при открытии удалит пересекающуюся закладную",
@@ -353,6 +356,16 @@ function segmentsCross(a1: Point, a2: Point, b1: Point, b2: Point): boolean {
   const d1 = d(a1, a2, b1), d2 = d(a1, a2, b2), d3 = d(b1, b2, a1), d4 = d(b1, b2, a2);
   if (((d1 > EPS) !== (d2 > EPS)) && ((d3 > EPS) !== (d4 > EPS))) return true;
   return false;
+}
+
+/** Пересечение отрезков ВКЛЮЧАЯ общие концы — как LIB.twoLinesIntersection редактора
+ *  в режиме 0 (0<=s<=1, 0<=t<=1; бандл 268; N3 ревью 306): V-пара закладных из одной
+ *  точки грани и касание концом разделителя оси закладной — пересечение. Параллельные
+ *  (в том числе коллинеарные) отрезки точки не дают — как в редакторе. */
+function segmentsCrossInclusive(a1: Point, a2: Point, b1: Point, b2: Point): boolean {
+  const q = lineIntersection({ p1: a1, p2: a2 }, { p1: b1, p2: b2 });
+  if (!q) return false;
+  return pointOnSegment({ p1: a1, p2: a2 }, q, 1e-6) && pointOnSegment({ p1: b1, p2: b2 }, q, 1e-6);
 }
 
 /**
@@ -511,6 +524,8 @@ function normLink(v: unknown): RigelLinkNorm {
 
 type CeilingRigelSig = {
   id: string;
+  /** Метка CR<n> — сквозная нумерация по комнатам (как ceilingRigelList). */
+  cr: number;
   roomId: string;
   p1: Point;
   p2: Point;
@@ -527,11 +542,14 @@ type CeilingRigelSig = {
 
 function rigelSigsOf(roomsModel: Record<string, unknown> | undefined): CeilingRigelSig[] {
   const out: CeilingRigelSig[] = [];
+  let n = 0;
   for (const [rid, room] of Object.entries((roomsModel ?? {}) as Record<string, Record<string, unknown>>)) {
     for (const rec of Object.values((room.rigels ?? {}) as Record<string, CeilingRigelRec>)) {
       if (!rec.p1 || !rec.p2) continue;
+      n += 1;
       out.push({
         id: String(rec.id ?? ""),
+        cr: n,
         roomId: rid,
         p1: { x: rec.p1.x, y: rec.p1.y },
         p2: { x: rec.p2.x, y: rec.p2.y },
@@ -549,6 +567,39 @@ function rigelSigsOf(roomsModel: Record<string, unknown> | undefined): CeilingRi
 
 function samePt(a: Point, b: Point): boolean {
   return Math.abs(a.x - b.x) <= COORD_TOL_CM && Math.abs(a.y - b.y) <= COORD_TOL_CM;
+}
+
+/** Полигон — та же форма (4 вершины с допуском, в прямом или обратном порядке). */
+function samePolygon(a: Point[], b: Point[]): boolean {
+  if (a.length !== b.length) return false;
+  const n = a.length;
+  for (let start = 0; start < n; start++) {
+    for (const dir of [1, -1] as const) {
+      let ok = true;
+      for (let i = 0; i < n; i++) {
+        const q = b[(start + (dir === 1 ? i : n - i) % n) % n]!;
+        if (!samePt(a[i]!, q)) { ok = false; break; }
+      }
+      if (ok) return true;
+    }
+  }
+  return false;
+}
+
+const linkStr = (l: RigelLinkNorm): string => (l === undefined ? "нет" : l === 0 ? "0" : `${l.ot}/${l.id}/${l.z1}`);
+
+/** N4 ревью 306: перечень различающихся полей записи (для текста problem). */
+function sigDiffList(e: CeilingRigelSig, g: CeilingRigelSig, ctx?: CeilingRigelLinkContext): string {
+  const parts: string[] = [];
+  if (Math.abs(e.width - g.width) > COORD_TOL_CM) parts.push(`width ${e.width} → ${g.width}`);
+  if (e.ceilingType !== g.ceilingType) parts.push(`ceiling_type ${e.ceilingType || '""'} → ${g.ceilingType || '""'}`);
+  if (!sameLink(e.p1Link, g.p1Link, ctx)) parts.push(`p1.link ${linkStr(e.p1Link)} → ${linkStr(g.p1Link)}`);
+  if (!sameLink(e.p2Link, g.p2Link, ctx)) parts.push(`p2.link ${linkStr(e.p2Link)} → ${linkStr(g.p2Link)}`);
+  if (e.idRoomRef !== undefined && g.idRoomRef !== undefined && e.idRoomRef !== g.idRoomRef) parts.push(`id_room ${e.idRoomRef} → ${g.idRoomRef}`);
+  const axisSame = (samePt(e.p1, g.p1) && samePt(e.p2, g.p2)) || (samePt(e.p1, g.p2) && samePt(e.p2, g.p1));
+  if (!axisSame) parts.push(`ось (${e.p1.x};${e.p1.y})–(${e.p2.x};${e.p2.y}) → (${g.p1.x};${g.p1.y})–(${g.p2.x};${g.p2.y})`);
+  if (!samePolygon(e.polygon, g.polygon)) parts.push("polygon");
+  return parts.length > 0 ? parts.join(", ") : "форма записи";
 }
 
 export type CeilingRigelLinkContext = {
@@ -629,10 +680,14 @@ export type CeilingRigelCompareOpts = {
  * строгая сверка по id записи (+ геометрический запасной путь для записей с
  * новым id, один-к-одному); с ревью 304 M5/M6 в сверку входят ceiling_type,
  * связи концов (p1.link/p2.link — хранимое поле, calc его не пересчитывает) и
- * id_room. Комната, затронутая изменёнными стенами: в normalize расхождение/
- * пропажа — предупреждение; в save — проблема; послабление «форма/связи» —
+ * id_room (последний — только при наличии с обеих сторон, N1 ревью 306). Комната,
+ * затронутая изменёнными стенами: в normalize расхождение/сдвиг конца оси —
+ * предупреждение, ПРОПАЖА закладной — отказ до записи (m8 ревью 306, решение
+ * координатора: restoreRigels удаляет закладную молча, пользовательские данные
+ * ceiling_type теряются); в save — проблема. Послабление «форма/связи» —
  * только для полигона (его calc действительно пересчитывает), ceiling_type и
- * связи в save сверяются строго.
+ * связи в save сверяются строго. Тексты расхождений называют различающееся
+ * поле (N4 ревью 306).
  */
 export function ceilingRigelCompare(
   expectedRooms: Record<string, unknown> | undefined,
@@ -686,7 +741,7 @@ export function ceilingRigelCompare(
       used.add(byId.id);
       if (sameSig(e, byId, ctx)) continue;
       if (!affected) {
-        problems.push(`room ${e.roomId}: закладная ${e.id} изменилась на сервере (width ${e.width} → ${byId.width}, ceiling_type ${e.ceilingType || '""'} → ${byId.ceilingType || '""'})`);
+        problems.push(`room ${e.roomId}: закладная ${e.id} (CR${e.cr}) изменилась на сервере (${sigDiffList(e, byId, ctx)})`);
         continue;
       }
       // затронутая комната: форма могла перестроиться — сопоставим по оси
@@ -706,10 +761,10 @@ export function ceilingRigelCompare(
         continue;
       }
       if (mode === "normalize") {
-        warnings.push(`room ${e.roomId}: закладная ${e.id} изменилась у затронутой комнаты (width ${e.width} → ${byId.width})`);
+        warnings.push(`room ${e.roomId}: закладная ${e.id} изменилась у затронутой комнаты (${sigDiffList(e, byId, ctx)})`);
         continue;
       }
-      problems.push(`room ${e.roomId}: закладная ${e.id} изменилась на сервере у затронутой комнаты (width ${e.width} → ${byId.width})`);
+      problems.push(`room ${e.roomId}: закладная ${e.id} изменилась на сервере у затронутой комнаты (${sigDiffList(e, byId, ctx)})`);
       continue;
     }
     // геометрический запасной путь — записи got с действительно новым id
@@ -720,10 +775,16 @@ export function ceilingRigelCompare(
       continue;
     }
     if (affected && mode === "normalize") {
-      warnings.push(`room ${e.roomId}: закладная ${e.id} не найдена после нормализации у затронутой комнаты — если стена срезает закладную, удалите её (ceiling_rigel_delete) перед правкой`);
+      // m8 ревью 306 (решение координатора, по рекомендации ревью): если нормализация
+      // после правки стен УДАЛИЛА закладную затронутой комнаты (restoreRigels
+      // выкидывает пересекающуюся или совпавшую с ребром ось) — отказ до записи:
+      // закладная несёт пользовательские данные (ceiling_type, вершины rigel_ceiling
+      // у разделителей), а агент не видит холст. Только сдвиг конца оси —
+      // предупреждение (ветка выше).
+      problems.push(`room ${e.roomId}: нормализация после правки стен удалила закладную ${e.id} (CR${e.cr}) затронутой комнаты — сначала ceiling_rigel_delete CR${e.cr}, затем повторите правку стен`);
       continue;
     }
-    problems.push(`room ${e.roomId}: закладная ${e.id} потеряна (width ${e.width}, ceiling_type ${e.ceilingType || '""'})${affected ? " — если стена срезает закладную, удалите её (ceiling_rigel_delete) перед правкой" : ""}`);
+    problems.push(`room ${e.roomId}: закладная ${e.id} (CR${e.cr}) потеряна (width ${e.width}, ceiling_type ${e.ceilingType || '""'})${affected ? ` — если стена срезает закладную, сначала ceiling_rigel_delete CR${e.cr}` : ""}`);
   }
   // лишние закладные
   for (const g of got) {
