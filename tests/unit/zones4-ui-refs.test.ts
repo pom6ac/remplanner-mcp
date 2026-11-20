@@ -10,7 +10,7 @@ import type { Model, Wall } from "../../src/model/types.ts";
 import { addCeilingRigel, updateCeilingRigel, deleteCeilingRigel } from "../../src/model/ceiling-rigels.ts";
 import { addZoneCeiling, removeZoneCeiling } from "../../src/model/zone.ts";
 import { rebuildCeilingZones } from "../../src/model/ceiling-zones.ts";
-import { finishCompare, setCeilingFinish } from "../../src/model/finish.ts";
+import { finishCompare, finishList, setCeilingFinish, removeCeilingFinish, addCeilingNiche, removeCeilingNiche } from "../../src/model/finish.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
 
@@ -222,6 +222,146 @@ test("310: Г-образная комната — закладная у выем
   assert.deepEqual(materialsOf(model, "room1"), ["gypsum_ceiling"]);
   const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
   assert.ok(ceilings.length >= 2, `Г-комната делится: ${ceilings.length} зон`);
+});
+
+// ---------- ревью 311 №1: API отделки потолка работает со всеми зонами комнаты ----------
+
+/** pid на рёбрах комнаты (addCeilingNiche/removeCeilingNiche ищут стороны по pid). */
+function withEdgePids(model: Model, roomId: string): void {
+  const room = (model.rooms2 as Record<string, Record<string, unknown>>)[roomId]!;
+  const pids = ["wallR", "wallB", "wallL", "wallT"];
+  ((room["edges"] ?? []) as Array<Record<string, unknown>>).forEach((e, i) => { e["pid"] = pids[i]!; });
+}
+
+test("312 №1: после закладной finish_get видит отделку зоны (не только ceilings[0]), remove снимает", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  setCeilingFinish(model, "room1", "gypsum_ceiling", {});
+  // закладная у правой стены: отделка по граням уходит в запись [1] (311-exp5)
+  addCeilingRigel(model, "room1", { start: { x: 3700, y: 1005 }, end: { x: 3700, y: 2995 } });
+  const fl = finishList(model, "room1")[0] as Record<string, unknown>;
+  assert.deepEqual(fl["ceiling"], { material: "gypsum_ceiling", level: 0, profile: "standard" }, "отделка зоны [1] видна в finish_get");
+  removeCeilingFinish(model, "room1");
+  const fl2 = finishList(model, "room1")[0] as Record<string, unknown>;
+  assert.equal(fl2["ceiling"], undefined, "remove снимает отделку в любой зоне");
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  assert.deepEqual(materialsOf(model, "room1"), [], "записей с отделкой нет");
+  assert.equal(ceilings.length, 2, "зоны сохранены");
+});
+
+test("312 №1: finish_ceiling_set в зонированной комнате — во все зоны, полигоны зон не переписываются", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  setCeilingFinish(model, "room1", "gypsum_ceiling", {});
+  addCeilingRigel(model, "room1", { start: { x: 2500, y: 1005 }, end: { x: 2500, y: 2995 } });
+  setCeilingFinish(model, "room1", "stretch_ceiling", {});
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  assert.equal(ceilings.length, 2);
+  assert.deepEqual(materialsOf(model, "room1"), ["stretch_ceiling", "stretch_ceiling"], "отделка во всех зонах");
+  const zonePolys = ceilings.map((c) => c.polygon as Pt[]);
+  assert.ok(
+    zonePolys.some((p) => p.every((q) => q.x <= 245.01)) && zonePolys.some((p) => p.every((q) => q.x >= 254.99)),
+    `полигоны — две зоны, не вся комната: ${JSON.stringify(zonePolys)}`,
+  );
+  // finish_get: одинаковый материал — ceiling; разные — ceiling_zones по записям
+  const fl = finishList(model, "room1")[0] as Record<string, unknown>;
+  assert.deepEqual(fl["ceiling"], { material: "stretch_ceiling", level: 0, profile: "standard" });
+  assert.deepEqual(fl["ceiling_zones"], [
+    { zone: 1, material: "stretch_ceiling", level: 0, profile: "standard" },
+    { zone: 2, material: "stretch_ceiling", level: 0, profile: "standard" },
+  ]);
+  ceilings[1]!["material"] = "rack_ceiling";
+  const fl2 = finishList(model, "room1")[0] as Record<string, unknown>;
+  assert.deepEqual(fl2["ceiling_zones"], [
+    { zone: 1, material: "stretch_ceiling", level: 0, profile: "standard" },
+    { zone: 2, material: "rack_ceiling", level: 0, profile: "standard" },
+  ]);
+  assert.equal(fl2["ceiling"], undefined, "разные материалы по зонам — поле ceiling не вводит в заблуждение");
+});
+
+test("312 №1: ниша в зонированной комнате — в зоны у этой стены, снимается по стене", () => {
+  const model = rectRoom("room1", 100, 100, 400, 300);
+  withEdgePids(model, "room1");
+  setCeilingFinish(model, "room1", "gypsum_ceiling", {});
+  addCeilingRigel(model, "room1", { start: { x: 2500, y: 1005 }, end: { x: 2500, y: 2995 } });
+  setCeilingFinish(model, "room1", "stretch_ceiling", {});
+  const res = addCeilingNiche(model, "room1", "wallL");
+  assert.ok(res.id);
+  const ceilings = ((model.rooms2 as Record<string, Record<string, unknown>>)["room1"]!.ceilings) as Array<Record<string, unknown>>;
+  const withNiche = ceilings.filter((c) => ((c["niches"] ?? []) as Array<Record<string, unknown>>).some((n) => n.exist === true));
+  assert.equal(withNiche.length, 1, "ниша — только в зоне у левой стены");
+  const niche = withNiche[0]!;
+  const nicheEdge = ((niche["edges"] ?? []) as Array<{ p1: Pt; p2: Pt }>).find((e) => e.p1.x <= 105 && e.p2.x <= 105);
+  assert.ok(nicheEdge, "ниша стоит на ребре зоны вдоль левой стены");
+  const removed = removeCeilingNiche(model, "room1", "wallL");
+  assert.equal(removed.parts, 1);
+  assert.deepEqual(materialsOf(model, "room1"), ["stretch_ceiling", "stretch_ceiling"]);
+  const flAfter = finishList(model, "room1")[0] as Record<string, unknown>;
+  assert.equal(flAfter["niches"], undefined, "ниши сняты");
+});
+
+// ---------- ревью 311 №2: сверка ceilingSigsOf во всех ветках finishCompare ----------
+
+test("312 №2: save — отделка только в ceilings[1], комната сменила контур → NORMALIZATION_DROPPED", () => {
+  const rooms: Record<string, Record<string, unknown>> = {
+    room1: {
+      polygon: [{ x: 400, y: 100 }, { x: 400, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }],
+      ceilings: [
+        { exist: false, polygon: [{ x: 255, y: 100 }, { x: 255, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }] },
+        { exist: true, id: "_cB", material: "stretch_ceiling", level: 0, profile: "standard", polygon: [{ x: 245, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }, { x: 245, y: 100 }] },
+      ],
+    },
+  };
+  const got: Record<string, Record<string, unknown>> = structuredClone(rooms);
+  (got["room1"]!["polygon"] as Pt[]).forEach((p) => { p.x = p.x === 400 ? 500 : p.x; });
+  got["room1"]!["ceilings"] = [{ exist: false }];
+  const res = finishCompare(rooms, got, undefined, undefined, "save");
+  assert.equal(res.problems.length, 1, `одна проблема: ${JSON.stringify(res.problems)}`);
+  assert.match(res.problems[0]!, /покрытие потолка.*stretch_ceiling/);
+  // контроль: та же модель с отделкой в [0] — тоже проблема (старая сверка её ловила)
+  const rooms0 = structuredClone(rooms);
+  const c = rooms0["room1"]!["ceilings"] as unknown[];
+  [c[0], c[1]] = [c[1], c[0]];
+  const res0 = finishCompare(rooms0, got, undefined, undefined, "save");
+  assert.equal(res0.problems.length, 1);
+});
+
+test("312 №2: split — часть не унаследовала отделку зоны [1] → problem (normalize)", () => {
+  const poly = [{ x: 400, y: 100 }, { x: 400, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }];
+  const expRooms = {
+    room1: {
+      polygon: poly,
+      ceilings: [
+        { exist: true, id: "_cA", material: "gypsum_ceiling", level: 0, profile: "standard", polygon: [{ x: 255, y: 100 }, { x: 255, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }] },
+        { exist: true, id: "_cB", material: "stretch_ceiling", level: 0, profile: "standard", polygon: [{ x: 400, y: 100 }, { x: 400, y: 300 }, { x: 255, y: 300 }, { x: 255, y: 100 }] },
+      ],
+    },
+  };
+  const part = (xLeft: number, xRight: number, withStretch: boolean): Record<string, unknown> => ({
+    polygon: [{ x: xRight, y: 100 }, { x: xRight, y: 300 }, { x: xLeft, y: 300 }, { x: xLeft, y: 100 }],
+    ceilings: [
+      { exist: true, id: `_c${xLeft}A`, material: "gypsum_ceiling", level: 0, profile: "standard", polygon: [{ x: 255, y: 100 }, { x: 255, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }] },
+      ...(withStretch
+        ? [{ exist: true, id: `_c${xLeft}B`, material: "stretch_ceiling", level: 0, profile: "standard", polygon: [{ x: 400, y: 100 }, { x: 400, y: 300 }, { x: 255, y: 300 }, { x: 255, y: 100 }] }]
+        : [{ exist: false }]),
+    ],
+  });
+  const ok = finishCompare(expRooms, { _p1: part(100, 250, true), _part2: part(250, 400, true) }, undefined, undefined, "normalize");
+  assert.deepEqual(ok.problems, []);
+  const lost = finishCompare(expRooms, { _p1: part(100, 250, false), _part2: part(250, 400, true) }, undefined, undefined, "normalize");
+  assert.ok(lost.problems.some((p) => p.includes("не унаследовала покрытие потолка") && p.includes("stretch_ceiling")), JSON.stringify(lost.problems));
+});
+
+test("312 №2: merge — объединённая комната потеряла отделку источников → problem", () => {
+  const expRooms: Record<string, Record<string, unknown>> = {
+    a: { polygon: [{ x: 200, y: 100 }, { x: 200, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }], ceilings: [{ exist: true, id: "_cA", material: "gypsum_ceiling", level: 0, profile: "standard", polygon: [{ x: 200, y: 100 }, { x: 200, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }] }] },
+    room2: { polygon: [{ x: 300, y: 100 }, { x: 300, y: 300 }, { x: 200, y: 300 }, { x: 200, y: 100 }], ceilings: [] },
+  };
+  const merged = {
+    _m: { polygon: [{ x: 300, y: 100 }, { x: 300, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }], ceilings: [{ exist: true, id: "_cM", material: "gypsum_ceiling", level: 0, profile: "standard", polygon: [{ x: 300, y: 100 }, { x: 300, y: 300 }, { x: 100, y: 300 }, { x: 100, y: 100 }] }] },
+  };
+  const ok = finishCompare(expRooms, structuredClone(merged), undefined, undefined, "normalize");
+  assert.deepEqual(ok.problems, [], "отделка источника сохранена — не потеря");
+  const lost = finishCompare(expRooms, { _m: { ...merged["_m"]!, ceilings: [{ exist: false }] } }, undefined, undefined, "normalize");
+  assert.ok(lost.problems.some((p) => p.includes("объединённая комната потеряла покрытие потолка")), JSON.stringify(lost.problems));
 });
 
 // ---------- mock save: потеря отделки зоны потолка при нормализации — отказ ----------

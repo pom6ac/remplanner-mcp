@@ -393,20 +393,72 @@ export function removeCeilingMolding(model: Model, roomRef: string, wallId?: str
 /** Потолки, на которые нельзя ставить закарнизную нишу (правило UI, бандл cursor_click). */
 const NICHE_FORBIDDEN_MATERIALS = new Set(["paint_ceiling", "whitewash_ceiling"]);
 
-/** Добавить закарнизную нишу вдоль стороны стены комнаты (ceilings[0].niches; PRO). */
+/** Добавить закарнизную нишу вдоль стороны стены комнаты (ceilings[0].niches; PRO).
+ *  Зонированный потолок (после пересчёта зон, ревью 311 №1): ниша ставится в каждую
+ *  зону, чьё ребро лежит на стороне стены (линия — по ребру зоны, как в UI). */
 export function addCeilingNiche(model: Model, roomRef: string, wallId: string): { id: string } {
-  const { room } = resolveRoom(model, roomRef);
+  const { id: roomId, room } = resolveRoom(model, roomRef);
   const ceilings = Array.isArray(room.ceilings) ? room.ceilings : [];
+  const targets = edgesOfWall(room, wallId);
+  if (targets.length === 0) {
+    throw new McpError("INVALID_ARGUMENT", `комната ${roomRef} не граничит со стеной ${wallId} (граничные стены — из finish_get/model_get)`);
+  }
+  /** Ребро зоны лежит на ребре комнаты (коллинеарно, в допуске UI-магнита). */
+  const onEdge = (e: { p1?: Point; p2?: Point }, base: { p1?: Point; p2?: Point }): boolean =>
+    Boolean(e.p1 && e.p2 && base.p1 && base.p2 &&
+      projD(e.p1, base.p1, base.p2) <= 0.05 && projD(e.p2, base.p1, base.p2) <= 0.05);
+  if (ceilings.length > 1) {
+    const zones = ceilings.filter((c) => (c as Record<string, unknown> | undefined)?.exist === true) as Array<Record<string, unknown>>;
+    if (zones.length === 0) {
+      throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет покрытия потолка — сначала finish_ceiling_set (в UI: «сначала добавьте потолок»)`);
+    }
+    for (const zone of zones) {
+      if (typeof zone["material"] === "string" && NICHE_FORBIDDEN_MATERIALS.has(zone["material"])) {
+        throw new McpError("INVALID_ARGUMENT", `закарнизная ниша не ставится на ${zone["material"]} (в UI доступна только для встраиваемых потолков)`);
+      }
+    }
+    let id = "";
+    let placed = 0;
+    for (const zone of zones) {
+      const zoneEdges = Array.isArray(zone["edges"]) ? zone["edges"] as Array<{ p1?: Point; p2?: Point }> : [];
+      for (let j = 0; j < zoneEdges.length; j++) {
+        const ze = zoneEdges[j]!;
+        const host = targets.find(({ edge }) => onEdge(ze, edge));
+        if (!host) continue;
+        if (edgeLenCm(ze) * 10 < FINISH_LIMITS.nicheEdgeMinMm) {
+          throw new McpError("INVALID_ARGUMENT", `ребро короче ${FINISH_LIMITS.nicheEdgeMinMm / 10} см — ниша не ставится; выберите стену длиннее`);
+        }
+        const line = edgeInsetLine(room, ze, 0, FINISH_GEOMETRY.nicheEndTrimCm);
+        id = `_ni${newId(8)}`;
+        const niches = edgeContainer(zone as RoomRec, "niches", zoneEdges.length);
+        niches[j] = {
+          exist: true,
+          parts: {
+            [id]: {
+              is_class: true, id, id_old: "", plan: "ceiling",
+              id_room: roomId,
+              id_ceiling: zone["id"],
+              line: { p1: { ...line.p1 }, p2: { ...line.p2 } },
+              line_wall: { p1: { ...(ze.p1 as Point) }, p2: { ...(ze.p2 as Point) } },
+              polygon: [], width: 0, area: 0, depth: FINISH_GEOMETRY.nicheDepthCm,
+            },
+          },
+        };
+        zone["niches"] = niches;
+        placed += 1;
+      }
+    }
+    if (placed === 0) {
+      throw new McpError("INVALID_ARGUMENT", `у зон потолка комнаты ${roomRef} нет ребра на стене ${wallId} — ниша не ставится`);
+    }
+    return { id };
+  }
   const c0 = ceilings[0] as Record<string, unknown> | undefined;
   if (!c0 || c0.exist !== true) {
     throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет покрытия потолка — сначала finish_ceiling_set (в UI: «сначала добавьте потолок»)`);
   }
   if (typeof c0.material === "string" && NICHE_FORBIDDEN_MATERIALS.has(c0.material)) {
     throw new McpError("INVALID_ARGUMENT", `закарнизная ниша не ставится на ${c0.material} (в UI доступна только для встраиваемых потолков)`);
-  }
-  const targets = edgesOfWall(room, wallId);
-  if (targets.length === 0) {
-    throw new McpError("INVALID_ARGUMENT", `комната ${roomRef} не граничит со стеной ${wallId} (граничные стены — из finish_get/model_get)`);
   }
   for (const { edge } of targets) {
     if (edgeLenCm(edge) * 10 < FINISH_LIMITS.nicheEdgeMinMm) {
@@ -437,17 +489,52 @@ export function addCeilingNiche(model: Model, roomRef: string, wallId: string): 
   return { id };
 }
 
-/** Убрать закарнизные ниши комнаты: со всех сторон или только со стороны стены wallId. */
+/** Убрать закарнизные ниши комнаты: со всех сторон или только со стороны стены wallId.
+ *  Зонированный потолок: ниши снимаются во всех записях (ребро зоны — по геометрии
+ *  на стороне стены; ревью 311 №1). */
 export function removeCeilingNiche(model: Model, roomRef: string, wallId?: string): { parts: number } {
   const { room } = resolveRoom(model, roomRef);
   const ceilings = Array.isArray(room.ceilings) ? room.ceilings : [];
+  const edges = Array.isArray(room.edges) ? room.edges : [];
+  const targets = wallId ? edgesOfWall(room, wallId) : [];
+  if (wallId && targets.length === 0) {
+    throw new McpError("INVALID_ARGUMENT", `комната ${roomRef} не граничит со стеной ${wallId} (граничные стены — из finish_get/model_get)`);
+  }
+  const onEdge = (p: Point, base: { p1?: Point; p2?: Point }): boolean =>
+    Boolean(base.p1 && base.p2 && projD(p, base.p1, base.p2) <= 0.05);
+  let n = 0;
+  if (ceilings.length > 1) {
+    for (const rec of ceilings) {
+      const c = rec as Record<string, unknown> | undefined;
+      const recEdges = c && Array.isArray(c["edges"]) ? c["edges"] as Array<{ p1?: Point; p2?: Point }> : [];
+      if (!c || !Array.isArray(c["niches"])) continue;
+      const niches = [...c["niches"] as Array<Record<string, unknown>>];
+      for (let i = 0; i < niches.length; i++) {
+        const cont = niches[i];
+        if (!cont || cont.exist !== true) continue;
+        const parts = (cont.parts ?? {}) as Record<string, Record<string, unknown>>;
+        const hit = wallId
+          ? Object.values(parts).some((part) => {
+              const line = part["line"] as { p1?: Point; p2?: Point } | undefined;
+              return Boolean(line?.p1 && line?.p2 && targets.some(({ edge }) => onEdge(line.p1!, edge) && onEdge(line.p2!, edge)));
+            })
+          : true;
+        if (!hit) continue;
+        niches[i] = { exist: false };
+        n++;
+      }
+      c["niches"] = niches;
+    }
+    if (wallId && n === 0) {
+      throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет ниш на стене ${wallId}`);
+    }
+    return { parts: n };
+  }
   const c0 = ceilings[0] as Record<string, unknown> | undefined;
   if (!c0 || c0.exist !== true) {
     throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет покрытия потолка — ниш нет`);
   }
-  const edges = Array.isArray(room.edges) ? room.edges : [];
   const niches = edgeContainer(c0 as RoomRec, "niches", edges.length);
-  let n = 0;
   for (let i = 0; i < edges.length; i++) {
     if (wallId && edges[i]!.pid !== wallId) continue;
     if (niches[i]!["exist"] !== true) continue;
@@ -554,10 +641,15 @@ export type CeilingFinishParams = {
   profile?: string;
 };
 
-/** Записать/заменить покрытие потолка комнаты (rooms2[room].ceilings[0]).
- *  Закарнизные ниши переживают смену материала (переносятся на новый потолок
- *  с обновлением id_ceiling — ревью 246 №2); на краску/побелку ниша в UI не
- *  ставится, поэтому при нишах такой материал отклоняется до правки. */
+/** Записать/заменить покрытие потолка комнаты (rooms2[room].ceilings).
+ *  Однозонная комната (одна запись) — запись в ceilings[0] с полигоном комнаты,
+ *  как на 141fd2b. Зонированная (записей несколько после пересчёта зон —
+ *  закладная/делитель, ревью 311 №1) — покрытие ставится во ВСЕ зоны: полигоны
+ *  записей (зон) сохраняются, полигон [0] полигоном всей комнаты не
+ *  переписывается. Закарнизные ниши переживают смену материала (переносятся на
+ *  новый потолок с обновлением id_ceiling — ревью 246 №2; ищутся во всех
+ *  записях); на краску/побелку ниша в UI не ставится, поэтому при нишах такой
+ *  материал отклоняется до правки. */
 export function setCeilingFinish(model: Model, roomRef: string, material: CeilingCover, params: CeilingFinishParams): { id: string } {
   if (!(CEILING_COVERS as readonly string[]).includes(material)) {
     throw new McpError("INVALID_ARGUMENT", `неизвестное покрытие потолка «${material}» (допустимо: ${CEILING_COVERS.join(", ")})`);
@@ -571,15 +663,46 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
   }
   const ceilings = Array.isArray(room.ceilings) ? [...room.ceilings] : [];
   while (ceilings.length < 1) ceilings.push({ exist: false });
-  const prev = ceilings[0] as Record<string, unknown> | undefined;
-  const prevNiches = prev && Array.isArray(prev["niches"]) ? prev["niches"] as Array<Record<string, unknown>> : [];
-  const hasNiches = prevNiches.some((n) => (n as { exist?: unknown } | undefined)?.exist === true);
+  const hasNiches = roomHasCeilingNiches(room);
   if (hasNiches && NICHE_FORBIDDEN_MATERIALS.has(material)) {
     throw new McpError(
       "INVALID_ARGUMENT",
       `у комнаты ${roomRef} есть закарнизные ниши — на ${material} ниша не ставится; сначала finish_ceiling_niche_remove (в UI ниша доступна только для встраиваемых потолков)`,
     );
   }
+  // Зонированный потолок (ревью 311 №1): отделка — во все зоны, полигоны зон
+  // не трогаем (полигон [0] полигоном всей комнаты переписывал зоны).
+  if (ceilings.length > 1) {
+    for (let i = 0; i < ceilings.length; i++) {
+      const prev = ceilings[i] as Record<string, unknown> | undefined;
+      const zoneId = `_c${newId(8)}`;
+      const entry: Record<string, unknown> = {
+        exist: true,
+        id: zoneId,
+        material,
+        level: params.level ?? 0,
+        profile: params.profile ?? "standard",
+      };
+      const prevPoly = prev?.["polygon"];
+      if (Array.isArray(prevPoly) && prevPoly.length >= 3) entry["polygon"] = structuredClone(prevPoly);
+      const prevEdges = prev?.["edges"];
+      if (Array.isArray(prevEdges) && prevEdges.length > 0) entry["edges"] = structuredClone(prevEdges);
+      const prevNiches = prev && Array.isArray(prev["niches"]) ? prev["niches"] as Array<Record<string, unknown>> : [];
+      if (prevNiches.some((n) => n?.exist === true)) {
+        entry["niches"] = structuredClone(prevNiches).map((n) => {
+          const rec = n as { exist?: unknown; parts?: Record<string, Record<string, unknown>> };
+          if (rec?.exist !== true) return n;
+          for (const part of Object.values(rec.parts ?? {})) part["id_ceiling"] = zoneId;
+          return n;
+        });
+      }
+      ceilings[i] = entry;
+    }
+    room.ceilings = ceilings;
+    return { id: (ceilings[0] as Record<string, unknown>).id as string };
+  }
+  const prev = ceilings[0] as Record<string, unknown> | undefined;
+  const prevNiches = prev && Array.isArray(prev["niches"]) ? prev["niches"] as Array<Record<string, unknown>> : [];
   const polygon = room.polygon ?? room.points ?? [];
   const id0 = `_c${newId(8)}`;
   const entry: Record<string, unknown> = {
@@ -606,14 +729,11 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
 
 /** Снять покрытие потолка комнаты. При закарнизных нишах — отказ с подсказкой
  *  finish_ceiling_niche_remove (по стандарту UI, как в setCeilingFinish):
- *  молчаливо стирать ниши нельзя (ревью 248 A). */
+ *  молчаливо стирать ниши нельзя (ревью 248 A). Зонированный потолок: exist:false
+ *  ставится во ВСЕ записи, полигоны зон сохраняются (ревью 311 №1). */
 export function removeCeilingFinish(model: Model, roomRef: string): void {
   const { room } = resolveRoom(model, roomRef);
-  const ceilings = Array.isArray(room.ceilings) ? room.ceilings : [];
-  const prev = ceilings[0] as Record<string, unknown> | undefined;
-  const prevNiches = prev && Array.isArray(prev["niches"]) ? prev["niches"] as Array<Record<string, unknown>> : [];
-  const hasNiches = prevNiches.some((n) => (n as { exist?: unknown } | undefined)?.exist === true);
-  if (hasNiches) {
+  if (roomHasCeilingNiches(room)) {
     throw new McpError(
       "INVALID_ARGUMENT",
       `у комнаты ${roomRef} есть закарнизные ниши — сначала finish_ceiling_niche_remove (в UI ниша снимается до снятия потолка)`,
@@ -622,6 +742,18 @@ export function removeCeilingFinish(model: Model, roomRef: string): void {
   const polygon = room.polygon ?? room.points ?? [];
   const list = Array.isArray(room.ceilings) ? [...room.ceilings] : [];
   while (list.length < 1) list.push({ exist: false });
+  if (list.length > 1) {
+    // зоны: у каждой записи свой полигон — не переписываем полигоном комнаты
+    for (let i = 0; i < list.length; i++) {
+      const prev = list[i] as Record<string, unknown> | undefined;
+      const prevPoly = prev?.["polygon"];
+      list[i] = Array.isArray(prevPoly) && prevPoly.length >= 3
+        ? { exist: false, polygon: structuredClone(prevPoly) }
+        : { exist: false };
+    }
+    room.ceilings = list;
+    return;
+  }
   list[0] = { exist: false, polygon: polygon.map((p) => ({ x: r2(p.x), y: r2(p.y) })) };
   room.ceilings = list;
 }
@@ -796,6 +928,39 @@ function ceilingSigsOf(room: RoomRec): string[] {
   return out.sort();
 }
 
+/**
+ * Отделка по зонам потолка для публичного ответа (этап 312, ревью 311 №1):
+ * записи exist===true с материалом, по порядку контейнера ceilings. После
+ * пересчёта зон (закладная/делитель) отделка может стоять в любой записи —
+ * чтение только ceilings[0] показывало null (регрессия против 141fd2b).
+ */
+type CeilingZoneFinish = { index: number; material: string; level: number | undefined; profile: string | undefined };
+function ceilingFinishZones(room: RoomRec): CeilingZoneFinish[] {
+  const arr = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
+  const out: CeilingZoneFinish[] = [];
+  arr.forEach((c, index) => {
+    if (!c || c.exist !== true) return;
+    const material = typeof c.material === "string" ? c.material : undefined;
+    if (!material) return;
+    out.push({
+      index,
+      material,
+      level: num(c.level),
+      profile: typeof c.profile === "string" ? c.profile : undefined,
+    });
+  });
+  return out;
+}
+
+/** Есть ли закарнизные ниши хоть в одной записи потолков комнаты. */
+function roomHasCeilingNiches(room: RoomRec): boolean {
+  const arr = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
+  return arr.some((c) =>
+    c && Array.isArray(c["niches"]) &&
+    (c["niches"] as Array<Record<string, unknown>>).some((n) => n?.exist === true),
+  );
+}
+
 function wallSigs(room: RoomRec, edges: RoomRec["edges"]): NonNullable<FinishSig["walls"]> {
   const out: NonNullable<FinishSig["walls"]> = [];
   const decors = Array.isArray(room.decors) ? room.decors : [];
@@ -845,29 +1010,44 @@ function moldingSigs(room: RoomRec, key: "floorMoldings" | "ceilingMoldings", ed
   return out;
 }
 
-/** Закарнизные ниши (ceilings[0].niches) в виде сигнатур (полная проекция — ревью 246 №10). */
+/** Закарнизные ниши (niches по записям ceilings) в виде сигнатур (полная проекция —
+ *  ревью 246 №10). Зонированный потолок (ревью 311 №1): ниши могут стоять в любой
+ *  записи — обходятся все; pid — ребро комнаты, на котором лежит линия ниши
+ *  (геометрически; запасной путь — индексная привязка для одиночной записи). */
 function nichesSig(room: RoomRec): NonNullable<FinishSig["niches"]> {
   const out: NonNullable<FinishSig["niches"]> = [];
-  const c0 = (room.ceilings ?? [])[0] as Record<string, unknown> | undefined;
-  const selfCeiling = typeof c0?.["id"] === "string" ? c0["id"] as string : undefined;
   const edges = Array.isArray(room.edges) ? room.edges : [];
-  const arr = c0 && Array.isArray(c0["niches"]) ? c0["niches"] as Array<Record<string, unknown>> : [];
-  for (let i = 0; i < arr.length; i++) {
-    const rec = arr[i] as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined;
-    if (!rec || rec.exist !== true) continue;
-    for (const part of Object.values(rec.parts ?? {})) {
-      const line = part.line as { p1?: Point; p2?: Point } | undefined;
-      if (!line?.p1 || !line?.p2) continue;
-      out.push({
-        pid: edges[i]?.pid as string | undefined,
-        line: [line.p1, line.p2],
-        depth: num(part.depth),
-        plan: typeof part.plan === "string" ? part.plan : undefined,
-        idCeiling: typeof part.id_ceiling === "string" ? part.id_ceiling : undefined,
-        selfCeiling,
-      });
+  const ceilings = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
+  const pidByLine = (line: { p1: Point; p2: Point }): string | undefined => {
+    for (const e of edges) {
+      if (e?.p1 && e?.p2 && projD(line.p1, e.p1, e.p2) <= 0.05 && projD(line.p2, e.p1, e.p2) <= 0.05) {
+        return e.pid;
+      }
     }
-  }
+    return undefined;
+  };
+  ceilings.forEach((rec, ci) => {
+    if (!rec) return;
+    const selfCeiling = typeof rec["id"] === "string" ? rec["id"] as string : undefined;
+    const arr = Array.isArray(rec["niches"]) ? rec["niches"] as Array<Record<string, unknown>> : [];
+    for (let i = 0; i < arr.length; i++) {
+      const nrec = arr[i] as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined;
+      if (!nrec || nrec.exist !== true) continue;
+      for (const part of Object.values(nrec.parts ?? {})) {
+        const line = part.line as { p1?: Point; p2?: Point } | undefined;
+        if (!line?.p1 || !line?.p2) continue;
+        const pid = pidByLine(line as { p1: Point; p2: Point }) ?? (ci === 0 ? edges[i]?.pid as string | undefined : undefined);
+        out.push({
+          pid,
+          line: [line.p1, line.p2],
+          depth: num(part.depth),
+          plan: typeof part.plan === "string" ? part.plan : undefined,
+          idCeiling: typeof part.id_ceiling === "string" ? part.id_ceiling : undefined,
+          selfCeiling,
+        });
+      }
+    }
+  });
   return out;
 }
 
@@ -1022,7 +1202,20 @@ function gotPartNear(
 const roomPolygon = (room: unknown): Point[] | undefined => roomPolygonOf(room);
 
 function roomHasFloorCeiling(room: RoomRec): boolean {
-  return Boolean(floorSig(room) || ceilingSig(room));
+  return Boolean(floorSig(room) || ceilingSigsOf(room).length > 0);
+}
+
+/** Мультимножество exp не покрыто got: список недостающих записей (ревью 311 №2). */
+function multisetMissing(exp: string[], got: string[]): string[] {
+  const counts = new Map<string, number>();
+  for (const g of got) counts.set(g, (counts.get(g) ?? 0) + 1);
+  const missing: string[] = [];
+  for (const c of exp) {
+    const n = counts.get(c) ?? 0;
+    if (n <= 0) missing.push(c);
+    else counts.set(c, n - 1);
+  }
+  return missing;
 }
 
 /**
@@ -1078,19 +1271,21 @@ export function finishCompare(
   for (const [rid, room] of Object.entries(exp)) {
     const gid = exact.get(rid) ?? sameMatch(rid);
     const expFloor = floorSig(room);
-    const expCeil = ceilingSig(room);
+    // отделка ВСЕХ зон во всех ветках (ревью 311 №2): сверка только по ceilings[0]
+    // пропускала потерю зоны [1] при изменившемся контуре, split и merge
+    const expCeils = ceilingSigsOf(room);
     if (!gid) {
-      if (!expFloor && !expCeil) continue; // только стены — сверяются по рёбрам ниже
+      if (!expFloor && expCeils.length === 0) continue; // только стены — сверяются по рёбрам ниже
       if (mode === "save") {
         // строго: комната на сервере не совпала по контуру — освобождений нет (ревью 98 N1)
         if (expFloor) problems.push(`room ${rid}: комната исчезла или изменилась на сервере — покрытие пола (${expFloor.cover}) потеряно`);
-        if (expCeil) problems.push(`room ${rid}: комната исчезла или изменилась на сервере — покрытие потолка (${expCeil.material}) потеряно`);
+        if (expCeils.length > 0) problems.push(`room ${rid}: комната исчезла или изменилась на сервере — покрытие потолка потеряно (${expCeils.join(" | ")})`);
         continue;
       }
       const heir = heirOf.get(rid) ?? null;
       if (!heir) {
         if (expFloor) problems.push(`room ${rid}: потеряно покрытие пола (${expFloor.cover}) при split/merge`);
-        if (expCeil) problems.push(`room ${rid}: потеряно покрытие потолка (${expCeil.material}) при split/merge`);
+        if (expCeils.length > 0) problems.push(`room ${rid}: потеряно покрытие потолка (${expCeils.join(" | ")}) при split/merge`);
         continue;
       }
       const heirRoom = got[heir.key]!;
@@ -1102,26 +1297,32 @@ export function finishCompare(
             const gf = floorSig(part);
             if (!gf || !sameFloor(expFloor, gf)) problems.push(`room ${rid}: часть ${k} не унаследовала покрытие пола (${expFloor.cover}) при split`);
           }
-          if (expCeil) {
-            const gc = ceilingSig(part);
-            if (!gc || !sameCeiling(expCeil, gc)) problems.push(`room ${rid}: часть ${k} не унаследовала покрытие потолка (${expCeil.material}) при split`);
+          if (expCeils.length > 0) {
+            const missing = multisetMissing(expCeils, ceilingSigsOf(part));
+            if (missing.length > 0) problems.push(`room ${rid}: часть ${k} не унаследовала покрытие потолка (${missing.join(" | ")}) при split`);
           }
         }
       } else {
         // merge: объединённая комната сохраняет покрытие ОДНОГО из источников
-        // (эталон 98: merge-diff-floors — floor_tile, merge-one-floor — laminate+потолок)
+        // (эталон 98: merge-diff-floors — floor_tile, merge-one-floor — laminate+потолок).
+        // По зонам (ревью 311 №2): restoreTotal редактора переносит записи источников
+        // по getZone — при схлопывании зон часть записей легитимно перезаписывается,
+        // поэтому сверяем подмножество: у результата есть отделка источников и нет чужой
         const sources = unmatchedExp
           .map((k) => exp[k]!)
           .filter((r) => overlapShare(roomPolygon(r) ?? [], roomPolygon(heirRoom) ?? []) >= SPLIT_MIN);
         const srcFloors = sources.map(floorSig).filter((s) => s !== undefined);
-        const srcCeils = sources.map(ceilingSig).filter((s) => s !== undefined);
+        const srcCeils = sources.flatMap((r) => ceilingSigsOf(r));
         const gotFloor = floorSig(heirRoom);
-        const gotCeil = ceilingSig(heirRoom);
+        const gotCeils = ceilingSigsOf(heirRoom);
         if (srcFloors.length > 0 && (!gotFloor || !srcFloors.some((s) => sameFloor(s, gotFloor)))) {
           problems.push(`room ${rid}: объединённая комната потеряла покрытие пола (${srcFloors.map((s) => s.cover).join(" / ")}) при merge`);
         }
-        if (srcCeils.length > 0 && (!gotCeil || !srcCeils.some((s) => sameCeiling(s, gotCeil)))) {
-          problems.push(`room ${rid}: объединённая комната потеряла покрытие потолка (${srcCeils.map((s) => s.material).join(" / ")}) при merge`);
+        if (srcCeils.length > 0) {
+          const allowed = new Set(srcCeils);
+          if (gotCeils.length === 0 || gotCeils.some((c) => !allowed.has(c))) {
+            problems.push(`room ${rid}: объединённая комната потеряла покрытие потолка (${srcCeils.join(" | ")}) при merge`);
+          }
         }
       }
       continue;
@@ -1164,7 +1365,6 @@ export function finishCompare(
     // этап 310 (m11 ревью 304): отделка ВСЕХ потолочных зон комнаты —
     // мультимножество записей, не только ceilings[0]; штатный перенос отделки
     // между зонами при нормализации не блокируется, потеря записи — расхождение
-    const expCeils = ceilingSigsOf(room);
     if (expCeils.length > 0) {
       const gotCeils = ceilingSigsOf(match);
       if (expCeils.length !== gotCeils.length || expCeils.some((c, i) => c !== gotCeils[i])) {
@@ -1438,7 +1638,18 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
       }
     }
     const floor = floorSig(room);
-    const ceiling = ceilingSig(room);
+    // покрытие потолка по зонам (ревью 311 №1): после пересчёта зон отделка может
+    // стоять в любой записи — чтение только ceilings[0] показывало null (регрессия
+    // против 141fd2b). ceiling — покрытие первой зоны с отделкой; если зоны отделаны
+    // по-разному, поле ceiling не выводится (вводило бы в заблуждение), перечень —
+    // ceiling_zones (zone — индекс записи ceilings, с 1). Однозонная комната —
+    // формат вывода как на 141fd2b.
+    const ceilingZones = ceilingFinishZones(room);
+    const head = ceilingZones[0];
+    const uniform = ceilingZones.every((z) =>
+      z.material === head!.material && (z.level ?? 0) === (head!.level ?? 0) && (z.profile ?? "standard") === (head!.profile ?? "standard"),
+    );
+    const ceiling = head && uniform ? head : undefined;
     const floorMoldings: Array<{ wall: string | null; type: string }> = [];
     for (const m of moldingSigs(room, "floorMoldings", edges)) {
       floorMoldings.push({ wall: wallLabel(m.pid, model), type: m.type });
@@ -1450,12 +1661,17 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
     const niches: Array<{ wall: string | null }> = [];
     {
       const edgesArr = Array.isArray(room.edges) ? room.edges : [];
-      const c0 = (room.ceilings ?? [])[0] as Record<string, unknown> | undefined;
-      const arr = c0 && Array.isArray(c0["niches"]) ? c0["niches"] as Array<Record<string, unknown>> : [];
-      for (let i = 0; i < arr.length; i++) {
-        const rec = arr[i] as { exist?: unknown } | undefined;
-        if (rec?.exist === true) niches.push({ wall: wallLabel(edgesArr[i]?.pid as string | undefined, model) });
-      }
+      const ceilingsArr = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
+      ceilingsArr.forEach((c0, ci) => {
+        if (!c0) return;
+        const arr = Array.isArray(c0["niches"]) ? c0["niches"] as Array<Record<string, unknown>> : [];
+        for (let i = 0; i < arr.length; i++) {
+          const rec = arr[i] as { exist?: unknown } | undefined;
+          if (rec?.exist !== true) continue;
+          const pid = ci === 0 ? edgesArr[i]?.pid as string | undefined : undefined;
+          niches.push({ wall: wallLabel(pid, model) });
+        }
+      });
     }
     // метки ZD<n> сквозные по всем комнатам — фильтрация после нумерации
     const zoneDelims = zoneDelimiterList(model).filter((d) => d["room_id"] === rid);
@@ -1473,6 +1689,14 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
         ...(floor.laying !== undefined ? { type_laying: floor.laying } : {}),
       } } : {}),
       ...(ceiling ? { ceiling: { material: ceiling.material, level: ceiling.level ?? 0, ...(ceiling.profile ? { profile: ceiling.profile } : {}) } } : {}),
+      ...(ceilingZones.length > 1 ? {
+        ceiling_zones: ceilingZones.map((z) => ({
+          zone: z.index + 1,
+          material: z.material,
+          level: z.level ?? 0,
+          ...(z.profile ? { profile: z.profile } : {}),
+        })),
+      } : {}),
       walls,
       ...(floorMoldings.length > 0 ? { floor_moldings: floorMoldings } : {}),
       ...(ceilingMoldings.length > 0 ? { ceiling_moldings: ceilingMoldings } : {}),
