@@ -7,6 +7,7 @@
 // делителей разных планов), save → reopen → сверка → render PNG.
 // node scripts/probes/296-live-check.ts run
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import type { Page } from "playwright-core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { loadModel, type LoadedModel } from "../../src/api.ts";
@@ -64,40 +65,43 @@ const roSnap = async (tag: string): Promise<LoadedModel> => {
   return m;
 };
 
-const created: Array<{ kind: "wall" | "delimiter" | "rigel"; siteId?: string; meta?: unknown }> = [];
+const created: Array<{ kind: "wall" | "rigel"; siteId?: string; meta?: unknown }> = [];
+/** Захваченные при создании разделители (ревью 298 №8): site_id с верхнего
+ *  уровня ответа zone_*_add + геометрия записи (type + концы, мм) — при смене
+ *  id редактором зачистка идёт по захваченной геометрии конкретной записи
+ *  (один-к-одному), НЕ по bbox. */
+const capturedDelims: Array<{ siteId: string; type: string; from_mm?: number[]; to_mm?: number[] }> = [];
 let opened = false;
 const freshLabel = async (coll: "walls" | "rigels", siteId: string): Promise<string | null> => {
   const mg = await call("model_get", {}, { quiet: true });
   const list = (mg[coll] ?? []) as Array<{ id: string; site_id: string }>;
   return list.find((w) => w.site_id === siteId)?.id ?? null;
 };
-// зачистка только по захваченным site_id через свежий model_get (ревью 263 N7).
-// После reopen редактор перегенерирует id разделителей (restoreTotal: id=LIB.id()),
-// поэтому «захваченный ID» после reopen — это site_id из свежей модели, отобранный
-// по геометрии пробной комнаты (в её bbox нет чужих объектов)
-const trialBBox = (): { x0: number; y0: number; x1: number; y1: number } => {
-  const c = created.find((c) => c.kind === "wall" && c.meta)?.meta as { ox: number; oy: number } | undefined;
-  return { x0: (c?.ox ?? 0) - 5, y0: (c?.oy ?? 0) - 5, x1: (c?.ox ?? 0) + 405, y1: (c?.oy ?? 0) + 305 };
-};
-const delimInTrial = (d: { vertexes?: Array<{ point?: { x: number; y: number } }> }): boolean => {
-  const bb = trialBBox();
-  const v = d.vertexes ?? [];
-  return v.length >= 2 && v.every((q) => q.point && q.point.x >= bb.x0 && q.point.x <= bb.x1 && q.point.y >= bb.y0 && q.point.y <= bb.y1);
-};
+const nearMm = (a?: number[], b?: number[]): boolean =>
+  Array.isArray(a) && Array.isArray(b) && Math.abs(a[0]! - b[0]!) <= 1 && Math.abs(a[1]! - b[1]!) <= 1;
+// зачистка только по захваченным ID (ревью 298 №8): site_id из ответа
+// zone_*_add; при смене id редактором (restore) — по захваченной геометрии
+// конкретной записи (type + концы, один-к-одному), не по bbox
 const removeCapturedDelimiters = async (): Promise<void> => {
   for (let guard = 0; guard < 20; guard++) {
     const mg = await call("model_get", {}, { quiet: true });
-    const raw = (mg["zone_delimiters"] ?? []) as Array<{ id: string; site_id: string; from_mm?: number[]; to_mm?: number[] }>;
-    // свежая модель: отбор по вхождению обеих точек в bbox пробной комнаты
+    const raw = (mg["zone_delimiters"] ?? []) as Array<{ id: string; site_id: string; type?: string; from?: number[]; to?: number[] }>;
+    const pending = [...capturedDelims];
     const mine = raw.filter((d) => {
-      const p = [d.from_mm, d.to_mm].map((q) => (Array.isArray(q) ? { x: (q[0] ?? 0) / 10, y: (q[1] ?? 0) / 10 } : null));
-      const bb = trialBBox();
-      return p.length === 2 && p.every((q) => q && q.x >= bb.x0 && q.x <= bb.x1 && q.y >= bb.y0 && q.y <= bb.y1);
+      const idx = pending.findIndex((c) =>
+        d.site_id === c.siteId ||
+        ((d.type ?? "") === c.type && ((nearMm(d.from, c.from_mm) && nearMm(d.to, c.to_mm)) || (nearMm(d.from, c.to_mm) && nearMm(d.to, c.from_mm)))),
+      );
+      if (idx === -1) return false;
+      pending.splice(idx, 1);
+      return true;
     });
     if (mine.length === 0) return;
     for (const d of mine) {
       const ref = d.site_id || d.id;
-      try { await call("zone_ceiling_remove", { delimiter_id: ref }, { quiet: true }); } catch (e) { console.log(`  zone remove ${ref}:`, String((e as Error).message).slice(0, 120)); }
+      // инструмент по типу записи (ревью 298 №2: zone_*_remove проверяет тип)
+      const tool = /^zone_(ceiling|floor|hydroisolation|floor_cap)$/.test(d.type ?? "") ? `${d.type}_remove` : "zone_ceiling_remove";
+      try { await call(tool, { delimiter_id: ref }, { quiet: true }); } catch (e) { console.log(`  zone remove ${ref}:`, String((e as Error).message).slice(0, 120)); }
     }
   }
 };
@@ -219,6 +223,15 @@ try {
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID }, { quiet: true });
   opened = true;
 
+  // гард «план в редакторе == сервер» (ревью 298 №9в): project.copy("server").plan_id
+  const edPage = ((await ctx.workspace().ensureEditor()) as unknown as { page: Page }).page;
+  const planInEditor = await edPage.evaluate(() => {
+    const w = window as unknown as { project?: { copy?: (s: string) => { plan_id?: string | number } | null } | null };
+    return String(w.project?.copy?.("server")?.plan_id ?? "");
+  });
+  console.log("гард плана: в редакторе", planInEditor, "| сервер", String(before.plan_id));
+  if (planInEditor !== String(before.plan_id)) throw new Error(`план в редакторе ${planInEditor} != серверу ${before.plan_id}`);
+
   // 2. пробная комната правее всей геометрии
   const rawWalls = (before.model["walls"] ?? {}) as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>;
   const maxX = Math.max(...Object.values(rawWalls).flatMap((w) => [w.p1.x, w.p2.x]));
@@ -257,16 +270,23 @@ try {
   if (!rigelSite) throw new Error("rigel_add не вернул site_id");
   created.push({ kind: "rigel", siteId: rigelSite });
 
+  // ревью 298 №8: zone_*_add возвращают site_id на ВЕРХНЕМ уровне ответа
+  const captureDelim = (res: Record<string, unknown>, type: string, from: number[], to: number[]): string => {
+    const sid = String(res["site_id"] ?? "");
+    if (!sid) throw new Error(`${type}_add не вернул site_id: ${JSON.stringify(res).slice(0, 200)}`);
+    capturedDelims.push({ siteId: sid, type, from_mm: from, to_mm: to });
+    return sid;
+  };
   const zdC = await call("zone_ceiling_add", { room_id: roomRef, from_mm: mm(ox, oy + 160), to_mm: mm(ox + 220, oy + 75) }, { quiet: true });
-  created.push({ kind: "delimiter", siteId: String((zdC as { entity?: { site_id?: string } }).entity?.site_id ?? "") });
+  const zdCSite = captureDelim(zdC, "zone_ceiling", [mm(ox, oy + 160).x, mm(ox, oy + 160).y], [mm(ox + 220, oy + 75).x, mm(ox + 220, oy + 75).y]);
   // пересечение делителей разных планов: линия зон пола поперёк зоны потолка
   const zdF = await call("zone_floor_add", { room_id: roomRef, from_mm: mm(ox + 100, oy), to_mm: mm(ox + 100, oy + 300) }, { quiet: true });
-  created.push({ kind: "delimiter", siteId: String((zdF as { entity?: { site_id?: string } }).entity?.site_id ?? "") });
+  const zdFSite = captureDelim(zdF, "zone_floor", [mm(ox + 100, oy).x, mm(ox + 100, oy).y], [mm(ox + 100, oy + 300).x, mm(ox + 100, oy + 300).y]);
   const zdH = await call("zone_hydroisolation_add", { room_id: roomRef, from_mm: mm(ox + 200, oy), to_mm: mm(ox + 200, oy + 300) }, { quiet: true });
-  created.push({ kind: "delimiter", siteId: String((zdH as { entity?: { site_id?: string } }).entity?.site_id ?? "") });
+  const zdHSite = captureDelim(zdH, "zone_hydroisolation", [mm(ox + 200, oy).x, mm(ox + 200, oy).y], [mm(ox + 200, oy + 300).x, mm(ox + 200, oy + 300).y]);
   const zdCap = await call("zone_floor_cap_add", { room_id: roomRef, from_mm: mm(ox + 300, oy), to_mm: mm(ox + 300, oy + 300) }, { quiet: true });
-  created.push({ kind: "delimiter", siteId: String((zdCap as { entity?: { site_id?: string } }).entity?.site_id ?? "") });
-  console.log("разделители:", JSON.stringify({ zdC, zdF, zdH, zdCap }).slice(0, 400));
+  const zdCapSite = captureDelim(zdCap, "zone_floor_cap", [mm(ox + 300, oy).x, mm(ox + 300, oy).y], [mm(ox + 300, oy + 300).x, mm(ox + 300, oy + 300).y]);
+  console.log("разделители:", JSON.stringify({ zdCSite, zdFSite, zdHSite, zdCapSite }));
   // пересечение одного плана — отказ
   try {
     await call("zone_floor_add", { room_id: roomRef, from_mm: mm(ox, oy + 100), to_mm: mm(ox + 400, oy + 100) }, { quiet: true });
@@ -278,13 +298,22 @@ try {
   const step = await saveStep("после разделителей");
   writeFileSync(`${OUT}/296-live-save-warnings.json`, JSON.stringify(step.warnings, null, 1));
 
-  // 4. reopen → все 4 разделителя на месте (отбор по геометрии пробной комнаты:
-  // редактор перегенерирует id разделителей при restore)
+  // 4. reopen → все 4 разделителя на месте: сопоставление по захваченному
+  // site_id, при смене id — по захваченной геометрии конкретной записи
+  // (type + концы), не по bbox
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID }, { quiet: true });
   const m2 = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const zones = (m2.model["zone_delimiters"] ?? {}) as Record<string, { vertexes?: Array<{ point?: { x: number; y: number } }>; type?: string }>;
-  const gotTypes = Object.values(zones).filter((d) => delimInTrial(d as never)).map((d) => String(d["type"]));
-  console.log("reopen, типы разделителей в пробной комнате:", JSON.stringify(gotTypes));
+  const zoneList = (m2.model["zone_delimiters"] ?? []) as Array<{ id?: string; site_id?: string; type?: string; from?: number[]; to?: number[] }>;
+  const gotTypes: string[] = [];
+  for (const c of capturedDelims) {
+    const hit = zoneList.find((d) => {
+      if (d.site_id === c.siteId) return true;
+      if ((d.type ?? "") !== c.type) return false;
+      return (nearMm(d.from, c.from_mm) && nearMm(d.to, c.to_mm)) || (nearMm(d.from, c.to_mm) && nearMm(d.to, c.from_mm));
+    });
+    if (hit) gotTypes.push(String(hit.type ?? ""));
+  }
+  console.log("reopen, типы разделителей (по захваченным записям):", JSON.stringify(gotTypes));
   for (const t of ["zone_ceiling", "zone_floor", "zone_hydroisolation", "zone_floor_cap"]) {
     if (!gotTypes.includes(t)) throw new Error(`после reopen нет ${t}`);
   }
@@ -318,10 +347,11 @@ try {
   console.log("полная семантическая сверка data с бэкапом:", same ? "OK — модель совпала" : "РАСХОЖДЕНИЕ");
   if (!same) writeFileSync(`${OUT}/296-get-own-after.json`, JSON.stringify(finalModel, null, 1));
 
-  // 8. контрольный проект после
+  // 8. контрольный проект после: канон + save_id (ревью 298 №9г: strip его
+  // удалял — сравниваем явно)
   const roAfter = await loadModel(ctx.session(), READONLY_ID, READONLY_PLAN_ID);
-  const roSame = sig(roAfter.model) === sig(snapBefore.model);
-  console.log("контрольный проект:", roAfter.data_empty ? "ПУСТОЙ — отказ" : roSame ? "не изменился" : "ИЗМЕНИЛСЯ — СТОП");
+  const roSame = sig(roAfter.model) === sig(snapBefore.model) && roAfter.save_id === snapBefore.save_id;
+  console.log("контрольный проект:", roAfter.data_empty ? "ПУСТОЙ — отказ" : roSame ? "не изменился (канон + save_id)" : "ИЗМЕНИЛСЯ — СТОП");
   if (!roSame || roAfter.data_empty) throw new Error("контрольный проект изменился или пуст");
   console.log("296-live OK; png:", pngPath ?? "(не извлечён)");
 } catch (e) {

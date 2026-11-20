@@ -33,7 +33,7 @@ const strip = (m: unknown) => {
 };
 const roSnap = async (tag: string): Promise<LoadedModel> => {
   const m = await loadModel(session, READONLY_ID, READONLY_PLAN_ID);
-  if (m.data_empty) { console.error(`FAIL: контрольный GET ${tag} пустой (data_empty) — отказ`); process.exit(1); }
+  if (m.data_empty) throw new Error(`контрольный GET ${tag} пустой (data_empty) — отказ`);
   writeFileSync(`.orca-reports/tmp/296-get-readonly-${tag}.json`, JSON.stringify(m, null, 1));
   return m;
 };
@@ -44,13 +44,13 @@ const backupPath = `.orca-reports/backup-${OBJECT_ID}-296.json`;
 if (!existsSync(backupPath)) {
   writeFileSync(backupPath, JSON.stringify(beforeModel, null, 1) + "\n");
   console.log("бэкап:", backupPath);
-} else {
-  const stored = JSON.parse(readFileSync(backupPath, "utf8")) as { model?: unknown };
-  if (strip(stored.model) !== strip(beforeModel.model)) {
-    console.error("FAIL: модель на сервере не совпадает с бэкапом — стоп"); process.exit(1);
+  } else {
+    const stored = JSON.parse(readFileSync(backupPath, "utf8")) as { model?: unknown };
+    if (strip(stored.model) !== strip(beforeModel.model)) {
+      throw new Error("модель на сервере не совпадает с бэкапом — стоп");
+    }
+    console.log("бэкап существует; сверка с текущим GET: совпадает");
   }
-  console.log("бэкап существует; сверка с текущим GET: совпадает");
-}
 
 const editor = await openEditor(session, OBJECT_ID, PLAN_ID, 60_000, { anonymous: false });
 const page = editor.page;
@@ -58,7 +58,8 @@ let devUnchanged = false;
 try {
   const planInEditor = await page.evaluate(() => String((window as any).project?.copy("server")?.plan_id ?? ""));
   if (planInEditor !== String(beforeModel.plan_id)) {
-    console.log("FAIL: план в редакторе", planInEditor, "!= серверу", beforeModel.plan_id); process.exit(1);
+    // throw, а не process.exit: finally обязан закрыть браузер (ревью 298 №9а)
+    throw new Error(`план в редакторе ${planInEditor} != серверу ${beforeModel.plan_id}`);
   }
   const log = (...a: unknown[]) => console.log(...a);
   await page.evaluate(() => {
@@ -137,7 +138,7 @@ try {
     }
     if (external.length >= 2) { room = { rid, poly, edges: external.map((e) => ({ p1: e.p1, p2: e.p2 })), external }; break; }
   }
-  if (!room) { log("FAIL: нет подходящей комнаты"); process.exit(1); }
+  if (!room) throw new Error("нет подходящей комнаты");
   const ext: ExtEdge[] = room.external;
   log("комната:", room.rid, "внешних рёбер:", ext.length);
   const closeTo = (pt: { x: number; y: number }, d: number): { x: number; y: number } => {
@@ -346,6 +347,9 @@ const after = await loadModel(session, OBJECT_ID, PLAN_ID);
 devUnchanged = strip(after.model) === strip(beforeModel.model);
 console.log("GET dev после пробы == бэкап:", devUnchanged ? "OK — не изменился" : "РАСХОЖДЕНИЕ");
 const roAfter = await roSnap("after");
-console.log("контрольный проект:", strip(roAfter.model) === strip(roBefore.model) ? "не изменился" : "ИЗМЕНИЛСЯ — СТОП");
-if (!devUnchanged) process.exit(1);
+const roUnchanged = strip(roAfter.model) === strip(roBefore.model) && roAfter.save_id === roBefore.save_id;
+console.log("контрольный проект:", roUnchanged ? "не изменился (канон + save_id)" : "ИЗМЕНИЛСЯ — СТОП");
+// ревью 298 №9б: расхождение = код 1, а не тихий exit(0)
+if (!devUnchanged) process.exitCode = 1;
+if (!roUnchanged) process.exitCode = 1;
 process.exit(process.exitCode ?? 0);
