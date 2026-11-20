@@ -193,8 +193,27 @@ export class ServerContext {
         (this.depsOverride?.openEditor ?? base.openEditor)(s, objectId, planId, { ...editorOpts, anonymous: editorOpts?.anonymous ?? anon });
       this.workspaceInternal = new Workspace(deps);
     }
-    const project = await this.workspaceInternal.open(objectId, planId, { anon: opts.anon });
+    const project = await this.workspaceInternal.open(objectId, this.resolvePlanId(objectId, planId), { anon: opts.anon });
     return { project, compact: compactModel(this.workspaceInternal.model) };
+  }
+
+  /**
+   * Планировка проекта: явный plan_id, иначе cookie object_plan_id при совпадении
+   * object_id, иначе "1". Номер планировки не равен "1" (живой случай: проект
+   * 7886243 → plan 999030): GET по plan_id=1 отдаёт не тот лист, а редактор
+   * открывается на 999030 и первое же изменение падает EDITOR_PROJECT_MISMATCH.
+   */
+  private resolvePlanId(objectId: string, requested: string): string {
+    const explicit = requested.trim();
+    if (explicit !== "" && explicit !== "1") return explicit;
+    const session = this.session();
+    const cookie = (name: string): string =>
+      (session.cookies as { name: string; value: string }[]).find((c) => c.name === name)?.value ?? "";
+    if (cookie("object_id") === objectId) {
+      const fromCookie = cookie("object_plan_id");
+      if (fromCookie !== "") return fromCookie;
+    }
+    return explicit !== "" ? explicit : "1";
   }
 
   /**
