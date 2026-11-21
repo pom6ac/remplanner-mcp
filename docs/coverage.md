@@ -111,12 +111,13 @@ PRO-инструменты помечены в разметке редактор
 Частичные гейты по ключу (ревью 331 Н1/Н2): `item_add` (полный список is_pro-ключей каталога), `opening_add` (13 PRO-типов
 дверей: `door_roto/_double`, `door_book/_double`, `door_bellows`, `door_glass`, `door_garage`, `door_system_x2/x3/x4`,
 `door_system_penal_x2/x3/x4`; купе, пенал, doorway/door/двустворчатые — не PRO), `finish_floor_set`/`finish_wall_set`
-(PRO-покрытия), `wall_add` (`c_glass`/`c_bar` → `wall_create_glass/bar`) — через `assertProPartialAllowed`. Единый источник
+(PRO-покрытия), `wall_add` (`c_glass`/`c_bar` → `wall_create_glass/bar`), `finish_floor_anchor_set` (ключ `anchor_floor`,
+этап 347) — через `assertProPartialAllowed`. Единый источник
 ключей — сгенерированный полный список `PRO_EDITOR_KEYS` (727 уникальных ключей эталона;
 `src/server/pro-editor-keys.generated.ts`, генератор
 `scripts/gen-pro-editor-keys.ts`, эталон `328-pro-anon.json`); сторож `tests/unit/pro-keys.test.ts` проверяет: каждый ключ
 эталона, принимаемый каким-либо инструментом MCP, на free даёт `NOT_AVAILABLE_ON_TARIFF`, на pro — проходит. Ключи эталона
-без инструмента MCP (инструменты листов «Пол» — `anchor_floor`, «Стяжка» — `cap_*`, «Изоляция» — `isolation_*`,
+без частичного гейта инструмента (инструменты листов «Стяжка» — `cap_*`, «Изоляция» — `isolation_*`,
 «Штукатурка» — `plaster_*`, а также элементы «Нарисовать элемент»/изображения и прочее вне модели MCP) гейтом не
 проверяются — их в MCP не поставить.
 
@@ -212,13 +213,13 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 
 | Лист | Инструмент UI (ключ) | Сущность и поля модели | MCP | Эталон | PRO |
 |---|---|---|---|---|---|
-| Помещения (`rooms`) | Название помещения (меню маркера площади) | `rooms2[rid].zones[i].name` | нет (параметр `name` у `room_add_*` игнорируется; `room_set_name` в design §7.2, не реализован) | нет (эталон `ui-ref-roomname.json` есть) | нет |
-| Помещения | Номер (авто по площади), цвет фона | `zones[i].number_by_area` (авто), `zones[i].color` | нет | да (цвет) | нет |
+| Помещения (`rooms`) | Название помещения (меню маркера площади) | `rooms2[rid].zones[i].name` | **да**: `room_set_name` (этап 347, эталон `ui-ref-finish9-room-fields`: null/""/"?" — «без имени», длина ≤ 100, управляющие символы запрещены; имя со спецсимволами `Комната "9" <тест> \` пережило save/reopen вживую) | нет (эталон `ui-ref-roomname.json` есть) | нет |
+| Помещения | Номер (авто по площади), цвет фона | `zones[i].number_by_area` (авто: зоны всех помещений по убыванию площади — ROOMS2.draw), `zones[i].color` | номер — **читается** в compact `rooms_list`/`model_get` (поле `number`, пересчитывается правилом редактора; производное, при save не сверяется); цвет — **да**: `room_set_color` (этап 347, hex #rrggbb, белый/#ffffff/null снимает — как палитра #cm-room2; сохранение цвета сверяется при save как пользовательское поле зоны) | да (цвет) | нет |
 | Перегородки | Высота помещения (`#cm-room2--zone-height`) | высота зоны | частично: `project_set_height` — одна на проект | да | нет |
 | Напольные покрытия (`floor`) | 22 покрытия без PRO (ламинат, паркет, доска, плитка, линолеум, ковролин…) | `rooms2[rid].floors[i].cover`, `type_laying`, `width/height` плашки, `stitch_width`, `angle` | **да**: `finish_floor_set` (этап 94, параметры раскладки) | да | нет |
 | Напольные покрытия | Керамогранит, метлах, мозаика, шестигранная плитка | то же | частично: `finish_floor_set` принимает (PRO-гейт по материалу, ревью 329 №2) | да | **да** |
-| Напольные покрытия | Подъём пола (меню покрытия) | `floors[i].f0offset` | нет | да | нет |
-| Напольные покрытия | Точка начала укладки (`anchor_floor`) | `floors[i].anchor` | нет | да | **да** |
+| Напольные покрытия | Подъём пола (меню покрытия) | `floors[i].f0offset` (0..100 см, `#cm-floor--floor0-offset`; при ненулевом подъёме редактор предлагает «Применить ко всем» полам с нулевым — `cm-floor--modal`) | **да**: `finish_floor_offset_set` (этап 347, мм 0..1000, 0 — сброс; `apply_to_all_zero` — кнопка «Применить ко всем», по умолчанию только текущий пол — как отмена диалога); сохранение подъёма сверяется при save как явно заданное поле (снят с пометки «производное»); точка укладки/подъём переживают деление комнаты стеной (restoreTotal копирует поля по совпадению контура зон — живая проба 347) | да | нет |
+| Напольные покрытия | Точка начала укладки (`anchor_floor`) | `floors[i].anchor` (`{p:{x,y}}`; клик инструмента сбрасывает угол раскладки в 0, угол с якорем — меню `#cm-floor-anchor--angle`; снятие — ластик) | **да**: `finish_floor_anchor_set` (этап 347, эталон `ui-ref-finish9-anchor`; точка внутри полигона пола в мм; PRO — ключ `anchor_floor` через единый частичный гейт, снятие якоря не гейтится — ластик; состояние — `finish_get` `floor.anchor`/`offset_mm`) | да | **да** |
 | Напольные покрытия | Зонирование пола (`zone_floor`) | верхнеуровневый `zone_delimiters` `zone_floor`, plan `floor` (этап 296) | **да**: `zone_floor_add/remove` (эталон `ui-ref-floorzone-delimiter`), список — `finish_get`/compact `zone_delimiters` (ZD<n>) | да | **да** |
 | Напольные покрытия | Плинтусы, 7 видов (`floor_molding_*`) | `rooms2[rid].floorMoldings` (этап 245) | **да**: `finish_floor_molding_set/remove` (эталон `ui-ref-finish2-floor-molding`) | да | **да** |
 | Потолки (`ceiling`) | 10 типов (натяжной ПВХ/ткань, покраска, ГКЛ, реечный, рейки, ПВХ-панели, побелка, Армстронг, Грильято) | `rooms2[rid].ceilings[i].type`, `level` (опуск), `profile` | **да**: `finish_ceiling_set` (этап 94, эталон `ui-ref-finish-ceiling`) | да | нет |
