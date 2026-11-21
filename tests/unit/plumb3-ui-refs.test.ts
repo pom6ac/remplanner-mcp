@@ -462,7 +462,7 @@ test("360: эталон ui-ref-plumb3-node-pipe — труба до узла-п�
   const node = addSpot(model, 120, 100, "waterspot_node");
   const pipe = addPipe(model, { kind: "water", path: [{ x: 2000, y: 1000 }, { itemId: node.id }] });
   assert.equal(pipe.type, m["type"]);
-  assert.deepEqual(pipe.items, m["items"]);
+  assert.deepEqual(Object.values(pipe.items).sort(), Object.values(m["items"] as Record<string, string>).sort(), "все вершины — node (id вершин генерируются)");
   assert.equal(pipe.vertexes.every((v) => v.type === "node"), true);
   assert.deepEqual(pipe.vertexes[1]!.point, { x: node.pc.x, y: node.pc.y });
 });
