@@ -799,6 +799,35 @@ function setHolePoints(wall: Wall, hole: Hole): void {
   const { p1, p2 } = pointsAroundCenter(wallAxis(wall), hole.pc, hole.width / 2);
   hole.p1 = { x: r2(p1.x), y: r2(p1.y) };
   hole.p2 = { x: r2(p2.x), y: r2(p2.y) };
+  if (wall.plan === "c") setHoleEdgePoints(wall, hole);
+}
+
+/**
+ * Точки проёма на гранях стены l1/r1/l2/r2 — их считает holes_get редактора
+ * (бандл @1702100: I.l1=LIB.pointAtLinePoint(I,I.p1,depth/2,"l") и т.д.).
+ * Редактор выполняет holes_get только для стен, доступных на текущем листе
+ * (calc4/UPDATE под isAvailable()), а WALLS.setFloor0Offset → setHolesFloor0Offset
+ * (бандл @1837591) обходит ВСЕ стены без isAvailable() и вызывает
+ * LIB.center(t.l1,t.l2)/LIB.center(t.r1,t.r2) — у проёма на перегородке (стена
+ * plan:"c") без этих точек редактор падает TypeError при draw/save после
+ * opening_add (этап 359). MCP пишет их сам тем же правилом: сдвиг точки края
+ * проёма перпендикулярно оси на depth/2 (side "l": +t*dy/L, −t*dx/L по
+ * LIB.pointAtLineCenter). На листе «Перегородки» holes_get пересчитывает
+ * производные поля сам, для стен plan:"a" поля не пишутся (как раньше).
+ */
+export function setHoleEdgePoints(wall: Wall, hole: Hole): void {
+  if (!hole.p1 || !hole.p2 || !(wall.depth > 0)) return;
+  const dx = hole.p2.x - hole.p1.x;
+  const dy = hole.p2.y - hole.p1.y;
+  const len = Math.hypot(dx, dy);
+  if (!(len > 0)) return;
+  const half = wall.depth / 2;
+  const ox = (half * dy) / len;
+  const oy = (-half * dx) / len;
+  hole.l1 = { x: r2(hole.p1.x + ox), y: r2(hole.p1.y + oy) };
+  hole.l2 = { x: r2(hole.p2.x + ox), y: r2(hole.p2.y + oy) };
+  hole.r1 = { x: r2(hole.p1.x - ox), y: r2(hole.p1.y - oy) };
+  hole.r2 = { x: r2(hole.p2.x - ox), y: r2(hole.p2.y - oy) };
 }
 
 /** Подгоняет pc/at под текущую ось стены: at берём из поля или проекции прежнего pc (№6 ревью). */
@@ -895,12 +924,19 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   const hole = wall.holes[params.holeId];
   if (!hole) throw new McpError("NOT_FOUND", `проём ${params.holeId} не найден`);
   // пара замены (этап 354, правила редактора door_must_change / door_is_other_not_change):
-  // размер и положение участников живой пары не меняются — restore возвращает
-  // замене габариты исходного (проба 354-replan2-ui4), а UI прячет ручки переноса
-  // у обоих участников (бандл: t||s|| — controls не показываются). Прочие поля
-  // (opening, casing, наличники) правятся как прежде
+  // размер, положение и высота участников живой пары не меняются — restore возвращает
+  // замене габариты И floor_height исходного (проба 354-replan2-ui4, @1700583), а UI прячет
+  // ручки переноса у обоих участников (бандл: t||s|| — controls не показываются). Прочие
+  // поля (opening, casing, наличники) правятся как прежде. Minor1 ревью 357: гард ловит
+  // не только width/height/центр, но и sill_height_mm (floor_height исходного разошёлся
+  // бы с заменой, которую restore копирует от исходного) и части windoor — размеры
+  // участников UI-пары окно→балконный блок
   if (replacementPairOf(wall, hole) &&
-      (params.widthMm !== undefined || params.heightMm !== undefined || params.centerMm !== undefined || params.offsetMm !== undefined)) {
+      (params.widthMm !== undefined || params.heightMm !== undefined || params.centerMm !== undefined ||
+        params.offsetMm !== undefined || params.sillHeightMm !== undefined ||
+        params.windowWidthMm !== undefined || params.windowHeightMm !== undefined ||
+        params.doorWidthMm !== undefined || params.doorHeightMm !== undefined ||
+        params.impostHeightMm !== undefined)) {
     throw new McpError("INVALID_ARGUMENT",
       hole.hasReplacement
         ? `проём ${hole.id} заменён проёмом листа «Перегородки» (hasReplacement) — размер и положение участников пары не меняются (door_must_change)`
