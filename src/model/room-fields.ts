@@ -22,8 +22,11 @@ import { polygonArea } from "./geometry.ts";
 /** Имя без имени в модели редактора (эталон 318: зоны name:"none"). */
 export const ROOM_NO_NAME = "none";
 
-/** Контрольные символы запрещены: имя попадает в SVG-текст легенды редактора. */
-const ROOM_NAME_CONTROL_RE = /[\u0000-\u001f\u007f]/;
+/** Контрольные символы запрещены: имя попадает в SVG-текст легенды редактора.
+ *  n1 ревью 348: кроме ASCII-управляющих — переводы строк U+2028/U+2029,
+ *  bidi-управляющие (U+202A–202E, U+2066–2069) и zero-width (U+200B–200F):
+ *  подмена отображения в легенде возможна и без инъекции. */
+const ROOM_NAME_CONTROL_RE = /[\u0000-\u001f\u007f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]/;
 
 export function setRoomName(model: Model, roomRef: string, name: string | null): { id: string; name: string | null } {
   if (name !== null) {
@@ -68,10 +71,37 @@ export function setRoomColor(model: Model, roomRef: string, color: string | null
   return { id, color: value };
 }
 
+/** Площадь комнаты в м²: поле area (м², как у Room2 редактора) либо из полигона (см²). */
+function roomAreaM2(room: Record<string, unknown>): number {
+  if (typeof room["area"] === "number" && room["area"] > 0) return room["area"] as number;
+  const poly = Array.isArray(room["polygon"]) ? room["polygon"] as Point[] : Array.isArray(room["points"]) ? room["points"] as Point[] : [];
+  return poly.length >= 3 ? polygonArea(poly) / 10_000 : 0;
+}
+
 /**
- * Номера зон по правилу редактора (ROOMS2.draw, бандл @93695): зоны всех
- * помещений (кроме террас; микрозоны is_micro_zone и записи-заглушки без
- * площади не нумеруются) сортируются по убыванию площади и нумеруются с 1.
+ * Микрокомната редактора (Room2.isMicroRoom, бандл 268-app.js): площадь меньше
+ * defs.areaMicroRoom (= 1 м²) и нет проёмов (holes_polygons пуст — вторая
+ * реализация isMicroRoom в бандле; у Room1 проверка проёмов идёт по стенам).
+ * FIELD m2 ревью 348: такие комнаты редактор не нумерует.
+ */
+function isMicroRoom(room: Record<string, unknown>): boolean {
+  if (roomAreaM2(room) >= 1) return false;
+  const hp = room["holes_polygons"];
+  if (hp === undefined || hp === null) return true;
+  if (Array.isArray(hp)) return hp.length === 0;
+  if (typeof hp === "object") return Object.keys(hp as object).length === 0;
+  return true;
+}
+
+/**
+ * Номера зон по правилу редактора (ROOMS2.draw → updateNumbers, бандл @93695):
+ * комнаты — кроме террас и микрокомнат (isMicroRoom: площадь < 1 м² без
+ * проёмов, FIELD m2 ревью 348); зоны — кроме микрозон (is_micro_zone) и записей
+ * без класса (is_class, бандл: `!zones[e].is_class || zones[e].is_micro_zone`
+ * — не нумеруются). is_class null/undefined в данных GET — артефакт сериализации
+ * (api-dump.rooms2-reopen: number_by_area записан при is_class true, после
+ * перечитывания is_class null) — такие зоны нумеруются; явно false — нет.
+ * Зоны всех помещений сортируются по убыванию площади и нумеруются с 1.
  * area в модели в м² (число), при отсутствии — из полигона (см²).
  * Возвращает (roomId → (индекс зоны → номер)).
  */
@@ -81,9 +111,10 @@ export function zoneNumbersByEditorRule(model: Model): Map<string, Map<number, n
   const entries: Entry[] = [];
   for (const [rid, room] of Object.entries(rooms)) {
     if (room["role"] === "terrace") continue;
+    if (isMicroRoom(room)) continue;
     const zoneList = Array.isArray(room["zones"]) ? room["zones"] as Array<Record<string, unknown>> : [];
     zoneList.forEach((z, zi) => {
-      if (!z || z["is_micro_zone"] === true) return;
+      if (!z || z["is_class"] === false || z["is_micro_zone"] === true) return;
       const area = typeof z["area"] === "number" && (z["area"] as number) > 0
         ? (z["area"] as number) * 10_000 // м² → см²
         : (Array.isArray(z["polygon"]) && (z["polygon"] as Point[]).length >= 3 ? polygonArea(z["polygon"] as Point[]) : 0);

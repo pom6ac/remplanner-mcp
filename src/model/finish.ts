@@ -155,6 +155,26 @@ function floorEntry(cover: string, room: RoomRec, id: string, extra: Record<stri
   };
 }
 
+/**
+ * Поля записи пола, которые обработчик клика материалом в редакторе ПЕРЕЗАПИСЫВАЕТ
+ * (бандл @3269759: r.exist/type_laying/cover/width/height/stitch_width/
+ * polygons_layout/polygons_layout_points); polygon/pc — форма комнаты. Всё
+ * остальное (f0offset, anchor, angle, custom_angle, id и любые прочие ключи
+ * записи) редактор при смене покрытия СОХРАНЯЕТ — мутация записи in place, —
+ * поэтому setFloorFinish переносит их из прежней записи (M1 ревью 348).
+ */
+const FLOOR_ENTRY_REWRITTEN_KEYS = new Set([
+  "exist", "id", "polygon", "pc", "cover",
+  "type_laying", "width", "height", "stitch_width",
+  "polygons_layout", "polygons_layout_points",
+]);
+
+/** Прежняя запись пола с покрытием (exist===true и cover) — источник переноса полей. */
+function aliveFloorPrev(room: RoomRec): Record<string, unknown> | undefined {
+  const f = (Array.isArray(room.floors) ? room.floors : [])[0] as Record<string, unknown> | undefined;
+  return f && f["exist"] === true && typeof f["cover"] === "string" ? f : undefined;
+}
+
 export type FloorFinishParams = {
   /** мм (в модели см). */
   plankLengthMm?: number;
@@ -198,9 +218,28 @@ export function setFloorFinish(model: Model, roomRef: string, cover: FloorCover,
   if (params.plankWidthMm !== undefined) extra.height = r2(params.plankWidthMm / 10);
   if (params.stitchWidthMm !== undefined) extra.stitch_width = r2(params.stitchWidthMm / 10);
   if (params.typeLaying !== undefined) extra.type_laying = params.typeLaying;
+  const prev = aliveFloorPrev(room);
+  // M1 ревью 348: смена покрытия не стирает пользовательские поля прежней записи —
+  // редактор мутирует запись in place (бандл @3269759 меняет только
+  // exist/type_laying/cover/width/height/stitch_width/polygons_layout[,_points]),
+  // поэтому f0offset/anchor/angle/custom_angle/id и прочие ключи переносятся.
+  // Поля панели (width/height/stitch_width/type_laying) без явного параметра
+  // сохраняют прежние значения (в редакторе они берутся из настроек панели,
+  // которые переживают смену покрытия).
+  const floorId = prev && typeof prev["id"] === "string" ? prev["id"] as string : `_f${newId(8)}`;
+  const entry = floorEntry(cover, room, floorId, extra);
+  if (prev) {
+    for (const [k, v] of Object.entries(prev)) {
+      if (FLOOR_ENTRY_REWRITTEN_KEYS.has(k) || k in entry) continue;
+      entry[k] = structuredClone(v);
+    }
+    for (const [k, v] of [["width", params.plankLengthMm], ["height", params.plankWidthMm], ["stitch_width", params.stitchWidthMm], ["type_laying", params.typeLaying]] as const) {
+      if (v === undefined && prev[k] !== undefined) entry[k] = structuredClone(prev[k]);
+    }
+  }
   const floors = Array.isArray(room.floors) ? [...room.floors] : [];
   while (floors.length < 1) floors.push({ exist: false });
-  floors[0] = floorEntry(cover, room, `_f${newId(8)}`, extra);
+  floors[0] = entry;
   room.floors = floors;
   return { id: floors[0]!.id as string };
 }
@@ -239,12 +278,16 @@ export function setFloorOffset(model: Model, roomRef: string, offsetMm: number, 
   f0["f0offset"] = v;
   let updated = 1;
   if (applyToAllZero) {
+    // кнопка «Применить ко всем» (#cm-floor--floor0-offset--confirm, бандл
+    // @3536116): значение ставится всем записям полов ВСЕХ комнат с f0offset==0,
+    // включая записи без покрытия (у Floor умолчание f0offset=0 — конструктор
+    // `e.f0offset||0`); FIELD m3 ревью 348 — раньше менялись только полы с покрытием.
     for (const r of Object.values(roomsOf(model))) {
       for (const f of (Array.isArray(r.floors) ? r.floors : []) as Array<Record<string, unknown>>) {
-        if (f && f["exist"] === true && f !== f0 && (num(f["f0offset"]) ?? 0) === 0) {
-          f["f0offset"] = v;
-          updated++;
-        }
+        if (!f || f === f0) continue;
+        if ((num(f["f0offset"]) ?? 0) !== 0) continue;
+        f["f0offset"] = v;
+        updated++;
       }
     }
   }

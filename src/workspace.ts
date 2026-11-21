@@ -21,7 +21,7 @@ import { roomPolygons } from "./model/items.ts";
 import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmatchedDanglingEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, assertNoNewWarmFloorCrossing, type DanglingEnd } from "./model/walls.ts";
 import { dist } from "./model/geometry.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
-import { finishCompare, finishLossHint } from "./model/finish.ts";
+import { finishCompare, finishLossHint, matchRoomsByContour, roomHeirs } from "./model/finish.ts";
 import { zoneDelimiterCompare, roomsWithChangedZoneCDividers, resurrectedZoneCDividers } from "./model/zone.ts";
 import { ceilingRigelCompare } from "./model/ceiling-rigels.ts";
 import { warmWallsCompare } from "./verify/warmwall.ts";
@@ -208,6 +208,30 @@ export class Workspace {
   /** Отметить комнату с правкой пользовательских полей (этап 347). */
   markRoomFieldEdited(roomId: string): void {
     this.roomFieldEdited.add(roomId);
+  }
+
+  /**
+   * M2 ревью 348: после замены рабочей копии нормализованной моделью (applyWalls)
+   * id комнат меняется редактором ($Restorer.restore_rooms — wall_move/split/merge
+   * пересоздают комнаты) — отметки пользовательских правок полей переносятся на
+   * id-наследников: точное совпадение контура, иначе классификация roomHeirs
+   * kind "same" (та же комната с новой геометрией). При split/merge отметка
+   * не переносится: имена комнат при смене топологии объясняются предупреждением
+   * room_topology_changed, а не сверкой.
+   */
+  private remapRoomFieldEdited(prevRooms: Record<string, unknown> | undefined, nextRooms: Record<string, unknown> | undefined): void {
+    if (this.roomFieldEdited.size === 0) return;
+    const next = nextRooms ?? {};
+    const { pairs } = matchRoomsByContour(prevRooms, next);
+    const heirOf = roomHeirs(prevRooms, next, pairs, "normalize");
+    const remapped = new Set<string>();
+    for (const rid of this.roomFieldEdited) {
+      const gid = pairs.get(rid);
+      if (gid) { remapped.add(gid); continue; }
+      const h = heirOf.get(rid);
+      if (h && h.kind === "same") remapped.add(h.key);
+    }
+    this.roomFieldEdited = remapped;
   }
 
   /** Комнаты с правками полей (для сверки комнат при save — SaveHost). */
@@ -738,7 +762,14 @@ export class Workspace {
         });
       }
       // нормализованная копия становится канонической
+      const prevModelRooms = (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined;
       this.modelInternal = toModel(structuredClone(norm.model as unknown as Record<string, unknown>));
+      // M2 ревью 348: id комнат сменился редактором — отметки правок полей
+      // переносятся на наследников до следующей сверки
+      this.remapRoomFieldEdited(
+        prevModelRooms,
+        (this.modelInternal["rooms2"] ?? this.modelInternal["rooms1"]) as Record<string, unknown> | undefined,
+      );
       if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
     }
     this.project.dirty = true;

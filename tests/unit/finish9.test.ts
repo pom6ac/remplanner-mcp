@@ -107,7 +107,14 @@ test("347: apply_to_all_zero — кнопка «Применить ко всем
   assert.equal(floorOf(m, a!)["f0offset"], 30);
   assert.equal(floorOf(m, b!)["f0offset"], 30, "пол с нулевым подъёмом получил значение");
   if (c) assert.equal(floorOf(m, c)["f0offset"], 10, "ненулевой подъём не перезаписывается");
-  assert.equal(res.updated, c ? 2 : 2);
+  // m3 ревью 348: кнопка редактора ставит значение ВСЕМ полам с f0offset==0,
+  // включая записи без покрытия (у Floor умолчание f0offset=0) — в фикстуре
+  // 4 комнаты, четвёртая остаётся без покрытия и тоже получает значение
+  const uncovered = ids.slice(3);
+  assert.equal(res.updated, 2 + uncovered.length, "все нулевые полы, включая непокрытые");
+  for (const id of uncovered) {
+    assert.equal((roomsOf(m)[id]!["floors"] as Array<Record<string, unknown>>)[0]!["f0offset"], 30, `непокрытый пол ${id} получил значение (как в редакторе)`);
+  }
   // без apply_to_all_zero — только текущий пол (отмена диалога)
   const m2 = baseModel();
   const ids2 = Object.keys(roomsOf(m2));

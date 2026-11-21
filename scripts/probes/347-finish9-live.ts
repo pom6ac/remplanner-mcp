@@ -19,6 +19,7 @@ import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { sig } from "./probe-sig.ts";
 import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath, type ReadonlyGuard } from "./probe-guard.ts";
+import { logCaptured, restoreByCaptured, type ProbeCreated } from "./probe-restore.ts";
 
 if (process.argv[2] !== "run" && process.argv[2] !== "cleanup") {
   console.error("запуск: run | cleanup");
@@ -52,13 +53,17 @@ const tryCall = async (name: string, args: Record<string, unknown> = {}): Promis
   }
 };
 
-type Created = { kind: "wall"; siteId: string };
+type Created = ProbeCreated;
 let created: Created[] = [];
 let opened = false;
 let restoredFlag = false;
 let before: LoadedModel | null = null;
 let roGuard: ReadonlyGuard | null = null;
-const probeRoomSites = new Set<string>();
+let probeRoomSites = new Set<string>();
+// m5 ревью 348: журнал захваченных ID (probe-restore.logCaptured) — зачистка
+// только по нему, разность множеств с бэкапом запрещена
+const CAPTURED_PATH = `.orca-reports/tmp/347-captured-${OBJECT_ID}.json`;
+const journal = (): void => logCaptured(CAPTURED_PATH, created, [...probeRoomSites]);
 
 async function saveTagged(tag: string): Promise<Record<string, unknown>> {
   await roGuard?.assertUnchanged(tag);
@@ -81,19 +86,6 @@ async function openAndGuard(): Promise<void> {
   console.log("гард «план в редакторе == серверу»: OK");
 }
 
-async function deleteWallsBySiteIds(ids: Set<string>): Promise<void> {
-  for (let guard = 0; guard < 40 && ids.size > 0; guard++) {
-    const mg = await call("model_get", {});
-    const walls = (mg["walls"] ?? []) as Array<{ id: string; site_id: string }>;
-    const hit = walls.find((w) => ids.has(w.site_id));
-    if (!hit) break;
-    ids.delete(hit.site_id);
-    try { await call("wall_delete", { wall_id: hit.id }); created = created.filter((c) => c.siteId !== hit.site_id); }
-    catch (e) { console.log(`wall_delete ${hit.id}:`, String((e as Error).message).slice(0, 200)); break; }
-    await new Promise((r) => setTimeout(r, 1200));
-  }
-}
-
 async function stripProbeFields(): Promise<void> {
   if (probeRoomSites.size === 0) return;
   const rooms = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string; site_id?: string }>;
@@ -113,16 +105,26 @@ async function stripProbeFields(): Promise<void> {
   console.log("зачистка полей/отделки: OK (комнат:", probeRoomSites.size, ")");
 }
 
-async function restoreByCaptured(): Promise<void> {
+async function restoreProbe(): Promise<void> {
   if (restoredFlag || !opened) return;
   restoredFlag = true;
+  journal();
   await stripProbeFields();
-  const wallIds = new Set(created.map((c) => c.siteId));
-  await deleteWallsBySiteIds(wallIds);
-  try { await saveTagged("restore"); }
-  catch (e) { console.log("restore save:", String((e as Error).message).slice(0, 250)); }
-  created = [];
-  opened = false;
+  try {
+    await restoreByCaptured({
+      call,
+      created,
+      ownRoomIds: [...probeRoomSites],
+      save: async () => {
+        try { await saveTagged("restore"); }
+        catch (e) { console.log("restore save:", String((e as Error).message).slice(0, 250)); }
+      },
+      log: (line) => console.log("restore:", line),
+    });
+  } finally {
+    created = [];
+    opened = false;
+  }
 }
 
 /** Пробная комната w×h (см), правее всей геометрии; возвращает roomId и полигон (см). */
@@ -173,49 +175,42 @@ try {
     }
   }
   if (process.argv[2] === "cleanup") {
-    // откат пробы по бэкапу: трогаются ТОЛЬКО стены/комнаты, которых нет в бэкапе.
-    // Отделка/поля снимаются инструментами, стены — wall_delete, затем save и sig-сверка.
+    // m5 ревью 348: откат ТОЛЬКО по журналу захваченных ID (probe-restore) —
+    // разность множеств с бэкапом не используется (выбор по геометрии запрещён).
     const backupPath = ".orca-reports/backup-".concat(OBJECT_ID, "-347.json");
     if (!existsSync(backupPath)) throw new Error("cleanup: бэкап не найден");
+    if (!existsSync(CAPTURED_PATH)) throw new Error(`cleanup: журнал захваченных ID не найден (${CAPTURED_PATH}) — зачистка только по журналу`);
     const stored = JSON.parse(readFileSync(backupPath, "utf8")) as { model?: Record<string, unknown> };
     const backupModel = (stored.model ?? {}) as Record<string, Record<string, unknown>>;
-    const backupWalls = new Set(Object.keys(backupModel["walls"] ?? {}));
-    const backupRooms = new Set(Object.keys((backupModel["rooms2"] ?? backupModel["rooms1"] ?? {}) as Record<string, unknown>));
-    const wallsNow = (before.model["walls"] ?? {}) as Record<string, { p1?: { x?: number; y?: number }; p2?: { x?: number; y?: number } }>;
-    const newWalls = Object.keys(wallsNow).filter((id) => !backupWalls.has(id));
-    const roomsNow = (before.model["rooms2"] ?? {}) as Record<string, Record<string, unknown>>;
-    // комнаты-остатки: id нет в бэкапе ИЛИ полигон в bbox новых стен (+1 см)
-    const xs: number[] = [], ys: number[] = [];
-    for (const id of newWalls) {
-      for (const p of [wallsNow[id]?.p1, wallsNow[id]?.p2]) {
-        if (p && typeof p.x === "number" && typeof p.y === "number") { xs.push(p.x); ys.push(p.y); }
-      }
-    }
-    const newRooms = Object.keys(roomsNow).filter((rid) => {
-      if (backupRooms.has(rid)) return false;
-      const poly = roomsNow[rid]!["polygon"] as Array<{ x: number; y: number }> | undefined;
-      if (!poly || poly.length < 3 || xs.length === 0) return false;
-      return poly.every((q) => q.x >= Math.min(...xs) - 1 && q.x <= Math.max(...xs) + 1 && q.y >= Math.min(...ys) - 1 && q.y <= Math.max(...ys) + 1);
-    });
-    console.log("cleanup: новых стен:", newWalls.length, "комнат-остатков:", JSON.stringify(newRooms));
-    if (newWalls.length === 0 && newRooms.length === 0) {
-      console.log("cleanup: остатков нет");
+    const j = JSON.parse(readFileSync(CAPTURED_PATH, "utf8")) as { rooms?: string[]; walls?: string[] };
+    const wallsJ = (j.walls ?? []).filter((s): s is string => Boolean(s));
+    const roomsJ = (j.rooms ?? []).filter((s): s is string => Boolean(s));
+    console.log("cleanup: по журналу — стен:", wallsJ.length, "комнат:", roomsJ.length);
+    if (wallsJ.length === 0 && roomsJ.length === 0) {
+      console.log("cleanup: журнал пуст — остатков по журналу нет");
     } else {
       await openAndGuard();
-      for (const rid of newRooms) probeRoomSites.add(rid);
+      probeRoomSites = new Set(roomsJ);
+      created = wallsJ.map((siteId) => ({ kind: "wall", siteId }) as ProbeCreated);
       await stripProbeFields();
-      await deleteWallsBySiteIds(new Set(newWalls));
-      await saveTagged("cleanup");
-      await openAndGuard();
-      const afterClean = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-      const sigOkClean = sig(afterClean.model as Record<string, unknown>) === sig(backupModel as unknown as Record<string, unknown>);
-      console.log("cleanup: сверка с бэкапом (sig):", sigOkClean ? "OK" : "РАСХОЖДЕНИЕ");
-      if (!sigOkClean) throw new Error("cleanup не восстановил бэкап");
+      await restoreByCaptured({
+        call,
+        created,
+        ownRoomIds: [...probeRoomSites],
+        save: async () => {
+          try { await saveTagged("cleanup"); }
+          catch (e) { console.log("cleanup save:", String((e as Error).message).slice(0, 250)); }
+        },
+        log: (line) => console.log("cleanup:", line),
+      });
+      created = [];
     }
-    roGuard.checkFinal("cleanup-финал").then((changed) => {
-      console.log("контрольный проект:", changed ? "ИЗМЕНИЛСЯ" : "не изменился");
-      if (changed) process.exitCode = 1;
-    });
+    const afterClean = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+    const sigOkClean = sig(afterClean.model as Record<string, unknown>) === sig(backupModel as unknown as Record<string, unknown>);
+    console.log("cleanup: сверка с бэкапом (sig):", sigOkClean ? "OK" : "РАСХОЖДЕНИЕ");
+    if (!sigOkClean) throw new Error("cleanup не восстановил бэкап");
+    const changed = await roGuard.checkFinal("cleanup-финал");
+    console.log("контрольный проект:", changed ? "ИЗМЕНИЛСЯ" : "не изменился");
     console.log("347-finish9-live cleanup: PASS");
   } else {
   await openAndGuard();
@@ -225,6 +220,7 @@ try {
   const trial = await makeTrialRoom(400, 300);
   console.log("пробная комната:", trial.roomId);
   probeRoomSites.add(trial.roomId);
+  journal(); // стены пробной комнаты + её rooms2-id — в журнал до записей отделки
   const roomsList0 = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string; site_id?: string }>;
   const roomRef = roomsRef(trial.roomId, roomsList0);
   const floorSet = await call("finish_floor_set", { room_id: roomRef, cover: "laminate", plank_length_mm: 1200, plank_width_mm: 180 });
@@ -311,6 +307,7 @@ try {
   // зачистка должна снять поля/отделку со ВСЕХ частей: id старой комнаты редактор
   // заменил на два новых
   for (const [rid] of parts) probeRoomSites.add(rid);
+  journal(); // части после деления — в журнал (id старой комнаты редактор заменил)
   const info = parts.map(([rid, r]) => ({
     rid,
     f0offset: r.floors?.[0]?.["f0offset"] ?? null,
@@ -328,7 +325,7 @@ try {
 
   // ---- зачистка ----
   await roGuard.assertUnchanged("перед зачисткой");
-  await restoreByCaptured();
+  await restoreProbe();
   await openAndGuard();
   const final = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const sigOk = sig(final.model as Record<string, unknown>) === sig(before!.model as Record<string, unknown>);
@@ -336,15 +333,13 @@ try {
   if (!sigOk) throw new Error("финальная модель не совпала с бэкапом");
   const probeRoomLeft = trial.roomId in ((final.model["rooms2"] ?? {}) as Record<string, unknown>);
   console.log("пробная комната удалена:", !probeRoomLeft);
-  roGuard.checkFinal("финал").then((changed) => {
-    console.log("контрольный проект:", changed ? "ИЗМЕНИЛСЯ" : "не изменился");
-    if (changed) process.exitCode = 1;
-  });
+  const changedFinal = await roGuard.checkFinal("финал");
+  console.log("контрольный проект:", changedFinal ? "ИЗМЕНИЛСЯ" : "не изменился");
   console.log("347-finish9-live: PASS");
   }
 } catch (e) {
   console.error("FAIL:", String((e as Error).message).slice(0, 600));
-  try { await restoreByCaptured(); } catch (e2) { console.error("restore:", String((e2 as Error).message).slice(0, 200)); }
+  try { await restoreProbe(); } catch (e2) { console.error("restore:", String((e2 as Error).message).slice(0, 200)); }
   process.exitCode = 1;
 } finally {
   await closeBrowser();
