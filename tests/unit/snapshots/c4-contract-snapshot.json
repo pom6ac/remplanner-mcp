@@ -297,6 +297,144 @@
    }
   },
   {
+   "name": "ceiling_hole_add",
+   "description": "Добавить проём в потолке (лист «Потолки», инструмент «Проем в потолке»): прямоугольник по двум противоположным углам (мм) внутри одной комнаты. Проём должен целиком лежать внутри одной комнаты и не пересекать другие проёмы в потолке (GEOMETRY_CONFLICT; проёмы пола — отдельный лист, с ними пересечение допустимо, как в редакторе). Лимитов размеров в панели редактора нет — только ненулевой размер. id — метка CH<n> из model_get. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "corner1": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "первый угол прямоугольника, мм"
+     },
+     "corner2": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "противоположный угол прямоугольника, мм"
+     }
+    },
+    "required": [
+     "corner1",
+     "corner2"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "ceiling_hole_delete",
+   "description": "Удалить проём в потолке (метка CH<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ceiling_hole_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка CH<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "ceiling_hole_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "ceiling_hole_update",
+   "description": "Изменить проём в потолке: новые углы прямоугольника (corner1/corner2, мм; переданные — заменяются, непереданные остаются). Правила те же: внутри одной комнаты, без пересечения других проёмов потолка. ceiling_hole_id — id проёма (site_id) или метка CH<n> из model_get.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ceiling_hole_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка CH<n> из model_get или id сайта"
+     },
+     "corner1": {
+      "description": "новый первый угол, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "corner2": {
+      "description": "новый противоположный угол, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     }
+    },
+    "required": [
+     "ceiling_hole_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "ceiling_rigel_add",
    "description": "Поставить потолочную закладную (лист «Потолки», инструмент «Потолочная закладная»; PRO). Полоса от стены до стены внутри комнаты: start/end — концы оси (мм); каждый конец магнитится к боковой грани стены, её торцу или грани колонны (в 30 мм; в редакторе радиус магнита равен ширине полосы — по умолчанию 10 см, до 100 см), угол оси к грани 45–135°, как в редакторе. Ось не пересекает разделители зон потолка, ригели и другие закладные комнаты. width_mm — толщина полосы (по умолчанию 100, панель 100..1000 мм). ceiling_type — отделка потолка на закладной. id — метка CR<n> для ceiling_rigel_update/delete. После правки вызывайте model_validate и project_save.",
    "inputSchema": {

@@ -415,29 +415,33 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
     }
   }
 
-  // проёмы в полу (этап 64): restore ожидает конечный полигон без самопересечений;
-  // пересечение проёмов редактор не проверяет, но такие проёмы некорректны семантически
+  // проёмы в полу/потолке (этапы 64/328): restore ожидает конечный полигон без
+  // самопересечений; пересечение проёмов редактор не проверяет, но такие проёмы
+  // некорректны семантически. Пересечение — в пределах вида (пол и потолок —
+  // разные листы, UI их не сравнивает).
   const holes = Object.values(model.level_holes ?? {});
   for (const hole of holes) {
     const bad: string[] = [];
-    if ((hole.type ?? "") !== "floor_hole") bad.push(`type:${hole.type ?? ""}`);
+    const type = hole.type ?? "";
+    if (type !== "floor_hole" && type !== "ceiling_hole") bad.push(`type:${type}`);
     if (!Array.isArray(hole.polygon) || hole.polygon.length < 3) bad.push("polygon");
     else for (const p of hole.polygon) if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) bad.push("polygon");
     if (bad.length > 0) {
       problems.push({
         code: "LEVEL_HOLE_BAD_GEOMETRY",
-        message: `проём в полу ${hole.id}: некорректная геометрия (${bad.join(", ")})`,
+        message: `проём ${hole.id}: некорректная геометрия (${bad.join(", ")})`,
         details: { hole_id: hole.id, fields: bad },
       });
     }
   }
   for (let i = 0; i < holes.length; i++) {
     for (let j = i + 1; j < holes.length; j++) {
+      if ((holes[i]!.type ?? "floor_hole") !== (holes[j]!.type ?? "floor_hole")) continue;
       const area = overlapArea(holes[i]!.polygon as Polygon, holes[j]!.polygon as Polygon);
       if (area > 0.01) {
         problems.push({
           code: "LEVEL_HOLES_OVERLAP",
-          message: `проёмы в полу ${holes[i]!.id} и ${holes[j]!.id} пересекаются (${Math.round(area * 100) / 100} см²)`,
+          message: `проёмы ${holes[i]!.id} и ${holes[j]!.id} пересекаются (${Math.round(area * 100) / 100} см²)`,
           details: { holes: [holes[i]!.id, holes[j]!.id], overlap_cm2: Math.round(area * 100) / 100 },
         });
       }

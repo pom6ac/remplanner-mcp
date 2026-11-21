@@ -29,7 +29,7 @@ import {
 } from "../model/dims.ts";
 import { cmToMm, mmToCm } from "../model/units.ts";
 import type { LedStrip, StripLight, LineStrip } from "../model/types.ts";
-import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
+import { addFloorHole, updateFloorHole, deleteFloorHole, addCeilingHole, updateCeilingHole, deleteCeilingHole } from "../model/floorhole.ts";
 import {
   MAX_POLYLINE_POINTS,
   MAX_POLYGON_VERTICES,
@@ -64,7 +64,7 @@ import { throwNotFound } from "../dto/common.ts";
 import { resolveWall, wallRef, thickness, resolveWallMaterial } from "../dto/walls.ts";
 import { swing, resolveOpeningWall, openingAddArgs, openingUpdateParams } from "../dto/openings.ts";
 import { position, positionMove, resolveItem, normalizePosition, againstWallCenter, itemsInRoom, catalogFoundView, catalogEntryView } from "../dto/items.ts";
-import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGasLine, resolvePipe, resolveWarmFloor, resolveWarmWall, resolveLightLine, resolveFloorHole, resolveCableLamp } from "../dto/structures.ts";
+import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGasLine, resolvePipe, resolveWarmFloor, resolveWarmWall, resolveLightLine, resolveFloorHole, resolveCeilingHole, resolveCableLamp } from "../dto/structures.ts";
 import { resolveBorder, borderResponse } from "../dto/borders.ts";
 import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInternal, sheetPublic, commentTextWarnings } from "../dto/dims.ts";
 import { rawEditorPayload } from "../dto/model-payload.ts";
@@ -2103,6 +2103,64 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           return true;
         });
         return ok({ deleted: a["floor_hole_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Проем в потолке (лист «Потолки», инструмент «Проем в потолке», этап 328) ----------
+    // Класс LevelHoling редактора хранит проёмы пола и потолка в одной коллекции
+    // level_holes; ceiling_hole — plan "ceiling" (эталон 328-ceilinghole-etalon.json).
+    // НЕ PRO (разметка 328-pro-anon.json).
+    ceiling_hole_add: tool(
+      "Добавить проём в потолке (лист «Потолки», инструмент «Проем в потолке»): прямоугольник по двум " +
+        "противоположным углам (мм) внутри одной комнаты. Проём должен целиком лежать внутри одной комнаты " +
+        "и не пересекать другие проёмы в потолке (GEOMETRY_CONFLICT; проёмы пола — отдельный лист, " +
+        "с ними пересечение допустимо, как в редакторе). Лимитов размеров в панели редактора нет — " +
+        "только ненулевой размер. id — метка CH<n> из model_get. " +
+        "После добавления вызывайте model_validate и project_save.",
+      {
+        corner1: mmPoint.describe("первый угол прямоугольника, мм"),
+        corner2: mmPoint.describe("противоположный угол прямоугольника, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const hole = ws.apply("ceiling_hole_add", (m) => addCeilingHole(m, {
+          corner1: a["corner1"] as MmPoint,
+          corner2: a["corner2"] as MmPoint,
+        }, ws.rooms()));
+        return ok(compactEntity(ws.model, (c) => c.level_holes.find((h) => h.site_id === hole.id) ?? null));
+      },
+    ),
+
+    ceiling_hole_update: tool(
+      "Изменить проём в потолке: новые углы прямоугольника (corner1/corner2, мм; переданные — " +
+        "заменяются, непереданные остаются). Правила те же: внутри одной комнаты, без пересечения " +
+        "других проёмов потолка. ceiling_hole_id — id проёма (site_id) или метка CH<n> из model_get.",
+      {
+        ceiling_hole_id: z.string().min(1).describe("метка CH<n> из model_get или id сайта"),
+        corner1: mmPoint.optional().describe("новый первый угол, мм"),
+        corner2: mmPoint.optional().describe("новый противоположный угол, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const hole = ws.apply("ceiling_hole_update", (m) => updateCeilingHole(m, {
+          holeId: resolveCeilingHole(m, a["ceiling_hole_id"] as string).id,
+          corner1: a["corner1"] as MmPoint | undefined,
+          corner2: a["corner2"] as MmPoint | undefined,
+        }, ws.rooms()));
+        return ok(compactEntity(ws.model, (c) => c.level_holes.find((h) => h.site_id === hole.id) ?? null));
+      },
+    ),
+
+    ceiling_hole_delete: tool(
+      "Удалить проём в потолке (метка CH<n> из model_get).",
+      { ceiling_hole_id: z.string().min(1).describe("метка CH<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("ceiling_hole_delete", (m) => {
+          deleteCeilingHole(m, resolveCeilingHole(m, a["ceiling_hole_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["ceiling_hole_id"], hint: SCENARIO_HINT });
       },
     ),
 
