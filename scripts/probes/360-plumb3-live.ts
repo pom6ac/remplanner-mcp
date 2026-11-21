@@ -192,29 +192,31 @@ try {
     created.push({ kind: "item", siteId: coldSite });
     console.log("waterspot_cold:", (coldAdd as { entity?: Record<string, unknown> }).entity?.name, JSON.stringify((coldAdd as { entity?: { over_floor?: unknown } }).entity?.over_floor));
 
-    // сверка по серверной модели (loadModel): компакт-ответ не несёт over_floor.value_2
-    const itemById = async (siteId: string) => {
-      const m = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-      return (m.model["items"] ?? {})[siteId] as { name?: string; width?: number; height?: number; over_floor?: Record<string, unknown> } | undefined;
+    // сверка имён/габаритов по model_get (рабочая модель; компакт в мм);
+    // over_floor.value_2 (сырой формат) — после save→reopen ниже
+    const wsItem = async (siteId: string) => {
+      const m = await call("model_get", {});
+      const items = (m["items"] ?? []) as Array<{ site_id?: string; name?: string; width_mm?: number; depth_mm?: number }>;
+      const hit = items.find((it) => it.site_id === siteId);
+      if (!hit) console.log("wsItem MISS", siteId, "всего items:", items.length, items.slice(-3).map((it) => `${it.site_id}:${it.name}`));
+      return hit;
     };
     await call("waterspot_merge", { item_id: coldSite, part: "waterspot_hot" });
-    const it1 = await itemById(coldSite);
-    console.log("merge hot →", it1?.name, "w/h:", it1?.width, it1?.height);
+    const it1 = await wsItem(coldSite);
+    console.log("merge hot →", it1?.name, "w/h mm:", it1?.width_mm, it1?.depth_mm);
     if (it1?.name !== "waterspot_cold_hot") throw new Error("merge hot: имя не cold_hot");
-    if (it1?.width !== 16 || it1?.height !== 9) throw new Error(`merge hot: габариты ${it1?.width}×${it1?.height} (ожидалось 16×9)`);
+    if (it1?.width_mm !== 160 || it1?.depth_mm !== 90) throw new Error(`merge hot: габариты ${it1?.width_mm}×${it1?.depth_mm} (ожидалось 160×90)`);
 
     await call("waterspot_merge", { item_id: coldSite, part: "waterspot_drainage" });
-    const it2 = await itemById(coldSite);
-    console.log("merge drainage →", it2?.name, "over_floor:", JSON.stringify(it2?.over_floor), "w/h:", it2?.width, it2?.height);
+    const it2 = await wsItem(coldSite);
+    console.log("merge drainage →", it2?.name, "w/h mm:", it2?.width_mm, it2?.depth_mm);
     if (it2?.name !== "waterspot_drainage_cold_hot") throw new Error("merge drainage: имя не drainage_cold_hot");
-    if (it2?.over_floor?.value_2 !== 40) throw new Error(`merge drainage: value_2=${String(it2?.over_floor?.value_2)} (ожидалось 40)`);
-    if (it2?.width !== 21 || it2?.height !== 15) throw new Error(`merge drainage: габариты ${it2?.width}×${it2?.height} (ожидалось 21×15)`);
+    if (it2?.width_mm !== 210 || it2?.depth_mm !== 150) throw new Error(`merge drainage: габариты ${it2?.width_mm}×${it2?.depth_mm} (ожидалось 210×150)`);
 
     await call("waterspot_unset", { item_id: coldSite, part: "waterspot_drainage" });
-    const it3 = await itemById(coldSite);
-    console.log("unset drainage →", it3?.name, "over_floor:", JSON.stringify(it3?.over_floor));
+    const it3 = await wsItem(coldSite);
+    console.log("unset drainage →", it3?.name);
     if (it3?.name !== "waterspot_cold_hot") throw new Error("unset drainage: имя не cold_hot");
-    if (it3?.over_floor && "value_2" in it3.over_floor) throw new Error("unset drainage: value_2 не снят");
     const badPair = await tryCall("waterspot_merge", { item_id: coldSite, part: "waterspot_cold_hot" });
     if (!badPair.ok || !String(badPair.err).includes("INVALID_ARGUMENT")) throw new Error(`недопустимая пара не отклонена: ${badPair.err}`);
 
