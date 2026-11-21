@@ -20,6 +20,7 @@ import { zoneDelimiterCompare, roomsWithChangedZoneCDividers, resurrectedZoneCDi
 import { ceilingRigelCompare } from "../model/ceiling-rigels.ts";
 import { warmWallsCompare } from "../verify/warmwall.ts";
 import { demolitionMismatches } from "../model/demolition.ts";
+import { claddingMismatches } from "../model/claddings.ts";
 import { roomsSaveCompare, zoneAffectedRoomIds, type RoomsChangePolicy } from "../model/rooms-save.ts";
 import { dimsMismatches } from "../model/dims.ts";
 import { elecLinkHolders } from "../model/electric2.ts";
@@ -144,6 +145,7 @@ const ENTITY_DELETE_LABELS: Record<Exclude<ModelEntityCollection, "walls">, stri
   pipes_heat: "магистрали отопления",
   pipes_ventilation: "воздуховоды",
   zone_delimiters: "разделители зон",
+  claddings: "линии обшивки ГКЛ",
 };
 
 /**
@@ -504,6 +506,12 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     host.model().walls as Record<string, never>,
     (norm.model as Record<string, unknown>)["walls"] as Record<string, never>,
   );
+  // этап 354: обшивка ГКЛ до записи сверяется с нормализованной моделью
+  const claddingNorm = claddingMismatches(
+    host.model() as unknown as Record<string, unknown>,
+    norm.model as unknown as Record<string, unknown>,
+    "normalize",
+  );
   // ревью 73 №2: свойства ограждений (height/depth/material) не должны меняться при нормализации
   const propsNorm = balconyWallPropertyMismatches(
     host.model().walls as unknown as Record<string, BalconyWallProps>,
@@ -562,7 +570,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     lostLedStrips.length > 0 || lostStripesLight.length > 0 || lostLineStrips.length > 0 ||
     lostCables.length > 0 ||
     ledGraphNorm.length > 0 || stripesGraphNorm.length > 0 || lineStripsGraphNorm.length > 0 ||
-    cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 ||
+    cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || claddingNorm.length > 0 ||
     dimsNorm.length > 0 || climateNorm.length > 0 || roomsNormProblems.length > 0 ||
     shieldsNorm.length > 0 ||
     zoneNorm.problems.length > 0 ||
@@ -604,6 +612,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         socket_group_mismatches: subsNorm,
         finish_mismatches: finishNorm.problems,
         demolition_mismatches: demolitionNorm,
+        cladding_mismatches: claddingNorm,
         dims_mismatches: dimsNorm,
         climate_mismatches: climateNorm,
         room_mismatches: roomsNormProblems,
@@ -773,6 +782,12 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       (norm.model as Record<string, unknown>)["walls"] as Record<string, never>,
       after.model["walls"] as Record<string, never>,
     );
+    // этап 354: обшивка ГКЛ после save — нормализованное ожидание против сервера
+    const claddingAfter = claddingMismatches(
+      norm.model as unknown as Record<string, unknown>,
+      after.model as unknown as Record<string, unknown>,
+      "save",
+    );
     // этап 113: размеры и комментарии после save сверяются по GET — нормализованное
     // ожидание против сервера (строго: текст, точки, привязки, отступ, цвет)
     const dimsAfter = dimsMismatches(norm.model as Model, after.model as Record<string, unknown>);
@@ -862,7 +877,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         ),
       },
     ).problems;
-    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && ceilingRigelAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
+    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && claddingAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && ceilingRigelAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
       verified = true;
       finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
       host.onVerified(toModel(structuredClone(after.model)));
@@ -911,6 +926,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
           room_mismatches: roomsAfterCheck,
           finish_mismatches: finishAfter,
           demolition_mismatches: demolitionAfter,
+          cladding_mismatches: claddingAfter,
           dims_mismatches: dimsAfter,
           climate_mismatches: climateAfter,
           shield_mismatches: shieldsAfter,

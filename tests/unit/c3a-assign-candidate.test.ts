@@ -187,18 +187,21 @@ test("updateWarmFloor: поздний отказ (corner2 вне комнаты)
   assert.deepEqual(wf, snapshot);
 });
 
-test("updateOpening: поздний отказ (перенос уводит пару замены с места) — проём не изменён", () => {
+test("updateOpening: участники пары замены не переносятся и не меняют габарит — проём не изменён", () => {
   const model = emptyModel();
   const { top } = rect(model);
   const door = addOpening(model, { wallId: top.id, type: "door", centerMm: 1000 });
-  const replacement = addOpening(model, { wallId: top.id, type: "window", widthMm: 1600, replacesHoleId: door.id });
+  const replacement = addOpening(model, { wallId: top.id, type: "doorway", replacesHoleId: door.id });
   const snapshot = structuredClone(door);
-  // дверь (80 см) помещается на новом месте, а замена (160 см, следует за ней) — нет:
-  // отказ возникает ПОСЛЕ записи width/at в кандидата и refreshHole, до assignCandidate —
-  // мутант «assign до проверки пары» или «без клона» испортил бы дверь
+  // этап 354 (как в редакторе door_must_change): размер и положение участников
+  // живой пары не меняются — отказ до любой мутации кандидата
   assert.throws(
     () => updateOpening(model, { wallId: top.id, holeId: door.id, centerMm: 3400 }),
-    (e: unknown) => e instanceof McpError && e.code === "GEOMETRY_CONFLICT",
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
+  );
+  assert.throws(
+    () => updateOpening(model, { wallId: top.id, holeId: replacement.id, centerMm: 3400 }),
+    (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT",
   );
   assert.equal(top.holes[door.id], door);
   assert.deepEqual(door, snapshot);

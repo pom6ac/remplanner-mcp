@@ -316,6 +316,11 @@ function fixtureEntities(name: string, root: Record<string, unknown>): [string, 
   if (zoneDict !== null && typeof zoneDict === "object" && !Array.isArray(zoneDict)) {
     for (const z of Object.values(zoneDict as Record<string, unknown>)) push("zone_delimiters", z);
   }
+  // обшивка ГКЛ: эталоны ui-ref-replan2-cladding-* несут словарь claddings (этап 354)
+  const cladDict = root["claddings"];
+  if (cladDict !== null && typeof cladDict === "object" && !Array.isArray(cladDict)) {
+    for (const c of Object.values(cladDict as Record<string, unknown>)) push("claddings", c);
+  }
   // щитки: эталоны ui-ref-shield-* несут словарь shields (этап 255)
   const shieldDict = root["shields"];
   if (shieldDict !== null && typeof shieldDict === "object" && !Array.isArray(shieldDict)) {

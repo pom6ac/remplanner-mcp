@@ -191,6 +191,13 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
       for (let j = i + 1; j < holes.length; j++) {
         const h1 = holes[i]!;
         const h2 = holes[j]!;
+        // пара замены (этап 354): замена plan:c стоит ровно в габарите исходного
+        // (replacement=1 / hasReplacement) — совпадение интервалов штатно, не дефект
+        if (h1.hasReplacement || h2.hasReplacement ||
+            (h1.plan === "c" && h1.parent === wall.id && h2.hasReplacement) ||
+            (h2.plan === "c" && h2.parent === wall.id && h1.hasReplacement)) {
+          continue;
+        }
         const r1 = holeRange(wall, h1);
         const r2 = holeRange(wall, h2);
         if (r1[0] < r2[1] - 1e-6 && r2[0] < r1[1] - 1e-6) {

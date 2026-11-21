@@ -233,6 +233,13 @@ export function setFloorFinish(model: Model, roomRef: string, cover: FloorCover,
   // Floor (e.width||settings.width||0). Поля панели переносятся из прежней
   // записи только при ТОМ ЖЕ покрытии (prev.cover===cover, путь «тот же
   // материал», m1-R ревью 350) и только если параметр не задан явно.
+  // n3 ревью 352 (покрытие без раскладки: линолеум, ковролин…): у инструмента
+  // без t.width placeholder пуст, и клик редактора сохраняет r.width=settings.width
+  // ||r.width — прежний размер записи, тогда как конструктор Floor даёт 0
+  // (settings.width||0); stitch_width: клик ||.5 против конструктора ??.5 —
+  // разница только при умолчании 0. MCP следует конструктору (0/умолчание);
+  // расхождение с кликом не влияет на вид (у покрытия без раскладки поля не
+  // используются) и не ловится сверкой (ожидание не задано — sameOptional true).
   const sameCover = prev !== undefined && prev["cover"] === cover;
   const floorId = prev && typeof prev["id"] === "string" ? prev["id"] as string : `_f${newId(8)}`;
   const entry = floorEntry(cover, room, floorId, extra);
@@ -1417,8 +1424,11 @@ function sameFloor(exp: NonNullable<FinishSig["floor"]>, got: NonNullable<Finish
       (Math.abs(exp.anchor.x - got.anchor.x) > COORD_TOL || Math.abs(exp.anchor.y - got.anchor.y) > COORD_TOL)) {
     return false;
   }
-  // n2-R ревью 350: custom_angle сверяется симметрично по наличию; снятие
-  // custom_angle без сброса угла (mouseup anchor_floor сбрасывает оба) не ловим
+  // n2-R ревью 350 (уточнено n2 ревью 352): custom_angle сверяется по наличию
+  // ОДНОСТОРОННЕ (sameOptional: exp есть → got обязан быть); появление custom_angle
+  // в got без ожидания не ловится — редактор сам поле не ставит, MCP пишет только 1
+  // или удаляет; снятие custom_angle без сброса угла (mouseup anchor_floor сбрасывает
+  // оба) не считаем расхождением
   if (!sameOptional(exp.custom, got.custom, [])) return false;
   return true;
 }

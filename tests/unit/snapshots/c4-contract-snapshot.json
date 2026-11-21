@@ -589,6 +589,82 @@
    }
   },
   {
+   "name": "cladding_add",
+   "description": "Провести линию обшивки ГКЛ (лист «Перегородки», инструмент «Обшивка гипсокартоном»). Линия лежит внутри одной комнаты; концы магнитятся к рёбрам комнаты (в 50 мм) и к свободным концам других линий обшивки (в 100 мм), как в редакторе. Минимальная длина — 40 мм; пересекать другие линии обшивки нельзя (только соединять концами). id — метка CL<n> для cladding_remove и model_get. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "from_mm": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "начало линии, мм"
+     },
+     "to_mm": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "конец линии, мм"
+     }
+    },
+    "required": [
+     "from_mm",
+     "to_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "cladding_remove",
+   "description": "Удалить линию обшивки ГКЛ (инструмент «ластик» на линии, лист «Перегородки»). cladding_id — метка CL<n> из model_get или id сайта из cladding_add.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "cladding_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка CL<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "cladding_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "comment_add",
    "description": "Добавить текстовый комментарий с указателем на план (кнопка «Текстовый комментарий» в нижней панели — **PRO в UI**: на бесплатном тарифе поведение не проверено). Текст 1..600 символов (символы «\"» и «`» канонизируются под формат редактора: \" → '', ` → ', в ответе — итоговый текст и warning), шрифт 8..30 (по умолчанию 10), рамка и указатель — по умолчанию включены, цвет из палитры UI (по умолчанию #000000), url — ссылка http(s)://. attach_item — привязать к предмету (label item, следует за ним; у предмета один такой комментарий). point — точка-указатель, pc — центр пузыря (по умолчанию в точке указателя). После добавления вызывайте model_validate и project_save.",
    "inputSchema": {
@@ -6151,6 +6227,7 @@
    "territory_borders": [],
    "level_holes": [],
    "zone_delimiters": [],
+   "claddings": [],
    "ceiling_rigels": [],
    "led_strips": [],
    "stripes_light": [],

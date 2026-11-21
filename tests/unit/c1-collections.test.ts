@@ -161,6 +161,7 @@ const FULL_COLLECTIONS: Pick<Model, ModelEntityCollection> = {
   pipes_heat: { ph1: pipe("ph1", "heat_pipe_hot") },
   pipes_ventilation: { pv1: pipe("pv1", "ventpipe_out") },
   zone_delimiters: { zd1: { id: "zd1", type: "zone_ceiling", plan: "ceiling", length: 0.5, id_room: "room1", matrix: [[null, EDGE], [EDGE, null]], vertexes: [{ id: "zd1_n1", point: POINT, type: "node" }, { id: "zd1_n2", point: { x: 150, y: 100 }, type: "node" }], items: { zd1_n1: "node", zd1_n2: "node" }, on_size: 1 } },
+  claddings: { cl1: { id: "cl1", p1: { x: 60, y: 60 }, p2: { x: 200, y: 60 }, pc: { x: 130, y: 60 } } },
 };
 
 /** Полная модель импорта: эталон + корневые поля Model. */
@@ -266,6 +267,10 @@ test("c1: project_clear очищает ВСЕ коллекции (включая
     for (const key of MODEL_ENTITY_COLLECTIONS) {
       if ((MODEL_REQUIRED_COLLECTIONS as readonly string[]).includes(key)) {
         assert.deepEqual(cleared[key], {}, `${key} (обязательная) после clear — пустой объект`);
+      } else if (key === "claddings") {
+        // пустая форма редактора — пустой объект ($Claddings.restore при
+        // отсутствующем ключе сохраняет прежние lines — этап 354)
+        assert.deepEqual(cleared[key], {}, `${key} после clear — пустой объект (форма редактора)`);
       } else {
         assert.equal(cleared[key], undefined, `${key} после clear удалена`);
       }

@@ -771,6 +771,14 @@ export type Model = {
     on_size?: number;
     [key: string]: unknown;
   }>;
+  /** Обшивка ГКЛ (лист «Перегородки», gypsum_cladding); у старых моделей может отсутствовать. */
+  claddings?: Record<string, {
+    id: string;
+    p1: Point;
+    p2: Point;
+    pc?: Point;
+    [key: string]: unknown;
+  }>;
   total_height: number;
   final: boolean;
   rooms1?: Record<string, unknown>;

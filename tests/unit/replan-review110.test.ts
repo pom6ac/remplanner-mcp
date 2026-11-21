@@ -33,11 +33,11 @@ const centerCm = (wall: Wall, hole: { pc: { x: number; y: number }; width: numbe
 // ---------- R4: обычный проём не участвует в паре ----------
 
 /** Одна пара (A исходный + R замена) и обычная дверь B — UI-модель без at. */
-function pairWithPlainDoor(widthMm = 800): { m: Model; wall: Wall; a: Wall["holes"][string]; r: Wall["holes"][string]; b: Wall["holes"][string] } {
+function pairWithPlainDoor(): { m: Model; wall: Wall; a: Wall["holes"][string]; r: Wall["holes"][string]; b: Wall["holes"][string] } {
   const m = baseModel();
   const wall = probeWall(m);
   const a = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 1000 });
-  const r = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: a.id, widthMm });
+  const r = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: a.id });
   const b = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 4000 });
   for (const h of [a, r, b]) delete h.at;
   return { m, wall, a, r, b };
@@ -78,9 +78,9 @@ test("110 R4: обычная дверь рядом с двумя парами н
   const m = baseModel();
   const wall = probeWall(m);
   const a1 = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 1000 });
-  const r1 = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: a1.id, widthMm: 800 });
+  const r1 = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: a1.id });
   const a2 = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 2200 });
-  const r2 = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: a2.id, widthMm: 800 });
+  const r2 = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: a2.id });
   const b = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 4000 });
   for (const h of [a1, r1, a2, r2, b]) delete h.at;
   const before = snapshotHoles(wall, [a1.id, r1.id, a2.id, r2.id]);

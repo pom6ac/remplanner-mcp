@@ -140,6 +140,19 @@ const comment = z.looseObject({
   plan: idStr.optional(),
 });
 
+/**
+ * Обшивка ГКЛ (этап 354, лист «Перегородки», gypsum_cladding): верхнеуровневая
+ * коллекция model.claddings, формат {id, p1, p2 (см), pc?} — эталон
+ * ui-ref-replan2-cladding.json, раунд-трип пробой 354-replan2-ui4.
+ * Производные поля редактора (p1lnk/p2lnk/dlpos/l1/l2/r1/r2) — passthrough.
+ */
+const cladding = z.looseObject({
+  id: idStr,
+  p1: point,
+  p2: point,
+  pc: point.optional(),
+});
+
 /** Графовая сущность (трубы/кабели/свет/границы/проёмы пола/тёплые полы). */
 const graphEntity = z.looseObject({
   id: idStr,
@@ -317,7 +330,7 @@ const room2 = z.looseObject({
  * без схемы графа и лимитов). Не-графовые коллекции реестра имеют собственные
  * схемы в collectionsSchema() (walls/items/pillars/rigels/rulers/comments/shields).
  */
-const NON_GRAPH_COLLECTIONS = new Set(["walls", "items", "pillars", "rigels", "rulers", "comments", "shields"]);
+const NON_GRAPH_COLLECTIONS = new Set(["walls", "items", "pillars", "rigels", "rulers", "comments", "shields", "claddings"]);
 
 const GRAPH_COLLECTIONS = MODEL_ENTITY_COLLECTIONS.filter((c) => !NON_GRAPH_COLLECTIONS.has(c));
 
@@ -332,6 +345,7 @@ function collectionsSchema(): Record<string, z.ZodType> {
     rulers: collection(ruler, MAX_IMPORT_ENTITIES).optional(),
     comments: collection(comment, MAX_IMPORT_ENTITIES).optional(),
     shields: collection(shield, MAX_IMPORT_ENTITIES).optional(),
+    claddings: collection(cladding, MAX_IMPORT_ENTITIES).optional(),
   };
   for (const key of GRAPH_COLLECTIONS) out[key] = collection(graphEntity, MAX_IMPORT_ENTITIES).optional();
   return out;

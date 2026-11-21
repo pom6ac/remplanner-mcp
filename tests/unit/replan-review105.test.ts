@@ -185,7 +185,7 @@ test("105 R3: замена UI-проёма без at — центр замены
   const corridor = Object.values(m.walls).find((w) => Math.abs(w.p1.y) < 1 && Math.abs(w.p2.y) < 1)!;
   const door = addOpening(m, { wallId: corridor.id, type: "door", offsetMm: 2000 });
   delete door.at; // UI-модель: служебного at нет
-  const rep = addOpening(m, { wallId: corridor.id, type: "doorway", replacesHoleId: door.id, widthMm: 800 });
+  const rep = addOpening(m, { wallId: corridor.id, type: "doorway", replacesHoleId: door.id });
   assert.ok(Math.abs(rep.pc.x - door.pc.x) < 0.05, `центры совпадают: ${rep.pc.x} vs ${door.pc.x}`);
   assert.ok(Math.abs(rep.pc.y - door.pc.y) < 0.05);
 });
@@ -229,7 +229,7 @@ test("105 R4: split — пара переезжает в одну половин
   const m = baseModel();
   const w = probeWall(m);
   const door = addOpening(m, { wallId: w.id, type: "door", offsetMm: 4000 });
-  const rep = addOpening(m, { wallId: w.id, type: "doorway", replacesHoleId: door.id, widthMm: 800 });
+  const rep = addOpening(m, { wallId: w.id, type: "doorway", replacesHoleId: door.id });
   const { first, second } = splitWall(m, w.id, 3000);
   assert.ok(second.holes[door.id], "исходный во второй стене");
   assert.ok(second.holes[rep.id], "замена во второй стене");

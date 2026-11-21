@@ -158,7 +158,7 @@ test("render-sync: ответ render_plan содержит ревизию — х
     assert.equal(res.revision!.walls, 4);
     assert.equal(res.revision!.openings, 2);
     assert.equal(res.revision!.items, 1);
-    assert.deepEqual(res.revision!.editor, { walls: 4, openings: 2, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0, cables: 0, cables_socket: 0, cables_warm_floor: 0, cables_conditioner: 0, rulers: 0, comments: 0, shields: 0, warm_floors: 0, zone_delimiters: 0, pipes_warm_floor: 0, pipes_conditioner: 0, pipes_heat: 0, pipes_ventilation: 0 }, "счётчики, которые видит редактор");
+    assert.deepEqual(res.revision!.editor, { walls: 4, openings: 2, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0, cables: 0, cables_socket: 0, cables_warm_floor: 0, cables_conditioner: 0, rulers: 0, comments: 0, shields: 0, warm_floors: 0, zone_delimiters: 0, claddings: 0, pipes_warm_floor: 0, pipes_conditioner: 0, pipes_heat: 0, pipes_ventilation: 0 }, "счётчики, которые видит редактор");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
