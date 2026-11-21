@@ -169,6 +169,21 @@ try {
   }
   out.pipes = s1.pipes ?? null;
   out.node_after_pipe = out.node_after_click_click ?? out.node_after_drag_from_node ?? null;
+  // 2д: двигаем узел-предмет — следует ли вершина трубы за предметом?
+  if (Object.keys((s1.pipes ?? {})).length > 0) {
+    const moveRes = await page.evaluate(({ itemId, d }) => {
+      const w = window as any;
+      const it = w.ITEMS[itemId];
+      if (!it) return "no-item";
+      const np = { x: it.props.pc.x + d, y: it.props.pc.y };
+      it.props.pc = np;
+      it.draw(null, { set_layer: true });
+      return "moved";
+    }, { itemId: nodeItems[0]![0], d: 30 });
+    out.node_move = moveRes;
+    await page.waitForTimeout(800);
+    await snapPipes("after_item_move");
+  }
 
   // 3. merge: waterspot_cold у стены, затем waterspot_hot кликом на неё
   out.pick_cold = await pickTool("waterspot_cold");
