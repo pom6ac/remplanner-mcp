@@ -178,6 +178,9 @@ try {
   await openAndGuard();
   const trial = await makeTrialRoom(300, 260); // 7.8 м² — хватает и для complex
   console.log("пробная комната:", trial.roomId);
+  // ревью 335 n2: сайт зачистки регистрируется СРАЗУ — если проба упадёт до
+  // шага зачистки, restoreByCaptured в finally всё равно снимет отделку
+  probeRoomSites.add(trial.roomId);
   const mgRooms = await call("model_get", {});
   const roomRef = ((mgRooms["rooms"] ?? []) as Array<{ id: string; site_id?: string }>).find((r) => (r as { site_id?: string }).site_id === trial.roomId)?.id ?? trial.roomId;
   const px = trial.poly.map((p) => p.x), py = trial.poly.map((p) => p.y);
@@ -236,6 +239,9 @@ try {
     });
   if (!targetRoom) throw new Error("комната верхней половины не найдена");
   console.log("комната для complex:", targetRoom[0]);
+  // ревью 335 n2: комната complex — в сайты зачистки ДО установки complex,
+  // иначе падение между set и зачисткой оставит отделку и wall_delete упрётся
+  probeRoomSites.add(targetRoom[0]);
   const roomsList = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string; site_id?: string }>;
   const roomRef2 = roomsList.find((r) => r.site_id === targetRoom[0])?.id ?? targetRoom[0];
   const cxU = (Math.min(...targetRoom[1].polygon!.map((p) => p.x)) + Math.max(...targetRoom[1].polygon!.map((p) => p.x))) / 2;
@@ -254,8 +260,6 @@ try {
 
   // ---- зачистка ----
   await roGuard.assertUnchanged("перед зачисткой");
-  probeRoomSites.add(trial.roomId);
-  probeRoomSites.add(targetRoom[0]);
   await stripProbeFinishes();
   await call("ceiling_hole_delete", { ceiling_hole_id: holeSite });
   created = created.filter((c) => !(c.kind === "hole"));

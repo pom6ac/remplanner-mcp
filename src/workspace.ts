@@ -21,7 +21,7 @@ import { roomPolygons } from "./model/items.ts";
 import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmatchedDanglingEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, assertNoNewWarmFloorCrossing, type DanglingEnd } from "./model/walls.ts";
 import { dist } from "./model/geometry.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
-import { finishCompare } from "./model/finish.ts";
+import { finishCompare, finishLossHint } from "./model/finish.ts";
 import { zoneDelimiterCompare, roomsWithChangedZoneCDividers, resurrectedZoneCDividers } from "./model/zone.ts";
 import { ceilingRigelCompare } from "./model/ceiling-rigels.ts";
 import { warmWallsCompare } from "./verify/warmwall.ts";
@@ -703,7 +703,16 @@ export class Workspace {
       warnings.push(...zoneResurrected.warnings);
       warnings.push(...warmNorm.warnings);
       warnings.push(...ceilingRigelNorm.warnings);
-      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || finishNorm.problems.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0 || zoneNorm.problems.length > 0 || zoneResurrected.problems.length > 0 || warmNorm.problems.length > 0 || ceilingRigelNorm.problems.length > 0) {
+      // ревью 335 M1: первый отказ, в который упирается агент (wall_delete при комнате
+      // с отделкой, которая исчезает или сливается), называет конкретную причину и
+      // порядок снятия отделки — из фактических расхождений, а не общим списком категорий
+      if (finishNorm.problems.length > 0) {
+        const finishHint = finishLossHint(finishNorm.problems);
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил отделку комнаты — мутация отменена; ${finishHint}`, {
+          details: { finish_mismatches: finishNorm.problems, hint: finishHint },
+        });
+      }
+      if (lostCablesNorm.length > 0 || cablesGraphNorm.length > 0 || cablesConnNorm.length > 0 || subsNorm.length > 0 || demolitionNorm.length > 0 || dimsNorm.length > 0 || climateNorm.length > 0 || shieldsNorm.length > 0 || zoneNorm.problems.length > 0 || zoneResurrected.problems.length > 0 || warmNorm.problems.length > 0 || ceilingRigelNorm.problems.length > 0) {
         throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил связи «выключатель → светильник», под-розетки, отделку, пометки демонтажа, размеры/комментарии, сущности климата, щитки, разделители зон потолка или тёплые стены — мутация отменена`, {
           details: { lost_cables: lostCablesNorm, cables_mismatches: cablesGraphNorm, cables_connection_mismatches: cablesConnNorm, socket_group_mismatches: subsNorm, finish_mismatches: finishNorm.problems, demolition_mismatches: demolitionNorm, dims_mismatches: dimsNorm, climate_mismatches: climateNorm, shield_mismatches: shieldsNorm, zone_mismatches: [...zoneNorm.problems, ...zoneResurrected.problems], warmwall_mismatches: warmNorm.problems, ceiling_rigel_mismatches: ceilingRigelNorm.problems },
         });

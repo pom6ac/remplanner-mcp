@@ -448,11 +448,11 @@ function collectPoints(node: unknown, out: Set<string> = new Set()): Set<string>
   return out;
 }
 
-test("сторож фикстур: точки фикстур не совпадают с точками контрольного проекта (readonly-ref)", () => {
+test("сторож фикстур: точки фикстур не совпадают с точками контрольного проекта (readonly-ref)", (t) => {
   const rootTmp = rootReportsTmp();
-  if (rootTmp === null) return; // CI/чистое окружение — эталона нет, проверка неприменима
+  if (rootTmp === null) return t.skip("эталона нет (CI/чистое окружение) — проверка неприменима"); // ревью 335 n1: пропуск виден, не тихий pass
   const refFiles = readdirSync(rootTmp).filter((f) => /^readonly-ref-.*\.json$/.test(f));
-  if (refFiles.length === 0) return;
+  if (refFiles.length === 0) return t.skip("эталона нет (readonly-ref-*.json отсутствуют) — проверка неприменима");
   const refPoints = new Set<string>();
   for (const f of refFiles) {
     collectPoints(JSON.parse(readFileSync(join(rootTmp, f), "utf8")), refPoints);

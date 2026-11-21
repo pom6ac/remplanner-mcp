@@ -660,6 +660,43 @@ export type CeilingFinishParams = {
  *  запись и complex не трогает (complexRemoved=false). */
 export type CeilingFinishResult = { id: string; complexRemoved: boolean };
 
+/** Запись покрытия для одной зоны потолка (общий слой setCeilingFinish):
+ *  полигон и рёбра зоны сохраняются (записи без edges — строятся по полигону,
+ *  ревью 313 C), ниши переносятся с перепривязкой id_ceiling на новую запись. */
+function zoneCeilingEntry(
+  prev: Record<string, unknown> | undefined,
+  material: CeilingCover,
+  level: number,
+  profile: string,
+): Record<string, unknown> {
+  const zoneId = `_c${newId(8)}`;
+  const entry: Record<string, unknown> = {
+    exist: true,
+    id: zoneId,
+    material,
+    level,
+    profile,
+  };
+  const prevPoly = prev?.["polygon"];
+  if (Array.isArray(prevPoly) && prevPoly.length >= 3) entry["polygon"] = structuredClone(prevPoly);
+  const prevEdges = prev?.["edges"];
+  if (Array.isArray(prevEdges) && prevEdges.length > 0) {
+    entry["edges"] = structuredClone(prevEdges);
+  } else if (Array.isArray(prevPoly) && prevPoly.length >= 3) {
+    entry["edges"] = polygonEdgesOf(prevPoly as Point[]);
+  }
+  const prevNiches = prev && Array.isArray(prev["niches"]) ? prev["niches"] as Array<Record<string, unknown>> : [];
+  if (prevNiches.some((n) => n?.exist === true)) {
+    entry["niches"] = structuredClone(prevNiches).map((n) => {
+      const rec = n as { exist?: unknown; parts?: Record<string, Record<string, unknown>> };
+      if (rec?.exist !== true) return n;
+      for (const part of Object.values(rec.parts ?? {})) part["id_ceiling"] = zoneId;
+      return n;
+    });
+  }
+  return entry;
+}
+
 export function setCeilingFinish(model: Model, roomRef: string, material: CeilingCover, params: CeilingFinishParams): CeilingFinishResult {
   if (!(CEILING_COVERS as readonly string[]).includes(material)) {
     throw new McpError("INVALID_ARGUMENT", `неизвестное покрытие потолка «${material}» (допустимо: ${CEILING_COVERS.join(", ")})`);
@@ -681,16 +718,31 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
   // (complex/offset/radius/material2) сохраняются, complexRemoved=false.
   const ceilings0 = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
   const existRecs = ceilings0.filter((c) => c?.["exist"] === true);
+  // ревью 335 m1: непокрытые зоны зонированного потолка (в редакторе отделку ставят
+  // по зоне кликом — часть зон может быть без покрытия). Тот же материал покрывает
+  // ИХ ТОЖЕ (клик ластика/материала по зоне без отделки ставит покрытие — r.material
+  // не совпал, обработчик вызывается); существующие записи не трогаются, complex
+  // на покрытых зонах сохраняется.
+  const uncoveredZones = ceilings0
+    .map((c, i) => ({ c, i }))
+    .filter(({ c }) => !c || c["exist"] !== true);
   if (existRecs.length > 0 && existRecs.every((c) => c["material"] === material)) {
     const head = existRecs[0]!;
     const levelSame = params.level === undefined || params.level === head["level"];
     const profileSame = params.profile === undefined || params.profile === head["profile"];
-    if (levelSame && profileSame) {
+    if (levelSame && profileSame && uncoveredZones.length === 0) {
       return { id: (head["id"] as string) ?? id, complexRemoved: false };
     }
     for (const c of existRecs) {
       if (params.level !== undefined) c["level"] = params.level;
       if (params.profile !== undefined) c["profile"] = params.profile;
+    }
+    if (uncoveredZones.length > 0 && ceilings0.length > 1) {
+      const ceilings = [...ceilings0];
+      for (const { c, i } of uncoveredZones) {
+        ceilings[i] = zoneCeilingEntry(c, material, params.level ?? 0, params.profile ?? "standard");
+      }
+      room.ceilings = ceilings;
     }
     return { id: (head["id"] as string) ?? id, complexRemoved: false };
   }
@@ -711,35 +763,7 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
   // не трогаем (полигон [0] полигоном всей комнаты переписывал зоны).
   if (ceilings.length > 1) {
     for (let i = 0; i < ceilings.length; i++) {
-      const prev = ceilings[i] as Record<string, unknown> | undefined;
-      const zoneId = `_c${newId(8)}`;
-      const entry: Record<string, unknown> = {
-        exist: true,
-        id: zoneId,
-        material,
-        level: params.level ?? 0,
-        profile: params.profile ?? "standard",
-      };
-      const prevPoly = prev?.["polygon"];
-      if (Array.isArray(prevPoly) && prevPoly.length >= 3) entry["polygon"] = structuredClone(prevPoly);
-      const prevEdges = prev?.["edges"];
-      if (Array.isArray(prevEdges) && prevEdges.length > 0) {
-        entry["edges"] = structuredClone(prevEdges);
-      } else if (Array.isArray(prevPoly) && prevPoly.length >= 3) {
-        // ревью 313 C: записи без edges (созданные до пересчёта зон) — строим по полигону,
-        // иначе finish_ceiling_niche_add после remove→set ложно отказывает
-        entry["edges"] = polygonEdgesOf(prevPoly as Point[]);
-      }
-      const prevNiches = prev && Array.isArray(prev["niches"]) ? prev["niches"] as Array<Record<string, unknown>> : [];
-      if (prevNiches.some((n) => n?.exist === true)) {
-        entry["niches"] = structuredClone(prevNiches).map((n) => {
-          const rec = n as { exist?: unknown; parts?: Record<string, Record<string, unknown>> };
-          if (rec?.exist !== true) return n;
-          for (const part of Object.values(rec.parts ?? {})) part["id_ceiling"] = zoneId;
-          return n;
-        });
-      }
-      ceilings[i] = entry;
+      ceilings[i] = zoneCeilingEntry(ceilings[i] as Record<string, unknown> | undefined, material, params.level ?? 0, params.profile ?? "standard");
     }
     room.ceilings = ceilings;
     return { id: (ceilings[0] as Record<string, unknown>).id as string, complexRemoved };
@@ -1726,6 +1750,41 @@ export function finishMismatches(
   gotWalls?: Record<string, unknown>,
 ): string[] {
   return finishCompare(expectedRooms, gotRooms, expectedWalls, gotWalls, "normalize").problems;
+}
+
+/**
+ * Подсказка к отказу из-за потери отделки при нормализации (ревью 335 M1):
+ * первый отказ, в который упирается агент, — wall_delete с общим текстом из
+ * дюжины категорий, в котором нет порядка снятия отделки. Текст строится из
+ * ФАКТИЧЕСКИХ строк problems (какая отделка мешает — пол/отделка стен/потолок,
+ * двухуровневый потолок по complex-сигнатуре зоны из ceilingSigsOf), а не
+ * общим списком инструментов. Путь снятия: двухуровневый потолок — сначала
+ * finish_ceiling_set другим покрытием (complex_removed), затем
+ * finish_ceiling_remove; пол — finish_floor_remove; стороны стен —
+ * finish_wall_remove; после снятия повторить операцию.
+ */
+export function finishLossHint(problems: string[]): string {
+  const has = (re: RegExp): boolean => problems.some((p) => re.test(p));
+  const floor = has(/покрытие пола|полигон пола|незакрытая полом/);
+  const wallSides = has(/отделка стены/);
+  const ceiling = has(/покрытие потолка|потолка/);
+  // двухуровневая отделка в problems видна по сигнатуре зоны (JSON-объект complex,
+  // не null) — ceilingSigsOf включает complex-поля в строку сигнатуры
+  const complex = has(/"complex":\{/);
+  const what: string[] = [];
+  if (floor) what.push("покрытие пола");
+  if (wallSides) what.push("отделку сторон стен");
+  if (ceiling) what.push(complex ? "двухуровневое покрытие потолка" : "покрытие потолка");
+  const steps: string[] = [];
+  if (ceiling && complex) steps.push("сначала finish_ceiling_set с другим покрытием (снимет двухуровневый с warning complex_removed), затем finish_ceiling_remove");
+  else if (ceiling) steps.push("finish_ceiling_remove");
+  if (floor) steps.push("finish_floor_remove");
+  if (wallSides) steps.push("finish_wall_remove");
+  if (steps.length === 0) {
+    return "отделка комнаты, которая исчезает или сливается при изменении стен, не переживает операцию — снимите отделку (finish_floor_remove / finish_wall_remove / finish_ceiling_remove) до операции и повторите";
+  }
+  return `отделка комнаты, которая исчезает или сливается при изменении стен, не переживает операцию — ` +
+    `мешает ${what.join(", ") || "отделка"}; снимите её до операции и повторите: ${steps.join("; ")}`;
 }
 
 /** Список отделки для публичного ответа (finish_get): по одной или всем комнатам. */

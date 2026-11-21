@@ -30,7 +30,7 @@ async function start(): Promise<Client> {
   return client;
 }
 
-type CeilingView = { material: string; level?: number; complex: boolean; level2?: number; material2?: string };
+type CeilingView = { material: string; level?: number; profile?: string; complex: boolean; level2?: number; material2?: string };
 
 async function ceilingOf(client: Client): Promise<CeilingView | undefined> {
   const res = await client.callTool({ name: "finish_get", arguments: { room_id: "R1" } });
@@ -110,6 +110,24 @@ test("ревью 333 Р1: тот же материал + level=-5 / profile=bogu
     // модель не тронута: уровень остался прежним (0)
     const c = await ceilingOf(client);
     assert.equal(c!.level, 0, "после отказов уровень не изменился");
+  } finally {
+    await client.close();
+  }
+});
+
+test("ревью 335 m3: тот же материал + level/profile на complex — complex сохраняется, поля на месте (мутации C/D/E краснеют)", async () => {
+  const client = await start();
+  try {
+    assert.ok(!((await client.callTool({ name: "finish_ceiling_complex_set", arguments: { room_id: "R1" } })).isError));
+    const same = await client.callTool({ name: "finish_ceiling_set", arguments: { room_id: "R1", material: "gypsum_ceiling", level: 20, profile: "standard" } });
+    assert.ok(!same.isError, text(same));
+    assert.ok(!(payload<{ warnings?: string[] }>(same).warnings ?? []).some((w) => w.startsWith("complex_removed")), "без complex_removed: level/profile на месте complex не снимается");
+    const c = await ceilingOf(client);
+    assert.equal(c!.level, 20, `level обновлён на месте: ${JSON.stringify(c)}`);
+    assert.equal(c!.profile, "standard", "профиль записан");
+    assert.equal(c!.complex, true, "complex сохранён при level/profile на месте");
+    assert.equal(c!.level2, 7.5, "level2 на месте");
+    assert.equal(c!.material2, "stretch_ceiling", "material2 на месте");
   } finally {
     await client.close();
   }

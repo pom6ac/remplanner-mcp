@@ -504,7 +504,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     wall_delete: tool(
-      "Удалить стену вместе с её проёмами (в ответе — число удалённых проёмов). Связанные стены теряют связь в узле.",
+      "Удалить стену вместе с её проёмами (в ответе — число удалённых проёмов). Связанные стены теряют связь в узле. " +
+        "Если у исчезающей или сливаемой комнаты есть отделка (пол, потолок, стороны стен), операция отклоняется — " +
+        "отделка не переживает удаление стены: снимите её до операции (finish_floor_remove / finish_wall_remove / " +
+        "finish_ceiling_remove; двухуровневый потолок — сначала finish_ceiling_set другим покрытием, затем " +
+        "finish_ceiling_remove) и повторите.",
       { wall_id: wallRef },
       async (a) => {
         const ws = wsOf();
@@ -2277,7 +2281,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "смену покрытия; на paint_ceiling/whitewash_ceiling при существующих нишах — отказ " +
         "(сначала finish_ceiling_niche_remove). Двухуровневый потолок (complex): смена на ДРУГОЙ " +
         "материал его НЕ переживает — снимается с warning complex_removed (как в редакторе); " +
-        "смена на тот же материал — no-op, двухуровневая отделка сохраняется (как в редакторе). " +
+        "смена на тот же материал — no-op; переданные level/profile обновляются на месте, " +
+        "двухуровневая отделка сохраняется (как в редакторе); непокрытые зоны зонированного " +
+        "потолка покрываются тем же материалом. " +
         "После правки вызывайте model_validate и project_save.",
       {
         room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),

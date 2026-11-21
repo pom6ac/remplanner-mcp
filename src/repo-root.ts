@@ -10,7 +10,9 @@ import { dirname, resolve } from "node:path";
 
 export function gitRepoRoot(cwd: string = import.meta.dirname): string | null {
   try {
-    const out = execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd, encoding: "utf8" }).trim();
+    // ревью 335 n1: stderr подавлен — вне git `fatal: not a git repository`
+    // не должен попадать в stderr процесса (пробы, генератор, тесты)
+    const out = execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     if (!out) return null;
     return dirname(resolve(cwd, out));
   } catch {

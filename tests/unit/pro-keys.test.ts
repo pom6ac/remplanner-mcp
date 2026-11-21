@@ -63,13 +63,13 @@ async function start(tariff: "free" | "pro" | null): Promise<Client> {
   return client;
 }
 
-test("pro-keys: единый список не пуст и совпадает с эталоном 328-pro-anon.json (если эталон локально есть)", () => {
+test("pro-keys: единый список не пуст и совпадает с эталоном 328-pro-anon.json (если эталон локально есть)", (t) => {
   assert.ok(PRO_EDITOR_KEYS.length >= 500, `в списке ${PRO_EDITOR_KEYS.length} ключей`);
   assert.equal(new Set(PRO_EDITOR_KEYS).size, PRO_EDITOR_KEYS.length, "дубликаты в списке");
   const sorted = [...PRO_EDITOR_KEYS].sort();
   assert.deepEqual(PRO_EDITOR_KEYS, sorted, "список отсортирован (генератор)");
   const etalon = findEtalon();
-  if (etalon === null) return; // CI/чистое окружение — эталона нет
+  if (etalon === null) return t.skip("эталона нет (CI/чистое окружение)"); // ревью 335 n1: пропуск виден, не тихий pass
   const parsed = JSON.parse(readFileSync(etalon, "utf8")) as { pro?: unknown };
   const etalonKeys = [...new Set((Array.isArray(parsed.pro) ? parsed.pro : []).filter((k): k is string => typeof k === "string"))].sort();
   assert.deepEqual(PRO_EDITOR_KEYS, etalonKeys, "список в src разошёлся с эталоном — перегенерируйте scripts/gen-pro-editor-keys.ts");
