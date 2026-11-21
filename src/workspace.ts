@@ -707,7 +707,7 @@ export class Workspace {
       // с отделкой, которая исчезает или сливается), называет конкретную причину и
       // порядок снятия отделки — из фактических расхождений, а не общим списком категорий
       if (finishNorm.problems.length > 0) {
-        const finishHint = finishLossHint(finishNorm.problems);
+        const finishHint = finishLossHint(finishNorm.losses);
         throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил отделку комнаты — мутация отменена; ${finishHint}`, {
           details: { finish_mismatches: finishNorm.problems, hint: finishHint },
         });

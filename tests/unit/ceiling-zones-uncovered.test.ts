@@ -6,11 +6,12 @@
 // (мутации «снимает complex», «только первая запись», «игнорирует profile»
 // краснеют), uncovered-зона покрывается.
 // M1 (текст отказа): finishLossHint строит подсказку из фактических строк
-// problems — какая отделка мешает и порядок её снятия.
+// problems — какая отделка мешает и порядок её снятия. Фикс-5 (ревью 337):
+// сопоставление — по кодам видов потери (FinishLoss), не регулярками по тексту.
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { Model, Point } from "../../src/model/types.ts";
-import { setCeilingFinish, finishLossHint } from "../../src/model/finish.ts";
+import { setCeilingFinish, finishLossHint, type FinishLoss } from "../../src/model/finish.ts";
 
 const sq = (x0: number): Point[] => [
   { x: x0, y: 0 }, { x: x0 + 200, y: 0 }, { x: x0 + 200, y: 300 }, { x: x0, y: 300 },
@@ -91,7 +92,7 @@ test("335 m1: все зоны покрыты тем же материалом �
 
 test("335 M1: двухуровневый потолок — подсказка с finish_ceiling_set другим покрытием → finish_ceiling_remove", () => {
   const hint = finishLossHint([
-    'room r2: потеряно покрытие потолка ({"material":"gypsum_ceiling","level":15,"profile":"standard","complex":{"material2":"stretch_ceiling","level2":75,"offset":40,"radius":10,"type":"closed"}}) при split/merge',
+    { kind: "ceiling_complex", text: 'room r2: потеряно покрытие потолка ({"material":"gypsum_ceiling","level":15,"profile":"standard","complex":{"material2":"stretch_ceiling","level2":75,"offset":40,"radius":10,"type":"closed"}}) при split/merge' },
   ]);
   assert.match(hint, /двухуровневое покрытие потолка/, `что мешает: ${hint}`);
   assert.match(hint, /finish_ceiling_set с другим покрытием/, `первый шаг: ${hint}`);
@@ -102,9 +103,9 @@ test("335 M1: двухуровневый потолок — подсказка �
 
 test("335 M1: пол и отделка стен — подсказка с finish_floor_remove и finish_wall_remove", () => {
   const hint = finishLossHint([
-    "room r1: потеряно покрытие пола (laminate) при split/merge",
-    "room r1: потеряна отделка стены W3 (paint_wall, слой 1) при split/merge",
-  ]);
+    { kind: "floor", text: "room r1: потеряно покрытие пола (laminate) при split/merge" },
+    { kind: "wall_side", text: "room r1: потеряна отделка стены W3 (paint_wall, слой 1) при split/merge" },
+  ] as FinishLoss[]);
   assert.match(hint, /покрытие пола/, `что мешает: ${hint}`);
   assert.match(hint, /отделку сторон стен/, `что мешает: ${hint}`);
   assert.match(hint, /finish_floor_remove/, `снятие пола: ${hint}`);
@@ -114,10 +115,39 @@ test("335 M1: пол и отделка стен — подсказка с finish
 
 test("335 M1: простой потолок (complex:null) — подсказка без шага смены материала", () => {
   const hint = finishLossHint([
-    'room r1: потеряно покрытие потолка ({"material":"gypsum_ceiling","level":0,"profile":"standard","complex":null}) при split/merge',
+    { kind: "ceiling", text: 'room r1: потеряно покрытие потолка ({"material":"gypsum_ceiling","level":0,"profile":"standard","complex":null}) при split/merge' },
   ]);
   assert.match(hint, /покрытие потолка/, `что мешает: ${hint}`);
   assert.doesNotMatch(hint, /двухуровнев/, `не двухуровневый: ${hint}`);
   assert.match(hint, /finish_ceiling_remove/, `ластик: ${hint}`);
   assert.doesNotMatch(hint, /finish_ceiling_set/, `смена материала не нужна: ${hint}`);
+});
+
+// --- 337 n3: непокрытая зона наследует level/profile покрытых зон ---
+
+test("337 n3: непокрытая зона без переданного level/profile наследует head (level 15), а не 0", () => {
+  const m = zoneModel([
+    { exist: true, id: "_c1", material: "gypsum_ceiling", level: 15, profile: "standard", polygon: sq(0), ...COMPLEX_FIELDS },
+    { exist: false, polygon: sq(200) },
+  ]);
+  const res = setCeilingFinish(m, "r1", "gypsum_ceiling", {});
+  assert.equal(res.complexRemoved, false);
+  const zs = zonesOf(m);
+  assert.equal(zs[1]!.exist, true, "непокрытая зона покрыта");
+  assert.equal(zs[1]!.level, 15, `наследует level соседней покрытой зоны: ${JSON.stringify(zs[1])}`);
+  assert.equal(zs[1]!.profile, "standard", "наследует profile соседней покрытой зоны");
+});
+
+test("337 n3: без записей exist (нечего наследовать) — умолчания 0/standard; переданные параметры приоритетны", () => {
+  const m = zoneModel([
+    { exist: false, polygon: sq(0) },
+    { exist: true, id: "_c1", material: "gypsum_ceiling", level: 15, profile: "standard", polygon: sq(200) },
+    { exist: false, polygon: sq(0) },
+  ]);
+  // exist:true есть только в [1]; покрытая зона _c2 остаётся, непокрытая [0] наследует её level
+  setCeilingFinish(m, "r1", "gypsum_ceiling", {});
+  const zs = zonesOf(m);
+  assert.equal(zs[0]!.exist, true, "первая зона покрыта");
+  assert.equal(zs[0]!.level, 15, `наследует level покрытой зоны: ${JSON.stringify(zs[0])}`);
+  assert.equal(zs[0]!.profile, "standard", "наследует profile покрытой зоны");
 });

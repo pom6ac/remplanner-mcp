@@ -740,7 +740,9 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
     if (uncoveredZones.length > 0 && ceilings0.length > 1) {
       const ceilings = [...ceilings0];
       for (const { c, i } of uncoveredZones) {
-        ceilings[i] = zoneCeilingEntry(c, material, params.level ?? 0, params.profile ?? "standard");
+        // n3 ревью 337: без переданного level/profile непокрытая зона наследует
+        // level/profile соседних покрытых зон (head), а не сбрасывается в 0
+        ceilings[i] = zoneCeilingEntry(c, material, params.level ?? (num(head["level"]) ?? 0), params.profile ?? (typeof head["profile"] === "string" ? head["profile"] : "standard"));
       }
       room.ceilings = ceilings;
     }
@@ -1354,7 +1356,52 @@ function roomHasFloorCeiling(room: RoomRec): boolean {
  *  «save» — после записи по GET (строго, без освобождений). */
 export type FinishMode = "normalize" | "save";
 
-export type FinishCompareResult = { problems: string[]; warnings: string[] };
+/**
+ * Виды потери отделки — единственный источник кодов (ревью 337 M1-а): finishCompare
+ * помечает каждую problem кодом вида (структурно, рядом с текстом), а finishLossHint
+ * сопоставляет по коду через FINISH_LOSS_REGISTRY, не регулярками по русскому тексту.
+ * Новый вид потери — новая строка здесь И запись в FINISH_LOSS_REGISTRY (сторож в
+ * wall-delete-finish-hint.test.ts краснеет, если записи в реестре нет).
+ */
+export const FINISH_LOSS_KINDS = [
+  "floor_molding", "ceiling_molding", "niche",
+  "ceiling_complex", "ceiling",
+  "floor", "wall_side",
+  "foreign_ceiling",
+] as const;
+export type FinishLossKind = (typeof FINISH_LOSS_KINDS)[number];
+/** problem с кодом вида: text — ровно та же строка, что и в problems. */
+export type FinishLoss = { kind: FinishLossKind; text: string };
+
+/** Правило реестра «вид потери → чем снимать → порядок» (ревью 337 M1-а). */
+export type FinishLossRule = {
+  kind: FinishLossKind;
+  /** что называем в подсказке как мешающее (винительный падеж) */
+  label: string;
+  /** инструмент(ы) снятия; null — вида без однозначного инструмента (запасной текст) */
+  tool: string | null;
+  /** порядок снятия в подсказке: меньше — раньше (ниша и плинтусы раньше ластиков:
+   *  ластик потолка при нише отказывает; двухуровневый — смена материала раньше ластика) */
+  order: number;
+};
+
+/**
+ * Реестр «вид потери отделки → инструмент снятия → порядок» — единственный источник
+ * подсказки (ревью 337 M1-а): и finishCompare (коды видов), и finishLossHint
+ * (инструменты и порядок) берут данные отсюда, новых списков инструментов в текстах нет.
+ */
+export const FINISH_LOSS_REGISTRY: readonly FinishLossRule[] = [
+  { kind: "niche", label: "закарнизную нишу", tool: "finish_ceiling_niche_remove", order: 1 },
+  { kind: "ceiling_molding", label: "потолочный плинтус", tool: "finish_ceiling_molding_remove", order: 2 },
+  { kind: "floor_molding", label: "плинтус пола", tool: "finish_floor_molding_remove", order: 3 },
+  { kind: "ceiling_complex", label: "двухуровневое покрытие потолка", tool: "finish_ceiling_set с другим покрытием (снимет двухуровневый с warning complex_removed), затем finish_ceiling_remove", order: 4 },
+  { kind: "ceiling", label: "покрытие потолка", tool: "finish_ceiling_remove", order: 5 },
+  { kind: "floor", label: "покрытие пола", tool: "finish_floor_remove", order: 6 },
+  { kind: "wall_side", label: "отделку сторон стен", tool: "finish_wall_remove", order: 7 },
+  { kind: "foreign_ceiling", label: "чужое покрытие потолка", tool: null, order: 8 },
+];
+
+export type FinishCompareResult = { problems: string[]; warnings: string[]; losses: FinishLoss[] };
 
 type WallPartSig = { pid?: string; line: [Point, Point]; type: string; layer: number; height: number; fromFloor: number };
 
@@ -1379,7 +1426,22 @@ export function finishCompare(
   const expW = asFinishWalls(expectedWalls);
   const gotW = asFinishWalls(gotWalls);
   const problems: string[] = [];
+  const losses: FinishLoss[] = [];
   const warnings: string[] = [];
+  // ревью 337 M1-а: каждая problem получает код вида потери (структурно, рядом
+  // с текстом) — подсказка строится по кодам из FINISH_LOSS_REGISTRY
+  const add = (kind: FinishLossKind, text: string): void => {
+    losses.push({ kind, text });
+    problems.push(text);
+  };
+  /** Вид потери потолка (n4 ревью 337): complex — только по записям ceilings
+   *  самой комнаты (complex:true), не по чужому покрытию и не по правой части
+   *  «не совпало (exp → got)» в тексте. */
+  const ceilingKind = (room: RoomRec, also?: RoomRec): FinishLossKind =>
+    ceilingHasComplex(room) || (also !== undefined && ceilingHasComplex(also)) ? "ceiling_complex" : "ceiling";
+  /** Код вида для плинтусов и ниши (раздел 5). */
+  const containerKind = (key: "floorMoldings" | "ceilingMoldings" | "__niches"): FinishLossKind =>
+    key === "__niches" ? "niche" : key === "floorMoldings" ? "floor_molding" : "ceiling_molding";
 
   // 1. точное сопоставление по каноническому контуру (id — подсказка, проверенная геометрией)
   const { pairs: exact } = matchRoomsByContour(expectedRooms, gotRooms);
@@ -1405,14 +1467,14 @@ export function finishCompare(
       if (!expFloor && expCeils.length === 0) continue; // только стены — сверяются по рёбрам ниже
       if (mode === "save") {
         // строго: комната на сервере не совпала по контуру — освобождений нет (ревью 98 N1)
-        if (expFloor) problems.push(`room ${rid}: комната исчезла или изменилась на сервере — покрытие пола (${expFloor.cover}) потеряно`);
-        if (expCeils.length > 0) problems.push(`room ${rid}: комната исчезла или изменилась на сервере — покрытие потолка потеряно (${expCeils.join(" | ")})`);
+        if (expFloor) add("floor", `room ${rid}: комната исчезла или изменилась на сервере — покрытие пола (${expFloor.cover}) потеряно`);
+        if (expCeils.length > 0) add(ceilingKind(room), `room ${rid}: комната исчезла или изменилась на сервере — покрытие потолка потеряно (${expCeils.join(" | ")})`);
         continue;
       }
       const heir = heirOf.get(rid) ?? null;
       if (!heir) {
-        if (expFloor) problems.push(`room ${rid}: потеряно покрытие пола (${expFloor.cover}) при split/merge`);
-        if (expCeils.length > 0) problems.push(`room ${rid}: потеряно покрытие потолка (${expCeils.join(" | ")}) при split/merge`);
+        if (expFloor) add("floor", `room ${rid}: потеряно покрытие пола (${expFloor.cover}) при split/merge`);
+        if (expCeils.length > 0) add(ceilingKind(room), `room ${rid}: потеряно покрытие потолка (${expCeils.join(" | ")}) при split/merge`);
         continue;
       }
       const heirRoom = got[heir.key]!;
@@ -1427,7 +1489,7 @@ export function finishCompare(
         if (expFloor) {
           for (const k of heir.partKeys) {
             const gf = floorSig(got[k]!);
-            if (!gf || !sameFloor(expFloor, gf)) problems.push(`room ${rid}: часть ${k} не унаследовала покрытие пола (${expFloor.cover}) при split`);
+            if (!gf || !sameFloor(expFloor, gf)) add("floor", `room ${rid}: часть ${k} не унаследовала покрытие пола (${expFloor.cover}) при split`);
           }
         }
         if (expCeils.length > 0) {
@@ -1436,19 +1498,21 @@ export function finishCompare(
           for (const k of heir.partKeys) {
             const partCeils = ceilingSigsOf(got[k]!);
             if (partCeils.length === 0) {
-              problems.push(`room ${rid}: часть ${k} не унаследовала покрытие потолка (${expCeils.join(" | ")}) при split`);
+              add(ceilingKind(room), `room ${rid}: часть ${k} не унаследовала покрытие потолка (${expCeils.join(" | ")}) при split`);
               continue;
             }
             const foreign = partCeils.filter((c) => !allowed.has(c));
             if (foreign.length > 0) {
-              problems.push(`room ${rid}: часть ${k} получила чужое покрытие потолка (${foreign.join(" | ")}) при split`);
+              // n4 ревью 337: чужое покрытие — не потеря отделки самой комнаты,
+              // код foreign_ceiling (подсказка без инструментов снятия)
+              add("foreign_ceiling", `room ${rid}: часть ${k} получила чужое покрытие потолка (${foreign.join(" | ")}) при split`);
               continue;
             }
             for (const c of partCeils) covered.add(c);
           }
           const uncovered = [...new Set(expCeils)].filter((c) => !covered.has(c));
           if (uncovered.length > 0) {
-            problems.push(`room ${rid}: ни одна часть split не унаследовала покрытие потолка (${uncovered.join(" | ")})`);
+            add(ceilingKind(room), `room ${rid}: ни одна часть split не унаследовала покрытие потолка (${uncovered.join(" | ")})`);
           }
         }
       } else {
@@ -1465,12 +1529,12 @@ export function finishCompare(
         const gotFloor = floorSig(heirRoom);
         const gotCeils = ceilingSigsOf(heirRoom);
         if (srcFloors.length > 0 && (!gotFloor || !srcFloors.some((s) => sameFloor(s, gotFloor)))) {
-          problems.push(`room ${rid}: объединённая комната потеряла покрытие пола (${srcFloors.map((s) => s.cover).join(" / ")}) при merge`);
+          add("floor", `room ${rid}: объединённая комната потеряла покрытие пола (${srcFloors.map((s) => s.cover).join(" / ")}) при merge`);
         }
         if (srcCeils.length > 0) {
           const allowed = new Set(srcCeils);
           if (gotCeils.length === 0 || gotCeils.some((c) => !allowed.has(c))) {
-            problems.push(`room ${rid}: объединённая комната потеряла покрытие потолка (${srcCeils.join(" | ")}) при merge`);
+            add(ceilingKind(room), `room ${rid}: объединённая комната потеряла покрытие потолка (${srcCeils.join(" | ")}) при merge`);
           }
         }
       }
@@ -1479,9 +1543,9 @@ export function finishCompare(
     const match = got[gid]!;
     if (expFloor) {
       const gotFloor = floorSig(match);
-      if (!gotFloor) problems.push(`room ${rid}: потеряно покрытие пола (${expFloor.cover})`);
+      if (!gotFloor) add("floor", `room ${rid}: потеряно покрытие пола (${expFloor.cover})`);
       else if (!sameFloor(expFloor, gotFloor)) {
-        problems.push(`room ${rid}: покрытие пола не совпало (${JSON.stringify(expFloor)} → ${JSON.stringify(gotFloor)})`);
+        add("floor", `room ${rid}: покрытие пола не совпало (${JSON.stringify(expFloor)} → ${JSON.stringify(gotFloor)})`);
       }
       // площадь покрытия пола (хвост ревью 95, ревью 246 №4): сравнение до/после —
       // блокируется только прирост незакрытой площади внутри комнаты (потеря
@@ -1495,7 +1559,7 @@ export function finishCompare(
       if (expFloorPoly && expFloorPoly.length >= 3) {
         const gotFloorPoly = ((match.floors as Array<Record<string, unknown>> | undefined) ?? [])[0]?.["polygon"] as Point[] | undefined;
         if (!gotFloorPoly || gotFloorPoly.length < 3) {
-          problems.push(`room ${rid}: потерян полигон пола`);
+          add("floor", `room ${rid}: потерян полигон пола`);
         } else {
           const expRoomPoly = roomPolygon(room) ?? [];
           const gotRoomPoly = roomPolygon(match) ?? [];
@@ -1506,7 +1570,7 @@ export function finishCompare(
           };
           const grewCm2 = uncovered(gotFloorPoly, gotRoomPoly) - uncovered(expFloorPoly, expRoomPoly);
           if (grewCm2 > Math.max(perimeterCm(gotRoomPoly) * COORD_TOL, 1)) {
-            problems.push(`room ${rid}: незакрытая полом площадь комнаты выросла на ${grewCm2.toFixed(1)} см² — потеря покрытия пола`);
+            add("floor", `room ${rid}: незакрытая полом площадь комнаты выросла на ${grewCm2.toFixed(1)} см² — потеря покрытия пола`);
           }
         }
       }
@@ -1517,7 +1581,8 @@ export function finishCompare(
     if (expCeils.length > 0) {
       const gotCeils = ceilingSigsOf(match);
       if (expCeils.length !== gotCeils.length || expCeils.some((c, i) => c !== gotCeils[i])) {
-        problems.push(`room ${rid}: покрытие потолка не совпало (${expCeils.join(" | ") || "нет"} → ${gotCeils.join(" | ") || "нет"})`);
+        // n4 ревью 337: complex — по записям комнат (exp и got), не по правой части текста
+        add(ceilingKind(room, match), `room ${rid}: покрытие потолка не совпало (${expCeils.join(" | ") || "нет"} → ${gotCeils.join(" | ") || "нет"})`);
       }
     }
   }
@@ -1563,14 +1628,14 @@ export function finishCompare(
     if (!gid) {
       if (mode === "save") {
         for (const sig of expWallsList) {
-          problems.push(`room ${rid}: потеряна отделка стены ${sig.pid ?? "?"} (${sig.type}, слой ${sig.layer}) — комната не найдена на сервере`);
+          add("wall_side", `room ${rid}: потеряна отделка стены ${sig.pid ?? "?"} (${sig.type}, слой ${sig.layer}) — комната не найдена на сервере`);
         }
         continue;
       }
       const heir = heirOf.get(rid) ?? null;
       if (!heir) {
         for (const sig of expWallsList) {
-          problems.push(`room ${rid}: потеряна отделка стены ${sig.pid ?? "?"} (${sig.type}, слой ${sig.layer}) при split/merge`);
+          add("wall_side", `room ${rid}: потеряна отделка стены ${sig.pid ?? "?"} (${sig.type}, слой ${sig.layer}) при split/merge`);
         }
         continue;
       }
@@ -1586,7 +1651,7 @@ export function finishCompare(
           (gotPartsByRoom.get(k) ?? []).some((g) => sameParams(w)(g) && nearRoom(g, k) && gotPartNear(w, g, gotW) !== null && overlapsExpLine(w, g)),
         );
         if (!survived) {
-          problems.push(`room ${rid}: потеряна отделка стены ${w.pid ?? "?"} (${w.type}, слой ${w.layer}) при split`);
+          add("wall_side", `room ${rid}: потеряна отделка стены ${w.pid ?? "?"} (${w.type}, слой ${w.layer}) при split`);
         }
       }
       continue;
@@ -1636,7 +1701,7 @@ export function finishCompare(
         covered = firstBadGap(expSpan, spans, openingsAxis, axisLen, END_TRIM_TOL, GAP_TOL) === null;
       }
       if (!covered) {
-        problems.push(`room ${rid}: потеряна отделка стены ${w.pid ?? "?"} (${w.type}, слой ${w.layer})`);
+        add("wall_side", `room ${rid}: потеряна отделка стены ${w.pid ?? "?"} (${w.type}, слой ${w.layer})`);
       }
     }
   }
@@ -1661,6 +1726,7 @@ export function finishCompare(
   };
   for (const key of ["floorMoldings", "ceilingMoldings", "__niches"] as const) {
     const label = key === "__niches" ? "ниша" : key === "floorMoldings" ? "плинтус" : "потолочный плинтус";
+    const kind = containerKind(key);
     const gotSigsByRoom = new Map<string, EdgePartSig[]>();
     for (const [gk, gr] of Object.entries(got)) {
       gotSigsByRoom.set(gk, containerSigsOf(gr, key));
@@ -1695,14 +1761,14 @@ export function finishCompare(
       if (!gid) {
         if (mode === "save") {
           for (const sig of expList) {
-            problems.push(`room ${rid}: потерян ${label} ${sig.pid ?? ""} (${sig.type}) — комната не найдена на сервере`);
+            add(kind, `room ${rid}: потерян ${label} ${sig.pid ?? ""} (${sig.type}) — комната не найдена на сервере`);
           }
           continue;
         }
         const heir = heirOf.get(rid) ?? null;
         if (!heir) {
           for (const sig of expList) {
-            problems.push(`room ${rid}: потерян ${label} ${sig.pid ?? ""} (${sig.type}) при split/merge`);
+            add(kind, `room ${rid}: потерян ${label} ${sig.pid ?? ""} (${sig.type}) при split/merge`);
           }
           continue;
         }
@@ -1715,7 +1781,7 @@ export function finishCompare(
             (gotSigsByRoom.get(k) ?? []).some((g) => sameParams(w)(g) && nearRoom(g, k) && gotPartNear(w, g, gotW) !== null && overlapsExpLine(w, g)),
           );
           if (!survived) {
-            problems.push(`room ${rid}: потерян ${label} ${w.pid ?? ""} (${w.type}) при split`);
+            add(kind, `room ${rid}: потерян ${label} ${w.pid ?? ""} (${w.type}) при split`);
           }
         }
         continue;
@@ -1734,12 +1800,12 @@ export function finishCompare(
         ];
         const covered = onLine.length > 0 && expectedAreaCovered(w.line, onLine, openingsLine);
         if (!covered) {
-          problems.push(`room ${rid}: потерян ${label} ${w.pid ?? ""} (${w.type})`);
+          add(kind, `room ${rid}: потерян ${label} ${w.pid ?? ""} (${w.type})`);
         }
       }
     }
   }
-  return { problems, warnings };
+  return { problems, warnings, losses };
 }
 
 /** Список расхождений (режим normalize, до записи): пусто — совпало. */
@@ -1753,38 +1819,34 @@ export function finishMismatches(
 }
 
 /**
- * Подсказка к отказу из-за потери отделки при нормализации (ревью 335 M1):
- * первый отказ, в который упирается агент, — wall_delete с общим текстом из
- * дюжины категорий, в котором нет порядка снятия отделки. Текст строится из
- * ФАКТИЧЕСКИХ строк problems (какая отделка мешает — пол/отделка стен/потолок,
- * двухуровневый потолок по complex-сигнатуре зоны из ceilingSigsOf), а не
- * общим списком инструментов. Путь снятия: двухуровневый потолок — сначала
- * finish_ceiling_set другим покрытием (complex_removed), затем
- * finish_ceiling_remove; пол — finish_floor_remove; стороны стен —
- * finish_wall_remove; после снятия повторить операцию.
+ * Подсказка к отказу из-за потери отделки при нормализации (ревью 335 M1,
+ * фикс-5 ревью 337 M1-а): первый отказ, в который упирается агент, — wall_delete
+ * с общим текстом из дюжины категорий, в котором нет порядка снятия отделки.
+ * Текст строится по ОДНОМУ реестру FINISH_LOSS_REGISTRY («вид потери → чем
+ * снимать → порядок»): вход — фактические problems с кодами видов от
+ * finishCompare, сопоставление ПО КОДАМ, не регулярками по русскому тексту.
+ * Порядок снятия — поле order: ниша и плинтусы раньше ластиков (ластик потолка
+ * при нише отказывает), двухуровневый потолок — смена материала раньше ластика.
+ * Запасной вариант (виды без инструмента в реестре, например чужое покрытие при
+ * split) — без перечня инструментов, со ссылкой на details.finish_mismatches
+ * и finish_get.
  */
-export function finishLossHint(problems: string[]): string {
-  const has = (re: RegExp): boolean => problems.some((p) => re.test(p));
-  const floor = has(/покрытие пола|полигон пола|незакрытая полом/);
-  const wallSides = has(/отделка стены/);
-  const ceiling = has(/покрытие потолка|потолка/);
-  // двухуровневая отделка в problems видна по сигнатуре зоны (JSON-объект complex,
-  // не null) — ceilingSigsOf включает complex-поля в строку сигнатуры
-  const complex = has(/"complex":\{/);
-  const what: string[] = [];
-  if (floor) what.push("покрытие пола");
-  if (wallSides) what.push("отделку сторон стен");
-  if (ceiling) what.push(complex ? "двухуровневое покрытие потолка" : "покрытие потолка");
-  const steps: string[] = [];
-  if (ceiling && complex) steps.push("сначала finish_ceiling_set с другим покрытием (снимет двухуровневый с warning complex_removed), затем finish_ceiling_remove");
-  else if (ceiling) steps.push("finish_ceiling_remove");
-  if (floor) steps.push("finish_floor_remove");
-  if (wallSides) steps.push("finish_wall_remove");
-  if (steps.length === 0) {
-    return "отделка комнаты, которая исчезает или сливается при изменении стен, не переживает операцию — снимите отделку (finish_floor_remove / finish_wall_remove / finish_ceiling_remove) до операции и повторите";
+export function finishLossHint(losses: readonly FinishLoss[]): string {
+  const kinds = new Set(losses.map((l) => l.kind));
+  const rules = FINISH_LOSS_REGISTRY
+    .filter((r) => kinds.has(r.kind))
+    .sort((a, b) => a.order - b.order);
+  const withTool = rules.filter((r) => r.tool !== null);
+  if (withTool.length === 0) {
+    return "отделка комнаты, которая исчезает или сливается при изменении стен, не переживает операцию — какие именно расхождения — в details.finish_mismatches; проверьте текущую отделку через finish_get, снимите её до операции и повторите";
   }
+  const what = withTool.map((r) => r.label);
+  const steps = withTool.map((r) => r.tool as string);
+  const extra = withTool.length < rules.length
+    ? "; есть и расхождения без однозначного инструмента — см. details.finish_mismatches и finish_get"
+    : "";
   return `отделка комнаты, которая исчезает или сливается при изменении стен, не переживает операцию — ` +
-    `мешает ${what.join(", ") || "отделка"}; снимите её до операции и повторите: ${steps.join("; ")}`;
+    `мешает ${what.join(", ")}; снимите её до операции и повторите: ${steps.join("; ")}${extra}`;
 }
 
 /** Список отделки для публичного ответа (finish_get): по одной или всем комнатам. */

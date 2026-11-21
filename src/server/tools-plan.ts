@@ -505,10 +505,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     wall_delete: tool(
       "Удалить стену вместе с её проёмами (в ответе — число удалённых проёмов). Связанные стены теряют связь в узле. " +
-        "Если у исчезающей или сливаемой комнаты есть отделка (пол, потолок, стороны стен), операция отклоняется — " +
-        "отделка не переживает удаление стены: снимите её до операции (finish_floor_remove / finish_wall_remove / " +
-        "finish_ceiling_remove; двухуровневый потолок — сначала finish_ceiling_set другим покрытием, затем " +
-        "finish_ceiling_remove) и повторите.",
+        "Если у исчезающей или сливаемой комнаты есть отделка (пол, потолок, стороны стен, плинтусы, ниши), операция отклоняется — " +
+        "отделка не переживает удаление стены: снимите её до операции (пол — finish_floor_remove, стороны стен — finish_wall_remove, " +
+        "покрытие потолка — finish_ceiling_remove, плинтус пола — finish_floor_molding_remove, потолочный плинтус — " +
+        "finish_ceiling_molding_remove, закарнизная ниша — finish_ceiling_niche_remove; двухуровневый потолок — сначала " +
+        "finish_ceiling_set другим покрытием, затем finish_ceiling_remove; ниша и плинтусы — раньше ластиков) и повторите.",
       { wall_id: wallRef },
       async (a) => {
         const ws = wsOf();
