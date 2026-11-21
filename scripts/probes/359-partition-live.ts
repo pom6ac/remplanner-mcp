@@ -146,7 +146,9 @@ try {
     console.log("save1 (дверь на перегородке) verified:", save1["verified"]);
     check(save1["verified"] === true, "save verified (дверь на перегородке — падение 356 исправлено)");
 
-    const windowAdd = await call("opening_add", { wall_id: partWall1.id, type: "window", center_mm: 2200, width_mm: 1000, sill_height_mm: 850 }) as { entity?: Record<string, unknown> };
+    // окно на соседней перегородке пробной комнаты (на той же стене, что дверь,
+    // не помещается по ширине: дверь 110–190 см, окно 100 см)
+    const windowAdd = await call("opening_add", { wall_id: partWall3.id, type: "window", center_mm: 1500, width_mm: 1000, sill_height_mm: 850 }) as { entity?: Record<string, unknown> };
     console.log("window on partition:", JSON.stringify(windowAdd.entity));
     created.push({ kind: "opening", siteId: String(windowAdd["entity"]?.id ?? windowAdd["entity"]?.site_id ?? "") });
     logCaptured(".orca-reports/tmp/359-captured.json", created, []);
