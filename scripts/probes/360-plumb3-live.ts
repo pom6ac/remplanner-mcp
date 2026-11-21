@@ -137,7 +137,8 @@ try {
   const before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const backupPath = `.orca-reports/backup-${OBJECT_ID}-360.json`;
   if (!existsSync(backupPath)) writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
-  else {
+  else if (process.argv[2] === "run") {
+    // предусловие только для run; cleanup существует, чтобы привести модель к бэкапу
     const stored = JSON.parse(readFileSync(backupPath, "utf8")) as { model?: Record<string, unknown> };
     if (sig(stored.model as Record<string, unknown>) !== sig(before.model as Record<string, unknown>)) {
       throw new Error("модель на сервере не совпадает с бэкапом этапа 360 — СТОП (без перезаписи бэкапа)");
