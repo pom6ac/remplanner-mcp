@@ -310,10 +310,16 @@ try {
   if (undoName !== "Зал 9") throw new Error(`(в): имя потерялось после undo+save: ${JSON.stringify(undoName)}`);
   console.log("(в) M2-R (rename → wall_move → undo → save): PASS");
 
-  // ---- (г) redo → save verified, имя переживает пересоздание комнаты ----
+  // ---- (г) rename → wall_move → undo → redo → save verified, имя на новом id ----
   await roGuard.assertUnchanged("перед частью (г)");
+  await call("room_set_name", { room_id: roomRef, name: "Зал 9" });
+  const rw2 = await rightWallId();
+  await call("wall_move", { wall_id: rw2, offset_mm: 500 });
+  const u2 = await call("undo", {});
+  console.log("undo (г):", JSON.stringify(u2));
+  if ((u2["applied"] as number) !== 1) throw new Error(`(г): undo не применился: ${JSON.stringify(u2)}`);
   const r = await call("redo", {});
-  console.log("redo:", JSON.stringify(r));
+  console.log("redo (г):", JSON.stringify(r));
   if ((r["applied"] as number) !== 1) throw new Error(`(г): redo не применился: ${JSON.stringify(r)}`);
   await saveTagged("redo");
   await openAndGuard();
@@ -337,8 +343,8 @@ try {
 
   // ---- (д) наблюдение: rename → split (wall_move через противоположную стену) → merge ----
   await roGuard.assertUnchanged("перед частью (д)");
-  const rw2 = await rightWallId();
-  await call("wall_move", { wall_id: rw2, offset_mm: -5000 });
+  const rw3 = await rightWallId();
+  await call("wall_move", { wall_id: rw3, offset_mm: -5000 });
   const splitMg = (await call("model_get", {})) as { rooms?: Array<{ id: string; site_id?: string }> };
   const splitModel = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const splitRooms = (splitModel.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }>; zones?: Array<Record<string, unknown>>; floors?: FloorRec[] }>;
@@ -356,7 +362,7 @@ try {
   journal();
   const splitSave = await observeSave("split");
   // merge обратно в исходный контур
-  await call("wall_move", { wall_id: rw2, offset_mm: 5000 });
+  await call("wall_move", { wall_id: rw3, offset_mm: 5000 });
   const mergeMg = (await call("model_get", {})) as { rooms?: Array<{ id: string; site_id?: string }> };
   const mergeModel = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const mergeRooms = (mergeModel.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }>; zones?: Array<Record<string, unknown>>; floors?: FloorRec[] }>;
