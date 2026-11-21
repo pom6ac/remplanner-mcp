@@ -300,6 +300,11 @@ try {
     console.log("reopen:", JSON.stringify({ keptCold, keptNode, pipes: keptPipes, saveId: save1["save_id"] }));
     if (!keptCold || !keptNode) throw new Error("после reopen пропали вывод/узел");
     if (keptPipes !== 3) throw new Error(`после reopen труб ${keptPipes} (ожидалось 3: water, hot, кусок drainage)`);
+    // value_2 после unset снят, у объединённого вывода высоты согласованы (сырой формат)
+    const coldRaw = (am.items ?? {})[coldSite] as { name?: string; over_floor?: { value?: number; value_2?: number } } | undefined;
+    console.log("cold после reopen:", coldRaw?.name, JSON.stringify(coldRaw?.over_floor));
+    if (coldRaw?.name !== "waterspot_cold_hot") throw Error("reopen: имя вывода не cold_hot");
+    if (coldRaw?.over_floor && "value_2" in coldRaw.over_floor) throw Error("reopen: value_2 остался после unset");
     const png = await call("render_plan", { sheet: "waterplan" });
     const pngLen = ((png as { png_bytes?: number }).png_bytes ?? 0) as number;
     console.log("render waterplan:", pngLen, "байт");
