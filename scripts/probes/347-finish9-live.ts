@@ -238,21 +238,14 @@ try {
   // ---- часть 3: стена делит комнату — поля переживают деление (как в редакторе) ----
   await roGuard.assertUnchanged("перед частью 3");
   const splitX = Math.min(...px) + (Math.max(...px) - Math.min(...px)) / 2;
+  // одна поперечная стена: от верхней грани до нижней (концы на осях стен — Т-стыки)
   const split = await call("wall_add", {
-    start: { x: Math.round((Math.min(...px) + 10) * 10), y: Math.round(Math.min(...py) * 10) },
-    end: { x: Math.round(splitX * 10), y: Math.round(Math.min(...py) * 10) },
-    thickness_mm: 100,
-  });
-  // вертикальная стена поперёк комнаты: от левого ребра до правого
-  const split2 = await call("wall_add", {
     start: { x: Math.round(splitX * 10), y: Math.round(Math.min(...py) * 10) },
     end: { x: Math.round(splitX * 10), y: Math.round(Math.max(...py) * 10) },
     thickness_mm: 100,
   });
-  for (const s of [split, split2]) {
-    const sid = (s as { entity?: { site_id?: string } }).entity?.site_id;
-    if (sid) created.push({ kind: "wall", siteId: sid });
-  }
+  const sid = (split as { entity?: { site_id?: string } }).entity?.site_id;
+  if (sid) created.push({ kind: "wall", siteId: sid });
   await saveTagged("split");
   await openAndGuard();
   const afterSplit = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
