@@ -1,16 +1,21 @@
-// 349 (фикс ревью 348, живая перепроверка M1/M2 в dev-объекте, ID только из env):
-// 1) M1 — подъём пола + точка укладки переживают смену покрытия (finish_floor_set
-//    другим материалом без параметров): save verified, reopen — f0offset/anchor/cover;
-// 2) M2 — имя зоны переживает wall_move (редактор пересоздаёт комнату с новым id):
-//    room_set_name → wall_move → save verified без ложной блокировки; reopen — имя;
-//    room_set_color на новом id → save verified;
-// 3) зачистка: журнал захваченных ID (probe-restore.logCaptured), восстановление
-//    общим probe-restore (restoreByCaptured), save restore, сверка sig с бэкапом
-//    .orca-reports/backup-<OBJECT>-349.json (снимается ДО прогона).
+// 349/353 (живая перепроверка фикс-2 b4193ae перед слиянием PR #52, ID только из env):
+// (а) M1-R — floor_tile (400×400, tile, шов 3) → подъём/якорь → смена на laminate БЕЗ
+//     параметров: после save/reopen у записи умолчания ламината (width/height/stitch_width/
+//     type_laying — сверка с tools.laminate живой страницы, эталон бандла 120/18/0.2/1/2),
+//     f0offset/anchor сохранены;
+// (б) то же покрытие (laminate без параметров): параметры раскладки, подъём, якорь, id
+//     записи сохранены;
+// (в) M2-R — room_set_name → wall_move → undo → save verified, имя комнаты на сервере;
+// (г) M2-R — redo → save verified, имя переживает пересоздание комнаты (новый id);
+// (д) наблюдение без фикса (f1 ревью 352): rename → wall_move через противоположную
+//     стену (split на две комнаты) → save → wall_move обратно в исходный контур (merge)
+//     → save: что редактор делает с именем частей и что отвечает MCP на save после merge.
 // Гарды полные (probe-guard): READONLY обязателен, коллизий env нет, GET-пара,
 // план в редакторе == серверу перед каждым reopen/записью, roGuard перед каждой
-// записью, финальная сверка контрольного проекта — await checkFinal (m6 ревью 348),
-// closeBrowser в finally. node scripts/probes/349-finish9-fix-live.ts run
+// записью, финальная сверка контрольного проекта — await checkFinal, closeBrowser в
+// finally. Бэкап .orca-reports/backup-<OBJECT>-353.json ДО прогона, restore общим
+// probe-restore по захваченным ID, сверка sig с бэкапом в конце.
+// node scripts/probes/349-finish9-fix-live.ts run
 import { existsSync, writeFileSync, readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -32,7 +37,7 @@ const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"] as string;
 const READONLY_PLAN_ID = process.env["REMPLANNER_PROBE_READONLY_PLAN_ID"] as string;
 if (!OBJECT_ID || !PLAN_ID || !READONLY_ID || !READONLY_PLAN_ID) { console.error("нужны env"); process.exit(1); }
 assertNoReadonlyCollision(OBJECT_ID, PLAN_ID, READONLY_ID, READONLY_PLAN_ID);
-setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
+setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 20 * 60_000).unref();
 
 const ctx = new ServerContext();
 const server = buildServer(ctx);
@@ -66,6 +71,23 @@ async function saveTagged(tag: string): Promise<Record<string, unknown>> {
   return r;
 }
 
+/** Сохранение-наблюдение (д): ответ MCP логируется, отказ НЕ останавливает пробу. */
+async function observeSave(tag: string): Promise<{ verified: boolean; raw: string }> {
+  await roGuard?.assertUnchanged(tag);
+  try {
+    const r = await call("project_save", {});
+    const raw = JSON.stringify({ verified: r["verified"], warnings: r["warnings"], details: r["details"] });
+    console.log(`save ${tag} (наблюдение):`, raw.slice(0, 700));
+    await new Promise((res) => setTimeout(res, 5500));
+    return { verified: r["verified"] === true, raw };
+  } catch (e) {
+    const raw = String((e as Error).message).slice(0, 700);
+    console.log(`save ${tag} (наблюдение) ОТКАЗ:`, raw);
+    await new Promise((res) => setTimeout(res, 5500));
+    return { verified: false, raw };
+  }
+}
+
 async function openAndGuard(): Promise<void> {
   await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
   opened = true;
@@ -76,6 +98,21 @@ async function openAndGuard(): Promise<void> {
   if (!planInEditor) throw new Error("compat.plan_id пуст — стоп");
   if (planInEditor !== String(PLAN_ID)) throw new Error(`план в редакторе ${planInEditor} != серверу ${PLAN_ID}`);
   console.log("гард «план в редакторе == серверу»: OK");
+}
+
+/** Умолчания инструмента покрытия с живой страницы (window.tools[tool]); null —
+ *  страница недоступна (тогда сверка идёт с эталоном бандла). */
+type ToolDefaults = { width?: number; height?: number; stitch_width?: number; type_laying?: string };
+async function readToolDefaults(tool: string): Promise<ToolDefaults | null> {
+  const ed = ctx.workspaceOrNull?.editorOrNull() as unknown as { page?: { evaluate<T>(fn: string): Promise<T> } } | null;
+  if (!ed?.page) return null;
+  try {
+    const got = await ed.page.evaluate<ToolDefaults | null>(`(() => {
+      const t = (typeof tools !== "undefined" && tools && tools[${JSON.stringify(tool)}]) ? tools[${JSON.stringify(tool)}] : null;
+      return t ? { width: t.width, height: t.height, stitch_width: t.stitch_width, type_laying: t.type_laying } : null;
+    })()`);
+    return got && typeof got === "object" ? got : null;
+  } catch { return null; }
 }
 
 function roomsRef(siteId: string, roomsList: Array<{ id: string; site_id?: string }>): string {
@@ -141,11 +178,29 @@ async function restoreProbe(): Promise<void> {
   }
 }
 
+type FloorRec = Record<string, unknown>;
+function floorOf(model: LoadedModel, roomId: string): FloorRec | undefined {
+  const rooms = (model.model["rooms2"] ?? {}) as Record<string, { floors?: FloorRec[] }>;
+  return rooms[roomId]?.floors?.[0];
+}
+function roomName(model: LoadedModel, roomId: string): string | null {
+  const rooms = (model.model["rooms2"] ?? {}) as Record<string, { zones?: Array<Record<string, unknown>> }>;
+  const z = rooms[roomId]?.zones?.[0];
+  return typeof z?.["name"] === "string" ? z["name"] : null;
+}
+async function rightWallId(): Promise<string> {
+  const mg = (await call("model_get", {})) as { walls?: Array<{ id: string; site_id?: string }> };
+  const w = (mg.walls ?? []).find((x) => x.site_id === RIGHT_WALL_SITE);
+  if (!w) throw new Error("правая стена пробной комнаты не найдена в model_get");
+  return w.id;
+}
+let RIGHT_WALL_SITE = "";
+
 try {
   roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
   before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const backupPath = ".orca-reports/backup-".concat(OBJECT_ID, "-349.json");
+  const backupPath = ".orca-reports/backup-".concat(OBJECT_ID, "-353.json");
   if (!existsSync(backupPath)) writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
   else {
     const stored = JSON.parse(readFileSync(backupPath, "utf8")) as { model?: Record<string, unknown> };
@@ -164,76 +219,156 @@ try {
   const roomsList0 = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string; site_id?: string }>;
   const roomRef = roomsRef(trial.roomId, roomsList0);
   const px = trial.poly.map((p) => p.x), py = trial.poly.map((p) => p.y);
+  RIGHT_WALL_SITE = trial.wallSites[1]!;
 
-  // ---- часть 1 (M1): подъём + якорь переживают смену покрытия ----
-  await roGuard.assertUnchanged("перед частью 1");
-  await call("finish_floor_set", { room_id: roomRef, cover: "laminate", plank_length_mm: 1200, plank_width_mm: 180, stitch_width_mm: 2 });
-  await saveTagged("floor");
+  // ---- (а) floor_tile → laminate: умолчания ламината, f0offset/anchor сохранены ----
+  await roGuard.assertUnchanged("перед частью (а)");
+  await call("finish_floor_set", { room_id: roomRef, cover: "floor_tile", plank_length_mm: 400, plank_width_mm: 400, stitch_width_mm: 3, type_laying: "tile" });
+  await saveTagged("tile");
+  await openAndGuard();
+  const tileModel = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+  const tileRec = floorOf(tileModel, trial.roomId);
+  console.log("tile-запись на сервере:", JSON.stringify({ cover: tileRec?.["cover"], width: tileRec?.["width"], height: tileRec?.["height"], stitch_width: tileRec?.["stitch_width"], type_laying: tileRec?.["type_laying"] }));
   await call("finish_floor_offset_set", { room_id: roomRef, offset_mm: 300 });
   const ax = Math.min(...px) + (Math.max(...px) - Math.min(...px)) * 0.6;
   const ay = Math.min(...py) + (Math.max(...py) - Math.min(...py)) * 0.6;
   await call("finish_floor_anchor_set", { room_id: roomRef, at_mm: { x: Math.round(ax * 10), y: Math.round(ay * 10) } });
-  // M1: смена покрытия БЕЗ параметров — подъём/якорь переживают; панельные
-  // параметры НЕ наследуются (M1-R ревью 350): width/height после смены —
-  // умолчания нового покрытия (конструктор Floor), поэтому сверяем только
-  // f0offset/anchor/cover
-  await call("finish_floor_set", { room_id: roomRef, cover: "parquet" });
+  await saveTagged("podium");
+  // умолчания ламината с живой страницы (эталон бандла: 120/18/0.2/«1/2»)
+  const lamLive = await readToolDefaults("laminate");
+  console.log("tools.laminate (страница):", JSON.stringify(lamLive), "| страница недоступна — эталон бандла" );
+  const expLam = lamLive ?? { width: 120, height: 18, stitch_width: 0.2, type_laying: "1/2" };
+  await call("finish_floor_set", { room_id: roomRef, cover: "laminate" });
   const v1 = await call("model_validate", {});
-  console.log("validate 1:", JSON.stringify({ ok: v1["ok"] }));
+  console.log("validate (а):", JSON.stringify({ ok: v1["ok"] }));
   await saveTagged("cover-change");
   await openAndGuard();
   const afterCover = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const floorRec = ((afterCover.model["rooms2"] ?? {}) as Record<string, { floors?: Array<Record<string, unknown>> }>)[trial.roomId]?.floors?.[0];
-  console.log("reopen после смены покрытия:", JSON.stringify({ cover: floorRec?.["cover"], f0offset: floorRec?.["f0offset"], anchor: floorRec?.["anchor"], width: floorRec?.["width"] }));
-  if (!floorRec || floorRec["cover"] !== "parquet") throw new Error("покрытие не сменилось");
-  if (floorRec["f0offset"] !== 30) throw new Error(`M1: подъём пола стёрт сменой покрытия: ${JSON.stringify(floorRec)}`);
-  const anchorRec = floorRec["anchor"] as { p?: { x?: number; y?: number } } | undefined;
-  if (!anchorRec?.p || Math.abs((anchorRec.p.x ?? 0) - ax) > 1 || Math.abs((anchorRec.p.y ?? 0) - ay) > 1) {
-    throw new Error("M1: точка укладки стёрта сменой покрытия");
+  const lamRec = floorOf(afterCover, trial.roomId);
+  console.log("(а) reopen после смены покрытия:", JSON.stringify({ cover: lamRec?.["cover"], width: lamRec?.["width"], height: lamRec?.["height"], stitch_width: lamRec?.["stitch_width"], type_laying: lamRec?.["type_laying"], f0offset: lamRec?.["f0offset"], anchor: lamRec?.["anchor"] }));
+  if (!lamRec || lamRec["cover"] !== "laminate") throw new Error("(а): покрытие не сменилось на laminate");
+  if (lamRec["width"] !== expLam.width || lamRec["height"] !== expLam.height) {
+    throw new Error(`(а): размеры не равны умолчаниям ламината ${JSON.stringify(expLam)}: ${JSON.stringify(lamRec)}`);
   }
-  // M1-R ревью 350: панельные параметры при смене покрытия — умолчания нового
-  // покрытия, прежние (120/18) переживать не обязаны; конкретное значение
-  // умолчаний паркета офлайн не сверялось — не проверяем
-  console.log("M1 (сменa покрытия не стирает поля): PASS");
+  if (lamRec["stitch_width"] !== expLam.stitch_width || lamRec["type_laying"] !== expLam.type_laying) {
+    throw new Error(`(а): шов/раскладка не равны умолчаниям ламината ${JSON.stringify(expLam)}`);
+  }
+  if (lamRec["f0offset"] !== 30) throw new Error(`(а): подъём пола стёрт сменой покрытия: ${JSON.stringify(lamRec)}`);
+  const anchorRec = lamRec["anchor"] as { p?: { x?: number; y?: number } } | undefined;
+  if (!anchorRec?.p || Math.abs((anchorRec.p.x ?? 0) - ax) > 1 || Math.abs((anchorRec.p.y ?? 0) - ay) > 1) {
+    throw new Error("(а): точка укладки стёрта сменой покрытия");
+  }
+  console.log("(а) M1-R (умолчания ламината, f0offset/anchor сохранены): PASS");
 
-  // ---- часть 2 (M2): имя зоны переживает wall_move (новый id комнаты) ----
-  await roGuard.assertUnchanged("перед частью 2");
-  const nameRes = await call("room_set_name", { room_id: roomRef, name: "Зал 9" });
-  console.log("room_set_name:", JSON.stringify(nameRes).slice(0, 120));
-  await saveTagged("name");
-  // перенос правой стены наружу на 50 см — контур меняется, редактор пересоздаёт комнату
-  const mg1 = (await call("model_get", {})) as { walls?: Array<{ id: string; site_id?: string }> };
-  const rightWall = (mg1.walls ?? []).find((w) => w.site_id === trial.wallSites[1]);
-  if (!rightWall) throw new Error("правая стена пробной комнаты не найдена в model_get");
-  await call("wall_move", { wall_id: rightWall.id, offset_mm: 500 });
-  await saveTagged("wall-move");
+  // ---- (б) то же покрытие: параметры раскладки сохранены ----
+  await roGuard.assertUnchanged("перед частью (б)");
+  const firstId = lamRec["id"];
+  await call("finish_floor_set", { room_id: roomRef, cover: "laminate" });
+  await saveTagged("same-cover");
   await openAndGuard();
-  const afterMove = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const roomsAfterMove = (afterMove.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }>; zones?: Array<Record<string, unknown>> }>;
+  const afterSame = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+  const sameRec = floorOf(afterSame, trial.roomId);
+  console.log("(б) reopen того же покрытия:", JSON.stringify({ id: sameRec?.["id"], width: sameRec?.["width"], height: sameRec?.["height"], stitch_width: sameRec?.["stitch_width"], type_laying: sameRec?.["type_laying"], f0offset: sameRec?.["f0offset"] }));
+  if (!sameRec) throw new Error("(б): запись пола пропала");
+  if (sameRec["width"] !== lamRec["width"] || sameRec["height"] !== lamRec["height"] || sameRec["stitch_width"] !== lamRec["stitch_width"] || sameRec["type_laying"] !== lamRec["type_laying"]) {
+    throw new Error("(б): параметры раскладки не сохранились при том же покрытии");
+  }
+  if (sameRec["f0offset"] !== 30 || !sameRec["anchor"]) throw new Error("(б): подъём/якорь потеряны при том же покрытии");
+  if (sameRec["id"] !== firstId) throw new Error(`(б): id записи изменился: ${String(firstId)} → ${String(sameRec["id"])}`);
+  console.log("(б) (параметры раскладки при том же покрытии): PASS");
+
+  // ---- (в) rename → wall_move → undo → save verified ----
+  await roGuard.assertUnchanged("перед частью (в)");
+  await call("room_set_name", { room_id: roomRef, name: "Зал 9" });
+  const rw1 = await rightWallId();
+  await call("wall_move", { wall_id: rw1, offset_mm: 500 });
+  const u = await call("undo", {});
+  console.log("undo:", JSON.stringify(u));
+  if ((u["applied"] as number) !== 1) throw new Error(`(в): undo не применился: ${JSON.stringify(u)}`);
+  await saveTagged("undo");
+  await openAndGuard();
+  const afterUndo = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+  const undoName = roomName(afterUndo, trial.roomId);
+  console.log("(в) имя после undo+save:", JSON.stringify(undoName));
+  if (undoName !== "Зал 9") throw new Error(`(в): имя потерялось после undo+save: ${JSON.stringify(undoName)}`);
+  console.log("(в) M2-R (rename → wall_move → undo → save): PASS");
+
+  // ---- (г) redo → save verified, имя переживает пересоздание комнаты ----
+  await roGuard.assertUnchanged("перед частью (г)");
+  const r = await call("redo", {});
+  console.log("redo:", JSON.stringify(r));
+  if ((r["applied"] as number) !== 1) throw new Error(`(г): redo не применился: ${JSON.stringify(r)}`);
+  await saveTagged("redo");
+  await openAndGuard();
+  const afterRedo = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+  const roomsAfterMove = (afterRedo.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }>; zones?: Array<Record<string, unknown>> }>;
   const maxX1 = Math.max(...px) + 51;
-  const moved = Object.entries(roomsAfterMove).filter(([, r]) => {
-    const p = r.polygon ?? [];
+  const moved = Object.entries(roomsAfterMove).filter(([, room]) => {
+    const p = room.polygon ?? [];
     return p.length >= 3 && p.every((q) => q.x >= Math.min(...px) - 1 && q.x <= maxX1 && q.y >= Math.min(...py) - 1 && q.y <= Math.max(...py) + 1);
   });
-  console.log("после wall_move: комнат в bbox:", moved.length);
-  if (moved.length !== 1) throw new Error(`ожидалась 1 комната после wall_move, найдено ${moved.length}`);
+  console.log("после redo: комнат в bbox:", moved.length);
+  if (moved.length !== 1) throw new Error(`ожидалась 1 комната после redo, найдено ${moved.length}`);
   const [newRoomId, newRoom] = moved[0]!;
   const gotName = typeof newRoom.zones?.[0]?.["name"] === "string" ? newRoom.zones![0]!["name"] : null;
-  console.log("id комнаты:", `${trial.roomId} → ${newRoomId}`, "имя:", JSON.stringify(gotName));
-  if (gotName !== "Зал 9") throw new Error(`M2: имя комнаты потерялось после wall_move: ${JSON.stringify(gotName)}`);
+  console.log("(г) id комнаты:", `${trial.roomId} → ${newRoomId}`, "имя:", JSON.stringify(gotName));
+  if (gotName !== "Зал 9") throw new Error(`(г): имя потерялось после redo+save: ${JSON.stringify(gotName)}`);
   probeRoomSites.delete(trial.roomId);
   probeRoomSites.add(newRoomId);
   journal();
-  // цвет на новом id — правка после смены id тоже сохраняется
-  await call("room_set_color", { room_id: newRoomId, color: "#f5e9d0" });
-  await saveTagged("color");
+  console.log("(г) M2-R (redo → save, имя на новом id): PASS");
+
+  // ---- (д) наблюдение: rename → split (wall_move через противоположную стену) → merge ----
+  await roGuard.assertUnchanged("перед частью (д)");
+  const rw2 = await rightWallId();
+  await call("wall_move", { wall_id: rw2, offset_mm: -5000 });
+  const splitMg = (await call("model_get", {})) as { rooms?: Array<{ id: string; site_id?: string }> };
+  const splitModel = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+  const splitRooms = (splitModel.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }>; zones?: Array<Record<string, unknown>>; floors?: FloorRec[] }>;
+  const splitRows = Object.entries(splitRooms).filter(([, room]) => {
+    const p = room.polygon ?? [];
+    return p.length >= 3 && p.some((q) => q.x >= Math.min(...px) - 1 && q.x <= Math.max(...px) + 1);
+  }).map(([rid, room]) => ({
+    id: rid,
+    ref: roomsRef(rid, splitMg.rooms ?? []),
+    name: typeof room.zones?.[0]?.["name"] === "string" ? room.zones![0]!["name"] : null,
+    cover: room.floors?.[0]?.["cover"] ?? null,
+  }));
+  console.log("(д) после split: комнат в колонке пробной:", JSON.stringify(splitRows));
+  for (const row of splitRows) probeRoomSites.add(row.id);
+  journal();
+  const splitSave = await observeSave("split");
+  // merge обратно в исходный контур
+  await call("wall_move", { wall_id: rw2, offset_mm: 5000 });
+  const mergeMg = (await call("model_get", {})) as { rooms?: Array<{ id: string; site_id?: string }> };
+  const mergeModel = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+  const mergeRooms = (mergeModel.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }>; zones?: Array<Record<string, unknown>>; floors?: FloorRec[] }>;
+  const mergeRows = Object.entries(mergeRooms).filter(([, room]) => {
+    const p = room.polygon ?? [];
+    return p.length >= 3 && p.some((q) => q.x >= Math.min(...px) - 1 && q.x <= Math.max(...px) + 1);
+  }).map(([rid, room]) => ({
+    id: rid,
+    ref: roomsRef(rid, mergeMg.rooms ?? []),
+    name: typeof room.zones?.[0]?.["name"] === "string" ? room.zones![0]!["name"] : null,
+    cover: room.floors?.[0]?.["cover"] ?? null,
+  }));
+  console.log("(д) после merge: комнат в колонке пробной:", JSON.stringify(mergeRows));
+  for (const row of mergeRows) probeRoomSites.add(row.id);
+  journal();
+  const mergeSave = await observeSave("merge-back");
+  console.log("(д) итог наблюдения:", JSON.stringify({ split_save: splitSave.verified, merge_save: mergeSave.verified, merge_save_raw: mergeSave.raw.slice(0, 400) }));
+  // состояние сервера после наблюдения (для отчёта; на исход не влияет)
   await openAndGuard();
-  const afterColor = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const colorRoom = ((afterColor.model["rooms2"] ?? {}) as Record<string, { zones?: Array<Record<string, unknown>> }>)[newRoomId];
-  const gotColor = typeof colorRoom?.zones?.[0]?.["color"] === "string" ? colorRoom.zones![0]!["color"] : null;
-  console.log("цвет на новом id:", gotColor);
-  if (gotColor !== "#f5e9d0") throw new Error(`M2: цвет зоны не дошёл до сервера: ${JSON.stringify(gotColor)}`);
-  console.log("M2 (правки полей переживают wall_move/смену id): PASS");
+  const afterObs = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+  const obsRooms = (afterObs.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }>; zones?: Array<Record<string, unknown>> }>;
+  const obsRows = Object.entries(obsRooms).filter(([, room]) => {
+    const p = room.polygon ?? [];
+    return p.length >= 3 && p.some((q) => q.x >= Math.min(...px) - 1 && q.x <= Math.max(...px) + 1);
+  }).map(([rid, room]) => ({
+    id: rid,
+    name: typeof room.zones?.[0]?.["name"] === "string" ? room.zones![0]!["name"] : null,
+  }));
+  console.log("(д) сервер после merge-save/reopen:", JSON.stringify(obsRows));
 
   // ---- зачистка ----
   await roGuard.assertUnchanged("перед зачисткой");
@@ -243,11 +378,12 @@ try {
   const sigOk = sig(final.model as Record<string, unknown>) === sig(before!.model as Record<string, unknown>);
   console.log("сверка с бэкапом (sig):", sigOk ? "OK" : "РАСХОЖДЕНИЕ");
   if (!sigOk) throw new Error("финальная модель не совпала с бэкапом");
-  const probeRoomLeft = trial.roomId in ((final.model["rooms2"] ?? {}) as Record<string, unknown>) || newRoomId in ((final.model["rooms2"] ?? {}) as Record<string, unknown>);
+  const allProbeRooms = [trial.roomId, ...[...probeRoomSites]];
+  const probeRoomLeft = allProbeRooms.some((rid) => rid in ((final.model["rooms2"] ?? {}) as Record<string, unknown>));
   console.log("пробная комната удалена:", !probeRoomLeft);
   const changedFinal = await roGuard.checkFinal("финал");
   console.log("контрольный проект:", changedFinal ? "ИЗМЕНИЛСЯ" : "не изменился");
-  console.log("349-finish9-fix-live: PASS");
+  console.log("349-finish9-fix-live (353): PASS — сценарии (а)-(г) зелёные, (д) наблюдение записано");
 } catch (e) {
   console.error("FAIL:", String((e as Error).message).slice(0, 800));
   try { await restoreProbe(); } catch (e2) { console.error("restore:", String((e2 as Error).message).slice(0, 200)); }
