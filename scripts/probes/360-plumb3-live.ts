@@ -246,10 +246,10 @@ try {
     const pipe1Site = (p1 as { entity?: { site_id?: string } }).entity?.site_id;
     if (!pipe1Site) throw new Error("pipe_add water без site_id");
     created.push({ kind: "pipe", siteId: pipe1Site });
-    const pe1 = (p1 as { entity?: { vertexes?: Array<{ type: string }>; items?: Record<string, string>; connected?: unknown } }).entity;
-    console.log("pipe water:", JSON.stringify({ vertex_types: pe1?.vertexes?.map((v) => v.type), items: pe1?.items }));
-    if (!pe1?.vertexes?.every((v) => ["node", "waterspot"].includes(v.type))) throw new Error("вершины трубы не node/waterspot");
-    if (Object.values(pe1?.items ?? {}).some((t) => t === "waterspot_node")) throw new Error("узел-предмет попал в items как предмет");
+    const pe1 = (p1 as { entity?: { vertexes?: number; connected?: string[]; length_mm?: number } }).entity;
+    console.log("pipe water:", JSON.stringify({ vertexes: pe1?.vertexes, connected: pe1?.connected, length_mm: pe1?.length_mm }));
+    if (pe1?.vertexes !== 3) throw new Error(`у трубы ${String(pe1?.vertexes)} вершин (ожидалось 3: узел, узел-предмет, вывод)`);
+    if (!pe1?.connected?.includes(coldSite)) throw new Error("вывод не в connected");
 
     // труба hot к комбинированному выводу (второй вид — отдельный скалярный слот)
     const p2 = await call("pipe_add", { kind: "hot", path: [{ item_id: coldSite }, { x: coldItem.x_mm! + 600, y: coldItem.y_mm! }] });
