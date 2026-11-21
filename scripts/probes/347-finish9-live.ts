@@ -20,7 +20,10 @@ import { ServerContext } from "../../src/server/context.ts";
 import { sig } from "./probe-sig.ts";
 import { assertNoReadonlyCollision, assertTargetPair, readonlyGuard, readonlyRefPath, type ReadonlyGuard } from "./probe-guard.ts";
 
-if (process.argv[2] !== "run") { console.error("запуск: run"); process.exit(0); }
+if (process.argv[2] !== "run" && process.argv[2] !== "cleanup") {
+  console.error("запуск: run | cleanup");
+  process.exit(0);
+}
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"] as string;
 const PLAN_ID = process.env["REMPLANNER_PROBE_PLAN_ID"] as string;
 const READONLY_ID = process.env["REMPLANNER_PROBE_READONLY_ID"] as string;
@@ -55,7 +58,7 @@ let opened = false;
 let restoredFlag = false;
 let before: LoadedModel | null = null;
 let roGuard: ReadonlyGuard | null = null;
-let probeRoomSite = "";
+const probeRoomSites = new Set<string>();
 
 async function saveTagged(tag: string): Promise<Record<string, unknown>> {
   await roGuard?.assertUnchanged(tag);
@@ -92,19 +95,22 @@ async function deleteWallsBySiteIds(ids: Set<string>): Promise<void> {
 }
 
 async function stripProbeFields(): Promise<void> {
-  if (!probeRoomSite) return;
+  if (probeRoomSites.size === 0) return;
   const rooms = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string; site_id?: string }>;
-  const ref = rooms.find((r) => r.site_id === probeRoomSite)?.id ?? probeRoomSite;
-  for (const [name, args] of [
-    ["finish_floor_anchor_set", { room_id: ref, at_mm: null }],
-    ["finish_floor_offset_set", { room_id: ref, offset_mm: 0 }],
-    ["finish_floor_remove", { room_id: ref }],
-    ["room_set_name", { room_id: ref, name: null }],
-    ["room_set_color", { room_id: ref, color: null }],
-  ] as [string, Record<string, unknown>][]) {
-    const r = await tryCall(name, args);
-    console.log(`${name} (зачистка):`, r.ok ? "OK" : r.err?.slice(0, 150));
+  for (const site of probeRoomSites) {
+    const ref = roomsRef(site, rooms);
+    for (const [name, args] of [
+      ["finish_floor_anchor_set", { room_id: ref, at_mm: null }],
+      ["finish_floor_offset_set", { room_id: ref, offset_mm: 0 }],
+      ["finish_floor_remove", { room_id: ref }],
+      ["room_set_name", { room_id: ref, name: null }],
+      ["room_set_color", { room_id: ref, color: null }],
+    ] as [string, Record<string, unknown>][]) {
+      const r = await tryCall(name, args);
+      if (!r.ok) console.log(`${name} ${ref} (зачистка):`, r.err?.slice(0, 150));
+    }
   }
+  console.log("зачистка полей/отделки: OK (комнат:", probeRoomSites.size, ")");
 }
 
 async function restoreByCaptured(): Promise<void> {
@@ -160,19 +166,61 @@ try {
   before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const backupPath = ".orca-reports/backup-".concat(OBJECT_ID, "-347.json");
   if (!existsSync(backupPath)) writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
-  else {
+  else if (process.argv[2] === "run") {
     const stored = JSON.parse(readFileSync(backupPath, "utf8")) as { model?: Record<string, unknown> };
     if (sig(stored.model as Record<string, unknown>) !== sig(before.model as Record<string, unknown>)) {
       throw new Error("модель на сервере не совпадает с бэкапом — стоп");
     }
   }
+  if (process.argv[2] === "cleanup") {
+    // откат пробы по бэкапу: трогаются ТОЛЬКО стены/комнаты, которых нет в бэкапе.
+    // Отделка/поля снимаются инструментами, стены — wall_delete, затем save и sig-сверка.
+    const backupWalls = new Set(Object.keys(((before.model["walls"] ?? {}) as Record<string, unknown>)));
+    const backupRooms = new Set(Object.keys(((before.model["rooms2"] ?? before.model["rooms1"] ?? {}) as Record<string, unknown>)));
+    const wallsNow = (before.model["walls"] ?? {}) as Record<string, { p1?: { x?: number; y?: number }; p2?: { x?: number; y?: number } }>;
+    const newWalls = Object.keys(wallsNow).filter((id) => !backupWalls.has(id));
+    const roomsNow = (before.model["rooms2"] ?? {}) as Record<string, Record<string, unknown>>;
+    // комнаты-остатки: id нет в бэкапе ИЛИ полигон в bbox новых стен (+1 см)
+    const xs: number[] = [], ys: number[] = [];
+    for (const id of newWalls) {
+      for (const p of [wallsNow[id]?.p1, wallsNow[id]?.p2]) {
+        if (p && typeof p.x === "number" && typeof p.y === "number") { xs.push(p.x); ys.push(p.y); }
+      }
+    }
+    const newRooms = Object.keys(roomsNow).filter((rid) => {
+      if (backupRooms.has(rid)) return false;
+      const poly = roomsNow[rid]!["polygon"] as Array<{ x: number; y: number }> | undefined;
+      if (!poly || poly.length < 3 || xs.length === 0) return false;
+      return poly.every((q) => q.x >= Math.min(...xs) - 1 && q.x <= Math.max(...xs) + 1 && q.y >= Math.min(...ys) - 1 && q.y <= Math.max(...ys) + 1);
+    });
+    console.log("cleanup: новых стен:", newWalls.length, "комнат-остатков:", JSON.stringify(newRooms));
+    if (newWalls.length === 0 && newRooms.length === 0) {
+      console.log("cleanup: остатков нет");
+    } else {
+      await openAndGuard();
+      for (const rid of newRooms) probeRoomSites.add(rid);
+      await stripProbeFields();
+      await deleteWallsBySiteIds(new Set(newWalls));
+      await saveTagged("cleanup");
+      await openAndGuard();
+      const afterClean = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+      const sigOkClean = sig(afterClean.model as Record<string, unknown>) === sig(before.model as Record<string, unknown>);
+      console.log("cleanup: сверка с бэкапом (sig):", sigOkClean ? "OK" : "РАСХОЖДЕНИЕ");
+      if (!sigOkClean) throw new Error("cleanup не восстановил бэкап");
+    }
+    roGuard.checkFinal("cleanup-финал").then((changed) => {
+      console.log("контрольный проект:", changed ? "ИЗМЕНИЛСЯ" : "не изменился");
+      if (changed) process.exitCode = 1;
+    });
+    console.log("347-finish9-live cleanup: PASS");
+  } else {
   await openAndGuard();
 
   // ---- часть 1: подъём пола и точка укладки ----
   await roGuard.assertUnchanged("перед частью 1");
   const trial = await makeTrialRoom(400, 300);
   console.log("пробная комната:", trial.roomId);
-  probeRoomSite = trial.roomId;
+  probeRoomSites.add(trial.roomId);
   const roomsList0 = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string; site_id?: string }>;
   const roomRef = roomsRef(trial.roomId, roomsList0);
   const floorSet = await call("finish_floor_set", { room_id: roomRef, cover: "laminate", plank_length_mm: 1200, plank_width_mm: 180 });
@@ -256,6 +304,9 @@ try {
   });
   console.log("после деления: частей:", parts.length);
   if (parts.length !== 2) throw new Error(`ожидались 2 части, найдено ${parts.length}`);
+  // зачистка должна снять поля/отделку со ВСЕХ частей: id старой комнаты редактор
+  // заменил на два новых
+  for (const [rid] of parts) probeRoomSites.add(rid);
   const info = parts.map(([rid, r]) => ({
     rid,
     f0offset: r.floors?.[0]?.["f0offset"] ?? null,
@@ -286,6 +337,7 @@ try {
     if (changed) process.exitCode = 1;
   });
   console.log("347-finish9-live: PASS");
+  }
 } catch (e) {
   console.error("FAIL:", String((e as Error).message).slice(0, 600));
   try { await restoreByCaptured(); } catch (e2) { console.error("restore:", String((e2 as Error).message).slice(0, 200)); }
