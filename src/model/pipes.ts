@@ -398,6 +398,12 @@ function itemVertex(model: Model, kind: PipeKind | ClimatePipeKind, itemId: stri
   }
   const item = model.items?.[itemId] as ItemProps | undefined;
   if (!item) throw new McpError("NOT_FOUND", `предмет ${itemId} не найден`);
+  // «Узел» waterspot_node — маркер, не вершина (живая проба 360-ws-live-recon):
+  // труба, нарисованная до узла в редакторе, приходит обычной вершиной type "node"
+  // в точке предмета; предмет не хранит обратной ссылки и вершина за ним не следует
+  if (item.name === "waterspot_node") {
+    return { id: `_${newId(5)}`, point: { ...item.pc }, type: "node" };
+  }
   const connectable = isClimate ? CLIMATE_PIPE_CONNECTABLE[kind as ClimatePipeKind]! : PIPE_CONNECTABLE[kind as PipeKind]!;
   if (!connectable.has(item.name)) {
     const pipeType = isClimate

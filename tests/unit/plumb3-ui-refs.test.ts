@@ -11,7 +11,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Model, ItemProps, Pipe } from "../../src/model/types.ts";
 import { addRoomRect } from "../../src/model/walls.ts";
-import { addItem, deleteItem } from "../../src/model/items.ts";
+import { addItem, deleteItem, updateItem } from "../../src/model/items.ts";
 import { addPipe, deletePipe } from "../../src/model/pipes.ts";
 import {
   mergeWaterSpot, unsetWaterSpot, removePipeVertex,
@@ -448,6 +448,45 @@ test("360: PRO-гейт merge — одиночные части (PRO): free от
       assertProPartialAllowed({ authStatus: AUTH("free") }, { anon: false }, "waterspot_merge", part),
     );
   }
+});
+
+// ---------- узел waterspot_node и трубы (живая проба 360-ws-live-recon) ----------
+
+test("360: эталон ui-ref-plumb3-node-pipe — труба до узла-предмета: вершина node без ссылки (обе стороны)", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-plumb3-node-pipe.json"), "utf8"));
+  const m = fx.model_object as Record<string, unknown>;
+  assert.equal(m["type"], "water_pipe");
+  assert.deepEqual((m["items"] as Record<string, string>), { v1: "node", v2: "node" });
+  // обратная сторона: pipe_add с item_id узла-предмета воспроизводит формат
+  const model = baseModel();
+  const node = addSpot(model, 120, 100, "waterspot_node");
+  const pipe = addPipe(model, { kind: "water", path: [{ x: 2000, y: 1000 }, { itemId: node.id }] });
+  assert.equal(pipe.type, m["type"]);
+  assert.deepEqual(pipe.items, m["items"]);
+  assert.equal(pipe.vertexes.every((v) => v.type === "node"), true);
+  assert.deepEqual(pipe.vertexes[1]!.point, { x: node.pc.x, y: node.pc.y });
+});
+
+test("360: pipe_add {item_id узла} — обычная вершина node в точке предмета, без обратной ссылки (как в редакторе)", () => {
+  const model = baseModel();
+  const node = addSpot(model, 150, 100, "waterspot_node");
+  const a = addSpot(model, 100, 100, "waterspot_cold");
+  const pipe = addPipe(model, { kind: "water", path: [{ itemId: a.id }, { itemId: node.id }] });
+  assert.equal(pipe.vertexes.length, 2);
+  const v = pipe.vertexes[1]!;
+  assert.equal(v.type, "node", "вершина узла — type node, не предмет");
+  assert.deepEqual(v.point, { x: node.pc.x, y: node.pc.y }, "точка вершины = pc узла-предмета");
+  assert.notEqual(v.id, node.id, "вершина не ссылается на предмет");
+  assert.deepEqual((node as ItemProps & { pipes?: unknown }).pipes, undefined, "у узла-предмета нет props.pipes");
+  assert.equal(pipe.items[v.id], "node");
+  // перенос узла-предмета не двигает вершину (в редакторе связи нет — проба 360)
+  updateItem(model, { itemId: node.id, center: { x: 2500, y: 1000 } });
+  assert.deepEqual(pipe.vertexes[1]!.point, { x: v.point.x, y: v.point.y }, "вершина трубы не следует за узлом-предметом");
+  // удаление узла-предмета не затрагивает трубу (нет ссылки — каскада нет)
+  const res = deleteItem(model, node.id);
+  assert.deepEqual(res.deleted_pipes, []);
+  assert.deepEqual(res.created_pipes, []);
+  assert.equal(pipesOf(model)[pipe.id]!.vertexes.length, 2, "труба цела");
 });
 
 function gasLengthM(pipe: Pick<Pipe, "vertexes" | "matrix">): number {

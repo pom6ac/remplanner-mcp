@@ -58,6 +58,6 @@
  "semantics": {
   "over_floor": "поле в модели отсутствует (каталог over_floor:false) — высота вывода узлу не задаётся",
   "context_menu": "#cm-waterspot (cm-waterspot--over-floor / --water-over-floor / --drainage-over-floor)",
-  "pipe_vertex": "при подключении к трубе вершина-предмет: подтверждение формата (тип вершины, props.pipes) — живая проба в dev-объекте, трубы PRO"
+  "pipe_vertex": "узел-предмет НЕ вершина трубы (живая проба 360-ws-live-recon, эталон ui-ref-plumb3-node-pipe): труба приходит обычной вершиной type node в точку pc предмета, без props.pipes; pipe_add {item_id узла} воспроизводит это"
  }
 }

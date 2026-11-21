@@ -1,0 +1,25 @@
+{
+ "_source": "эталон формата из dev-объекта (платный тариф, схема без серверного save: клики UI + project.copy(\"server\"), откат перезагрузкой, GET-сверка sig; проба scripts/probes/360-ws-live-recon.ts, дамп .orca-reports/tmp/360-ws-live-recon.json): труба water_pipe, нарисованная drag'ом от пустой точки ДО предмета «Узел» (waterspot_node). id вершин/предмета и координаты заменены на синтетические (см); ID проектов/планов отсутствуют",
+ "menu_title": "Водопроводная труба ХВС → Узел",
+ "tool_id": "plannertool_water_pipe",
+ "model_object": {
+  "id": "0",
+  "matrix": [
+   [null, { "length": 1 }],
+   [{ "length": 1 }, null]
+  ],
+  "vertexes": [
+   { "id": "v1", "point": { "x": 200, "y": 100 }, "type": "node" },
+   { "id": "v2", "point": { "x": 120, "y": 100 }, "type": "node" }
+  ],
+  "items": { "v1": "node", "v2": "node" },
+  "type": "water_pipe",
+  "length": 0.8
+ },
+ "semantics": {
+  "node_item_not_vertex": "предмет waterspot_node (pc 120,100) НЕ становится вершиной: вершина v2 — обычный узел type node в точке pc предмета, id вершины ≠ id предмета; у предмета нет props.pipes (обратной ссылки нет)",
+  "item_move": "перенос узла-предмета не двигает вершину трубы (связи нет — живая проба 360-ws-live-recon)",
+  "item_delete": "удаление узла-предмета не затрагивает трубу (нет ссылки)",
+  "pipe_drawing": "в редакторе труба до узла рисуется drag'ом/кликами; клик-в-узел стартом трубу не начинает (проба: техники click_click/drag_from_node дали пусто, drag_to_node создал трубу)"
+ }
+}
