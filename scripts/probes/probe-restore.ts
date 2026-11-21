@@ -38,6 +38,7 @@ export function logCaptured(path: string, created: readonly ProbeCreated[], ownR
 }
 
 type FinishGet = {
+  site_id?: string;
   ceiling?: { complex?: unknown; material?: string };
   ceiling_zones?: Array<{ complex?: unknown; material?: string }>;
   floor?: unknown;
@@ -49,9 +50,18 @@ type FinishGet = {
 
 /** Снятие отделки СВОЕЙ комнаты по подсказке реестра (порядок FINISH_LOSS_REGISTRY).
  *  Complex сначала снимается сменой материала на ДРУГОЙ (warning complex_removed),
- *  затем ластик; отказы отдельного вида логируются, но не останавливают restore. */
+ *  затем ластик; отказы отдельного вида логируются, но не останавливают restore.
+ *  M1 ревью 344: инструмент finish_get возвращает МАССИВ записей комнат
+ *  (ok(finishList(...)), src/model/finish.ts finishList), а не объект — запись
+ *  своей комнаты берётся из массива по site_id; нет записи — лог и пропуск. */
 export async function removeRoomFinishByHint(call: ProbeCall, roomId: string, log: (line: string) => void): Promise<void> {
-  const fg = (await call("finish_get", { room_id: roomId })) as unknown as FinishGet;
+  const list = (await call("finish_get", { room_id: roomId })) as unknown as FinishGet[];
+  const arr = Array.isArray(list) ? list : [];
+  const fg = arr.find((r) => r?.site_id === roomId) ?? arr[0];
+  if (!fg) {
+    log(`finish_get ${roomId}: записи комнаты в ответе нет — снятие отделки пропущено`);
+    return;
+  }
   const complexNow = [fg.ceiling, ...(fg.ceiling_zones ?? [])].some((c) => c?.complex === true);
   const tryStep = async (name: string, args: Record<string, unknown>): Promise<void> => {
     try { await call(name, args); }
