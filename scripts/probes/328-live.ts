@@ -51,6 +51,27 @@ const call = async (name: string, args: Record<string, unknown> = {}): Promise<R
 let created: Array<{ kind: string; siteId?: string }> = [];
 let opened = false;
 let restoredFlag = false;
+// комнаты пробы (334: отделка мешает wall_delete — нормализация теряет отделку
+// исчезнувшей комнаты → INVALID_GEOMETRY; перед удалением стен снимаем complex
+// и покрытие)
+const probeRoomSites = new Set<string>();
+
+/** Снять отделку пробных комнат (complex → смена материала, затем ластик). */
+async function stripProbeFinishes(): Promise<void> {
+  if (probeRoomSites.size === 0) return;
+  const rooms = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string; site_id?: string }>;
+  for (const site of probeRoomSites) {
+    const ref = rooms.find((r) => r.site_id === site)?.id ?? site;
+    try {
+      const cs = await call("finish_ceiling_set", { room_id: ref, material: "stretch_ceiling" });
+      console.log(`finish_ceiling_set ${ref} (зачистка):`, (cs as { isError?: boolean }).isError ? "отказ" : JSON.stringify((cs as { warnings?: string[] }).warnings ?? []));
+    } catch (e) { console.log(`finish_ceiling_set ${ref} (зачистка):`, String((e as Error).message).slice(0, 120)); }
+    try {
+      const rm = await call("finish_ceiling_remove", { room_id: ref });
+      console.log(`finish_ceiling_remove ${ref} (зачистка):`, (rm as { isError?: boolean }).isError ? "отказ" : "OK");
+    } catch (e) { console.log(`finish_ceiling_remove ${ref} (зачистка):`, String((e as Error).message).slice(0, 120)); }
+  }
+}
 let before: LoadedModel | null = null;
 let roGuard: ReadonlyGuard | null = null;
 
@@ -79,6 +100,7 @@ async function deleteWallsBySiteIds(ids: Set<string>): Promise<void> {
 async function restoreByCaptured(): Promise<void> {
   if (restoredFlag || !opened) return;
   restoredFlag = true;
+  await stripProbeFinishes();
   const mg = await call("model_get", {});
   const holes = (mg["level_holes"] ?? []) as Array<{ id: string; site_id: string }>;
   for (const h of holes) {
@@ -232,6 +254,9 @@ try {
 
   // ---- зачистка ----
   await roGuard.assertUnchanged("перед зачисткой");
+  probeRoomSites.add(trial.roomId);
+  probeRoomSites.add(targetRoom[0]);
+  await stripProbeFinishes();
   await call("ceiling_hole_delete", { ceiling_hole_id: holeSite });
   created = created.filter((c) => !(c.kind === "hole"));
   const wallIds = new Set(created.filter((c) => c.kind === "wall" && c.siteId).map((c) => c.siteId!));
