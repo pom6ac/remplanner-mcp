@@ -474,7 +474,16 @@ export class Workspace {
       }
       const lostHoles = checkLevelHolesAfterNormalize(this.modelInternal!, norm.model as Model);
       if (lostHoles.length > 0) {
-        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил проёмы в полу — мутация отменена`, {
+        // эталон 328 (live): стена/мутация, после которой редактор молча теряет
+        // проём (например, новая стена прошла через проём потолка), — отказ ДО
+        // записи с выходом: сначала удалите или перенесите проём. Текст по виду
+        // проёма (пол/потолок — разные листы, этап 328).
+        const kinds = new Set(
+          Object.values(((this.modelInternal ?? {}) as { level_holes?: Record<string, { type?: string }> }).level_holes ?? {})
+            .map((h) => (h?.type === "ceiling_hole" ? "потолке" : "полу")),
+        );
+        const where = kinds.size === 1 ? [...kinds][0]! : "полу/потолке";
+        throw new McpError("INVALID_GEOMETRY", `после нормализации редактор потерял или изменил проём(ы) в ${where} — мутация отменена; удалите или перенесите затронутый проём и повторите операцию`, {
           details: { level_hole_mismatches: lostHoles },
         });
       }
