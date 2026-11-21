@@ -650,11 +650,21 @@ export type CeilingFinishParams = {
  *  новый потолок с обновлением id_ceiling — ревью 246 №2; ищутся во всех
  *  записях); на краску/побелку ниша в UI не ставится, поэтому при нишах такой
  *  материал отклоняется до правки. */
-export function setCeilingFinish(model: Model, roomRef: string, material: CeilingCover, params: CeilingFinishParams): { id: string } {
+/** Результат смены/снятия покрытия потолка: complexRemoved — была ли снята
+ *  двухуровневая отделка (ревью 329 №5: в редакторе смена материала и снятие
+ *  потолка делают complex=false и стирают offset/radius/material2 — MCP делает
+ *  то же, но сообщает об этом явно, не молча). */
+export type CeilingFinishResult = { id: string; complexRemoved: boolean };
+
+export function setCeilingFinish(model: Model, roomRef: string, material: CeilingCover, params: CeilingFinishParams): CeilingFinishResult {
   if (!(CEILING_COVERS as readonly string[]).includes(material)) {
     throw new McpError("INVALID_ARGUMENT", `неизвестное покрытие потолка «${material}» (допустимо: ${CEILING_COVERS.join(", ")})`);
   }
   const { id, room } = resolveRoom(model, roomRef);
+  // ревью 329 №5: двухуровневый потолок при смене материала снимается (как в
+  // редакторе: r.exist=!0, r.complex=!1, delete offset/radius/material2) —
+  // caller получает complexRemoved для явного warning в ответе
+  const complexRemoved = ceilingHasComplex(room);
   if (params.level !== undefined && (!Number.isInteger(params.level) || params.level < 0 || params.level > FINISH_LIMITS.ceilingLevelMax)) {
     throw new McpError("INVALID_ARGUMENT", `level должен быть целым числом от 0 до ${FINISH_LIMITS.ceilingLevelMax}`);
   }
@@ -705,7 +715,7 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
       ceilings[i] = entry;
     }
     room.ceilings = ceilings;
-    return { id: (ceilings[0] as Record<string, unknown>).id as string };
+    return { id: (ceilings[0] as Record<string, unknown>).id as string, complexRemoved };
   }
   const prev = ceilings[0] as Record<string, unknown> | undefined;
   const prevNiches = prev && Array.isArray(prev["niches"]) ? prev["niches"] as Array<Record<string, unknown>> : [];
@@ -730,15 +740,25 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
   }
   ceilings[0] = entry;
   room.ceilings = ceilings;
-  return { id: ceilings[0]!.id as string };
+  return { id: ceilings[0]!.id as string, complexRemoved };
+}
+
+/** Есть ли в записях потолков комнаты двухуровневая отделка (complex=true). */
+function ceilingHasComplex(room: RoomRec): boolean {
+  const arr = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
+  return arr.some((c) => c?.["complex"] === true);
 }
 
 /** Снять покрытие потолка комнаты. При закарнизных нишах — отказ с подсказкой
  *  finish_ceiling_niche_remove (по стандарту UI, как в setCeilingFinish):
  *  молчаливо стирать ниши нельзя (ревью 248 A). Зонированный потолок: exist:false
- *  ставится во ВСЕ записи, полигоны зон сохраняются (ревью 311 №1). */
-export function removeCeilingFinish(model: Model, roomRef: string): void {
+ *  ставится во ВСЕ записи, полигоны зон сохраняются (ревью 311 №1). Двухуровневая
+ *  отделка снимается вместе с покрытием (в редакторе ластик не снимает complex,
+ *  но смене материала/снятию потолка complex не переживает) — ревью 329 №5:
+ *  caller сообщает об этом warning'ом, не молча. */
+export function removeCeilingFinish(model: Model, roomRef: string): CeilingFinishResult {
   const { room } = resolveRoom(model, roomRef);
+  const complexRemoved = ceilingHasComplex(room);
   if (roomHasCeilingNiches(room)) {
     throw new McpError(
       "INVALID_ARGUMENT",
@@ -762,10 +782,11 @@ export function removeCeilingFinish(model: Model, roomRef: string): void {
       list[i] = entry;
     }
     room.ceilings = list;
-    return;
+    return { id: "", complexRemoved };
   }
   list[0] = { exist: false, polygon: polygon.map((p) => ({ x: r2(p.x), y: r2(p.y) })) };
   room.ceilings = list;
+  return { id: "", complexRemoved };
 }
 
 // ---------- семантическая сверка ----------
@@ -956,7 +977,17 @@ function ceilingSigsOf(room: RoomRec): string[] {
  * любой записи — чтение только ceilings[0] показывало null (регрессия против
  * 141fd2b).
  */
-export type CeilingZoneFinish = { index: number; material: string; level: number | undefined; profile: string | undefined };
+/** Поля двухуровневой отделки зоны (ревью 329 №5: finish_get показывает complex,
+ *  level2, material2 — пользователь MCP видит двухуровневый потолок). */
+export type CeilingZoneFinish = {
+  index: number;
+  material: string;
+  level: number | undefined;
+  profile: string | undefined;
+  complex: boolean;
+  level2: number | undefined;
+  material2: string | undefined;
+};
 export function ceilingFinishZones(room: RoomRec): CeilingZoneFinish[] {
   const arr = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
   const out: CeilingZoneFinish[] = [];
@@ -964,11 +995,15 @@ export function ceilingFinishZones(room: RoomRec): CeilingZoneFinish[] {
     if (!c || c.exist !== true) return;
     const material = typeof c.material === "string" ? c.material : undefined;
     if (!material) return;
+    const complex = c.complex === true;
     out.push({
       index,
       material,
       level: num(c.level),
       profile: typeof c.profile === "string" ? c.profile : undefined,
+      complex,
+      level2: complex ? num(c.level2) : undefined,
+      material2: complex && typeof c.material2 === "string" ? c.material2 : undefined,
     });
   });
   return out;
@@ -1699,7 +1734,8 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
     const ceilingZones = ceilingFinishZones(room);
     const head = ceilingZones[0];
     const uniform = ceilingZones.every((z) =>
-      z.material === head!.material && (z.level ?? 0) === (head!.level ?? 0) && (z.profile ?? "standard") === (head!.profile ?? "standard"),
+      z.material === head!.material && (z.level ?? 0) === (head!.level ?? 0) && (z.profile ?? "standard") === (head!.profile ?? "standard")
+      && z.complex === head!.complex && z.material2 === head!.material2 && (z.level2 ?? 0) === (head!.level2 ?? 0),
     );
     const ceiling = head && uniform ? head : undefined;
     const floorMoldings: Array<{ wall: string | null; type: string }> = [];
@@ -1755,13 +1791,24 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
         ...(floor.stitch !== undefined ? { stitch_width_mm: Math.round(floor.stitch * 10) } : {}),
         ...(floor.laying !== undefined ? { type_laying: floor.laying } : {}),
       } } : {}),
-      ...(ceiling ? { ceiling: { material: ceiling.material, level: ceiling.level ?? 0, ...(ceiling.profile ? { profile: ceiling.profile } : {}) } } : {}),
+      ...(ceiling ? { ceiling: {
+        material: ceiling.material,
+        level: ceiling.level ?? 0,
+        ...(ceiling.profile ? { profile: ceiling.profile } : {}),
+        // ревью 329 №5: двухуровневая отделка видна в finish_get
+        complex: ceiling.complex,
+        ...(ceiling.complex && ceiling.level2 !== undefined ? { level2: ceiling.level2 } : {}),
+        ...(ceiling.complex && ceiling.material2 !== undefined ? { material2: ceiling.material2 } : {}),
+      } } : {}),
       ...(ceilingZones.length > 1 ? {
         ceiling_zones: ceilingZones.map((z) => ({
           zone: z.index + 1,
           material: z.material,
           level: z.level ?? 0,
           ...(z.profile ? { profile: z.profile } : {}),
+          complex: z.complex,
+          ...(z.complex && z.level2 !== undefined ? { level2: z.level2 } : {}),
+          ...(z.complex && z.material2 !== undefined ? { material2: z.material2 } : {}),
         })),
       } : {}),
       walls,

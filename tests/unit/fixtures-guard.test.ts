@@ -412,3 +412,66 @@ test("ревью 159 m4: обфусцированный email через [at]", 
   assertCaught(JSON.stringify({ _source: SRC, contact: "user [at] gmail.com" }));
   assertCaught(JSON.stringify({ _source: SRC, contact: "user[at]gmail.com" }));
 });
+
+// ---------- ревью 329 №6: фикстуры не содержат геометрии контрольного проекта ----------
+// Эталон контрольного проекта — .orca-reports/tmp/readonly-ref-*.json в КОРНЕВОМ
+// репо (worktree лежит в <root>/.worktrees/<имя>, поэтому ищем самый внешний
+// каталог-предок с .orca-reports). Файл не в git и в CI отсутствует — проверка
+// пропускается; локально ловит случай, когда в фикстуру попали реальные точки
+// плана пользователя.
+
+function findRootReportsTmp(from: string): string | null {
+  let found: string | null = null;
+  let dir = from;
+  for (;;) {
+    const prev = dir;
+    const candidate = join(dir, ".orca-reports", "tmp");
+    try {
+      if (statSync(candidate).isDirectory()) found = candidate;
+    } catch { /* нет каталога на этом уровне */ }
+    dir = join(dir, "..");
+    if (dir === prev) break;
+  }
+  return found;
+}
+
+function collectPoints(node: unknown, out: Set<string> = new Set()): Set<string> {
+  if (Array.isArray(node)) {
+    node.forEach((x) => collectPoints(x, out));
+    return out;
+  }
+  if (node && typeof node === "object") {
+    const rec = node as Record<string, unknown>;
+    if (typeof rec["x"] === "number" && typeof rec["y"] === "number") {
+      out.add(`${rec["x"]},${rec["y"]}`);
+    }
+    for (const v of Object.values(rec)) collectPoints(v, out);
+  }
+  return out;
+}
+
+test("сторож фикстур: точки фикстур не совпадают с точками контрольного проекта (readonly-ref)", () => {
+  const rootTmp = findRootReportsTmp(FIXTURES);
+  if (rootTmp === null) return; // CI/чистое окружение — эталона нет, проверка неприменима
+  const refFiles = readdirSync(rootTmp).filter((f) => /^readonly-ref-.*\.json$/.test(f));
+  if (refFiles.length === 0) return;
+  const refPoints = new Set<string>();
+  for (const f of refFiles) {
+    collectPoints(JSON.parse(readFileSync(join(rootTmp, f), "utf8")), refPoints);
+  }
+  assert.ok(refPoints.size > 0, "в readonly-ref-*.json не найдено точек — unexpected");
+  // Исключения — только с обоснованием (переснятие — отдельная задача).
+  const ALLOW_REF_POINT_HITS = new Map<string, string>([
+    // эталон 57-comm-ui3 (магнит к колонне) снят с dev-копии плана; совпадает одна
+    // точка wall_line.p1 — переснятие эталона вне задачи 330 (ревью 329 №6, бэклог)
+    ["ui-ref-comm-water.json", "совпадение единственной точки; переснятие — отдельная задача"],
+  ]);
+  const offenders: string[] = [];
+  for (const name of readdirSync(FIXTURES).filter((f) => f.endsWith(".json")).sort()) {
+    const pts = collectPoints(JSON.parse(readFileSync(join(FIXTURES, name), "utf8")));
+    for (const p of pts) {
+      if (refPoints.has(p) && !ALLOW_REF_POINT_HITS.has(name)) offenders.push(`${name}: точка (${p}) есть в контрольном эталоне`);
+    }
+  }
+  assert.deepEqual(offenders, [], "в фикстурах точки из контрольного проекта (ПДн) — переснять на синтетические");
+});

@@ -614,7 +614,7 @@ export function projectTools(ctx: ServerContext): Record<string, ToolDef> {
         return ok({
           plan_id: ws.project!.planId,
           floors: Array.isArray(floors) ? floors : [{ floor_id: "1", plans: [ws.project!.planId] }],
-          note: "несколько этажей — PRO (NOT_AVAILABLE_ON_TARIFF)",
+          note: "несколько этажей — PRO (на бесплатном тарифе запись этажа отклоняется гейтом тарифа, см. src/server/pro.ts)",
         });
       },
     ),

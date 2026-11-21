@@ -18,7 +18,16 @@ import { McpError } from "../errors.ts";
  * До этапа 328 гейты были копиями (assertProMaterialAllowed для glass/bar,
  * assertShieldAllowed для shield_*), а zone_floor/zone_ceiling/led/stripe/
  * line_light/cable/wiring/pipe/warm_floor/finish-PRO-инструменты не гейтились
- * вовсе. Теперь один реестр + одна функция; каждому инструменту реестра — тест
+ * вовсе. Ревью 329 №1/№2: копии удалены — весь NOT_AVAILABLE_ON_TARIFF живёт
+ * только здесь (проверяется тестом), инструментов реестра — через proGate,
+ * частичных (PRO_PARTIAL_TOOLS) — через assertProPartialAllowed. Ключи
+ * частичных гейтов item_add/finish_floor_set/finish_wall_set — из эталонов
+ * .orca-reports/tmp/328-pro-anon.json и 328-pro-sheets.json (листы waterplan/
+ * sockets/light_connections/security/cables; PRO-покрытия «Полы» и «Отделка
+ * стен» — разметка анонимного проекта, plannertool-ключи с is_pro).
+ * comment_add/update — PRO по coverage §3/§4 (кнопка «Текстовый комментарий»
+ * закрыта за PRO; в анонимной разметке 328 ключ comment не встречается, гейт
+ * консервативный по решению координатора). Каждому инструменту реестра — тест
  * с моком тарифа free (tests/unit/pro-gate.test.ts).
  */
 
@@ -63,14 +72,53 @@ export const PRO_TOOL_GROUPS: readonly ProToolGroup[] = [
   { tools: ["warm_floor_add", "warm_floor_update"], editorKeys: ["warm_floor_wire", "warm_floor_water"], label: "тёплый пол" },
   { tools: ["finish_ceiling_niche_add"], editorKeys: ["ceiling_niche"], label: "закарнизная ниша" },
   { tools: ["finish_ceiling_molding_set"], editorKeys: ["molding"], label: "потолочный плинтус" },
+  { tools: ["comment_add", "comment_update"], editorKeys: ["comment (кнопка «Текстовый комментарий»; coverage §3/§4)"], label: "текстовые комментарии" },
   { tools: ["finish_floor_molding_set"], editorKeys: ["floor_molding_plastic", "floor_molding_polyurethane", "floor_molding_mdf", "floor_molding_wood", "floor_molding_tile", "floor_molding_with_light", "floor_molding_hidden"], label: "плинтусы" },
   { tools: [...SHIELD_TOOLS], editorKeys: ["shield"], seniorOnly: true, label: "конструктор электрощитка" },
 ] as const;
 
-/** Инструменты-исключения с частичным гейтом внутри инструмента (kind/material). */
+/** Ключи каталога предметов (plannertool_* с is_pro, эталоны 328-pro-anon/
+ *  328-pro-sheets.json — листы waterplan/sockets/light_connections/security/
+ *  cables), которые ставятся item_add. */
+export const PRO_ITEM_KEYS: readonly string[] = [
+  // лист «Водоснабжение» (waterplan)
+  "waterspot_cold", "waterspot_hot", "waterspot_drainage", "waterspot_collector",
+  // лист «Розетки» (sockets)
+  "floor_socket", "ceiling_socket", "furniture_socket",
+  // лист «Выключатели» (light_connections)
+  "light_switch_triple", "light_dimmer", "light_switch_through", "light_switch_through_double",
+  "light_switch_cross", "light_switch_cross_double", "light_switch_master",
+  // лист «Электропроводка» (cables)
+  "electric_box", "electric_box_wall", "electric_kup",
+  // лист «Безопасность» (security)
+  "motion_sensor", "light_sensor", "water_leakage_panel", "water_leakage_sensor", "alarm_panel",
+] as const;
+
+/** PRO-покрытия пола (лист «Напольные покрытия», разметка 328-pro-anon.json). */
+export const PRO_FLOOR_COVERS: readonly string[] = ["stoneware_wood", "stoneware_marble", "metlah", "mosaic", "hex_tile"] as const;
+
+/** PRO-отделки стен (лист «Отделка стен», разметка 328-pro-anon.json). */
+export const PRO_WALL_COVERS: readonly string[] = [
+  "wall_chalk_paint", "wall_clinker", "wall_stone", "wall_woodbatten", "wall_sheet_panels", "wall_tile_panels",
+  "painting_tile", "wallpaper_tiles", "wall_apron",
+] as const;
+
+/**
+ * Инструменты-исключения с частичным гейтом внутри инструмента (по ключу):
+ * гейтится только обращение к is_pro-ключу, остальное — как у бесплатного
+ * тарифа. Ключи — из эталонов 328-pro-anon/328-pro-sheets.json.
+ */
 export const PRO_PARTIAL_TOOLS: Record<string, { editorKeys: readonly string[]; label: string }> = {
-  // wall_add kind=partition material=glass|bar — ключи wall_create_glass/bar (PRO)
-  wall_add: { editorKeys: ["wall_create_glass", "wall_create_bar"], label: "стеклянная и реечная перегородки" },
+  // wall_add kind=partition material=glass|bar — ключи wall_create_glass/bar (PRO,
+  // лист «Перегородки», эталон 328-pro-sheets.json); в гейт передаётся код модели
+  // c_glass/c_bar (resolveWallMaterial, src/dto/walls.ts)
+  wall_add: { editorKeys: ["c_glass", "c_bar"], label: "стеклянная и реечная перегородки" },
+  // item_add по is_pro-ключам каталога (эталоны 328)
+  item_add: { editorKeys: PRO_ITEM_KEYS, label: "PRO-предметы каталога (точки воды, розетки, выключатели, коробки, датчики)" },
+  // PRO-покрытия пола
+  finish_floor_set: { editorKeys: PRO_FLOOR_COVERS, label: "PRO-покрытия пола (керамогранит, метлах, мозаика, шестигранная плитка)" },
+  // PRO-отделки стен (включая двухслойные и фартук)
+  finish_wall_set: { editorKeys: PRO_WALL_COVERS, label: "PRO-отделки стен" },
 };
 
 /** Все инструменты реестра, которые гейтятся (add/update). */
@@ -106,4 +154,38 @@ export async function assertProToolAllowed(ctx: ProGateContext, project: { anon:
   }
   const st = await ctx.authStatus();
   if (st.tariff !== "pro") throw proGateError(label, tool, st.tariff);
+}
+
+/**
+ * Частичный гейт (ревью 329 №1/№2): инструмент гейтится только по is_pro-ключу
+ * (материал/покрытие/позиция каталога из PRO_PARTIAL_TOOLS). Если ключ не PRO —
+ * ничего не делает (как у бесплатного тарифа). Для is_pro-ключа — то же правило,
+ * что у полного гейта: анонимный проект = бесплатный тариф, неизвестный тариф
+ * трактуется как бесплатный.
+ */
+export async function assertProPartialAllowed(
+  ctx: ProGateContext,
+  project: { anon: boolean } | null | undefined,
+  tool: string,
+  key: string,
+  hint?: string,
+): Promise<void> {
+  const partial = PRO_PARTIAL_TOOLS[tool];
+  if (!partial) throw new McpError("INTERNAL", `инструмент ${tool} отсутствует в реестре частичных PRO-гейтов (src/server/pro.ts)`);
+  if (!partial.editorKeys.includes(key)) return;
+  if (project?.anon) {
+    throw new McpError(
+      "NOT_AVAILABLE_ON_TARIFF",
+      `«${key}» — PRO (${partial.label}); в анонимном проекте недоступно`,
+      { hint: hint ?? "откройте проект PRO-аккаунта (project_open после входа)", details: { tool, key, tariff: "anon" } },
+    );
+  }
+  const st = await ctx.authStatus();
+  if (st.tariff !== "pro") {
+    throw new McpError(
+      "NOT_AVAILABLE_ON_TARIFF",
+      `«${key}» — PRO (${partial.label}); на тарифе без PRO недоступно (тариф: ${st.tariff})`,
+      { hint, details: { tool, key, tariff: st.tariff } },
+    );
+  }
 }

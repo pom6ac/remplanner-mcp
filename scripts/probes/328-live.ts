@@ -115,7 +115,7 @@ async function makeTrialRoom(w: number, h: number): Promise<{ roomId: string; po
     created.push({ kind: "wall", siteId: sid });
   }
   await saveTagged("trial-room");
-  await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
+  await openAndGuard(); // ревью 329 №13: гард «план в редакторе == серверу» перед каждым reopen
   const after = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const rooms = (after.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }> }>;
   const entry = Object.entries(rooms).find(([, r]) => {
@@ -171,7 +171,7 @@ try {
   const v = await call("model_validate", {});
   console.log("validate:", JSON.stringify({ ok: v["ok"] }));
   await saveTagged("hole");
-  await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
+  await openAndGuard();
   const after1 = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const holes1 = Object.values((after1.model["level_holes"] ?? {}) as Record<string, Record<string, unknown>>).filter((h) => h["type"] === "ceiling_hole");
   console.log("reopen: ceiling_holes:", holes1.length, JSON.stringify(holes1.map((h) => ({ plan: h["plan"], area: h["area"], id_room: String(h["id_room"] ?? "").slice(0, 8) }))));
@@ -191,7 +191,7 @@ try {
   const splitSite = (split as { entity?: { site_id?: string } }).entity?.site_id;
   if (splitSite) created.push({ kind: "wall", siteId: splitSite });
   await saveTagged("split-wall");
-  await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
+  await openAndGuard();
   const after2 = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const holes2 = Object.values((after2.model["level_holes"] ?? {}) as Record<string, Record<string, unknown>>).filter((h) => h["type"] === "ceiling_hole");
   console.log("после деления стеной: ceiling_holes:", holes2.length, JSON.stringify(holes2.map((h) => ({ area: h["area"], id_room: String(h["id_room"] ?? "").slice(0, 8) }))));
@@ -223,7 +223,7 @@ try {
   const v3 = await call("model_validate", {});
   console.log("validate 3:", JSON.stringify({ ok: v3["ok"] }));
   await saveTagged("complex");
-  await call("project_open", { object_id: OBJECT_ID, plan_id: PLAN_ID });
+  await openAndGuard();
   const after3 = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const room3 = ((after3.model["rooms2"] ?? {}) as Record<string, { ceilings?: Array<Record<string, unknown>> }>)[targetRoom[0]]!;
   const complexRec = (room3["ceilings"] ?? []).find((c) => c["complex"] === true);

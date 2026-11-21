@@ -24,8 +24,24 @@ import { McpError } from "../errors.ts";
  * Проверки редактора (тот же обработчик): площадь записи потолка ≥ 4 м²
  * (l10n ceiling_not_inst_complex + reason_1) и внутренний контур
  * (get_inner_polygon с offset 40 см) без самопересечений (reason_3) — иначе
- * INVALID_ARGUMENT. При/edit save сверка — по sig отделки (finish.ts
- * ceilingSigsOf), дополненному полями complex/material2/level2/offset/radius.
+ * INVALID_ARGUMENT. Перед построением внутреннего контура редактор дважды
+ * прогоняет LIB.mergeLines по рёбрам и сливает коллинеарные (T-узел на контуре —
+ * примыкающая стена/wall_split — штатная ситуация; ревью 329 №3): порт —
+ * mergeCollinearEdges перед innerPolygon.
+ *
+ * Отличия от обработчика бандла (268-app.js, complex_ceiling), ревью 329 №12:
+ * - terrace: в редакторе клик по террасе молча игнорируется ("terrace" !==
+ *   room.role) — MCP отказывает INVALID_ARGUMENT (явность вместо тишины);
+ * - зона по клику выбирается по наименьшей площади среди содержащих точку
+ *   (LIB.polygonArea + isPointOverPolygon, сравнение d<t) — как в редакторе;
+ * - level2 проверяется на falsy (r.level2 || …): 0 — это «не задан»;
+ * - armstrong_ceiling: редактор перед установкой complex делает
+ *   r.deleteItems() для is_class-записи (удаляет предметы раскладки Армстронга);
+ *   MCP не воспроизводит deleteItems (класс редактора недоступен) — предметы
+ *   раскладки остаются в модели; расхождение допустимо: редактор пересчитает
+ *   записи потолка при restore/save.
+ * При/edit save сверка — по sig отделки (finish.ts ceilingSigsOf), дополненному
+ * полями complex/material2/level2/offset/radius.
  */
 
 export const COMPLEX_CEILING_DEFS = {
@@ -54,12 +70,53 @@ function polygonAreaM2(poly: Point[]): number {
 }
 
 /**
+ * Порт LIB.mergeLines для контура потолка (ревью 329 №3): удаляет вершины,
+ * у которых смежные рёбра коллинеарны и продолжают друг друга (угол между
+ * линиями 180±0.1°, как angleBetweenTwoLines в бандле; допуск точек — 0.2 см,
+ * но в кольце вершины общие). Редактор прогоняет mergeLines дважды по рёбрам
+ * записи перед get_inner_polygon — без этого T-узел на контуре комнаты
+ * (примыкающая стена, wall_split) даёт параллельные смежные рёбра после
+ * отступа и ложный GEOMETRY_CONFLICT. Возвращает новый массив (вход не меняет).
+ */
+export function mergeCollinearEdges(poly: Point[], tolerance = 0.2): Point[] {
+  let pts = poly.map((p) => ({ ...p }));
+  let changed = true;
+  while (changed && pts.length > 3) {
+    changed = false;
+    for (let i = 0; i < pts.length && pts.length > 3; i++) {
+      const prev = pts[(i - 1 + pts.length) % pts.length]!;
+      const cur = pts[i]!;
+      const next = pts[(i + 1) % pts.length]!;
+      // вершина-дубликат предыдущей (ребро нулевой длины) — сливается всегда
+      const dup = Math.hypot(cur.x - prev.x, cur.y - prev.y) <= tolerance;
+      if (!dup) {
+        const d1x = cur.x - prev.x, d1y = cur.y - prev.y;
+        const d2x = next.x - cur.x, d2y = next.y - cur.y;
+        const l1 = Math.hypot(d1x, d1y), l2 = Math.hypot(d2x, d2y);
+        if (l1 < 1e-9 || l2 < 1e-9) continue;
+        // коллинеарность смежных рёбер (LIB.angleBetweenTwoLines, |h−180| < 0.1° —
+        // угол между осями линий): синус угла между направлениями < sin(0.1°)
+        const cos = (d1x * d2x + d1y * d2y) / (l1 * l2);
+        const sin = Math.abs(d1x * d2y - d1y * d2x) / (l1 * l2);
+        if (sin > 0.002 && Math.abs(cos) < 1 - 1e-9) continue;
+      }
+      pts = pts.filter((_, j) => j !== i);
+      changed = true;
+      break;
+    }
+  }
+  return pts;
+}
+
+/**
  * Внутренний контур полигона со сдвигом offsetCm внутрь (порт get_inner_polygon):
- * каждое ребро сдвигается внутрь, новые вершины — пересечения соседних
- * сдвинутых прямых. Ориентация берётся по знаковой площади.
+ * перед отступом коллинеарные рёбра сливаются (mergeCollinearEdges — порт
+ * LIB.mergeLines, ревью 329 №3), каждое ребро сдвигается внутрь, новые вершины —
+ * пересечения соседних сдвинутых прямых. Ориентация берётся по знаковой площади.
  */
 export function innerPolygon(poly: Point[], offsetCm: number): Point[] {
-  const n = poly.length;
+  const merged = mergeCollinearEdges(poly);
+  const n = merged.length;
   if (n < 3) throw new McpError("INVALID_ARGUMENT", "контур потолка вырожден");
   const offsetEdge = (a: Point, b: Point): { A: number; B: number; C: number } => {
     // прямая a→b, сдвинутая внутрь на offsetCm: n·p = n·a + offset, n — нормаль внутрь
@@ -68,13 +125,13 @@ export function innerPolygon(poly: Point[], offsetCm: number): Point[] {
     if (len < 1e-9) throw new McpError("INVALID_ARGUMENT", "контур потолка содержит нулевое ребро");
     let nx = dy / len, ny = -dx / len;
     const mid = { x: (a.x + b.x) / 2 + nx * offsetCm, y: (a.y + b.y) / 2 + ny * offsetCm };
-    if (!pointInPolygon(poly, mid)) {
+    if (!pointInPolygon(merged as Polygon, mid)) {
       nx = -nx; ny = -ny;
     }
     return { A: nx, B: ny, C: nx * a.x + ny * a.y + offsetCm };
   };
   const lines: { A: number; B: number; C: number }[] = [];
-  for (let i = 0; i < n; i++) lines.push(offsetEdge(poly[i]!, poly[(i + 1) % n]!));
+  for (let i = 0; i < n; i++) lines.push(offsetEdge(merged[i]!, merged[(i + 1) % n]!));
   const out: Point[] = [];
   for (let i = 0; i < n; i++) {
     const l1 = lines[i]!, l2 = lines[(i + 1) % n]!;
@@ -128,6 +185,13 @@ export type CeilingComplexResult = { index: number; id: string; siteId: string; 
  */
 export function setCeilingComplex(model: Model, roomRef: string, atMm?: MmPoint): CeilingComplexResult {
   const { id: roomId, room } = resolveRoom(model, roomRef);
+  // ревью 329 №12: в террасе двухуровневый потолок не ставится (в редакторе клик
+  // по террасе молча игнорируется: "terrace" !== this.room.role) — MCP отказывает явно
+  if (room["role"] === "terrace") {
+    throw new McpError("INVALID_ARGUMENT", `комната ${roomRef} — терраса: двухуровневый потолок не ставится (в редакторе клик по террасе игнорируется)`, {
+      details: { kind: "terrace_ceiling", room_id: roomId },
+    });
+  }
   let records = ceilingsOf(room);
   if (records.length === 0) {
     // как у редактора: запись-контейнер от контура комнаты (Room2 restore)
@@ -144,13 +208,21 @@ export function setCeilingComplex(model: Model, roomRef: string, atMm?: MmPoint)
     }];
     records = ceilingsOf(room);
   }
-  // зона: запись, содержащая точку (клик редактора); без точки — единственная
+  // зона: запись, содержащая точку (клик редактора); ревью 329 №12 — как в
+  // редакторе, по наименьшей площади среди содержащих (сравнение d<t); без
+  // точки — единственная
   let index = -1;
   if (atMm) {
     const p = { x: mmToCm(atMm.x), y: mmToCm(atMm.y) };
-    index = records.findIndex((c) => {
+    let bestArea = Infinity;
+    records.forEach((c, i) => {
       const poly = c["polygon"] as Point[] | undefined;
-      return Array.isArray(poly) && poly.length >= 3 && pointInPolygon(poly as Polygon, p);
+      if (!Array.isArray(poly) || poly.length < 3 || !pointInPolygon(poly as Polygon, p)) return;
+      const a2 = Math.abs(polygonSignedArea(poly));
+      if (a2 < bestArea) {
+        bestArea = a2;
+        index = i;
+      }
     });
     if (index < 0) {
       throw new McpError("OUTSIDE_ROOM", `точка вне зон потолка комнаты ${roomRef} — двухуровневый потолок ставится кликом по зоне (как в редакторе)`, {
@@ -197,7 +269,9 @@ export function setCeilingComplex(model: Model, roomRef: string, atMm?: MmPoint)
   if (candidate["profile"] === undefined || candidate["profile"] === null || candidate["profile"] === "") {
     candidate["profile"] = "standard";
   }
-  if (candidate["level2"] === undefined || candidate["level2"] === null) {
+  // ревью 329 №12: level2 проверяется на falsy, как в редакторе (r.level2 || …):
+  // 0 считается «не задан», умолчания применяются
+  if (!candidate["level2"]) {
     candidate["level"] = COMPLEX_CEILING_DEFS.level;
     candidate["level2"] = COMPLEX_CEILING_DEFS.level2;
     candidate["material"] = COMPLEX_CEILING_DEFS.material;

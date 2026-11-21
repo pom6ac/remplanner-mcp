@@ -1,15 +1,19 @@
 // Этап 328 п.3: единый PRO-гейт — тест на КАЖДЫЙ инструмент реестра с моком
 // тарифа free (и анонимным проектом через офлайн-контекст, design §4).
+// Ревью 329 №9: циклы free→отказ / pro→проходит на каждый инструмент реестра
+// и частичный гейт на каждый ключ — через инжектированный statusFn; не-PRO
+// инструменты этапа (потолок ч.2) не гейтятся.
 // Реестр: src/server/pro.ts; эталон разметки: .orca-reports/tmp/328-pro-anon.json
 // (анонимный редактор = бесплатный тариф, 792 plannertool_* с is_pro).
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
-import { PRO_TOOL_GROUPS, proGatedTools, assertProToolAllowed, proGateError } from "../../src/server/pro.ts";
+import { PRO_TOOL_GROUPS, PRO_PARTIAL_TOOLS, PRO_ITEM_KEYS, proGatedTools, assertProToolAllowed, assertProPartialAllowed, proGateError } from "../../src/server/pro.ts";
 import type { ClientPageInfo } from "../../src/api.ts";
 import type { AuthStatusInfo } from "../../src/server/context.ts";
 
@@ -19,6 +23,11 @@ const FIXTURE = join(ROOT, "tests/fixtures/anon-rect-4000x3000.json");
 const INFO = (over: Partial<ClientPageInfo> = {}): AuthStatusInfo => ({
   logged_in: true, login_error: false, tariff: "free", projects: [],
   mode: "account", projects_limit: 5, account_email_masked: null, ...over,
+});
+
+/** Фейковый контекст с инжектированным тарифом (ревью 329 №9). */
+const ctxWithTariff = (tariff: ClientPageInfo["tariff"]) => ({
+  authStatus: async () => INFO({ tariff }),
 });
 
 test("pro-gate: реестр не пуст, инструменты уникальны, _delete/_remove не гейтятся", () => {
@@ -143,6 +152,10 @@ function minimalArgs(tool: string): Record<string, unknown> {
       return { room_id: "R1", wall_id: "W1" };
     case "finish_floor_molding_set":
       return { room_id: "R1", wall_id: "W1", type: "floor_molding_wood" };
+    case "comment_add":
+      return { point: { x: 0, y: 0 }, text: "тест" };
+    case "comment_update":
+      return { comment_id: "1" };
     default:
       return {};
   }
@@ -150,3 +163,140 @@ function minimalArgs(tool: string): Record<string, unknown> {
 
 // параметр цикла используется статически — линтер
 void PRO_TOOL_GROUPS;
+
+// ---------- ревью 329 №1/№2: единый источник ошибки тарифа ----------
+
+function collectTs(dir: string, out: string[] = []): string[] {
+  for (const e of readdirSync(dir)) {
+    const p = join(dir, e);
+    if (statSync(p).isDirectory()) collectTs(p, out);
+    else if (e.endsWith(".ts")) out.push(p);
+  }
+  return out;
+}
+
+test("ревью 329 №1: NOT_AVAILABLE_ON_TARIFF в src — только в pro.ts (и enum в errors.ts)", () => {
+  const offenders: string[] = [];
+  for (const f of collectTs(join(ROOT, "src"))) {
+    const text = readFileSync(f, "utf8");
+    if (!text.includes("NOT_AVAILABLE_ON_TARIFF")) continue;
+    if (f.endsWith("server/pro.ts") || f.endsWith("errors.ts")) continue;
+    offenders.push(f);
+  }
+  assert.deepEqual(offenders, [], "копии гейта тарифа вернулись");
+});
+
+// ---------- ревью 329 №9: инжектированный statusFn, free → отказ / pro → проходит ----------
+
+test("ревью 329 №9: на каждый инструмент реестра free — отказ, pro — проходит", async () => {
+  for (const tool of proGatedTools()) {
+    const g = PRO_TOOL_GROUPS.find((x) => x.tools.includes(tool))!;
+    await assert.rejects(
+      assertProToolAllowed(ctxWithTariff("free"), { anon: false }, tool, g.label),
+      (e: unknown) => e instanceof Error && (e as { code?: string }).code === "NOT_AVAILABLE_ON_TARIFF",
+      `${tool}: free должен отказать`,
+    );
+    await assert.doesNotReject(
+      assertProToolAllowed(ctxWithTariff("pro"), { anon: false }, tool, g.label),
+      `${tool}: pro должен пройти`,
+    );
+  }
+});
+
+test("ревью 329 №9: частичные гейты — is_pro-ключ: free отказ, pro проходит; не-PRO ключ проходит на free", async () => {
+  for (const [tool, partial] of Object.entries(PRO_PARTIAL_TOOLS)) {
+    for (const key of partial.editorKeys) {
+      await assert.rejects(
+        assertProPartialAllowed(ctxWithTariff("free"), { anon: false }, tool, key),
+        (e: unknown) => e instanceof Error && (e as { code?: string }).code === "NOT_AVAILABLE_ON_TARIFF",
+        `${tool}/${key}: free должен отказать`,
+      );
+      await assert.doesNotReject(
+        assertProPartialAllowed(ctxWithTariff("pro"), { anon: false }, tool, key),
+        `${tool}/${key}: pro должен пройти`,
+      );
+    }
+  }
+  // не-PRO ключи (обычные покрытия/предметы) на free не гейтятся
+  const notPro: [string, string][] = [
+    ["wall_add", "c_pgb"],
+    ["item_add", "socket"],
+    ["item_add", "sofa_ikea_kivik"],
+    ["finish_floor_set", "laminate"],
+    ["finish_wall_set", "wallpaper"],
+  ];
+  for (const [tool, key] of notPro) {
+    await assert.doesNotReject(
+      assertProPartialAllowed(ctxWithTariff("free"), { anon: false }, tool, key),
+      `${tool}/${key}: не-PRO ключ не гейтится`,
+    );
+  }
+});
+
+test("ревью 329 №9: список is_pro-ключей item_add — из эталона 328-pro-sheets.json", () => {
+  // ключи листов waterplan/sockets/light_connections/security/cables — PRO в разметке
+  const must = [
+    "waterspot_cold", "waterspot_hot", "waterspot_drainage", "waterspot_collector",
+    "floor_socket", "ceiling_socket", "furniture_socket",
+    "light_switch_triple", "light_dimmer", "light_switch_through", "light_switch_through_double",
+    "light_switch_cross", "light_switch_cross_double", "light_switch_master",
+    "electric_box", "electric_box_wall", "electric_kup",
+    "motion_sensor", "light_sensor", "water_leakage_panel", "water_leakage_sensor", "alarm_panel",
+  ];
+  for (const k of must) assert.ok(PRO_ITEM_KEYS.includes(k), `${k}: нет в PRO_ITEM_KEYS`);
+});
+
+// ---------- ревью 329 №9: не-PRO инструменты этапа (потолок ч.2) не гейтятся ----------
+
+const STAGE_NOT_PRO_TOOLS = [
+  "ceiling_hole_add", "ceiling_hole_update", "ceiling_hole_delete",
+  "ceiling_rigel_add", "ceiling_rigel_update", "ceiling_rigel_delete",
+  "floor_hole_add", "floor_hole_update", "floor_hole_delete",
+  "finish_ceiling_complex_set",
+] as const;
+
+test("ревью 329 №9: не-PRO инструменты этапа не в реестре и не гейтятся (офлайн-контекст)", () => {
+  const gated = new Set(proGatedTools());
+  for (const t of STAGE_NOT_PRO_TOOLS) assert.ok(!gated.has(t), `${t} попал в реестр PRO`);
+});
+
+for (const tool of STAGE_NOT_PRO_TOOLS) {
+  test(`ревью 329 №9: ${tool} на анонимном проекте — без гейта тарифа`, async () => {
+    const ctx = new ServerContext({ offlineFixture: FIXTURE });
+    const server = buildServer(ctx);
+    const client = new Client({ name: "pro-gate-not-pro", version: "0.0.0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(b), client.connect(a)]);
+    try {
+      const res = await client.callTool({ name: tool, arguments: notProArgs(tool) });
+      const payload = JSON.parse((res.content as { type: string; text: string }[]).map((c) => c.text).join("")) as { code?: string };
+      assert.notEqual(payload.code, "NOT_AVAILABLE_ON_TARIFF", `${tool}: неожиданно за гейтом тарифа`);
+    } finally {
+      await client.close();
+    }
+  });
+}
+
+function notProArgs(tool: string): Record<string, unknown> {
+  switch (tool) {
+    case "ceiling_hole_add":
+    case "floor_hole_add":
+      return { corner1: { x: 0, y: 0 }, corner2: { x: 500, y: 500 } };
+    case "ceiling_hole_update":
+    case "floor_hole_update":
+      return { ceiling_hole_id: "nope", floor_hole_id: "nope" };
+    case "ceiling_hole_delete":
+    case "floor_hole_delete":
+      return { ceiling_hole_id: "nope", floor_hole_id: "nope" };
+    case "ceiling_rigel_add":
+      return { room_id: "R1", start: { x: 0, y: 0 }, end: { x: 1000, y: 0 }, ceiling_type: "gypsum_ceiling" };
+    case "ceiling_rigel_update":
+      return { rigel_id: "nope" };
+    case "ceiling_rigel_delete":
+      return { rigel_id: "nope" };
+    case "finish_ceiling_complex_set":
+      return { room_id: "R1" };
+    default:
+      return {};
+  }
+}

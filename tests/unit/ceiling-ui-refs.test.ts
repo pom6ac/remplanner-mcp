@@ -2,14 +2,22 @@
 // двухуровневый потолок (complex_ceiling): эталоны UI в обе стороны, метки
 // CH<n>/FH<n> по типам, пересечения в пределах вида, выбор зоны по точке,
 // проверки площади/внутреннего контура, mock save (сверка complex-полей).
+// Ревью 329 №3: комната с Т-узлом на контуре (коллинеарные рёбра) — complex
+// ставится. Ревью 329 №4/№11: тесты «в обе стороны» — стена сквозь проём →
+// INVALID_GEOMETRY до записи, стена мимо/делит комнату (в том числе с
+// двухуровневым потолком) → без ложных отказов; эталонные тесты через
+// ингест → compact → levelHoleMismatches == [].
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { Model, LevelHole } from "../../src/model/types.ts";
-import { addCeilingHole, updateCeilingHole, deleteCeilingHole, addFloorHole, levelHoleMismatches } from "../../src/model/floorhole.ts";
+import { addCeilingHole, updateCeilingHole, deleteCeilingHole, addFloorHole, updateFloorHole, deleteFloorHole, levelHoleMismatches } from "../../src/model/floorhole.ts";
 import { setCeilingComplex } from "../../src/model/ceiling-complex.ts";
+import { addWall } from "../../src/model/walls.ts";
 import type { RoomPolygon } from "../../src/model/items.ts";
 import { compactModel } from "../../src/model/compact.ts";
+import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
+import type { LoadedModel } from "../../src/api.ts";
 import { McpError } from "../../src/errors.ts";
 
 type Pt = { x: number; y: number };
@@ -230,4 +238,226 @@ test("328: complex сохраняет существующие level2 (умол�
   assert.equal(after["complex"], true);
   assert.equal(after["offset"], 40);
   void rec0;
+});
+
+// ---------- ревью 329 №3: коллинеарные рёбра (Т-узел на контуре) ----------
+
+test("ревью 329 №3: комната с Т-узлом на контуре (примыкающая стена) — complex ставится", () => {
+  const m = baseModel();
+  const room = (m.rooms2 as Record<string, Record<string, unknown>>)["room1"]!;
+  (room["ceilings"] as Record<string, unknown>[])[0]!["polygon"] = [
+    { x: 0, y: 0 }, { x: 200, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 },
+  ];
+  const res = setCeilingComplex(m, "room1");
+  assert.equal(res.already, false);
+  const rec = ((room["ceilings"] ?? []) as Record<string, unknown>[])[res.index]!;
+  assert.equal(rec["complex"], true);
+});
+
+test("ревью 329 №3: innerPolygon сливает коллинеарные вершины (порт mergeLines)", async () => {
+  const { innerPolygon, mergeCollinearEdges } = await import("../../src/model/ceiling-complex.ts");
+  const tJunction = [
+    { x: 0, y: 0 }, { x: 200, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 },
+  ];
+  assert.deepEqual(mergeCollinearEdges(tJunction), [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }]);
+  // прямоугольник с Т-узлом: внутренний контур — прямоугольник 320×220 (отступ 40)
+  const inner = innerPolygon(tJunction, 40);
+  assert.equal(inner.length, 4);
+  assert.deepEqual(inner, [{ x: 360, y: 40 }, { x: 360, y: 260 }, { x: 40, y: 260 }, { x: 40, y: 40 }]);
+  // углы не сливает (45° и 90°), дубликаты вершин сливает
+  assert.equal(mergeCollinearEdges([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]).length, 3);
+  assert.deepEqual(
+    mergeCollinearEdges([{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]),
+    [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }],
+  );
+});
+
+// ---------- ревью 329 №11: эталон через ингест → compact → mismatches == [] ----------
+
+test("ревью 329 №11: ингест эталона ceiling_hole → compact CH1; levelHoleMismatches(эталон, MCP) == []", () => {
+  const m = baseModel();
+  m.level_holes = { [HOLE_REF.id as string]: structuredClone(HOLE_REF) as unknown as LevelHole };
+  const compact = compactModel(m, ROOMS);
+  const ch = compact.level_holes.find((h) => h.id === "CH1")!;
+  assert.ok(ch, "эталонный проём виден как CH1");
+  assert.equal(ch.type, "ceiling_hole");
+  assert.equal(ch.width_mm, 300);
+  assert.equal(ch.depth_mm, 300);
+  assert.equal(ch.area_m2, 0.09);
+  // семантическая сверка в обе стороны: то, что производит MCP по тем же углам,
+  // не расходится с эталоном drag'а (вершины сопоставляются по координатам).
+  // граф items в эталоне отсутствует (дамп БЕЗ сохранения, редактор достраивает
+  // при draw) — заполняем ожидание значениями MCP по сопоставлению вершин по
+  // координатам; сам граф items покрыт ingest-тестом b5/171
+  const m2 = baseModel();
+  const produced = addCeilingHole(m2, HOLES_MM(), ROOMS);
+  const expectedRec = structuredClone(HOLE_REF) as unknown as { vertexes: { id: string; point: { x: number; y: number } }[]; items?: Record<string, string> };
+  const gotRec = structuredClone(produced) as unknown as { vertexes: { id: string; point: { x: number; y: number } }[]; items: Record<string, string> };
+  expectedRec.items = {};
+  for (const ev of expectedRec.vertexes) {
+    const gv = gotRec.vertexes.find((gv) => Math.abs(gv.point.x - ev.point.x) < 0.01 && Math.abs(gv.point.y - ev.point.y) < 0.01);
+    assert.ok(gv, "вершина эталона воспроизведена MCP");
+    expectedRec.items[ev.id] = gotRec.items[gv.id]!;
+  }
+  assert.deepEqual(
+    levelHoleMismatches({ [HOLE_REF.id as string]: expectedRec as unknown as LevelHole }, { [HOLE_REF.id as string]: gotRec }),
+    [],
+  );
+});
+
+test("ревью 329 №11: floor-инструменты по ceiling-проёму — INVALID_ARGUMENT (и наоборот)", () => {
+  const m = baseModel();
+  const ceil = addCeilingHole(m, HOLES_MM(), ROOMS);
+  assert.throws(() => updateFloorHole(m, { holeId: ceil.id }, ROOMS), (e: unknown) =>
+    e instanceof McpError && e.code === "INVALID_ARGUMENT");
+  assert.throws(() => deleteFloorHole(m, ceil.id), (e: unknown) =>
+    e instanceof McpError && e.code === "INVALID_ARGUMENT");
+  const floor = addFloorHole(m, { corner1: { x: 8500, y: 4500 }, corner2: { x: 8800, y: 4800 } }, ROOMS);
+  assert.throws(() => updateCeilingHole(m, { holeId: floor.id }, ROOMS), (e: unknown) =>
+    e instanceof McpError && e.code === "INVALID_ARGUMENT");
+  assert.throws(() => deleteCeilingHole(m, floor.id), (e: unknown) =>
+    e instanceof McpError && e.code === "INVALID_ARGUMENT");
+});
+
+// ---------- ревью 329 №4: стена/проём/complex — mock normalize в обе стороны ----------
+
+const COMPAT = { global_version: null, planner_version: null, bundles: [], object_id: null, plan_id: null, present: { WALLS: true, ROOMS2: true, restore: true, draw: true, copy: true, save: true, canvas: true, wall_link1: true, wall_link2: true, wall_calc: true } };
+
+type SaveServer = { saveId: string; model: Record<string, unknown> };
+
+/** Mock-сессия save (как в floor-terrace.test.ts): transformNorm правит нормализованную копию. */
+function saveMock(server: SaveServer, afterSave: (s: SaveServer) => void, transformNorm?: (m: Record<string, unknown>) => void): Workspace {
+  let normalized: Record<string, unknown> | null = null;
+  const editor: EditorLike = {
+    objectId: "0", planId: "1",
+    async normalize(m) {
+      normalized = structuredClone(m as object) as Record<string, unknown>;
+      transformNorm?.(normalized);
+      const c = { walls: 0, holes: 0, items: 0, pillars: 0, rigels: 0 };
+      return { model: structuredClone(normalized as object) as Record<string, unknown>, rooms: [], before: c, after: c };
+    },
+    async save() {
+      server.model = structuredClone(normalized!);
+      afterSave(server);
+      return { ok: true, saveId: "s2", conflict: false };
+    },
+    async renderPng() { return Buffer.from(""); },
+    async compatInfo() { return COMPAT; },
+    async close() {},
+  };
+  const deps: WorkspaceDeps = {
+    session: { cookies: [] },
+    async loadModel(): Promise<LoadedModel> {
+      return { object_id: "0", plan_id: "1", save_id: server.saveId, units: "cm", data_empty: false, model: structuredClone(server.model) };
+    },
+    async openEditor() { return editor; },
+  };
+  return new Workspace(deps);
+}
+
+test("ревью 329 №4a: normalize потерял ceiling_hole (стена сквозь проём) — INVALID_GEOMETRY до записи", async () => {
+  const m = baseModel();
+  addCeilingHole(m, HOLES_MM(), ROOMS);
+  const before = structuredClone(m);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    // редактор молча потерял проём потолка (стена прошла сквозь него)
+    (norm as { level_holes?: Record<string, unknown> }).level_holes = {};
+  });
+  await ws.open("0", "1");
+  await assert.rejects(
+    ws.applyWalls("wall_add", (model) => {
+      addWall(model, { start: { x: 0, y: -3000 }, end: { x: 4000, y: -3000 }, thicknessMm: 100 });
+      return true;
+    }),
+    (e: unknown) => {
+      assert.ok(e instanceof McpError);
+      assert.equal(e.code, "INVALID_GEOMETRY");
+      const details = (e as { details?: { level_hole_mismatches?: string[] } }).details;
+      assert.ok(
+        (details?.level_hole_mismatches ?? []).some((x) => x.includes("потолке") && x.includes("потерян")),
+        JSON.stringify(details),
+      );
+      return true;
+    },
+  );
+  assert.deepEqual(m, before, "локальная модель не изменилась");
+});
+
+test("ревью 329 №4б: normalize сохранил проём при делении комнаты — мутация без ложных отказов", async () => {
+  const m = baseModel();
+  addCeilingHole(m, HOLES_MM(), ROOMS);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    // редактор разделил комнату стеной: room1/room2, проём пережил (в части room1);
+    // идемпотентно — save-верификация нормализует серверную копию повторно
+    const rooms = (norm as { rooms2?: Record<string, Record<string, unknown>> }).rooms2!;
+    if (rooms["room2"]) return;
+    rooms["room1"] = { polygon: [{ x: 700, y: 300 }, { x: 930, y: 300 }, { x: 930, y: 400 }, { x: 700, y: 400 }], ceilings: [{ exist: false }] };
+    rooms["room2"] = { polygon: [{ x: 700, y: 400 }, { x: 930, y: 400 }, { x: 930, y: 530 }, { x: 700, y: 530 }], ceilings: [{ exist: false }] };
+  });
+  await ws.open("0", "1");
+  const out = await ws.applyWalls("wall_add", (model) => {
+    addWall(model, { start: { x: 7000, y: 4000 }, end: { x: 9300, y: 4000 }, thicknessMm: 100 });
+    return true;
+  });
+  assert.ok(out.result === true);
+});
+
+/** Запись complex для split-тестов: комната с двухуровневым потолком. */
+function complexRoomModel(): Model {
+  const m = baseModel();
+  const room = (m.rooms2 as Record<string, Record<string, unknown>>)["room1"]!;
+  room["polygon"] = [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }];
+  const rec = (room["ceilings"] as Record<string, unknown>[])[0]!;
+  rec["polygon"] = [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }];
+  setCeilingComplex(m, "room1");
+  return m;
+}
+
+test("ревью 329 №4в: стена делит комнату с двухуровневым потолком — без ложного NORMALIZATION_DROPPED", async () => {
+  const m = complexRoomModel();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    // редактор разделил комнату: части унаследовали complex-отделку (restoreCeilings);
+    // идемпотентно — серверная копия при верификации нормализуется повторно
+    const rooms = (norm as { rooms2?: Record<string, Record<string, unknown>> }).rooms2!;
+    if (rooms["room2"]) return;
+    const srcRec = structuredClone((rooms["room1"]!["ceilings"] as Record<string, unknown>[])[0]!);
+    rooms["room1"] = {
+      polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 150 }, { x: 0, y: 150 }],
+      ceilings: [structuredClone(srcRec)],
+    };
+    rooms["room2"] = {
+      polygon: [{ x: 0, y: 150 }, { x: 400, y: 150 }, { x: 400, y: 300 }, { x: 0, y: 300 }],
+      ceilings: [structuredClone(srcRec)],
+    };
+  });
+  await ws.open("0", "1");
+  const out = await ws.save();
+  assert.equal(out.verified, true, "split с complex — штатная топология");
+});
+
+test("ревью 329 №4в: normalize потерял complex-поля при split — NORMALIZATION_DROPPED до записи", async () => {
+  const m = complexRoomModel();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  let saves = 0;
+  const ws = saveMock(server, () => { saves++; }, (norm) => {
+    const rooms = (norm as { rooms2?: Record<string, Record<string, unknown>> }).rooms2!;
+    rooms["room1"] = {
+      polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 150 }, { x: 0, y: 150 }],
+      ceilings: [{ exist: true, material: "gypsum_ceiling", level: 0, profile: "standard" }],
+    };
+    rooms["room2"] = {
+      polygon: [{ x: 0, y: 150 }, { x: 400, y: 150 }, { x: 400, y: 300 }, { x: 0, y: 300 }],
+      ceilings: [{ exist: true, material: "gypsum_ceiling", level: 0, profile: "standard" }],
+    };
+  });
+  await ws.open("0", "1");
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "NORMALIZATION_DROPPED");
+    return true;
+  });
+  assert.equal(saves, 0, "до записи дело не дошло");
 });
