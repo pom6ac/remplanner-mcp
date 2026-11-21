@@ -32,7 +32,6 @@ export const MODEL_ENTITY_COLLECTIONS = [
   "comments",
   "shields",
   "zone_delimiters",
-  "claddings",
   "warm_floors",
   "pipes_warm_floor",
   "pipes_conditioner",
@@ -69,7 +68,6 @@ export const PUBLIC_COLLECTION_KEYS = {
   comments: "comments",
   shields: "shields",
   zone_delimiters: "zone_delimiters",
-  claddings: "claddings",
   warm_floors: "warm_floors",
   pipes_warm_floor: "pipes_warm_floor",
   pipes_conditioner: "pipes_conditioner",
@@ -134,15 +132,6 @@ export function hasEntities(model: Model): boolean {
  */
 export const MODEL_REQUIRED_COLLECTIONS = ["walls", "items", "pillars", "rulers", "comments"] as const;
 
-/**
- * Коллекции, чья пустая форма у редактора — ПУСТОЙ ОБЪЕКТ верхнеуровнево, а не
- * отсутствие ключа: project.copy("server") пишет o.claddings=$Claddings.copy()
- * всегда (даже пустой), а $Claddings.restore при отсутствующем ключе сохраняет
- * прежние lines того же экземпляра редактора — удаление ключа возвращало линии
- * при normalize (проба 354-cleanup). clear/import оставляют claddings: {}.
- */
-export const MODEL_EMPTY_OBJECT_COLLECTIONS = ["claddings"] as const;
-
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
@@ -150,10 +139,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 /** Очистить все коллекции объектов в рабочей копии (project_clear). */
 export function clearEntityCollections(model: Model): void {
   for (const key of MODEL_ENTITY_COLLECTIONS) {
-    if (
-      (MODEL_REQUIRED_COLLECTIONS as readonly string[]).includes(key) ||
-      (MODEL_EMPTY_OBJECT_COLLECTIONS as readonly string[]).includes(key)
-    ) {
+    if ((MODEL_REQUIRED_COLLECTIONS as readonly string[]).includes(key)) {
       model[key] = {} as never;
     } else {
       delete model[key];
@@ -175,10 +161,7 @@ export function replaceEntityCollections(target: Model, source: Model): void {
     const value = source[key];
     if (isRecord(value)) {
       target[key] = structuredClone(value) as never;
-    } else if (
-      (MODEL_REQUIRED_COLLECTIONS as readonly string[]).includes(key) ||
-      (MODEL_EMPTY_OBJECT_COLLECTIONS as readonly string[]).includes(key)
-    ) {
+    } else if ((MODEL_REQUIRED_COLLECTIONS as readonly string[]).includes(key)) {
       target[key] = {} as never;
     } else {
       delete target[key];

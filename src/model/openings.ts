@@ -6,7 +6,6 @@ import type { MmPoint } from "./walls.ts";
 import { wallFaces } from "./wall-geometry.ts";
 import { McpError } from "../errors.ts";
 import { assignCandidate } from "./assign.ts";
-import { cutCladdingLinesForHole } from "./claddings.ts";
 
 /**
  * Таблица «ключ каталога → hole.type / group / дефолты».
@@ -605,7 +604,7 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
   // расширяет до 90), явные размеры — INVALID_ARGUMENT
   if (replaced) {
     if (kind.windoor) {
-      throw new McpError("INVALID_ARGUMENT", `замена ${replaced.id} проёмом plan:c с частями (windoor) не поддерживается — как в редакторе, замена ставится ровно в габарит исходного`, {
+      throw new McpError("INVALID_ARGUMENT", `замена ${replaced.id} проёмом plan:c с частями (windoor) не поддерживается — MCP строже редактора: setReplacement редактора windoor не запрещает, но MCP замену с частями не строит (№7 ревью 355)`, {
         hint: "для замены используйте doorway/door/window без частей",
         details: { kind: "replace_windoor", wall_id: wall.id, hole_id: replaced.id },
       });
@@ -728,10 +727,6 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
   assertHoleInvariants(hole); // все инварианты кандидата — до записи в модель (ревью 28, R3/R4)
   wall.holes ??= {};
   wall.holes[holeId] = hole;
-  // этап 354: как в редакторе (addHole режет линии обшивки у нового проёма) —
-  // линии обшивки, пересекающие оба откоса нового проёма в полосе 51 см от грани,
-  // режутся сразу, чтобы normalize не сделал это на save (иначе NORMALIZATION_DROPPED)
-  cutCladdingLinesForHole(model, wall, holeRange(wall, hole));
   return hole;
 }
 
@@ -985,8 +980,11 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
     at = holeOffsetCm(wall, hole);
   }
   // ревью 108 R4: партнёр по паре замены исключается из проверки пересечений
-  // (высота/размеры одного участника не должны блокироваться вторым), а перенос,
-  // меняющий центр, переносится согласованно на второго участника
+  // (высота/размеры одного участника не должны блокироваться вторым).
+  // №11 ревью 355: явные centerMm/offsetMm/widthMm/heightMm участников пары
+  // отклоняются гардом выше (replacement_pair_immutable), поэтому согласованный
+  // перенос пары из ревью 108 R4 удалён как недостижимый: у пары меняются только
+  // не-геометрические поля (opening/casing/наличники), width и at остаются прежними
   const pair = replacementPairOf(wall, hole);
   checkPlacement(wall, at, width, hole.id, pair?.id); // до мутации: при ошибке модель не меняется
 
@@ -1036,38 +1034,6 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   candidate.at = r2(at);
   refreshHole(wall, candidate);
   assertHoleInvariants(candidate); // финальные инварианты — тоже до изменения модели (R3/R4)
-  // согласованный перенос пары (ревью 108 R4): центр сместился — второй участник
-  // следует за первым. Проверка на копии стены до любой мутации: не помещается —
-  // атомарный отказ с подсказкой (выбор поведения: перенос, а не разъезд пары)
-  if (pair) {
-    const newCenter = at + width / 2;
-    const pairCenter = holeOffsetCm(wall, pair) + pair.width / 2;
-    if (Math.abs(newCenter - pairCenter) > 0.005) {
-      const scratch = structuredClone(wall);
-      assignCandidate(scratch.holes[hole.id]!, candidate);
-      const sp = scratch.holes[pair.id]!;
-      if (sp.at !== undefined) {
-        sp.at = r2(newCenter - sp.width / 2);
-        refreshHole(scratch, sp);
-      } else {
-        // UI-проём без служебного at: позиция задаётся центром pc
-        const pc = pointAtLength(wallAxis(scratch), newCenter);
-        sp.pc = { x: r2(pc.x), y: r2(pc.y) };
-        setHolePoints(scratch, sp);
-      }
-      try {
-        checkPlacement(scratch, holeOffsetCm(scratch, sp), sp.width, sp.id, hole.id);
-      } catch (cause) {
-        const code = cause instanceof McpError ? cause.code : "GEOMETRY_CONFLICT";
-        throw new McpError(code,
-          `перенос проёма ${hole.id} уводит с места пару замены: второй участник ${pair.id} (${hole.plan === "c" ? "исходный" : "замена"}) не помещается на стене после переноса`, {
-            hint: "пара замены переносится согласованно; перенесите пару в пределы стены или удалите замену (opening_delete) перед переносом",
-            details: { kind: "replacement_pair_transfer_conflict", wall_id: wall.id, hole_id: hole.id, pair_id: pair.id },
-          });
-      }
-      assignCandidate(pair, scratch.holes[pair.id]!);
-    }
-  }
   assignCandidate(hole, candidate);
   return hole;
 }

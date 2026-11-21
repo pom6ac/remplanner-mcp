@@ -314,6 +314,45 @@ export function guardedSave(guard: ReadonlyGuard, save: () => Promise<unknown>):
   };
 }
 
+/**
+ * Гард «план в редакторе == сервер» (№6г ревью 355) — ядро, FAIL-CLOSED: если план
+ * редактора не определён (compat нет или plan_id пуст/undefined) — отказ, а не
+ * пропуск сверки (в прогоне 354-dev.log ветка `openedPlan !== undefined` молча
+ * пропускала сверку при `editor plan: undefined`). Бросает ProbeGuardError.
+ */
+export function checkEditorPlanMatch(planIdInEditor: unknown, expectedPlanId: string): void {
+  if (planIdInEditor === undefined || planIdInEditor === null || String(planIdInEditor) === "") {
+    throw new ProbeGuardError(
+      "гард «план в редакторе == серверу» (№6г ревью 355): план в редакторе не определён " +
+      "(compat.plan_id пуст или редактор не создан) — сверка невозможна — отказ до записи (fail-closed)",
+    );
+  }
+  if (String(planIdInEditor) !== expectedPlanId) {
+    throw new ProbeGuardError(`гард «план в редакторе == серверу»: в редакторе план ${String(planIdInEditor)}, ожидался ${expectedPlanId} — стоп`);
+  }
+}
+
+/** Обёртка гарда плана редактора для проб: editor — editorOrNull() (compat
+ *  синхронно или compatInfo() после ленивого создания редактора, как в
+ *  310-m11-live); отказ — process.exit(1) до записи. */
+export async function assertEditorPlanMatch(
+  editor: { compat?: Record<string, unknown>; compatInfo?: () => Promise<{ plan_id?: unknown }> } | null | undefined,
+  expectedPlanId: string,
+): Promise<void> {
+  let planId: unknown;
+  if (editor && typeof editor.compatInfo === "function") {
+    const compat = await editor.compatInfo();
+    planId = compat?.plan_id;
+  } else {
+    planId = editor?.compat ? editor.compat["plan_id"] : undefined;
+  }
+  try {
+    checkEditorPlanMatch(planId, expectedPlanId);
+  } catch (e) {
+    guardExit(e);
+  }
+}
+
 /** Ссылка на гард для проб, где save-сайты вне области видимости локального
  *  roGuard (top-level хелперы, finally) — ревью 321 N4. */
 export type ReadonlyGuardRef = { current: ReadonlyGuard | null };

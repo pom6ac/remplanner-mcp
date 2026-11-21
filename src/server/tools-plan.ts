@@ -49,7 +49,6 @@ import {
 } from "../model/finish.ts";
 import { setRoomName, setRoomColor } from "../model/room-fields.ts";
 import { addZoneDelimiter, removeZoneDelimiter, zoneDelimiterList, ZONE_DELIMITER_PLANS, type ZoneDelimiterType } from "../model/zone.ts";
-import { addCladding, removeCladding, claddingList } from "../model/claddings.ts";
 import { addCeilingRigel, updateCeilingRigel, deleteCeilingRigel, ceilingRigelList, type CeilingRigelRec } from "../model/ceiling-rigels.ts";
 import { setCeilingComplex } from "../model/ceiling-complex.ts";
 import {
@@ -237,40 +236,6 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
     );
   }
-
-  // Обшивка ГКЛ (лист «Перегородки», gypsum_cladding, этап 354): линия внутри
-  // одной комнаты; кнопки в разметке редактора нет, но режим, модель и restore
-  // поддерживаются редактором полностью (пробы 354-replan2-ui/ui4). Метки CL<n>
-  // сквозные (claddingList — один источник для model_get/compact/remove).
-  const claddingTools: Record<string, ToolDefLike> = {
-    cladding_add: tool(
-      "Провести линию обшивки ГКЛ (лист «Перегородки», инструмент «Обшивка гипсокартоном»). " +
-        "Линия лежит внутри одной комнаты; концы магнитятся к рёбрам комнаты (в 50 мм) " +
-        "и к свободным концам других линий обшивки (в 100 мм), как в редакторе. " +
-        "Минимальная длина — 40 мм; пересекать другие линии обшивки нельзя (только соединять концами). " +
-        "id — метка CL<n> для cladding_remove и model_get. После правки вызывайте model_validate и project_save.",
-      {
-        from_mm: mmPoint.describe("начало линии, мм"),
-        to_mm: mmPoint.describe("конец линии, мм"),
-      },
-      async (a) => {
-        const ws = wsOf();
-        const res = ws.apply("cladding_add", (m) => addCladding(m, { fromMm: a["from_mm"] as MmPoint, toMm: a["to_mm"] as MmPoint }));
-        const n = claddingList(ws.model).findIndex((c) => c["site_id"] === res.id);
-        return ok({ id: `CL${n + 1}`, site_id: res.id, room_id: res.room_id, length_mm: res.length_mm, hint: SCENARIO_HINT });
-      },
-    ),
-    cladding_remove: tool(
-      "Удалить линию обшивки ГКЛ (инструмент «ластик» на линии, лист «Перегородки»). " +
-        "cladding_id — метка CL<n> из model_get или id сайта из cladding_add.",
-      { cladding_id: z.string().min(1).describe("метка CL<n> из model_get или id сайта") },
-      async (a) => {
-        const ws = wsOf();
-        const res = ws.apply("cladding_remove", (m) => removeCladding(m, a["cladding_id"] as string));
-        return ok({ cladding_id: a["cladding_id"], removed: res.removed, hint: SCENARIO_HINT });
-      },
-    ),
-  };
 
   // Потолочные закладные (класс CeilingRigel, rooms2[rid].rigels, этап 303, PRO):
   // полоса «от стены до стены» внутри комнаты; концы магнитятся к боковым граням
@@ -2607,8 +2572,6 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     ...zoneTools,
-
-    ...claddingTools,
 
     // ---------- Терраса и участок (пункты меню «Терраса и участок», этап 64) ----------
     terrace_add: tool(

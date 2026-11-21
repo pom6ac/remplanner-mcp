@@ -171,7 +171,7 @@ test("parse-guard: will_delete по id — удаление + добавлени
     return true;
   });
   const res: SaveOutcome = await ws.save();
-  assert.deepEqual(res.will_delete, { walls: 0, openings: 1, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0, cables: 0, cables_socket: 0, cables_warm_floor: 0, cables_conditioner: 0, rulers: 0, comments: 0, shields: 0, warm_floors: 0, zone_delimiters: 0, claddings: 0, pipes_warm_floor: 0, pipes_conditioner: 0, pipes_heat: 0, pipes_ventilation: 0 });
+  assert.deepEqual(res.will_delete, { walls: 0, openings: 1, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0, cables: 0, cables_socket: 0, cables_warm_floor: 0, cables_conditioner: 0, rulers: 0, comments: 0, shields: 0, warm_floors: 0, zone_delimiters: 0, pipes_warm_floor: 0, pipes_conditioner: 0, pipes_heat: 0, pipes_ventilation: 0 });
   assert.ok(res.warnings.some((w) => w.includes("srv_old")), res.warnings.join("; "));
   const lostHole = res.warnings.find((w) => /проём/.test(w)) ?? "";
   assert.ok(/apuny6wral|pbwydi1o66/.test(lostHole), `в предупреждении id удалённого проёма: ${lostHole}`);
@@ -196,7 +196,7 @@ test("parse-guard: project_save предупреждает, сколько об�
   // при записи он пропадёт с сервера, project_save обязан об этом предупредить
   ws.apply("item_delete", (m) => { delete m.items["srv2"]; return true; });
   const res: SaveOutcome = await ws.save();
-  assert.deepEqual(res.will_delete, { walls: 0, openings: 0, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0, cables: 0, cables_socket: 0, cables_warm_floor: 0, cables_conditioner: 0, rulers: 0, comments: 0, shields: 0, warm_floors: 0, zone_delimiters: 0, claddings: 0, pipes_warm_floor: 0, pipes_conditioner: 0, pipes_heat: 0, pipes_ventilation: 0 });
+  assert.deepEqual(res.will_delete, { walls: 0, openings: 0, items: 1, pillars: 0, rigels: 0, gas_lines: 0, pipes: 0, terrace_borders: 0, territory_borders: 0, level_holes: 0, led_strips: 0, stripes_light: 0, line_strips: 0, cables: 0, cables_socket: 0, cables_warm_floor: 0, cables_conditioner: 0, rulers: 0, comments: 0, shields: 0, warm_floors: 0, zone_delimiters: 0, pipes_warm_floor: 0, pipes_conditioner: 0, pipes_heat: 0, pipes_ventilation: 0 });
   assert.ok(res.warnings.some((w) => w.includes("1") && w.includes("предмет")), res.warnings.join("; "));
   // публичные ключи will_delete — словарь compact model_get: gas_lines есть, pipes_gas нет
   const willDelete = res.will_delete as unknown as Record<string, number>;
@@ -226,6 +226,31 @@ test("parse-guard: will_delete — переименование стены с с
     res.warnings.some((w) => /идентификатор/.test(w) && /стен/.test(w)),
     `предупреждение о смене идентификаторов стен: ${res.warnings.join("; ")}`,
   );
+});
+
+// Фикс 356 (№1 ревью 355): обшивка ГКЛ убрана из MCP (инструмента нет в UI),
+// но существующие записи model.claddings (созданные редактором иначе) —
+// passthrough: коллекция проходит сквозь open → save без изменений, сверка
+// не даёт ложного NORMALIZATION_DROPPED, ключ не удаляется и не чистится.
+test("parse-guard: существующие claddings переживают save без изменений (passthrough, фикс 356)", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel(), dataEmpty: false };
+  const serverModel = server.model as unknown as Record<string, unknown>;
+  serverModel["claddings"] = {
+    cl_edit: { id: "cl_edit", p1: { x: 60, y: 60 }, p2: { x: 200, y: 60 }, pc: { x: 130, y: 60 }, p1lnk: { obj: 0 } },
+  };
+  const claddingsBefore = structuredClone(serverModel["claddings"]);
+  const { deps } = mockDeps(server);
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("item_add", (m) => {
+    m.items["it_new"] = { id: "it_new", name: "sofa", pc: { x: 250, y: 150 }, angle: 0, width: 100, height: 100, plan: { furniture: 1 } } as Model["items"][string];
+    return true;
+  });
+  const res: SaveOutcome = await ws.save();
+  assert.ok(res.verified, "save verified");
+  assert.ok(!res.warnings.some((w) => /обшивк|cladding/i.test(w)), "нет предупреждений про обшивку");
+  const saved = (server.model as unknown as Record<string, unknown>)["claddings"];
+  assert.deepEqual(saved, claddingsBefore, "claddings в записанной модели не изменились (passthrough)");
 });
 
 test("parse-guard: will_delete — реальное удаление стены остаётся удалением", async () => {

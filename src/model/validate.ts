@@ -5,7 +5,7 @@ import {
   pointInPolygon, segmentsCross, dist, closestPoint, projectionLength, lineIntersection,
   polygonArea, polygonSignedArea, overlapArea, type Segment, type Polygon,
 } from "./geometry.ts";
-import { holeRange } from "./openings.ts";
+import { holeRange, replacementPairOf } from "./openings.ts";
 import { edgeOnWallFace, pillarPolygon, PILLAR_DEFS } from "./pillars.ts";
 import { borderRingPolygons, borderRingContact } from "./terraces.ts";
 import { prepareForRestore } from "./walls.ts";
@@ -192,12 +192,10 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
         const h1 = holes[i]!;
         const h2 = holes[j]!;
         // пара замены (этап 354): замена plan:c стоит ровно в габарите исходного
-        // (replacement=1 / hasReplacement) — совпадение интервалов штатно, не дефект
-        if (h1.hasReplacement || h2.hasReplacement ||
-            (h1.plan === "c" && h1.parent === wall.id && h2.hasReplacement) ||
-            (h2.plan === "c" && h2.parent === wall.id && h1.hasReplacement)) {
-          continue;
-        }
+        // (replacement=1 / hasReplacement) — совпадение интервалов штатно, не дефект.
+        // №10 ревью 355: пропуск только для СОБСТВЕННОЙ пары (replacementPairOf) —
+        // пересечение исходного/замены с посторонним проёмом ловится как прежде
+        if (replacementPairOf(wall, h1) === h2) continue;
         const r1 = holeRange(wall, h1);
         const r2 = holeRange(wall, h2);
         if (r1[0] < r2[1] - 1e-6 && r2[0] < r1[1] - 1e-6) {

@@ -6,7 +6,6 @@ import { wallFaces } from "./wall-geometry.ts";
 import { projectionLength, type Segment } from "./geometry.ts";
 import { parseSwitchVertexId } from "./electric.ts";
 import { zoneDelimiterList } from "./zone.ts";
-import { claddingList } from "./claddings.ts";
 import { ceilingRigelList } from "./ceiling-rigels.ts";
 import { ceilingFinishZones } from "./finish.ts";
 import { zoneNumbersByEditorRule } from "./room-fields.ts";
@@ -304,16 +303,6 @@ export type CompactZoneDelimiter = {
   length_mm: number;
 };
 
-/** Обшивка ГКЛ (этап 354, лист «Перегородки», gypsum_cladding), метки CL<n>. */
-export type CompactCladding = {
-  id: string;
-  site_id: string;
-  room_id: string | null;
-  from: [number, number];
-  to: [number, number];
-  length_mm: number;
-};
-
 export type CompactBorder = {
   id: string;
   site_id: string;
@@ -424,7 +413,6 @@ export type CompactModel = {
   territory_borders: CompactBorder[];
   level_holes: CompactFloorHole[];
   zone_delimiters: CompactZoneDelimiter[];
-  claddings: CompactCladding[];
   ceiling_rigels: CompactCeilingRigel[];
   led_strips: CompactLightStrip[];
   stripes_light: CompactLightStrip[];
@@ -976,14 +964,6 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     territory_borders: territoryBorders,
     level_holes: levelHoles,
     zone_delimiters: zoneDelimiters,
-    claddings: claddingList(model).map((c) => ({
-      id: String(c["id"] ?? ""),
-      site_id: String(c["site_id"] ?? ""),
-      room_id: (c["room_id"] as string | null) || null,
-      from: [round0((c["from_mm"] as [number, number])[0]), round0((c["from_mm"] as [number, number])[1])] as [number, number],
-      to: [round0((c["to_mm"] as [number, number])[0]), round0((c["to_mm"] as [number, number])[1])] as [number, number],
-      length_mm: round0(Number(c["length_mm"] ?? 0)),
-    })),
     ceiling_rigels: ceilingRigels,
     led_strips: compactLightStrips(model.led_strips, "LS"),
     stripes_light: compactLightStrips(model.stripes_light, "SL"),
