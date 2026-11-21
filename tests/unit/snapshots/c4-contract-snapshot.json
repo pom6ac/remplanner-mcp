@@ -1136,6 +1136,46 @@
    }
   },
   {
+   "name": "finish_ceiling_complex_set",
+   "description": "Поставить двухуровневый потолок в зоне комнаты (лист «Потолки», инструмент «Двухуровневый потолок»): внутренний контур с отступом 400 мм от стен, радиус скругления 100 мм (умолчания редактора). Проверки редактора: площадь зоны потолка ≥ 4 м², внутренний контур без самопересечений (GEOMETRY_CONFLICT/INVALID_ARGUMENT). at_mm — точка внутри зоны потолка (клик в редакторе); обязательна, если зон больше одной (zone_ceiling-делители, закладные). Повторный вызов по уже двухуровневой зоне — нет-op (как в редакторе). Снять двухуровневый потолок в редакторе нельзя (ластик его не снимает) — инстру remove нет. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "at_mm": {
+      "description": "точка внутри зоны потолка (клик), мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     }
+    },
+    "required": [
+     "room_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "finish_ceiling_molding_remove",
    "description": "Снять потолочные плинтусы комнаты. Без wall_id — со всех сторон.",
    "inputSchema": {

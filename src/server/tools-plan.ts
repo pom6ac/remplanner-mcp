@@ -48,6 +48,7 @@ import {
 } from "../model/finish.ts";
 import { addZoneDelimiter, removeZoneDelimiter, zoneDelimiterList, ZONE_DELIMITER_PLANS, type ZoneDelimiterType } from "../model/zone.ts";
 import { addCeilingRigel, updateCeilingRigel, deleteCeilingRigel, ceilingRigelList, type CeilingRigelRec } from "../model/ceiling-rigels.ts";
+import { setCeilingComplex } from "../model/ceiling-complex.ts";
 import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
 } from "../model/terraces.ts";
@@ -2310,6 +2311,32 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const ws = wsOf();
         ws.apply("finish_ceiling_remove", (m) => { removeCeilingFinish(m, a["room_id"] as string); return true; });
         return ok({ room_id: a["room_id"], removed: "ceiling", hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Двухуровневый потолок (лист «Потолки», complex_ceiling, этап 328) ----------
+    // НЕ PRO (разметка 328-pro-anon.json). Поля записи ceilings: complex, offset 40,
+    // radius 10, level 15, level2 7.5, material gypsum_ceiling, material2 stretch_ceiling,
+    // type closed (эталон 328-complex-etalon.json); производные polygon2/polygon_new/
+    // polygons_layout/edges_new редактор пересчитывает сам. Снятие: в UI ластик
+    // двухуровневый потолок не снимает (проба 328-complex) — отдельного remove нет.
+    finish_ceiling_complex_set: tool(
+      "Поставить двухуровневый потолок в зоне комнаты (лист «Потолки», инструмент «Двухуровневый " +
+        "потолок»): внутренний контур с отступом 400 мм от стен, радиус скругления 100 мм (умолчания " +
+        "редактора). Проверки редактора: площадь зоны потолка ≥ 4 м², внутренний контур без " +
+        "самопересечений (GEOMETRY_CONFLICT/INVALID_ARGUMENT). at_mm — точка внутри зоны потолка " +
+        "(клик в редакторе); обязательна, если зон больше одной (zone_ceiling-делители, закладные). " +
+        "Повторный вызов по уже двухуровневой зоне — нет-op (как в редакторе). Снять двухуровневый " +
+        "потолок в редакторе нельзя (ластик его не снимает) — инстру remove нет. " +
+        "После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        at_mm: mmPoint.optional().describe("точка внутри зоны потолка (клик), мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_ceiling_complex_set", (m) => setCeilingComplex(m, a["room_id"] as string, a["at_mm"] as MmPoint | undefined));
+        return ok({ room_id: a["room_id"], zone_index: res.index, ceiling_id: res.id, already: res.already, hint: SCENARIO_HINT });
       },
     ),
 

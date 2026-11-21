@@ -47,6 +47,7 @@ const EXPECTED_TOOLS = [
   "shield_collector_add", "shield_collector_update", "shield_collector_delete",
   // §7.4e — проем в полу, терраса и участок (этап 64)
   "floor_hole_add", "floor_hole_update", "floor_hole_delete",
+  "finish_ceiling_complex_set",
   "ceiling_hole_add", "ceiling_hole_update", "ceiling_hole_delete",
   "terrace_add", "terrace_border_update", "terrace_border_delete",
   "terrace_fence_add", "terrace_column_add", "terrace_column_update", "terrace_column_delete",

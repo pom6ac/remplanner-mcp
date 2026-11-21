@@ -110,7 +110,7 @@ export type FloorCover = (typeof FLOOR_COVERS)[number];
 export type WallCover = (typeof WALL_COVERS)[number];
 export type CeilingCover = (typeof CEILING_COVERS)[number];
 
-type RoomRec = {
+export type RoomRec = {
   polygon?: Point[];
   points?: Point[];
   area?: number;
@@ -122,7 +122,7 @@ type RoomRec = {
   [key: string]: unknown;
 };
 
-type RoomsMap = Record<string, RoomRec>;
+export type RoomsMap = Record<string, RoomRec>;
 
 function roomsOf(model: Model): RoomsMap {
   return (model.rooms2 ?? model.rooms1 ?? {}) as RoomsMap;
@@ -933,7 +933,17 @@ function ceilingSigsOf(room: RoomRec): string[] {
     // level 0 / profile standard — умолчания: отсутствие эквивалентно значению (96 R4)
     const level = num(c.level);
     const profile = typeof c.profile === "string" ? c.profile : "standard";
-    out.push(JSON.stringify({ material, level: level ?? 0, profile: profile === "" ? "standard" : profile }));
+    // двухуровневый потолок (этап 328): явно заданные пользователем поля complex/
+    // material2/level2/offset/radius обязательны после normalize и GET — их
+    // исчезновение потеря (new-entity-section.md); при complex=false сигнатура та же
+    const complex = c.complex === true ? {
+      material2: typeof c.material2 === "string" ? c.material2 : "",
+      level2: num(c.level2) ?? 0,
+      offset: num(c.offset) ?? 0,
+      radius: num(c.radius) ?? 0,
+      type: typeof c.type === "string" ? c.type : "",
+    } : null;
+    out.push(JSON.stringify({ material, level: level ?? 0, profile: profile === "" ? "standard" : profile, complex }));
   }
   return out.sort();
 }

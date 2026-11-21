@@ -1,0 +1,107 @@
+{
+ "_source": "drag по UI dev-объекта (headless Chromium, проба 328-scout, инструмент ceiling_hole на листе «Потолки»: перетаскивание прямоугольника внутри комнаты), model project.copy(\"server\"), БЕЗ сохранения; id проёма/вершин/комнаты обезличены через scripts/anonymize.ts (id1…); координаты — реальные точки листа (не идентифицируют). Поля модели: как у floor_hole (этап 64), но type \"ceiling_hole\" и plan \"ceiling\" (лист «Потолки»); length — периметр в м, area — площадь м², pc — центр, id_room — комната (обезличен).",
+ "id": "id1",
+ "plan": "ceiling",
+ "polygon": [
+  {
+   "x": 734.1,
+   "y": 339.3
+  },
+  {
+   "x": 764.1,
+   "y": 339.3
+  },
+  {
+   "x": 764.1,
+   "y": 369.3
+  },
+  {
+   "x": 734.1,
+   "y": 369.3
+  }
+ ],
+ "matrix": [
+  [
+   null,
+   {
+    "length": 1
+   },
+   null,
+   {
+    "length": 1
+   }
+  ],
+  [
+   {
+    "length": 1
+   },
+   null,
+   {
+    "length": 1
+   },
+   null
+  ],
+  [
+   null,
+   {
+    "length": 1
+   },
+   null,
+   {
+    "length": 1
+   }
+  ],
+  [
+   {
+    "length": 1
+   },
+   null,
+   {
+    "length": 1
+   },
+   null
+  ]
+ ],
+ "vertexes": [
+  {
+   "id": "id2",
+   "point": {
+    "x": 734.1,
+    "y": 339.3
+   },
+   "type": "node"
+  },
+  {
+   "id": "id3",
+   "point": {
+    "x": 764.1,
+    "y": 339.3
+   },
+   "type": "node"
+  },
+  {
+   "id": "id4",
+   "point": {
+    "x": 764.1,
+    "y": 369.3
+   },
+   "type": "node"
+  },
+  {
+   "id": "id5",
+   "point": {
+    "x": 734.1,
+    "y": 369.3
+   },
+   "type": "node"
+  }
+ ],
+ "type": "ceiling_hole",
+ "length": 1.2,
+ "id_room": "id6",
+ "area": 0.09,
+ "pc": {
+  "x": 749.1,
+  "y": 354.3
+ }
+}

@@ -77,6 +77,11 @@ const EDITOR_IDS_FORBIDDEN = new Set<string>([
   // UI в dev-проекте (проба 318-zonec-name), ID — zd1/v1/v2/room1/wall1..4
   // синтетические (сквозное обезличивание).
   "ui-ref-zonec-delimiter.json",
+  // Эталоны потолка ч.2 (этап 328): проём в потолке (drag UI, проба 328-scout)
+  // и двухуровневый потолок (клики UI, проба 328-complex), сняты в dev-проекте
+  // БЕЗ save; ID обезличены через scripts/anonymize.ts (id1…), сквозной набор.
+  "ui-ref-ceiling-hole.json",
+  "ui-ref-ceiling-complex.json",
   // Эталоны «Электрощиток» ч.2 (этап 284): сняты в dev-проекте (пробы
   // 284-wire-matrix/284-bus2), внутренние ID щитка/портов/проводов/шины/коллектора
   // заменены на id1… (сквозное обезличивание).
