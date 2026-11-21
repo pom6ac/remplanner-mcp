@@ -212,12 +212,7 @@ try {
     console.log("merge drainage →", it2?.name, "w/h mm:", it2?.width_mm, it2?.depth_mm);
     if (it2?.name !== "waterspot_drainage_cold_hot") throw new Error("merge drainage: имя не drainage_cold_hot");
     if (it2?.width_mm !== 210 || it2?.depth_mm !== 150) throw new Error(`merge drainage: габариты ${it2?.width_mm}×${it2?.depth_mm} (ожидалось 210×150)`);
-
-    await call("waterspot_unset", { item_id: coldSite, part: "waterspot_drainage" });
-    const it3 = await wsItem(coldSite);
-    console.log("unset drainage →", it3?.name);
-    if (it3?.name !== "waterspot_cold_hot") throw new Error("unset drainage: имя не cold_hot");
-    const badPair = await tryCall("waterspot_merge", { item_id: coldSite, part: "waterspot_cold_hot" });
+    const badPair = await tryCall("waterspot_merge", { item_id: coldSite, part: "waterspot_drainage_hot" });
     if (badPair.ok || !String(badPair.err).includes("INVALID_ARGUMENT")) throw new Error(`недопустимая пара не отклонена: ${badPair.err}`);
 
     // ---- 2. узел waterspot_node + трубы ----
@@ -280,12 +275,23 @@ try {
       throw new Error(`вершина-предмет удалилась pipe_node_delete: ${delItemVertex.err ?? "без ошибки"}`);
     }
 
+    // ---- 3b. unset drainage — каскад куска канализации (труба из 2 вершин удаляется) ----
+    const u1 = await call("waterspot_unset", { item_id: coldSite, part: "waterspot_drainage" });
+    console.log("unset drainage →", (u1 as { entity?: { name?: string } }).entity?.name,
+      "pipes:", JSON.stringify((u1 as { pipes?: unknown }).pipes));
+    if ((u1 as { entity?: { name?: string } }).entity?.name !== "waterspot_cold_hot") throw new Error("unset drainage: имя не cold_hot");
+    const unsetPipes = (u1 as { pipes?: { deleted?: string[]; created?: string[] } }).pipes;
+    if (!unsetPipes?.deleted?.length || unsetPipes.created?.length) {
+      throw new Error(`unset drainage: каскад не соответствует (кусок из 2 вершин удаляется): ${JSON.stringify(unsetPipes)}`);
+    }
+    for (const pid of unsetPipes.deleted) created = created.filter((c) => c.siteId !== pid);
+
     // ---- 4. item_delete вывода с трубой — каскад ----
-    const hotAdd = await call("item_add", { name: "waterspot_hot", position: { center: { x: 17000, y: 12000 } } });
+    const hotAdd = await call("item_add", { name: "waterspot_hot", position: { center: { x: roomCx + 1200, y: roomCy + 300 } } });
     void hotAdd;
     const hotSite = await itemSiteId("waterspot_hot");
     created.push({ kind: "item", siteId: hotSite });
-    const p4 = await call("pipe_add", { kind: "hot", path: [{ item_id: hotSite }, { x: 17500, y: 12500 }] });
+    const p4 = await call("pipe_add", { kind: "hot", path: [{ item_id: hotSite }, { x: roomCx + 1500, y: roomCy + 400 }] });
     const pipe4Site = (p4 as { entity?: { site_id?: string } }).entity?.site_id;
     if (!pipe4Site) throw new Error("pipe_add hot (2) без site_id");
     created.push({ kind: "pipe", siteId: pipe4Site });
@@ -307,7 +313,7 @@ try {
     const keptPipes = Object.values(am.pipes ?? {}).filter((p) => p.type === "water_pipe" || p.type === "water_hot_pipe" || p.type === "drainage_pipe").length;
     console.log("reopen:", JSON.stringify({ keptCold, keptNode, pipes: keptPipes, saveId: save1["save_id"] }));
     if (!keptCold || !keptNode) throw new Error("после reopen пропали вывод/узел");
-    if (keptPipes !== 3) throw new Error(`после reopen труб ${keptPipes} (ожидалось 3: water, hot, кусок drainage)`);
+    if (keptPipes !== 2) throw new Error(`после reopen труб ${keptPipes} (ожидалось 2: water и hot; кусок канализации удалён каскадом unset)`);
     // value_2 после unset снят, у объединённого вывода высоты согласованы (сырой формат)
     const coldRaw = (am.items ?? {})[coldSite] as { name?: string; over_floor?: { value?: number; value_2?: number } } | undefined;
     console.log("cold после reopen:", coldRaw?.name, JSON.stringify(coldRaw?.over_floor));

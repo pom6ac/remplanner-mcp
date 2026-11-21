@@ -1397,10 +1397,14 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           widthCm: entry.width,
           heightCm: entry.height,
         }));
-        return ok(compactEntity(ws.model, (c) => {
-          const idx = Object.values(ws.model.items).findIndex((it) => it.id === item.item.id);
-          return idx >= 0 ? c.items[idx] ?? null : (c.items.find((i) => i.name === result) ?? null);
-        }));
+        return ok({
+          pipes: item.pipes,
+          entity: compactEntity(ws.model, (c) => {
+            const idx = Object.values(ws.model.items).findIndex((it) => it.id === item.item.id);
+            return idx >= 0 ? c.items[idx] ?? null : (c.items.find((i) => i.name === result) ?? null);
+          }).entity,
+          hint: SCENARIO_HINT,
+        });
       },
     ),
 
