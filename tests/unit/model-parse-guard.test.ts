@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Workspace, type WorkspaceDeps, type EditorLike, type SaveOutcome } from "../../src/workspace.ts";
+import { recordingDeps, type SaveServer } from "./helpers/c2-save-journal.ts";
 import type { LoadedModel } from "../../src/api.ts";
 import type { Model, FixtureEnvelope } from "../../src/model/types.ts";
 import { McpError } from "../../src/errors.ts";
@@ -232,14 +233,19 @@ test("parse-guard: will_delete — переименование стены с с
 // но существующие записи model.claddings (созданные редактором иначе) —
 // passthrough: коллекция проходит сквозь open → save без изменений, сверка
 // не даёт ложного NORMALIZATION_DROPPED, ключ не удаляется и не чистится.
+// nit ревью 357 №5: тест идёт через общий save-мок (helpers/c2-save-journal,
+// тот же контракт, что у канонических save-тестов), а не через локальный
+// identity-мок. Граница теста: MCP сам не трогает claddings; правки обшивки
+// живым редактором при normalize (например, moveHolesByCladdings режет линии
+// у проёмов) принимаются как есть — молчаливая правка, как в UI.
 test("parse-guard: существующие claddings переживают save без изменений (passthrough, фикс 356)", async () => {
-  const server: Server = { saveId: "s1", model: fixtureModel(), dataEmpty: false };
+  const server: SaveServer = { saveId: "s1", model: fixtureModel() };
   const serverModel = server.model as unknown as Record<string, unknown>;
   serverModel["claddings"] = {
     cl_edit: { id: "cl_edit", p1: { x: 60, y: 60 }, p2: { x: 200, y: 60 }, pc: { x: 130, y: 60 }, p1lnk: { obj: 0 } },
   };
   const claddingsBefore = structuredClone(serverModel["claddings"]);
-  const { deps } = mockDeps(server);
+  const { deps } = recordingDeps(server);
   const ws = new Workspace(deps);
   await ws.open("123", "1");
   ws.apply("item_add", (m) => {
