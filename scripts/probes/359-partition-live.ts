@@ -157,7 +157,9 @@ try {
     console.log("save2 (окно на перегородке) verified:", save2["verified"]);
     check(save2["verified"] === true, "save verified (окно на перегородке)");
 
-    const doorwayAdd = await call("opening_add", { wall_id: partWall3.id, type: "doorway", center_mm: 1500 }) as { entity?: Record<string, unknown> };
+    // doorway (проём без заполнения) на перегородке с дверью: дверь 110–190 см,
+    // doorway 210–290 см — на той же стене помещается
+    const doorwayAdd = await call("opening_add", { wall_id: partWall1.id, type: "doorway", center_mm: 2500 }) as { entity?: Record<string, unknown> };
     console.log("doorway on partition:", JSON.stringify(doorwayAdd.entity));
     created.push({ kind: "opening", siteId: String(doorwayAdd["entity"]?.id ?? doorwayAdd["entity"]?.site_id ?? "") });
     logCaptured(".orca-reports/tmp/359-captured.json", created, []);
