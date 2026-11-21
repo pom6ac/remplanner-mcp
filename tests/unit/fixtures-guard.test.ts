@@ -458,14 +458,11 @@ test("сторож фикстур: точки фикстур не совпада
     collectPoints(JSON.parse(readFileSync(join(rootTmp, f), "utf8")), refPoints);
   }
   assert.ok(refPoints.size > 0, "в readonly-ref-*.json не найдено точек — unexpected");
-  // Исключения — только с обоснованием (переснятие — отдельная задача).
-  // Ревью 331 Н7: ключ исключения — пара «файл + точка», а не файл целиком:
-  // новые совпадающие точки в той же фикстуре сторож не пропустит молча.
-  const ALLOW_REF_POINT_HITS = new Map<string, string>([
-    // эталон 57-comm-ui3 (магнит к колонне) снят с dev-копии плана; совпадает одна
-    // точка wall_line.p1 — переснятие эталона вне задачи 330 (ревью 329 №6, бэклог)
-    ["ui-ref-comm-water.json|921.2,210.7", "совпадение единственной точки; переснятие — отдельная задача"],
-  ]);
+  // Исключений нет (этап 341: эталон ui-ref-comm-water переснят на синтетическую
+  // геометрию, точка wall_line.p1 больше не совпадает с контрольным эталоном).
+  // Новая запись сюда — только с обоснованием и планом переснятия: совпадение точки
+  // фикстуры с планом пользователя запрещено.
+  const ALLOW_REF_POINT_HITS = new Map<string, string>([]);
   const offenders: string[] = [];
   for (const name of readdirSync(FIXTURES).filter((f) => f.endsWith(".json")).sort()) {
     const pts = collectPoints(JSON.parse(readFileSync(join(FIXTURES, name), "utf8")));
