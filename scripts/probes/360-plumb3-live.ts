@@ -218,7 +218,7 @@ try {
     console.log("unset drainage →", it3?.name);
     if (it3?.name !== "waterspot_cold_hot") throw new Error("unset drainage: имя не cold_hot");
     const badPair = await tryCall("waterspot_merge", { item_id: coldSite, part: "waterspot_cold_hot" });
-    if (!badPair.ok || !String(badPair.err).includes("INVALID_ARGUMENT")) throw new Error(`недопустимая пара не отклонена: ${badPair.err}`);
+    if (badPair.ok || !String(badPair.err).includes("INVALID_ARGUMENT")) throw new Error(`недопустимая пара не отклонена: ${badPair.err}`);
 
     // ---- 2. узел waterspot_node + трубы ----
     const nodeAdd = await call("item_add", { name: "waterspot_node", position: { center: { x: 14500, y: 12000 } } });
@@ -270,7 +270,7 @@ try {
     created.push({ kind: "pipe", siteId: dn.created_pipes![0]! });
     // вершина-предмет узлом не удаляется
     const delItemVertex = await tryCall("pipe_node_delete", { pipe_id: dn.created_pipes![0]!, vertex: 1 });
-    if (!delItemVertex.ok || !String(delItemVertex.err).includes("INVALID_ARGUMENT")) {
+    if (delItemVertex.ok || !String(delItemVertex.err).includes("INVALID_ARGUMENT")) {
       throw new Error(`вершина-предмет удалилась pipe_node_delete: ${delItemVertex.err ?? "без ошибки"}`);
     }
 
