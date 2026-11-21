@@ -185,6 +185,8 @@ test("338 M1-а: потолочный плинтус — finish_ceiling_molding_
       const erase = message.indexOf("finish_ceiling_remove", molding + 1);
       assert.ok(molding >= 0, `в подсказке инструмент потолочного плинтуса: ${message}`);
       assert.ok(erase > molding, `плинтус снимается раньше ластика (ластик при плинтусе не снять): ${message}`);
+      // n6 ревью 339: простой потолок не должен получать шаг смены материала
+      assert.doesNotMatch(message, /finish_ceiling_set/, `признак complex только по своей комнате: ${message}`);
       assert.doesNotMatch(message, /finish_floor_remove/, `пол не мешает: ${message}`);
     },
   );
@@ -205,6 +207,8 @@ test("338 M1-а: закарнизная ниша — finish_ceiling_niche_remove
       const erase = message.indexOf("finish_ceiling_remove", niche + 1);
       assert.ok(niche >= 0, `в подсказке инструмент ниши: ${message}`);
       assert.ok(erase > niche, `ниша снимается раньше ластика (ластик при нише отказывает): ${message}`);
+      // n6 ревью 339: простой потолок не должен получать шаг смены материала
+      assert.doesNotMatch(message, /finish_ceiling_set/, `признак complex только по своей комнате: ${message}`);
       assert.doesNotMatch(message, /finish_floor_remove/, `пол не мешает: ${message}`);
     },
   );
@@ -232,6 +236,23 @@ test("338 M1-а: пол и плинтус — оба шага в подсказ�
 });
 
 // --- сторож реестра (перечисление видов — из одного источника) ---
+
+// n8 ревью 339: каждая problem имеет код вида — problems выводятся из losses,
+// прямой problems.push в обход add невозможен; тест краснеет, если в finishCompare
+// вернётся сборка problems мимо losses
+test("339 n8: problems и losses попарно равны (problem без кода вида невозможен)", () => {
+  const m = corridorModel();
+  const rooms = (m.rooms2 ?? {}) as Record<string, Record<string, unknown>>;
+  const src = "_uwwgk";
+  setCeilingFinish(m, src, "gypsum_ceiling", {});
+  setFloorFinish(m, src, "laminate", {});
+  const exp = structuredClone(rooms);
+  const got: Record<string, Record<string, unknown>> = {};
+  const res = finishCompare(exp, got, undefined, undefined, "normalize");
+  assert.ok(res.problems.length > 0, "есть расхождения");
+  assert.equal(res.problems.length, res.losses.length, "по problem на loss");
+  assert.deepEqual(res.problems, res.losses.map((l) => l.text), "тексты problems и losses совпадают");
+});
 
 test("338 сторож: каждый вид из FINISH_LOSS_KINDS имеет запись в FINISH_LOSS_REGISTRY", () => {
   const reg = new Set(FINISH_LOSS_REGISTRY.map((r) => r.kind));
@@ -279,9 +300,10 @@ test("338 сторож: подсказка строится по кодам, н�
   assert.ok(res.problems.some((p) => p.includes("чужое покрытие потолка")), `чужое покрытие — problem: ${JSON.stringify(res.problems)}`);
   assert.ok(res.losses.length > 0 && res.losses.every((l) => l.kind === "foreign_ceiling"), `каждая problem — foreign_ceiling: ${JSON.stringify(res.losses)}`);
   const hint = finishLossHint(res.losses as FinishLoss[]);
-  assert.doesNotMatch(hint, /finish_ceiling_set/, `смена материала не по чужому покрытию: ${hint}`);
-  assert.doesNotMatch(hint, /finish_ceiling_remove/, `ластик не по чужому покрытию: ${hint}`);
+  assert.doesNotMatch(hint, /finish_ceiling_set/, `смена материала не по чужому покрытию (n4): ${hint}`);
+  // n5 ревью 339: чужое покрытие снимается ластиком покрытия потолка исходной
+  // комнаты (expCeils пустеет, проверка частей не выполняется) — инструмент назван
+  assert.match(hint, /finish_ceiling_remove/, `инструмент чужого покрытия назван (n5): ${hint}`);
   assert.doesNotMatch(hint, /finish_floor_remove/, `пол не упоминается: ${hint}`);
-  assert.match(hint, /details\.finish_mismatches/, `запасной вариант ссылается на details: ${hint}`);
-  assert.match(hint, /finish_get/, `запасной вариант ссылается на finish_get: ${hint}`);
+  assert.doesNotMatch(hint, /details\.finish_mismatches/, `не запасной вариант: ${hint}`);
 });

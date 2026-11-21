@@ -138,16 +138,20 @@ test("337 n3: непокрытая зона без переданного level/
   assert.equal(zs[1]!.profile, "standard", "наследует profile соседней покрытой зоны");
 });
 
-test("337 n3: без записей exist (нечего наследовать) — умолчания 0/standard; переданные параметры приоритетны", () => {
+// n7 ревью 339: прежнее название обещало «умолчания 0/standard» и «приоритет
+// переданных параметров», а тело проверяло то же наследование level 15. Умолчания
+// через existRecs недостижимы (exist:true всегда есть), приоритет параметров
+// проверяется здесь: переданный level перекрывает наследуемый.
+test("337 n3: переданный level приоритетнее наследования от покрытой зоны", () => {
   const m = zoneModel([
     { exist: false, polygon: sq(0) },
     { exist: true, id: "_c1", material: "gypsum_ceiling", level: 15, profile: "standard", polygon: sq(200) },
     { exist: false, polygon: sq(0) },
   ]);
-  // exist:true есть только в [1]; покрытая зона _c2 остаётся, непокрытая [0] наследует её level
-  setCeilingFinish(m, "r1", "gypsum_ceiling", {});
+  // exist:true есть только в [1]; непокрытая [0] без параметра наследовала бы 15
+  setCeilingFinish(m, "r1", "gypsum_ceiling", { level: 20 });
   const zs = zonesOf(m);
   assert.equal(zs[0]!.exist, true, "первая зона покрыта");
-  assert.equal(zs[0]!.level, 15, `наследует level покрытой зоны: ${JSON.stringify(zs[0])}`);
-  assert.equal(zs[0]!.profile, "standard", "наследует profile покрытой зоны");
+  assert.equal(zs[0]!.level, 20, `переданный level приоритетнее наследования: ${JSON.stringify(zs[0])}`);
+  assert.equal(zs[0]!.profile, "standard", "profile без параметра наследуется");
 });

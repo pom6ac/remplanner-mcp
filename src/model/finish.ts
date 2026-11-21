@@ -1398,7 +1398,11 @@ export const FINISH_LOSS_REGISTRY: readonly FinishLossRule[] = [
   { kind: "ceiling", label: "покрытие потолка", tool: "finish_ceiling_remove", order: 5 },
   { kind: "floor", label: "покрытие пола", tool: "finish_floor_remove", order: 6 },
   { kind: "wall_side", label: "отделку сторон стен", tool: "finish_wall_remove", order: 7 },
-  { kind: "foreign_ceiling", label: "чужое покрытие потолка", tool: null, order: 8 },
+  // n5 ревью 339: чужое покрытие при split снимается ластиком покрытия потолка
+  // ИСХОДНОЙ комнаты — expCeils становится пустым, проверка частей не выполняется
+  // (проба 339 .orca-reports/tmp/339-foreign-probe.ts: после removeCeilingFinish
+  // problems пусты). Снятую отделку комнаты наносят заново после операции.
+  { kind: "foreign_ceiling", label: "чужое покрытие потолка", tool: "finish_ceiling_remove", order: 8 },
 ];
 
 export type FinishCompareResult = { problems: string[]; warnings: string[]; losses: FinishLoss[] };
@@ -1425,14 +1429,14 @@ export function finishCompare(
     Object.fromEntries(Object.entries(walls ?? {}).map(([k, w]) => [k, (w ?? {}) as FinishWall]));
   const expW = asFinishWalls(expectedWalls);
   const gotW = asFinishWalls(gotWalls);
-  const problems: string[] = [];
   const losses: FinishLoss[] = [];
   const warnings: string[] = [];
   // ревью 337 M1-а: каждая problem получает код вида потери (структурно, рядом
-  // с текстом) — подсказка строится по кодам из FINISH_LOSS_REGISTRY
+  // с текстом) — подсказка строится по кодам из FINISH_LOSS_REGISTRY.
+  // n8 ревью 339: problems выводятся из losses, прямой problems.push в обход add
+  // невозможен — problem без кода вида не попадёт в отказ
   const add = (kind: FinishLossKind, text: string): void => {
     losses.push({ kind, text });
-    problems.push(text);
   };
   /** Вид потери потолка (n4 ревью 337): complex — только по записям ceilings
    *  самой комнаты (complex:true), не по чужому покрытию и не по правой части
@@ -1504,7 +1508,8 @@ export function finishCompare(
             const foreign = partCeils.filter((c) => !allowed.has(c));
             if (foreign.length > 0) {
               // n4 ревью 337: чужое покрытие — не потеря отделки самой комнаты,
-              // код foreign_ceiling (подсказка без инструментов снятия)
+              // код foreign_ceiling; n5 ревью 339: снимается ластиком покрытия
+              // потолка исходной комнаты (см. комментарий в FINISH_LOSS_REGISTRY)
               add("foreign_ceiling", `room ${rid}: часть ${k} получила чужое покрытие потолка (${foreign.join(" | ")}) при split`);
               continue;
             }
@@ -1805,7 +1810,7 @@ export function finishCompare(
       }
     }
   }
-  return { problems, warnings, losses };
+  return { problems: losses.map((l) => l.text), warnings, losses };
 }
 
 /** Список расхождений (режим normalize, до записи): пусто — совпало. */
@@ -1827,14 +1832,17 @@ export function finishMismatches(
  * finishCompare, сопоставление ПО КОДАМ, не регулярками по русскому тексту.
  * Порядок снятия — поле order: ниша и плинтусы раньше ластиков (ластик потолка
  * при нише отказывает), двухуровневый потолок — смена материала раньше ластика.
- * Запасной вариант (виды без инструмента в реестре, например чужое покрытие при
- * split) — без перечня инструментов, со ссылкой на details.finish_mismatches
- * и finish_get.
+ * Запасной вариант (виды без инструмента в реестре) — без перечня инструментов,
+ * со ссылкой на details.finish_mismatches и finish_get.
+ * n9 ревью 339: при «ceiling_complex» правило простого «ceiling» пропускается —
+ * снятие двухуровневого завершается тем же finish_ceiling_remove, повтор в шагах лишний.
  */
 export function finishLossHint(losses: readonly FinishLoss[]): string {
   const kinds = new Set(losses.map((l) => l.kind));
   const rules = FINISH_LOSS_REGISTRY
     .filter((r) => kinds.has(r.kind))
+    // n9 ревью 339: «ceiling» дублирует финал снятия «ceiling_complex»
+    .filter((r) => r.kind !== "ceiling" || !kinds.has("ceiling_complex"))
     .sort((a, b) => a.order - b.order);
   const withTool = rules.filter((r) => r.tool !== null);
   if (withTool.length === 0) {
