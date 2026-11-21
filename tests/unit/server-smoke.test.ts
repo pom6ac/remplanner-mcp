@@ -8,6 +8,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { join } from "node:path";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { addLightLine, updateLightLine } from "../../src/model/lighting.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const FIXTURE = join(ROOT, "tests/fixtures/anon-rect-4000x3000.json");
@@ -222,27 +223,25 @@ test("smoke: схемы отвергают отрицательные разме
   }
 });
 
-test("smoke: световые линии — update принимает отрицательные координаты (85 №1: план может уходить в минус, как в add)", async () => {
+test("smoke: световые линии — PRO-гейт на анонимном проекте (328), отрицательные координаты — на модельном слое", async () => {
   let client: Client | undefined;
   try {
     client = await start();
-    for (const [addTool, updTool, idKey] of [
-      ["led_strip_add", "led_strip_update", "led_strip_id"],
-      ["stripe_add", "stripe_update", "stripe_id"],
-      ["line_light_add", "line_light_update", "line_light_id"],
-    ] as const) {
+    // led_strip/stripe/line_light — PRO-инструменты (is_pro, эталон 328-pro-anon.json):
+    // на анонимном проекте (равен бесплатному тарифу) гейт возвращает NOT_AVAILABLE_ON_TARIFF
+    for (const addTool of ["led_strip_add", "stripe_add", "line_light_add"] as const) {
       const add = await client.callTool({ name: addTool, arguments: { kind: "recessed", path: [{ x: -1000, y: -1000 }, { x: 0, y: -1000 }] } });
-      assert.ok(!add.isError, `${addTool}: ${text(add)}`);
-      const added = JSON.parse(text(add)) as { entity: { site_id: string } | null };
-      assert.ok(added.entity, `${addTool}: сущность создана`);
-      const upd = await client.callTool({
-        name: updTool,
-        arguments: { [idKey]: added.entity!.site_id, positions: [{ vertex: 0, x_mm: -500, y_mm: -2000 }] },
-      });
-      assert.ok(!upd.isError, `${updTool}: отрицательные координаты допустимы: ${text(upd)}`);
-      const compact = JSON.parse(text(upd)) as { entity: { from: number[] } | null };
-      assert.deepEqual(compact.entity!.from, [-500, -2000], `${updTool}: узел перенесён в минус`);
+      assert.ok(add.isError, `${addTool}: анонимный проект — гейт`);
+      const payload = JSON.parse(text(add)) as { code: string };
+      assert.equal(payload.code, "NOT_AVAILABLE_ON_TARIFF", `${addTool}: ${text(add)}`);
     }
+    // свойство «отрицательные координаты допустимы» — модельный слой (85 №1)
+    const ctx = new ServerContext({ offlineFixture: FIXTURE });
+    const model = structuredClone(ctx.workspace().model);
+    const line = addLightLine(model, { kind: "line", path: [{ x: -1000, y: -1000 }, { x: 0, y: -1000 }] });
+    updateLightLine(model, { kind: "line", lineId: line.id, positions: [{ vertex: 0, x: -500, y: -2000 }] });
+    const strip = Object.values(model.line_strips ?? {})[0]!;
+    assert.deepEqual([strip.vertexes[0]!.point.x, strip.vertexes[0]!.point.y], [-50, -200]);
   } finally {
     if (client) await client.close();
   }

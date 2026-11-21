@@ -68,6 +68,7 @@ import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGas
 import { resolveBorder, borderResponse } from "../dto/borders.ts";
 import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInternal, sheetPublic, commentTextWarnings } from "../dto/dims.ts";
 import { rawEditorPayload } from "../dto/model-payload.ts";
+import { PRO_TOOL_GROUPS, PRO_PARTIAL_TOOLS, assertProToolAllowed, type ProToolGroup } from "./pro.ts";
 
 // T19: инструменты стен, проёмов, предметов, каталога и чтения (design §7.2–7.4, §7.6).
 
@@ -157,20 +158,31 @@ const ZONE_TOOL_TEXTS: Record<ZoneDelimiterType, { add: string; remove: string }
 export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   const wsOf = () => ctx.workspace();
 
-  // Тарифный гейт PRO-материалов перегородок (этап 103): анонимный проект равен
-  // бесплатному тарифу (design §4), неизвестный тариф трактуется как бесплатный.
+  // Тарифный гейт PRO-инструментов (этап 328, единое правило — реестр src/server/pro.ts):
+  // инструмент, помеченный is_pro в разметке редактора, на тарифе без PRO возвращает
+  // NOT_AVAILABLE_ON_TARIFF. Анонимный проект равен бесплатному тарифу (design §4),
+  // неизвестный тариф трактуется как бесплатный.
+  const PRO_BY_TOOL = new Map<string, ProToolGroup>(PRO_TOOL_GROUPS.flatMap((g) => g.tools.map((t) => [t, g])));
+  const proGate = async (tool: string): Promise<void> => {
+    const g = PRO_BY_TOOL.get(tool);
+    if (!g) throw new McpError("INTERNAL", `инструмент ${tool} отсутствует в реестре PRO (src/server/pro.ts)`);
+    await assertProToolAllowed(ctx, wsOf().project, tool, g.label);
+  };
+
+  // wall_add: PRO только у материалов glass/bar (частичный гейт — PRO_PARTIAL).
   const assertProMaterialAllowed = async (): Promise<void> => {
     const ws = wsOf();
+    const partial = PRO_PARTIAL_TOOLS["wall_add"]!;
     if (ws.project?.anon) {
-      throw new McpError("NOT_AVAILABLE_ON_TARIFF", "стеклянная и реечная перегородки — PRO-инструменты; в анонимном проекте они недоступны", {
+      throw new McpError("NOT_AVAILABLE_ON_TARIFF", `${partial.label} — PRO-инструменты; в анонимном проекте они недоступны`, {
         hint: "откройте проект PRO-аккаунта (project_open после входа) или используйте pgb/foam_block/brick/gypsum",
-        details: { tool: "wall_add", key: "wall_create_glass|wall_create_bar" },
+        details: { tool: "wall_add", key: partial.editorKeys.join("|") },
       });
     }
     const st = await ctx.authStatus();
     if (st.tariff !== "pro") {
-      throw new McpError("NOT_AVAILABLE_ON_TARIFF", "стеклянная и реечная перегородки — только в PRO-версии (неизвестный или бесплатный тариф)", {
-        details: { tool: "wall_add", key: "wall_create_glass|wall_create_bar", tariff: st.tariff },
+      throw new McpError("NOT_AVAILABLE_ON_TARIFF", `${partial.label} — только в PRO-версии (неизвестный или бесплатный тариф)`, {
+        details: { tool: "wall_add", key: partial.editorKeys.join("|"), tariff: st.tariff },
       });
     }
   };
@@ -187,9 +199,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   };
 
   // Конструктор электрощитка (лист «Электрощиток») — «старшие тарифы PRO»
-  // (анонс 24.12.2025): анонимный проект равен бесплатному тарифу (design §4),
-  // неизвестный тариф трактуется как бесплатный. На бесплатном тарифе поведение
-  // сервера не проверялось — открытый вопрос этапа 255.
+  // (анонс 24.12.2025; реестр PRO_TOOL_GROUPS seniorOnly): анонимный проект
+  // равен бесплатному тарифу (design §4), неизвестный тариф трактуется как
+  // бесплатный. На бесплатном тарифе поведение сервера не проверялось —
+  // открытый вопрос этапа 255.
   const assertShieldAllowed = async (): Promise<void> => {
     const ws = wsOf();
     if (ws.project?.anon) {
@@ -224,6 +237,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // PRO-гейт (этап 328, реестр): zone_c не в реестре — без гейта, как в редакторе
+        if (t !== "zone_c") await proGate(`${t}_add`);
         const res = ws.apply(`${t}_add`, (m) => addZoneDelimiter(m, a["room_id"] as string, {
           type: t,
           fromMm: a["from_mm"] as MmPoint,
@@ -1188,6 +1203,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("pipe_add");
         const pipe = ws.apply("pipe_add", (m) => addPipe(m, {
           kind: a["kind"] as PipeKind | ClimatePipeKind,
           path: (a["path"] as unknown[]).map((el) => {
@@ -1219,6 +1235,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("pipe_update");
         const pipe = ws.apply("pipe_update", (m) => updatePipe(m, {
           pipeId: resolvePipe(m, a["pipe_id"] as string).id,
           positions: (a["positions"] as { vertex: number; x_mm: number; y_mm: number }[]).map((p) => ({
@@ -1258,6 +1275,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("warm_floor_add");
         const wf = ws.apply("warm_floor_add", (m) => addWarmFloor(m, {
           kind: a["kind"] as "cable" | "infrared" | "water",
           corner1: a["corner1"] as MmPoint,
@@ -1278,6 +1296,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("warm_floor_update");
         const wf = ws.apply("warm_floor_update", (m) => updateWarmFloor(m, {
           warmFloorId: resolveWarmFloor(m, a["warm_floor_id"] as string).id,
           corner1: a["corner1"] as MmPoint | undefined,
@@ -1400,6 +1419,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("led_strip_add");
         const line = ws.apply("led_strip_add", (m) => addLightLine(m, { kind: "led", path: a["path"] as MmPoint[] }));
         return ok(compactEntity(ws.model, (c) => c.led_strips.find((g) => g.site_id === line.id) ?? null));
       },
@@ -1418,6 +1438,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("led_strip_update");
         const line = ws.apply("led_strip_update", (m) => updateLightLine(m, {
           kind: "led",
           lineId: resolveLightLine(m, "led", a["led_strip_id"] as string).id,
@@ -1453,6 +1474,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("stripe_add");
         const line = ws.apply("stripe_add", (m) => addLightLine(m, { kind: a["kind"] as LightKind, path: a["path"] as MmPoint[] }));
         return ok(compactEntity(ws.model, (c) => c.stripes_light.find((g) => g.site_id === line.id) ?? null));
       },
@@ -1471,6 +1493,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("stripe_update");
         const line = ws.apply("stripe_update", (m) => {
           const found = resolveLightLine(m, "recessed", a["stripe_id"] as string);
           const kind = found.type === "pendent_strip" ? "pendent" : found.type === "surface_stripe" ? "surface" : "recessed";
@@ -1510,6 +1533,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("line_light_add");
         const line = ws.apply("line_light_add", (m) => addLightLine(m, { kind: "line", path: a["path"] as MmPoint[] }));
         return ok(compactEntity(ws.model, (c) => c.line_strips.find((g) => g.site_id === line.id) ?? null));
       },
@@ -1528,6 +1552,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("line_light_update");
         const line = ws.apply("line_light_update", (m) => updateLightLine(m, {
           kind: "line",
           lineId: resolveLightLine(m, "line", a["line_light_id"] as string).id,
@@ -1572,6 +1597,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("cable_add");
         const cable = ws.apply("cable_add", (m) => addCable(m, {
           switchItemId: resolveItem(m, a["switch_item_id"] as string).id,
           switchSubId: a["switch_sub_id"] as string | undefined,
@@ -1629,6 +1655,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("wiring_add");
         const toolKey = a["kind"] as string;
         const cable = ws.apply("wiring_add", (m) => addElecCable(m, {
           tool: toolKey,
@@ -1673,6 +1700,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("wiring_update");
         const cable = ws.apply("wiring_update", (m) => {
           // метка CS/CW/CC<n> из model_get или id сайта (одна карта меток, как в wiring_delete)
           const compact = compactModel(m);
@@ -2312,6 +2340,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("finish_floor_molding_set");
         const res = ws.apply("finish_floor_molding_set", (m) => setFloorMolding(
           m,
           a["room_id"] as string,
@@ -2352,6 +2381,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("finish_ceiling_molding_set");
         const res = ws.apply("finish_ceiling_molding_set", (m) => setCeilingMolding(
           m,
           a["room_id"] as string,
@@ -2390,6 +2420,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("finish_ceiling_niche_add");
         const res = ws.apply("finish_ceiling_niche_add", (m) => addCeilingNiche(
           m,
           a["room_id"] as string,
