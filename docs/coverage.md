@@ -90,18 +90,33 @@
 ## 3. Ограничения тарифа [разметка, док]
 
 PRO-инструменты помечены в разметке редактора классом `is_pro` у `#plannertool_<ключ>` и у групп; клик открывает окно
-«Данный инструмент доступен в PRO-версии программы». В анонимном редакторе помечено 727 из 1563 инструментов. Сервер
-модель не проверяет (design §2), поэтому PRO-сущность технически можно записать в модель. **Это обход тарифа (AGENTS.md,
-правило 5), MCP так не делает:** на бесплатном тарифе PRO-инструмент возвращает `NOT_AVAILABLE_ON_TARIFF`.
+«Данный инструмент доступен в PRO-версии программы». Актуальный замер (этап 328, анонимный редактор = бесплатный тариф,
+эталон `.orca-reports/tmp/328-pro-anon.json` вне git): **is_pro у 792 из 1699** `plannertool_*`; обход листов —
+`.orca-reports/tmp/328-pro-sheets.json`. Сервер модель не проверяет (design §2), поэтому PRO-сущность технически можно
+записать в модель. **Это обход тарифа (AGENTS.md, правило 5), MCP так не делает:** на бесплатном тарифе PRO-инструмент
+возвращает `NOT_AVAILABLE_ON_TARIFF`.
+
+Факты 328 по ключам потолка/зонирования: `ceiling_rigel`, `ceiling_hole`, `floor_hole`, `complex_ceiling`, `zone_c`,
+`stretch_ceiling*` — **НЕ PRO**; `zone_floor`, `zone_ceiling`, `ceiling_niche`, `molding` (потолочный плинтус), все
+`floor_molding_*`, `anchor_floor`, `line_light`, `led_strip`, шины (`surface/recessed/pendent_strip`), кабели `wire_*`,
+трубы (`water_pipe`, `warm_floor_pipe`, `heat_pipe_*`, `ventpipe_*`, `conditioner_drainage`), `warm_floor_wire/water`,
+`wall_create_glass/bar` — **PRO**. Ключ делителя зон на листах «Гидроизоляция» и «Стяжка» — тот же `zone_floor` (PRO).
+
+Единый гейт MCP (этап 328): реестр `PRO_TOOL_GROUPS` (`src/server/pro.ts`) + одна функция `assertProToolAllowed`;
+анонимный проект равен бесплатному тарифу (design §4), неизвестный тариф — бесплатный; add/update гейтятся, delete/remove —
+нет (ластик и «Удалить» в редакторе не помечены is_pro). Исключение — `shield_*` (весь лист «Электрощиток» — «старшие
+тарифы PRO», анонс 24.12.2025; гейтятся все, включая delete). На каждый инструмент реестра — тест с моком тарифа free
+(`tests/unit/pro-gate.test.ts`).
 
 Кроме инструментов, за PRO закрыты: комментарии, «Нарисовать элемент» (фигуры и линии), изображения на плане, PDF/PNG/SVG,
-DXF (старшие тарифы), 3D, «Построить автоматически» (водоснабжение и щиток), лист «Электрощиток» (конструктор щитка —
-«старшие тарифы PRO», анонс 24.12.2025: «доступен всем пользователям старших тарифов PRO в полном объеме»).
-На dev-аккаунте конструктор доступен (проба 255-shield-scout: лист открывается, рейка и ввод создаются).
-Поведение MCP на бесплатном тарифе: NOT_AVAILABLE_ON_TARIFF (как у PRO-материалов перегородок); живой проверки
-на бесплатном аккаунте не было — открытый вопрос этапа 255.
+DXF (старшие тарифы), 3D, «Построить автоматически» (водоснабжение и щиток). На dev-аккаунте («Расширенный») конструктор
+щитка доступен (проба 255-shield-scout). Живой проверки гейта на бесплатном аккаунте не было — открытый вопрос (dev-объект
+с платным тарифом; правило new-entity-section: не заявлять, что поведение free проверено).
 
 ## 4. Карта покрытия
+
+Актуализировано по фактическому `src` на этапе 328 (2026-11-21): столбец MCP — да/частично/нет с именами инструментов;
+снапшот контракта — 138 инструментов (`tests/unit/snapshots/c4-contract-snapshot.json`).
 
 Столбцы: **MCP** — покрыто ли существующими инструментами (design §7): да / нет / частично. **Эталон** — нужен ли снимок из UI
 до реализации (F2-01). **PRO** — инструмент закрыт на бесплатном тарифе. Ключи — `global_tools`.
@@ -110,15 +125,15 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 
 | Лист | Инструмент UI (ключ) | Сущность и поля модели | MCP | Эталон | PRO |
 |---|---|---|---|---|---|
-| Демонтаж (`break_walls`, `b`) | Демонтаж стены целиком (`break`) | `walls[id].demount=1`, `p1/p2.demount=1`, `sectors={}` (`Wall.setDemount`) | нет | да | нет |
-| Демонтаж | Демонтировать участок стены (`break_part`) | `walls[id].sectors[sid]={id, pc (на оси), width}`; на листе `c` редактор режет стену на дочерние (`child`) | нет | да | нет |
-| Демонтаж | Демонтировать проём (`break_door`) | `walls[id].holes[hid].demount=1`; нельзя, если проём уже заменён на «Перегородках» | нет | да | нет |
-| Демонтаж | Демонтировать радиатор / электрощиток (`break_radiator`, `break_electric_shield`) | `items[id].props.demount` у предметов исходного плана | нет | да | нет |
-| Демонтаж | Отменить демонтаж (`remove_break`) | обнуление тех же полей | нет | нет | нет |
+| Демонтаж (`break_walls`, `b`) | Демонтаж стены целиком (`break`) | `walls[id].demount=1`, `p1/p2.demount=1`, `sectors={}` (`Wall.setDemount`) | **да**: `demolish`/`demolish_cancel` (этап 103, эталон `ui-ref-demolish*`) | да | нет |
+| Демонтаж | Демонтировать участок стены (`break_part`) | `walls[id].sectors[sid]={id, pc (на оси), width}`; на листе `c` редактор режет стену на дочерние (`child`) | частично: `demolish` с `sector` — участок по оси; дочерние стены листа `c` — `wall_split` | да | нет |
+| Демонтаж | Демонтировать проём (`break_door`) | `walls[id].holes[hid].demount=1`; нельзя, если проём уже заменён на «Перегородках» | частично: `demolish` (`opening` в составе демонтажа стены); отдельного инструмента нет | да | нет |
+| Демонтаж | Демонтировать радиатор / электрощиток (`break_radiator`, `break_electric_shield`) | `items[id].props.demount` у предметов исходного плана | частично: `demolish` по предмету | да | нет |
+| Демонтаж | Отменить демонтаж (`remove_break`) | обнуление тех же полей | **да**: `demolish_cancel` | нет | нет |
 | Перегородки (`create_walls`, `c`) | Стена из ПГБ / пеноблоков / кирпича / ГКЛ (`wall_create_pgb\|blocks\|bricks\|gypsum`) | `walls[id]` с `plan:"c"`, материал `c_*` | частично: `wall_add kind=partition` ставит `plan:c`, материал не выбирается | да (материалы `c_*`) | нет |
-| Перегородки | Стеклянная, реечная перегородка (`wall_create_glass`, `wall_create_bar`) | то же, `c_glass`, `c_bar` | нет | да | **да** |
-| Перегородки | Гипсокартонный короб (`gypsum_box`) | `pillars[id]` с `plan:"c"`, `role_:"gypsum"`, высота | нет | да | нет |
-| Перегородки | Обшивка ГКЛ (`gypsum_cladding`) | `claddings` | нет | да | нет (в разметке нет кнопки — [проверить]) |
+| Перегородки | Стеклянная, реечная перегородка (`wall_create_glass`, `wall_create_bar`) | то же, `c_glass`, `c_bar` | **да**: `wall_add` материалами glass/bar (PRO-гейт `src/server/pro.ts`, `NOT_AVAILABLE_ON_TARIFF` на free) | да | **да** |
+| Перегородки | Гипсокартонный короб (`gypsum_box`) | `pillars[id]` с `plan:"c"`, `role_:"gypsum"`, высота | **да**: `pillar_add` (этап 43, роль gypsum) | да | нет |
+| Перегородки | Обшивка ГКЛ (`gypsum_cladding`) | `claddings` | нет (в разметке нет кнопки — [проверить]) | да | нет (в разметке нет кнопки — [проверить]) |
 | Перегородки | Зонировать помещение (`zone`) | верхнеуровневый `zone_delimiters` `zone_c`, plan `c` (этап 318); деление зон — `rooms2[].zones` на безымянных наследников (имя помещения — `room.name`, не теряется; имена/флаги зон-родителей редактор при делении сбрасывает — живой эталон 318) | **да**: `zone_c_add/remove` (эталон `ui-ref-zonec-delimiter`, привязка узлов к рёбрам — type `room`), список — `finish_get`/compact `zone_delimiters` (ZD<n>); ингест делителей из GET при `project_open`/импорте, save MCP делители UI не теряет | да | нет |
 | Перегородки | Двери и окна на перегородках, замена исходной двери | `walls[id].holes[hid]` с `plan:"c"`; замена — проём `c` поверх проёма `a` | частично: `opening_add` на стене `plan:c` [проверить]; замены нет | да | как у проёмов (13 типов дверей PRO) |
 | Исходный план | Силуэт перегородок на исходном плане | настройка видимости | не нужно | нет | нет |
@@ -127,14 +142,14 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 
 | Лист | Инструмент UI (ключ) | Сущность и поля модели | MCP | Эталон | PRO |
 |---|---|---|---|---|---|
-| Исходный план → «Коммуникации» | Сантехнический стояк, стояки ГВС/ХВС, канализационный (`water`, `water_column_hot\|cold`, `drainage_column`) | `items` («шахты»: `items_mines`, `items_on_walls` — ставятся у стены) | частично: `item_add` требует точку внутри комнаты, привязка к стене не проверялась | да | нет |
-| Исходный план | Ввод водоснабжения (`ceiling_water`) | `items` | частично | да | нет |
+| Исходный план → «Коммуникации» | Сантехнический стояк, стояки ГВС/ХВС, канализационный (`water`, `water_column_hot\|cold`, `drainage_column`) | `items` («шахты»: `items_mines`, `items_on_walls` — ставятся у стены) | частично: `item_add` требует точку внутри комнаты, привязка к стене не проверялась | да | да | нет |
+| Исходный план | Ввод водоснабжения (`ceiling_water`) | `items` | частично: `item_add` (эталон `ui-ref-comm-ceiling_water`) | да | нет |
 | Сантехника (`santeh`) | 176 позиций (`santeh_furniture` 136 + `furniture` 40) | `items` с `plan.santeh` | **да** (`item_add`, `catalog_search`) | нет (эталон ванны/унитаза есть в T1) | 23 группы PRO (поддоны, уголки, накладные раковины…) |
-| Водоснабжение (`waterplan`) | Выводы: ХВС+ГВС, ХВС+канализация, ХВС+ГВС+канализация, ГВС+канализация (`waterspot_cold_hot`, `waterspot_drainage_cold`, `waterspot_drainage_cold_hot`, `waterspot_drainage_hot`) | `items` (`waterspots`), высота `over_floor` 50 см, у канализации своя высота (`#cm-waterspot--drainage-over-floor`), группа (`GroupWaterSpots`) | нет | да | нет |
-| Водоснабжение | Одиночные выводы ХВС, ГВС, канализации (`waterspot_cold\|hot\|drainage`) | `items` | нет | да | **да** |
-| Водоснабжение | Коллекторный узел (`waterspot_collector`) | `items`, `anchor: wall`, h 150 | нет | да | **да** |
-| Водоснабжение | Узел (`waterspot_node`) | вершина графа труб | нет | да | нет |
-| Водоснабжение | Трубы ХВС, ГВС, канализации (`water_pipe`, `water_hot_pipe`, `drainage_pipe`) | `pipes[]` (граф); метраж для сметы — вдоль стен, не по линии | нет | да | **да** |
+| Водоснабжение (`waterplan`) | Выводы: ХВС+ГВС, ХВС+канализация, ХВС+ГВС+канализация, ГВС+канализация (`waterspot_cold_hot`, `waterspot_drainage_cold`, `waterspot_drainage_cold_hot`, `waterspot_drainage_hot`) | `items` (`waterspots`), высота `over_floor` 50 см, у канализации своя высота (`#cm-waterspot--drainage-over-floor`), группа (`GroupWaterSpots`) | частично: `item_add` (высота из каталога, группа — item_update layer) | да | нет |
+| Водоснабжение | Одиночные выводы ХВС, ГВС, канализации (`waterspot_cold\|hot\|drainage`) | `items` | частично: `item_add` (PRO-гейта у каталога предметов нет — открытый вопрос 328) | да | **да** |
+| Водоснабжение | Коллекторный узел (`waterspot_collector`) | `items`, `anchor: wall`, h 150 | частично: `item_add` against_wall | да | **да** |
+| Водоснабжение | Узел (`waterspot_node`) | вершина графа труб | частично: подключается через `pipe_add` path | да | нет |
+| Водоснабжение | Трубы ХВС, ГВС, канализации (`water_pipe`, `water_hot_pipe`, `drainage_pipe`) | `pipes[]` (граф); метраж для сметы — вдоль стен, не по линии | **да**: `pipe_add kind=water/hot/drainage` + `pipe_update/delete` (этап 78, эталон `ui-ref-plumb-pipe`); PRO-гейт 328 | да | **да** |
 | Водоснабжение | Построить автоматически | мастер (`load_v2_modal('santeh_pipes')`) | нет | нет | **да** |
 
 ### 4.3 Электрика и свет
@@ -146,14 +161,14 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 | Розетки | Выводы провода 220 В, под освещение, духовку, варочную панель, кондиционер (`wire`, `wire_light`, `wire_oven`, `wire_stove`, `wire_conditioner`) | `items` (`wires`), h 30 / 230 | да: `item_add` (часть 2); подключение кабелем — `wiring_add` | да | нет |
 | Розетки | Слаботочный, напольный, потолочный вывод | `items` | да: `item_add` (часть 2) | да | **да** |
 | Розетки / Электропроводка | Электрощиток накладной, встроенный, слаботочный (`electric_shield`, `electric_shield_internal`, `lowcurrent_shield*`) | `items`, `anchor: wall`, h 120/170 | да: `item_add` (часть 2); конструктор щитка — нет | да | нет |
-| Розетки | Домофон, видеодомофон, Wi-Fi роутер | `items` | нет | нет | **да** |
+| Розетки | Домофон, видеодомофон, Wi-Fi роутер | `items` | частично: `item_add` по каталогу (без PRO-гейта — открытый вопрос 328) | нет | **да** |
 | Выключатели (`light_connections`) | 1- и 2-клавишный (`light_switch`, `light_switch_double`) | `items` (группы, как розетки), h 90 | да: `item_add` (этап 88) | да | нет |
 | Выключатели | 3-клавишный, диммер, проходные, перекрёстные, мастер | `items` | да: `item_add` (этап 88, каталог) | да | **да** |
 | Выключатели | Соединительная линия (`cable`) | `cables[]` (`Cable`), вершины — выключатель (клавиша) и светильники/световые линии | да: `cable_add`/`cable_delete` (этап 88; часть 2 — цель-линия led_strip/line_light/трековые, вершина `<lineId>\|t\|<vid>`) | да | **да** |
 | Освещение (`light`) | Люстры, потолочные и встраиваемые светильники (32 позиции без PRO) | `items` (`anchor: ceiling`), размер до центра, «центр комнаты = ½» | частично: `item_add center` | да (центр комнаты) | нет |
 | Освещение | Бра и настенные (`bra`, `bra_shades`, `led_lamp`, `light_stick`, `wall_spot`, `wall_lamp`, `painting_lighting`) | `items` (`anchor: wall`), h 120–220 | частично | да | нет |
-| Освещение | Трековые шины, споты, линейный свет, LED-подсветка (`*_strip`, `track_*`, `line_light`, `led_strip`) | `stripes_light`, `line_strips`, `led_strips` | нет | да | **да** |
-| Освещение | Двойные и тройные встраиваемые и накладные, банные, уличные, подсветка пола | `items` | нет | нет | **да** |
+| Освещение | Трековые шины, споты, линейный свет, LED-подсветка (`*_strip`, `track_*`, `line_light`, `led_strip`) | `stripes_light`, `line_strips`, `led_strips` | **да**: `led_strip_add/update/delete`, `stripe_add/update/delete`, `line_light_add/update/delete` (этап 84/85; PRO-гейт 328) | да | **да** |
+| Освещение | Двойные и тройные встраиваемые и накладные, банные, уличные, подсветка пола | `items` | частично: `item_add` по каталогу (без PRO-гейта — открытый вопрос 328) | нет | **да** |
 | Электропроводка (`cables`) | Кабели 2–5 жил, заземление, слаботочные (31 тип `wire_*`); warm_floor_wire, conditioner_wire | `cables_socket[]` / `cables_warm_floor[]` / `cables_conditioner[]` (`ElecCable`, граф как трубы), длина с опусками до точек (производная); плоскость расчёта — в меню щитка | да: `wiring_add`/`wiring_update`/`wiring_delete` (часть 2) | да | **да** |
 | Электропроводка | Распред. короб потолочный, в стене; КУП (`electric_box`, `electric_box_wall`, `electric_kup`) | `items` | да: `item_add` (часть 2) | да | **да** |
 | Электропроводка | Узел (`electrospot_node`) | вершина графа | да: `item_add` (часть 2) | да | нет |
@@ -188,22 +203,22 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 | Помещения (`rooms`) | Название помещения (меню маркера площади) | `rooms2[rid].zones[i].name` | нет (параметр `name` у `room_add_*` игнорируется; `room_set_name` в design §7.2, не реализован) | нет (эталон `ui-ref-roomname.json` есть) | нет |
 | Помещения | Номер (авто по площади), цвет фона | `zones[i].number_by_area` (авто), `zones[i].color` | нет | да (цвет) | нет |
 | Перегородки | Высота помещения (`#cm-room2--zone-height`) | высота зоны | частично: `project_set_height` — одна на проект | да | нет |
-| Напольные покрытия (`floor`) | 22 покрытия без PRO (ламинат, паркет, доска, плитка, линолеум, ковролин…) | `rooms2[rid].floors[i].cover`, `type_laying`, `width/height` плашки, `stitch_width`, `angle` | нет | да | нет |
-| Напольные покрытия | Керамогранит, метлах, мозаика, шестигранная плитка | то же | нет | да | **да** |
+| Напольные покрытия (`floor`) | 22 покрытия без PRO (ламинат, паркет, доска, плитка, линолеум, ковролин…) | `rooms2[rid].floors[i].cover`, `type_laying`, `width/height` плашки, `stitch_width`, `angle` | **да**: `finish_floor_set` (этап 94, параметры раскладки) | да | нет |
+| Напольные покрытия | Керамогранит, метлах, мозаика, шестигранная плитка | то же | частично: `finish_floor_set` принимает, PRO-гейта на материал нет — открытый вопрос 328 | да | **да** |
 | Напольные покрытия | Подъём пола (меню покрытия) | `floors[i].f0offset` | нет | да | нет |
 | Напольные покрытия | Точка начала укладки (`anchor_floor`) | `floors[i].anchor` | нет | да | **да** |
 | Напольные покрытия | Зонирование пола (`zone_floor`) | верхнеуровневый `zone_delimiters` `zone_floor`, plan `floor` (этап 296) | **да**: `zone_floor_add/remove` (эталон `ui-ref-floorzone-delimiter`), список — `finish_get`/compact `zone_delimiters` (ZD<n>) | да | **да** |
 | Напольные покрытия | Плинтусы, 7 видов (`floor_molding_*`) | `rooms2[rid].floorMoldings` (этап 245) | **да**: `finish_floor_molding_set/remove` (эталон `ui-ref-finish2-floor-molding`) | да | **да** |
-| Потолки (`ceiling`) | 10 типов (натяжной ПВХ/ткань, покраска, ГКЛ, реечный, рейки, ПВХ-панели, побелка, Армстронг, Грильято) | `rooms2[rid].ceilings[i].type`, `level` (опуск), `profile` | нет | да | нет |
-| Потолки | Двухуровневый потолок (`complex_ceiling`) | `ceilings[i].complex`, `radius`, `offset`, `material2` | нет | да | нет |
+| Потолки (`ceiling`) | 10 типов (натяжной ПВХ/ткань, покраска, ГКЛ, реечный, рейки, ПВХ-панели, побелка, Армстронг, Грильято) | `rooms2[rid].ceilings[i].type`, `level` (опуск), `profile` | **да**: `finish_ceiling_set` (этап 94, эталон `ui-ref-finish-ceiling`) | да | нет |
+| Потолки | Двухуровневый потолок (`complex_ceiling`) | `ceilings[i].complex`, `radius`, `offset`, `material2` | **да**: `finish_ceiling_complex_set` (этап 328, эталон `ui-ref-ceiling-complex`: offset 40, radius 10, level 15/7.5, material gypsum_ceiling, material2 stretch_ceiling, type closed; проверки редактора: площадь ≥ 4 м², внутренний контур без самопересечений; нет-op на повторном вызове; снятия нет — ластик complex не снимает, живая проба 328-complex) | да | нет |
 | Потолки | Зонирование потолка (`zone_ceiling`) | верхнеуровневый `zone_delimiters` (граф GraphLines: vertexes/matrix, type zone_ceiling, plan ceiling; per-room `rooms2[rid].delimiters` — legacy, редактор мигрирует при restore; привязка узлов zone — производное редактора, конец на грани закладной — type `rigel_ceiling`, эталон `ui-ref-ceilzone-delimiter-rigel`) | **да**: `zone_ceiling_add/remove` (эталоны `ui-ref-ceilzone-delimiter`, `ui-ref-ceilzone-delimiter-rigel`), список — `finish_get`/compact `zone_delimiters` (ZD<n>) | да | **да** |
 | Потолки | Закарнизная ниша (`ceiling_niche`), потолочный плинтус (`molding`) | `ceilings[0].niches`, `ceilingMoldings` (этап 245) | **да**: `finish_ceiling_niche_add/remove`, `finish_ceiling_molding_set/remove` (эталоны `ui-ref-finish2-ceiling-*`) | да | **да** |
 | Потолки | Потолочная закладная (`ceiling_rigel`) | `rooms2[rid].rigels` (класс CeilingRigel: `{id, id_room, p1/p2 (link к боковым граням стен l/r или граням колонн), width 10 (панель 10..100 см), ceiling_type, polygon}` — этап 303) | **да**: `ceiling_rigel_add/update/delete` (эталон `ui-ref-zones3-ceiling-rigel`), список — `finish_get`/compact `ceiling_rigels` (CR<n>); перенос закладной редактором не поддержан (контекстное меню: ширина/удалить/сбросить отделку) — update меняет только width/ceiling_type; зоны потолка (`ceilings[]` по зонам) пересчитываются при операциях с закладными/делителями, отделка всех зон сверяется при save (этап 310, эталон `ui-ref-zones4-ceiling-zones`); изменение ширины перепривязывает узлы делителей на грани закладной к новой грани (restoreDelimiters, ревью 311 №3); ниши при пересчёте зон переносятся по геометрии (restoreCeilingNiches) или операция отказывает с подсказкой finish_ceiling_niche_remove | да | **да** |
-| Потолки | Проём в потолке (`ceiling_hole`) | `level_holes` | нет | да | нет |
-| Отделка стен (`walls`) | 11 видов без PRO (обои, покраска, побелка, плитка, мозаика, вагонка, панели, штукатурки) | `rooms2[rid].decors`: `{type, layer, line, line_wall, height, height_from_floor}` | нет | да | нет |
+| Потолки | Проём в потолке (`ceiling_hole`) | `level_holes` — та же коллекция, что у пола: `{type:"ceiling_hole", plan:"ceiling", polygon 4 угла, matrix-кольцо, vertexes/items, length (периметр, м), area (м²), pc, id_room}` (этап 328, эталон `ui-ref-ceiling-hole`) | **да**: `ceiling_hole_add/update/delete` (метки CH<n>); пересечение — в пределах вида (пол и потолок — разные листы); стена через проём: редактор молча теряет проём — MCP отказывает до записи (живая проба 328-live) | да | нет |
+| Отделка стен (`walls`) | 11 видов без PRO (обои, покраска, побелка, плитка, мозаика, вагонка, панели, штукатурки) | `rooms2[rid].decors`: `{type, layer, line, line_wall, height, height_from_floor}` | **да**: `finish_wall_set` (этап 94, сторона стены по комнате) | да | нет |
 | Отделка стен | Фартук, комбинированные (покраска+плитка, обои+плитка), меловая покраска, рейки, клинкер, камень, листовые/плиточные панели | то же | **да**: `finish_wall_set` — двухслойные painting_tile/wallpaper_tiles и фартук wall_apron (этап 245, эталон `ui-ref-finish2-wall-layers`); меловая покраска, рейки, клинкер, камень, листовые/плиточные панели — обычными покрытиями `finish_wall_set` | да | **да** |
-| Нижняя панель | Добавить размер (линейка) | `rulers[]` `{p1, p2, offset, plan, show_everywhere, p1_target, p2_target}`; точное значение задаётся в меню (анонс 25.08.2026) | нет | да | нет |
-| Нижняя панель | Текстовый комментарий | `comments[]` | нет | да | **да** |
+| Нижняя панель | Добавить размер (линейка) | `rulers[]` `{p1, p2, offset, plan, show_everywhere, p1_target, p2_target}`; точное значение задаётся в меню (анонс 25.08.2026) | **да**: `dim_add/update/delete`, `dims_list` (этап 113) | да | нет |
+| Нижняя панель | Текстовый комментарий | `comments[]` | **да**: `comment_add/update/delete`, `comments_list` (этап 113; экранирование текста, лимиты) | да | **да** |
 | Нижняя панель | Нарисовать элемент (фигуры, линии, толстые линии), изображение | `free_figures`, `freelines`, `thick_lines`, `pictures` | нет | нет | **да** |
 | Пользовательские листы | Добавить лист | `custom_plans` | нет | нет | [проверить] |
 | Развёртки (режим «Стены») | Автоматические развёртки, нумерация стен, «назначить первой», «скрыть стену» | `rooms2[rid].prs_first`, `prs_disabled`, `prs_hidden`, `edges_prs` | нет | да | нет (просмотр); экспорт — PDF, PRO |
