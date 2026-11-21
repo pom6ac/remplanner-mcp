@@ -221,7 +221,13 @@ try {
     if (badPair.ok || !String(badPair.err).includes("INVALID_ARGUMENT")) throw new Error(`недопустимая пара не отклонена: ${badPair.err}`);
 
     // ---- 2. узел waterspot_node + трубы ----
-    const nodeAdd = await call("item_add", { name: "waterspot_node", position: { center: { x: 14500, y: 12000 } } });
+    // центр пробной комнаты — по рёбрам model_get (edges, мм)
+    const roomsAll = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string; edges?: Array<{ from: [number, number] }> }>;
+    const trial = roomsAll[roomsAll.length - 1]!;
+    if (!trial?.edges?.length) throw new Error("пробная комната не найдена в model_get");
+    const roomCx = Math.round(trial.edges.reduce((s, e) => s + e.from[0], 0) / trial.edges.length);
+    const roomCy = Math.round(trial.edges.reduce((s, e) => s + e.from[1], 0) / trial.edges.length);
+    const nodeAdd = await call("item_add", { name: "waterspot_node", position: { center: { x: roomCx, y: roomCy } } });
     void nodeAdd;
     const nodeSite = await itemSiteId("waterspot_node");
     created.push({ kind: "item", siteId: nodeSite });
