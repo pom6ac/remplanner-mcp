@@ -74,11 +74,11 @@ async function openAndGuard(): Promise<void> {
   console.log("гард «план в редакторе == серверу»: OK");
 }
 
-/** Зачистка своих предметов/труб по журналу (до стен). */
-async function cleanupItemsAndPipes(): Promise<void> {
+/** Зачистка своих предметов/труб: журнал ∪ текущий created (до стен). */
+async function cleanupItemsAndPipes(createdList: ProbeCreated[]): Promise<void> {
   const j = existsSync(CAPTURED_PATH) ? JSON.parse(readFileSync(CAPTURED_PATH, "utf8")) as { pipes?: string[]; items?: string[] } : {};
-  const pipeIds = j.pipes ?? [];
-  const itemIds = j.items ?? [];
+  const pipeIds = [...new Set([...(j.pipes ?? []), ...createdList.filter((c) => c.kind === "pipe").map((c) => c.siteId!)])];
+  const itemIds = [...new Set([...(j.items ?? []), ...createdList.filter((c) => c.kind === "item").map((c) => c.siteId!)])];
   for (const pid of pipeIds) {
     const r = await tryCall("pipe_delete", { pipe_id: pid });
     console.log("pipe_delete", pid, r.ok ? "OK" : r.err?.slice(0, 120));
@@ -91,8 +91,11 @@ async function cleanupItemsAndPipes(): Promise<void> {
 
 async function restoreProbe(tag: string): Promise<void> {
   if (!opened) return;
+  // журнал читается ДО перезаписи; в зачистку идёт объединение с текущим created
+  const snapshot = [...created];
+  await cleanupItemsAndPipes(snapshot);
+  created = created.filter((c) => c.kind === "wall");
   journal();
-  await cleanupItemsAndPipes();
   await deleteWallsBySiteIds({ call, created, ownRoomIds: [], log: (l) => console.log("restore:", l) });
   try { await saveTagged(`${tag}-restore`); }
   catch (e) { console.log(`${tag} save:`, String((e as Error).message).slice(0, 250)); }
