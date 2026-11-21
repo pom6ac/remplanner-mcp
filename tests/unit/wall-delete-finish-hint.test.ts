@@ -237,9 +237,10 @@ test("338 M1-а: пол и плинтус — оба шага в подсказ�
 
 // --- сторож реестра (перечисление видов — из одного источника) ---
 
-// n8 ревью 339: каждая problem имеет код вида — problems выводятся из losses,
-// прямой problems.push в обход add невозможен; тест краснеет, если в finishCompare
-// вернётся сборка problems мимо losses
+// n8 ревью 339, m3 ревью 342: тест закрепляет инвариант «problems — тексты
+// losses»; структурная защита на другом уровне — переменной problems в
+// finishCompare нет, прямой push в обход add не скомпилируется. Исходник
+// дополнительно сторожится тестом ниже.
 test("339 n8: problems и losses попарно равны (problem без кода вида невозможен)", () => {
   const m = corridorModel();
   const rooms = (m.rooms2 ?? {}) as Record<string, Record<string, unknown>>;
@@ -252,6 +253,46 @@ test("339 n8: problems и losses попарно равны (problem без ко�
   assert.ok(res.problems.length > 0, "есть расхождения");
   assert.equal(res.problems.length, res.losses.length, "по problem на loss");
   assert.deepEqual(res.problems, res.losses.map((l) => l.text), "тексты problems и losses совпадают");
+});
+
+// m3 ревью 342: откат n8 (возврат локальной problems с push в обход add) должен
+// краснеть структурно — сторож исходника: внутри finishCompare нет кода problems.push
+// (комментарии вырезаются, чтобы не ловить упоминания в тексте)
+test("339 n8 (342 m3): в исходнике finishCompare нет problems.push", () => {
+  const src = readFileSync(join(ROOT, "src", "model", "finish.ts"), "utf8");
+  const start = src.indexOf("export function finishCompare");
+  assert.ok(start >= 0, "finishCompare найден");
+  const end = src.indexOf("\nexport ", start + 1);
+  const body = src.slice(start, end > start ? end : undefined).replace(/\/\/.*$/gm, "");
+  assert.doesNotMatch(body, /problems\s*\.\s*push/, "problems собирается только из losses через add");
+});
+
+// n2 ревью 342: дедуп шага ластика (n9) закреплён тестом — мутация «шаги без
+// дедупа» краснит: finish_ceiling_remove встречается ровно один раз
+test("342 n2: ceiling+ceiling_complex — finish_ceiling_remove ровно один раз (n9)", () => {
+  const hint = finishLossHint([
+    { kind: "ceiling", text: "room r1: потеряно покрытие потолка" },
+    { kind: "ceiling_complex", text: "room r1: потеряно двухуровневое покрытие потолка" },
+  ] as FinishLoss[]);
+  assert.match(hint, /finish_ceiling_set с другим покрытием/, `шаг complex: ${hint}`);
+  assert.equal(hint.split("finish_ceiling_remove").length - 1, 1, `ластик без повтора: ${hint}`);
+});
+
+// n1 ревью 342: чужое покрытие потолка снимается тем же ластиком, что и своё —
+// дедуп по инструменту, а не по виду
+test("342 n1: foreign_ceiling не добавляет повтор finish_ceiling_remove", () => {
+  const plain = finishLossHint([
+    { kind: "ceiling", text: "room r1: потеряно покрытие потолка" },
+    { kind: "foreign_ceiling", text: "room r1: часть получила чужое покрытие потолка" },
+  ] as FinishLoss[]);
+  assert.match(plain, /чужое покрытие потолка/, `вид назван: ${plain}`);
+  assert.equal(plain.split("finish_ceiling_remove").length - 1, 1, `ластик без повтора: ${plain}`);
+  const complex = finishLossHint([
+    { kind: "ceiling_complex", text: "room r1: потеряно двухуровневое покрытие потолка" },
+    { kind: "foreign_ceiling", text: "room r1: часть получила чужое покрытие потолка" },
+  ] as FinishLoss[]);
+  assert.match(complex, /finish_ceiling_set с другим покрытием/, `шаг complex: ${complex}`);
+  assert.equal(complex.split("finish_ceiling_remove").length - 1, 1, `ластик без повтора: ${complex}`);
 });
 
 test("338 сторож: каждый вид из FINISH_LOSS_KINDS имеет запись в FINISH_LOSS_REGISTRY", () => {

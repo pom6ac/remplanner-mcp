@@ -8,7 +8,8 @@
 // Гарды полные (probe-guard): ID из env, READONLY обязателен, GET-пара, план в
 // редакторе == серверу, бэкап + сверка sig(), контрольный проект — фиксированный
 // корневой эталон (без REF_INIT; расхождение — немедленный стоп), restore по
-// захваченным site_id в finally, closeBrowser.
+// захваченным ID в finally (отделка своих комнат снимается по реестру, журнал ID —
+// .orca-reports/tmp/343-captured.json), closeBrowser.
 // node scripts/probes/341-tails50-live.ts run
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -20,6 +21,7 @@ import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { sig } from "./probe-sig.ts";
 import { assertNoReadonlyCollision, assertTargetPair, gitRepoRoot, readonlyGuard, readonlyRefPath, type ReadonlyGuard } from "./probe-guard.ts";
+import { logCaptured, restoreByCaptured as restoreByCapturedCore, type ProbeCreated } from "./probe-restore.ts";
 
 if (process.argv[2] !== "run") { console.error("запуск: run"); process.exit(0); }
 const OBJECT_ID = process.env["REMPLANNER_PROBE_OBJECT_ID"] as string;
@@ -54,10 +56,13 @@ const callErr = async (name: string, args: Record<string, unknown> = {}): Promis
   return text(res).slice(0, 2000);
 };
 
-type Created = { kind: string; siteId?: string };
+type Created = ProbeCreated;
 let created: Created[] = [];
+let ownRoomIds: string[] = [];
 let opened = false;
 let restoredFlag = false;
+// журнал захваченных ID (m1 ревью 342): доочистка — только по ним, не по геометрии
+const CAPTURED_PATH = join(ROOT_DIR, ".orca-reports", "tmp", "343-captured.json");
 
 async function saveTagged(tag: string): Promise<Record<string, unknown>> {
   await roGuard?.assertUnchanged(tag);
@@ -68,35 +73,16 @@ async function saveTagged(tag: string): Promise<Record<string, unknown>> {
   return r;
 }
 
-async function deleteWallsBySiteIds(ids: Set<string>): Promise<void> {
-  for (let guard = 0; guard < 40 && ids.size > 0; guard++) {
-    const mg = await call("model_get", {});
-    const walls = (mg["walls"] ?? []) as Array<{ id: string; site_id: string }>;
-    const hit = walls.find((w) => ids.has(w.site_id));
-    if (!hit) continue;
-    ids.delete(hit.site_id);
-    try { await call("wall_delete", { wall_id: hit.id }); created = created.filter((c) => !(c.kind === "wall" && c.siteId === hit.site_id)); }
-    catch (e) { console.log(`wall_delete ${hit.id}:`, String((e as Error).message).slice(0, 200)); break; }
-    await new Promise((r) => setTimeout(r, 1200));
-  }
-}
-
 async function restoreByCaptured(): Promise<void> {
   if (restoredFlag || !opened) return;
   restoredFlag = true;
-  const mg = await call("model_get", {});
-  void mg;
-  // свои разделители зон потолка — до стен (при удалении комнаты не остаются висеть)
-  for (const c of created.filter((c) => c.kind === "delimiter" && c.siteId).reverse()) {
-    try { await call("zone_ceiling_remove", { delimiter_id: c.siteId }); }
-    catch (e) { console.log("zone_ceiling_remove:", String((e as Error).message).slice(0, 150)); }
-  }
-  created = created.filter((c) => c.kind !== "delimiter");
-  const wallIds = new Set(created.filter((c) => c.kind === "wall" && c.siteId).map((c) => c.siteId!));
-  await deleteWallsBySiteIds(wallIds);
-  try { await saveTagged("restore"); }
-  catch (e) { console.log("restore save:", String((e as Error).message).slice(0, 250)); }
+  logCaptured(CAPTURED_PATH, created, ownRoomIds);
+  // m1 ревью 342: restore — только по захваченным ID; отделка СВОИХ комнат
+  // снимается по подсказке реестра ДО удаления стен (иначе wall_delete отказывает)
+  try { await restoreByCapturedCore({ call, created, ownRoomIds, save: () => saveTagged("restore"), log: console.log }); }
+  catch (e) { console.log("restore:", String((e as Error).message).slice(0, 250)); }
   created = [];
+  ownRoomIds = [];
   opened = false;
 }
 
@@ -128,6 +114,8 @@ async function makeTrialRoom(w: number, h: number): Promise<{ roomId: string; po
     return p.length >= 3 && p.every((q) => q.x >= ox - 1 && q.x <= ox + w + 1 && q.y >= oy - 1 && q.y <= oy + h + 1);
   });
   if (!entry) throw new Error("пробная комната не появилась");
+  ownRoomIds.push(entry[0]);
+  logCaptured(CAPTURED_PATH, created, ownRoomIds);
   return { roomId: entry[0], poly: entry[1].polygon! };
 }
 
@@ -250,6 +238,7 @@ try {
   const zSite = (zs as { site_id?: string }).site_id ?? (zs as { entity?: { site_id?: string } }).entity?.site_id;
   if (!zSite) throw new Error("zone_ceiling_add без site_id");
   created.push({ kind: "delimiter", siteId: zSite });
+  logCaptured(CAPTURED_PATH, created, ownRoomIds);
   await saveTagged("B-delimiter");
   await openAndGuard();
   const afterDelim = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);

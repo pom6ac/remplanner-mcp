@@ -1834,22 +1834,28 @@ export function finishMismatches(
  * при нише отказывает), двухуровневый потолок — смена материала раньше ластика.
  * Запасной вариант (виды без инструмента в реестре) — без перечня инструментов,
  * со ссылкой на details.finish_mismatches и finish_get.
- * n9 ревью 339: при «ceiling_complex» правило простого «ceiling» пропускается —
- * снятие двухуровневого завершается тем же finish_ceiling_remove, повтор в шагах лишний.
+ * n9 ревью 339, n1 ревью 342: шаг с уже названным инструментом не повторяется —
+ * снятие двухуровневого завершается тем же finish_ceiling_remove, чужое покрытие
+ * потолка снимается тем же ластиком, что и своё (дедуп по инструменту, не по виду).
  */
 export function finishLossHint(losses: readonly FinishLoss[]): string {
   const kinds = new Set(losses.map((l) => l.kind));
   const rules = FINISH_LOSS_REGISTRY
     .filter((r) => kinds.has(r.kind))
-    // n9 ревью 339: «ceiling» дублирует финал снятия «ceiling_complex»
-    .filter((r) => r.kind !== "ceiling" || !kinds.has("ceiling_complex"))
     .sort((a, b) => a.order - b.order);
   const withTool = rules.filter((r) => r.tool !== null);
   if (withTool.length === 0) {
     return "отделка комнаты, которая исчезает или сливается при изменении стен, не переживает операцию — какие именно расхождения — в details.finish_mismatches; проверьте текущую отделку через finish_get, снимите её до операции и повторите";
   }
   const what = withTool.map((r) => r.label);
-  const steps = withTool.map((r) => r.tool as string);
+  const steps: string[] = [];
+  for (const r of withTool) {
+    const tool = r.tool as string;
+    // n9 ревью 339, n1 ревью 342: инструмент, уже названный в шагах (в том числе
+    // внутри составного шага ceiling_complex), повторно не называется
+    if (steps.some((s) => s.includes(tool))) continue;
+    steps.push(tool);
+  }
   const extra = withTool.length < rules.length
     ? "; есть и расхождения без однозначного инструмента — см. details.finish_mismatches и finish_get"
     : "";
