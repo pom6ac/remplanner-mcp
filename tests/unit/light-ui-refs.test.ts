@@ -540,7 +540,9 @@ test("84: регрессия — трубы, газовые линии и пре
   updateItem(model, { itemId: spot.id, center: { x: 600, y: 2500 } });
   assert.equal(JSON.stringify(led), beforeLed, "перенос предмета не задевает световые линии (нет вершин-предметов)");
   assert.equal(gas.length, 1);
-  assert.throws(() => deleteItem(model, spot.id), McpError, "предмет подключён к трубе — сначала pipe_delete");
+  // предмет-концевая вершина трубы — каскад (этап 360): труба из 2 вершин удаляется
+  const res = deleteItem(model, spot.id);
+  assert.equal(res.deleted_pipes.length, 1, "труба из 2 вершин удалена вместе с выводом");
 });
 
 // ---------- эталоны световых линий (живая проверка PRO-проекта, обезличены) ----------

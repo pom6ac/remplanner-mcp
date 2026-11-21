@@ -89,8 +89,10 @@ export type ItemProps = {
   /** Подъём над полом, см — форма редактора {value, display} (эталон ui-ref-stair-stair_spot);
    *  числовая форма из старых моделей читается, новые предметы пишут объект.
    *  У розеток/выключателей (этап 88) редактор дописывает vd = value (производное,
-   *  эталоны ui-ref-elec-*: {value, display, vd}). */
-  over_floor?: number | { value: number; display: boolean; vd?: number } | null;
+   *  эталоны ui-ref-elec-*: {value, display, vd}). У точек воды с канализацией
+   *  (этап 360, GroupWaterSpots) value_2 — высота вывода канализации
+   *  (эталоны ui-ref-plumb-waterspot*: {value:50, display:false, value_2:40}). */
+  over_floor?: number | { value: number; display: boolean; vd?: number; value_2?: number } | null;
   plan: Record<string, number>;
   id_room?: string | null;
   id_wall?: string | null;

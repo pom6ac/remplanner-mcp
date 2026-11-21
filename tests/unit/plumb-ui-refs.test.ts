@@ -176,7 +176,7 @@ test("78: pipe_update — перенос узла пересчитывает д�
   assert.throws(() => updatePipe(model, { pipeId: "nope", positions: [] }), (e: unknown) => e instanceof McpError && e.code === "NOT_FOUND");
 });
 
-test("78: pipe_delete снимает обратные ссылки (скаляр и массив), item_delete подключённого предмета блокирован", () => {
+test("78: pipe_delete снимает обратные ссылки (скаляр и массив); item_delete — каскад (этап 360)", () => {
   const model = baseModel();
   const a = addSpot(model, 100, 100, "waterspot_cold_hot");
   const col = addSpot(model, 300, 100, "waterspot_collector");
@@ -185,21 +185,25 @@ test("78: pipe_delete снимает обратные ссылки (скаляр
   assert.equal((a as ItemProps & { pipes?: Record<string, unknown> }).pipes!.water_pipe_id, p1.id);
   assert.equal((a as ItemProps & { pipes?: Record<string, unknown> }).pipes!.water_hot_pipe_id, p2.id);
   assert.deepEqual((col as ItemProps & { pipes?: Record<string, unknown> }).pipes!.water_pipe_id, [p1.id]);
-  // item_delete подключённого — INVALID_ARGUMENT
-  assert.throws(() => deleteItem(model, a.id), (e: unknown) => e instanceof McpError && e.code === "INVALID_ARGUMENT");
+  // item_delete подключённого — каскад как в редакторе (этап 360, deleteByItem):
+  // концевая вершина снимается, обе трубы остаются без неё
+  const res = deleteItem(model, a.id);
+  assert.deepEqual(res.deleted_pipes, [], "концевая вершина трубу не удаляет");
+  assert.deepEqual(res.created_pipes, []);
+  assert.equal(model.items[a.id], undefined);
+  const g1 = (model as unknown as { pipes: Record<string, Pipe> }).pipes[p1.id]!;
+  const g2 = (model as unknown as { pipes: Record<string, Pipe> }).pipes[p2.id]!;
+  assert.equal(g1.vertexes.length, 2, "p1 без снятого вывода");
+  assert.equal(g2.vertexes.length, 2, "p2 без снятого вывода");
+  assert.ok(!g1.items[a.id] && !g2.items[a.id], "записи items удалённого вывода сняты");
   // удаление одной трубы снимает только её ключ
   deletePipe(model, p1.id);
-  const ap = a as ItemProps & { pipes?: Record<string, unknown> };
-  assert.equal(ap.pipes!.water_pipe_id, undefined);
-  assert.equal(ap.pipes!.water_hot_pipe_id, p2.id);
   // multi-массив сокращается: у коллектора p1 (water) и p2 (hot) — отдельные ключи
   const cp = col as ItemProps & { pipes?: Record<string, unknown> };
   assert.deepEqual(cp.pipes!.water_hot_pipe_id, [p2.id]);
   assert.equal(cp.pipes!.water_pipe_id, undefined);
   deletePipe(model, p2.id);
   assert.equal(cp.pipes!.water_pipe_id, undefined);
-  deleteItem(model, a.id);
-  assert.equal(model.items[a.id], undefined);
   assert.throws(() => deletePipe(model, "nope"), (e: unknown) => e instanceof McpError && e.code === "NOT_FOUND");
 });
 

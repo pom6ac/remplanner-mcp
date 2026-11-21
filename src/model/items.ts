@@ -9,6 +9,7 @@ import type { MmPoint } from "./walls.ts";
 import type { ToolEntry } from "../catalog.ts";
 import { McpError } from "../errors.ts";
 import { pipesReferencingItem, refreshPipeForItem } from "./pipes.ts";
+import { removePipeVertex } from "./waterspots.ts";
 import { elecCablesReferencingItem, refreshElecCablesForItem } from "./electric2.ts";
 import { deleteShieldsForItem } from "./shield.ts";
 import { detachRulerItemTargets, itemComments, deleteComment, refreshRulersForItem, refreshItemComments } from "./dims.ts";
@@ -620,16 +621,26 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   return props;
 }
 
-/** item_delete: предмет, подключённый к трубе или связи, удаляется только после них. */
-export function deleteItem(model: Model, itemId: string): { detached_rulers: string[]; deleted_comments: string[]; deleted_shields: string[] } {
+/**
+ * item_delete: предмет, подключённый к связи «выключатель → светильник», удаляется
+ * только после неё. К трубам (этап 360) — каскад как в редакторе: ластик/«Удалить»
+ * снимает вершину предмета с трубы через GraphLines.deleteByItem (труба из 2 вершин
+ * удаляется, внутренняя вершина делит трубу на куски — новые id у кусков); отказ
+ * этапа 78 заменён портированным поведением обработчиков бандла.
+ */
+export function deleteItem(model: Model, itemId: string): {
+  detached_rulers: string[]; deleted_comments: string[]; deleted_shields: string[];
+  deleted_pipes: string[]; created_pipes: string[];
+} {
   if (!model.items[itemId]) throw new McpError("NOT_FOUND", `предмет ${itemId} не найден`);
-  const linked = pipesReferencingItem(model, itemId);
-  if (linked.length > 0) {
-    throw new McpError(
-      "INVALID_ARGUMENT",
-      `предмет ${itemId} подключён к трубе (${linked.map((p) => p.id).join(", ")}) — сначала удалите трубу pipe_delete, затем предмет`,
-      { details: { kind: "pipe_referenced", pipes: linked.map((p) => p.id) } },
-    );
+  // каскад труб: снимаем вершину предмета со ВСЕХ ссылающихся труб (список — до мутаций)
+  const linkedPipes = pipesReferencingItem(model, itemId);
+  const deletedPipes: string[] = [];
+  const createdPipes: string[] = [];
+  for (const p of linkedPipes) {
+    const res = removePipeVertex(model, p.id, itemId);
+    deletedPipes.push(...res.deleted);
+    createdPipes.push(...res.created);
   }
   // часть 2: кабели-проводка держат обратные ссылки предмета/под-розеток —
   // удаление оставило бы висячие ссылки
@@ -662,7 +673,13 @@ export function deleteItem(model: Model, itemId: string): { detached_rulers: str
   const detached = detachRulerItemTargets(model, itemId);
   const comments = itemComments(model, itemId);
   for (const c of comments) deleteComment(model, c.id);
-  return { detached_rulers: detached, deleted_comments: comments.map((c) => c.id), deleted_shields: shields };
+  return {
+    detached_rulers: detached,
+    deleted_comments: comments.map((c) => c.id),
+    deleted_shields: shields,
+    deleted_pipes: deletedPipes,
+    created_pipes: createdPipes,
+  };
 }
 
 /** items_list (опционально по комнате-точке). */

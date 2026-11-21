@@ -12,6 +12,7 @@ import { demolish, demolishCancel } from "../model/demolition.ts";
 import { McpError } from "../errors.ts";
 import { addRigel, updateRigel, deleteRigel } from "../model/rigels.ts";
 import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind, type ClimatePipeKind } from "../model/pipes.ts";
+import { mergeWaterSpot, unsetWaterSpot, removePipeVertex, waterSpotMergeResult, waterSpotMergeError, waterSpotUnsetResult, waterSpotUnsetError } from "../model/waterspots.ts";
 import { addWarmFloor, updateWarmFloor, deleteWarmFloor } from "../model/climate.ts";
 import { warmWallAdd, warmWallUpdate, warmWallDelete, warmWallList, warmWallEntries } from "../model/warmwall.ts";
 import { addLightLine, updateLightLine, deleteLightLine, MAX_LIGHT_PATH_NODES, type LightKind } from "../model/lighting.ts";
@@ -987,7 +988,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     item_delete: tool(
       "Удалить предмет (метка I<n> из model_get). Привязанные к предмету размеры (dim_add attach) " +
         "сохраняются с отвязкой концов, комментарий предмета удаляется; у электрощитка конструктор " +
-        "удаляется вместе с предметом (deleted_shields). В ответе — deleted_shields/detached_rulers/deleted_comments.",
+        "удаляется вместе с предметом (deleted_shields). Предмет-вершина трубы (вывод воды, стояк, " +
+        "узел waterspot_node) удаляется с каскадом, как в редакторе: труба из двух вершин удаляется " +
+        "целиком, внутренняя вершина делит трубу на куски (created_pipes — новые id кусков). " +
+        "В ответе — deleted_shields/detached_rulers/deleted_comments/deleted_pipes/created_pipes.",
       { item_id: z.string().min(1) },
       async (a) => {
         const ws = wsOf();
@@ -995,7 +999,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           const target = resolveItem(m, a["item_id"] as string);
           return deleteItem(m, target.id);
         });
-        return ok({ deleted: a["item_id"], ...res, hint: SCENARIO_HINT });
+        return ok({
+          deleted: a["item_id"],
+          ...res,
+          hint: SCENARIO_HINT,
+        });
       },
     ),
 
@@ -1286,6 +1294,113 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           return true;
         });
         return ok({ deleted: a["pipe_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    pipe_node_delete: tool(
+      "Удалить узел трубы (контекстное меню узла в редакторе, #cm-tree-node → «Удалить»): pipe_id — метка " +
+        "TP/PW/PC/PH/PV<n>, vertex — индекс вершины (0-based, как в model_get pipes[].vertexes), тип вершины — node. " +
+        "Каскад как в редакторе (GraphLines.deleteByItem): труба из двух вершин удаляется целиком; удаление " +
+        "внутреннего узла делит трубу на куски (в ответе created_pipes — новые id кусков, deleted_pipes — id " +
+        "исходной трубы); концевой узел укорачивает трубу. Вершины-предметы удаляются item_delete (тот же каскад).",
+      {
+        pipe_id: z.string().min(1).describe("метка TP<n>/PW<n>/PC<n>/PH<n>/PV<n> из model_get или id сайта"),
+        vertex: mmInt.describe("индекс вершины (0-based)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("pipe_node_delete", (m) => {
+          const { pipe } = resolvePipe(m, a["pipe_id"] as string);
+          const v = pipe.vertexes[Number(a["vertex"])];
+          if (!v) {
+            throw new McpError("INVALID_ARGUMENT", `vertex ${String(a["vertex"])}: индекс вне диапазона 0..${pipe.vertexes.length - 1}`);
+          }
+          if (v.type !== "node") {
+            throw new McpError(
+              "INVALID_ARGUMENT",
+              `вершина ${String(a["vertex"])} — предмет (${v.type}): удаляйте его item_delete (каскад труб тот же)`,
+              { details: { kind: "item_vertex", item: v.id } },
+            );
+          }
+          return removePipeVertex(m, pipe.id, v.id);
+        });
+        return ok({ deleted_pipes: res.deleted, created_pipes: res.created, hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ---------- Группы выводов воды (GroupWaterSpots, этап 360) ----------
+    waterspot_merge: tool(
+      "Объединить выводы воды «как в редакторе» (лист «Водоснабжение»): поставить одиночный вывод part на " +
+        "существующий вывод item_id — существующий вывод переименовывается в комбинированный (id сохраняется, " +
+        "подключённые трубы остаются на месте), габариты берутся из каталога. Допустимые пары — как в редакторе " +
+        "(GroupWaterSpots): cold+hot→waterspot_cold_hot, cold+drainage→waterspot_drainage_cold, " +
+        "hot+drainage→waterspot_drainage_hot, drainage+hot→waterspot_drainage_hot, drainage+cold→" +
+        "waterspot_drainage_cold, cold_hot+drainage→waterspot_drainage_cold_hot, drainage_cold+hot→" +
+        "waterspot_drainage_cold_hot, drainage_hot+cold→waterspot_drainage_cold_hot (часть part — имя инструмента: " +
+        "waterspot_cold, waterspot_hot, waterspot_drainage, waterspot_cold_hot, waterspot_drainage_cold, " +
+        "waterspot_drainage_hot). У пристенного вывода (against_wall) в комбинированном с канализацией появляется " +
+        "over_floor.value_2 — высота вывода канализации (умолчание 40 см; у цели-канализации value и value_2 " +
+        "меняются местами, value=50); у свободного вывода и результата waterspot_cold_hot высоты не меняются. " +
+        "MCP не сдвигает иконку канализации на 3 см (производная UI-подгонка, projection восстанавливает редактор). " +
+        "Части waterspot_cold/hot/drainage — PRO-инструменты редактора: на бесплатном тарифе объединение ими " +
+        "отклоняется гейтом тарифа. После объединения вызывайте model_validate и project_save.",
+      {
+        item_id: z.string().min(1).describe("существующий вывод (метка I<n> или id сайта)"),
+        part: z.enum(["waterspot_cold", "waterspot_hot", "waterspot_drainage", "waterspot_cold_hot", "waterspot_drainage_cold", "waterspot_drainage_hot"])
+          .describe("какой одиночный вывод «ставится» на цель (имя инструмента редактора)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const part = a["part"] as string;
+        await proGateKey("waterspot_merge", part);
+        const target = resolveItem(ws.model, a["item_id"] as string);
+        const result = waterSpotMergeResult(part, target.name);
+        if (!result) throw waterSpotMergeError(part, target.name);
+        const entry = await ctx.toolEntry(result);
+        const item = ws.apply("waterspot_merge", (m) => mergeWaterSpot(m, {
+          itemId: resolveItem(m, a["item_id"] as string).id,
+          part,
+          widthCm: entry.width,
+          heightCm: entry.height,
+        }));
+        return ok(compactEntity(ws.model, (c) => {
+          const idx = Object.values(ws.model.items).findIndex((it) => it.id === item.item.id);
+          return idx >= 0 ? c.items[idx] ?? null : (c.items.find((i) => i.name === result) ?? null);
+        }));
+      },
+    ),
+
+    waterspot_unset: tool(
+      "Разделить комбинированный вывод воды (контекстное меню точки в редакторе → «Убрать …»): снимаемая часть " +
+        "part удаляется — вывод переименовывается в остаток (id сохраняется), габариты — из каталога; у пристенного " +
+        "вывода высота канализации возвращается из over_floor.value_2 в value (у остатка-воды value сохраняется). " +
+        "Каскад труб — как в редакторе: подключённая труба снимаемой части (props.pipes.<вид>_id) теряет вершину " +
+        "предмета: труба из двух вершин удаляется, внутренняя — делится на куски (created_pipes). Снимаемые части: " +
+        "waterspot_drainage_cold_hot → hot/cold/drainage; waterspot_drainage_hot → hot/drainage; " +
+        "waterspot_drainage_cold → cold/drainage; waterspot_cold_hot → cold/hot (part — имя инструмента снимаемой " +
+        "части). После разделения вызывайте model_validate и project_save.",
+      {
+        item_id: z.string().min(1).describe("комбинированный вывод (метка I<n> или id сайта)"),
+        part: z.enum(["waterspot_cold", "waterspot_hot", "waterspot_drainage"])
+          .describe("какая часть снимается (имя инструмента редактора)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const part = a["part"] as string;
+        const target = resolveItem(ws.model, a["item_id"] as string);
+        const result = waterSpotUnsetResult(target.name, part);
+        if (!result) throw waterSpotUnsetError(target.name, part);
+        const entry = await ctx.toolEntry(result);
+        const item = ws.apply("waterspot_unset", (m) => unsetWaterSpot(m, {
+          itemId: resolveItem(m, a["item_id"] as string).id,
+          part,
+          widthCm: entry.width,
+          heightCm: entry.height,
+        }));
+        return ok(compactEntity(ws.model, (c) => {
+          const idx = Object.values(ws.model.items).findIndex((it) => it.id === item.item.id);
+          return idx >= 0 ? c.items[idx] ?? null : (c.items.find((i) => i.name === result) ?? null);
+        }));
       },
     ),
 
