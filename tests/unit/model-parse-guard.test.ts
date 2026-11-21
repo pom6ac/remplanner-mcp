@@ -228,6 +228,31 @@ test("parse-guard: will_delete — переименование стены с с
   );
 });
 
+// Фикс 356 (№1 ревью 355): обшивка ГКЛ убрана из MCP (инструмента нет в UI),
+// но существующие записи model.claddings (созданные редактором иначе) —
+// passthrough: коллекция проходит сквозь open → save без изменений, сверка
+// не даёт ложного NORMALIZATION_DROPPED, ключ не удаляется и не чистится.
+test("parse-guard: существующие claddings переживают save без изменений (passthrough, фикс 356)", async () => {
+  const server: Server = { saveId: "s1", model: fixtureModel(), dataEmpty: false };
+  const serverModel = server.model as unknown as Record<string, unknown>;
+  serverModel["claddings"] = {
+    cl_edit: { id: "cl_edit", p1: { x: 60, y: 60 }, p2: { x: 200, y: 60 }, pc: { x: 130, y: 60 }, p1lnk: { obj: 0 } },
+  };
+  const claddingsBefore = structuredClone(serverModel["claddings"]);
+  const { deps } = mockDeps(server);
+  const ws = new Workspace(deps);
+  await ws.open("123", "1");
+  ws.apply("item_add", (m) => {
+    m.items["it_new"] = { id: "it_new", name: "sofa", pc: { x: 250, y: 150 }, angle: 0, width: 100, height: 100, plan: { furniture: 1 } } as Model["items"][string];
+    return true;
+  });
+  const res: SaveOutcome = await ws.save();
+  assert.ok(res.verified, "save verified");
+  assert.ok(!res.warnings.some((w) => /обшивк|cladding/i.test(w)), "нет предупреждений про обшивку");
+  const saved = (server.model as unknown as Record<string, unknown>)["claddings"];
+  assert.deepEqual(saved, claddingsBefore, "claddings в записанной модели не изменились (passthrough)");
+});
+
 test("parse-guard: will_delete — реальное удаление стены остаётся удалением", async () => {
   const server: Server = { saveId: "s1", model: fixtureModel(), dataEmpty: false };
   const { deps } = mockDeps(server);

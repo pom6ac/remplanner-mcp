@@ -596,11 +596,44 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
       hint: `доступны: ${Object.keys(OPENING_KINDS).join(", ")}`,
     });
   }
+  // замена (этап 354, семантика setReplacement редактора): окно поверх двери пару
+  // не образует (бандл: "windows"===e.group && "doors"===i.group — skip), замена
+  // с частями (windoor) не строится; габариты замены наследует от исходного
+  // (restore принудительно возвращает замене width/height/floor_height/f0offset
+  // исходного — проба 354-replan2-ui4: doorway 80 над дверью 90 редактор
+  // расширяет до 90), явные размеры — INVALID_ARGUMENT
+  if (replaced) {
+    if (kind.windoor) {
+      throw new McpError("INVALID_ARGUMENT", `замена ${replaced.id} проёмом plan:c с частями (windoor) не поддерживается — MCP строже редактора: setReplacement редактора windoor не запрещает, но MCP замену с частями не строит (№7 ревью 355)`, {
+        hint: "для замены используйте doorway/door/window без частей",
+        details: { kind: "replace_windoor", wall_id: wall.id, hole_id: replaced.id },
+      });
+    }
+    if (replaced.type === "windoor") {
+      // MCP строже редактора: у балконного блока нет height, restore редактора
+      // возвращает замене undefined и убивает её высоту — габарит замены не определён
+      throw new McpError("INVALID_ARGUMENT", `проём ${replaced.id} — балконный блок (windoor): замена с наследованием габарита не определена — удалите блок (opening_delete) и поставьте новый проём`, {
+        details: { kind: "replace_windoor_original", wall_id: wall.id, hole_id: replaced.id },
+      });
+    }
+    if (kind.group === "windows" && replaced.group === "doors") {
+      throw new McpError("INVALID_ARGUMENT", `проём ${replaced.id} — дверь, окно поверх двери замену не образует (правило редактора setReplacement)`, {
+        details: { kind: "replace_window_over_door", wall_id: wall.id, hole_id: replaced.id },
+      });
+    }
+    if (params.widthMm !== undefined || params.heightMm !== undefined || params.sillHeightMm !== undefined) {
+      throw new McpError("INVALID_ARGUMENT", `замена ${replaced.id} ставится в габарит исходного проёма — width_mm/height_mm/sill_height_mm при replaces не передаются`, {
+        details: { kind: "replacement_size_conflict", wall_id: wall.id, hole_id: replaced.id },
+      });
+    }
+  }
   // применимость параметров и входы — до любых вычислений и мутаций (№1/№6; ревью 28, R3)
   validateOpeningParams(kind, params);
   // части балконного блока разбираются один раз: кандидат строится до мутации (ревью 28, R1–R4)
   const parts = kind.windoor ? windoorParts(kind, params) : null;
-  const widthCm = parts ? parts.widthCm : mmToCm(params.widthMm ?? kind.widthMm);
+  // замена наследует ширину исходного (restore редактора возвращает замене
+  // габариты исходного — проба 354-replan2-ui4)
+  const widthCm = replaced ? replaced.width : parts ? parts.widthCm : mmToCm(params.widthMm ?? kind.widthMm);
   const len = axisLength(wall);
   let at: number;
   if (params.centerMm !== undefined) {
@@ -645,13 +678,19 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
     group: kind.group,
     pc: { x: r2(pc.x), y: r2(pc.y) },
     width: r2(widthCm),
-    height: mmToCm(params.heightMm ?? kind.heightMm),
+    height: replaced && replaced.height !== undefined ? replaced.height : mmToCm(params.heightMm ?? kind.heightMm),
     depth: kind.depthCm,
     at: r2(at),
   };
-  const sill = mmToCm(params.sillHeightMm ?? kind.sillCm * 10);
-  if (sill > 0) hole.floor_height = sill;
-  else if (kind.group === "windows") hole.floor_height = 0; // эталон UI: у окон floor_height присутствует всегда
+  if (replaced) {
+    // floor_height замена тоже наследует (restore редактора копирует его из исходного)
+    if (replaced.floor_height !== undefined) hole.floor_height = replaced.floor_height;
+    if (replaced.f0offset !== undefined) hole.f0offset = replaced.f0offset;
+  } else {
+    const sill = mmToCm(params.sillHeightMm ?? kind.sillCm * 10);
+    if (sill > 0) hole.floor_height = sill;
+    else if (kind.group === "windows") hole.floor_height = 0; // эталон UI: у окон floor_height присутствует всегда
+  }
   // у балконного блока поле height в модели отсутствует (эталон ui-ref-window-window_balcony)
   if (kind.windoor) delete hole.height;
   // opening: swing с учётом формата типа, иначе дефолт вида (окна и двери, этап 25/37)
@@ -682,6 +721,7 @@ export function addOpening(model: Model, params: AddOpeningParams): Hole {
     hole.pcb = { x: r2(hole.pc.x), y: r2(hole.pc.y) };
     hole.p1b = { x: r2(hole.p1!.x), y: r2(hole.p1!.y) };
     hole.p2b = { x: r2(hole.p2!.x), y: r2(hole.p2!.y) };
+    hole.replacement = 1; // как в редакторе (setReplacement): у замены replacement=1
     replaced.hasReplacement = 1;
   }
   assertHoleInvariants(hole); // все инварианты кандидата — до записи в модель (ревью 28, R3/R4)
@@ -854,6 +894,22 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   if (!wall) throw new McpError("NOT_FOUND", `стена ${params.wallId} не найдена`);
   const hole = wall.holes[params.holeId];
   if (!hole) throw new McpError("NOT_FOUND", `проём ${params.holeId} не найден`);
+  // пара замены (этап 354, правила редактора door_must_change / door_is_other_not_change):
+  // размер и положение участников живой пары не меняются — restore возвращает
+  // замене габариты исходного (проба 354-replan2-ui4), а UI прячет ручки переноса
+  // у обоих участников (бандл: t||s|| — controls не показываются). Прочие поля
+  // (opening, casing, наличники) правятся как прежде
+  if (replacementPairOf(wall, hole) &&
+      (params.widthMm !== undefined || params.heightMm !== undefined || params.centerMm !== undefined || params.offsetMm !== undefined)) {
+    throw new McpError("INVALID_ARGUMENT",
+      hole.hasReplacement
+        ? `проём ${hole.id} заменён проёмом листа «Перегородки» (hasReplacement) — размер и положение участников пары не меняются (door_must_change)`
+        : `проём ${hole.id} — замена исходного проёма (plan:c) — размер и положение наследуются от исходного и не меняются (door_is_other_not_change)`,
+      {
+        hint: "снимите замену (opening_delete замены), измените проём и поставьте замену заново (opening_add с replaces_hole_id)",
+        details: { kind: "replacement_pair_immutable", wall_id: wall.id, hole_id: hole.id },
+      });
+  }
   // правило hole__dont_install_over_balcony запрещает только НОВЫЕ проёмы на
   // ограждениях (ban в addOpening ниже); уже стоящий проём существующего проекта
   // правится как прежде (регрессия ревью 73 №1), удаление тоже разрешено
@@ -924,8 +980,11 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
     at = holeOffsetCm(wall, hole);
   }
   // ревью 108 R4: партнёр по паре замены исключается из проверки пересечений
-  // (высота/размеры одного участника не должны блокироваться вторым), а перенос,
-  // меняющий центр, переносится согласованно на второго участника
+  // (высота/размеры одного участника не должны блокироваться вторым).
+  // №11 ревью 355: явные centerMm/offsetMm/widthMm/heightMm участников пары
+  // отклоняются гардом выше (replacement_pair_immutable), поэтому согласованный
+  // перенос пары из ревью 108 R4 удалён как недостижимый: у пары меняются только
+  // не-геометрические поля (opening/casing/наличники), width и at остаются прежними
   const pair = replacementPairOf(wall, hole);
   checkPlacement(wall, at, width, hole.id, pair?.id); // до мутации: при ошибке модель не меняется
 
@@ -975,38 +1034,6 @@ export function updateOpening(model: Model, params: UpdateOpeningParams): Hole {
   candidate.at = r2(at);
   refreshHole(wall, candidate);
   assertHoleInvariants(candidate); // финальные инварианты — тоже до изменения модели (R3/R4)
-  // согласованный перенос пары (ревью 108 R4): центр сместился — второй участник
-  // следует за первым. Проверка на копии стены до любой мутации: не помещается —
-  // атомарный отказ с подсказкой (выбор поведения: перенос, а не разъезд пары)
-  if (pair) {
-    const newCenter = at + width / 2;
-    const pairCenter = holeOffsetCm(wall, pair) + pair.width / 2;
-    if (Math.abs(newCenter - pairCenter) > 0.005) {
-      const scratch = structuredClone(wall);
-      assignCandidate(scratch.holes[hole.id]!, candidate);
-      const sp = scratch.holes[pair.id]!;
-      if (sp.at !== undefined) {
-        sp.at = r2(newCenter - sp.width / 2);
-        refreshHole(scratch, sp);
-      } else {
-        // UI-проём без служебного at: позиция задаётся центром pc
-        const pc = pointAtLength(wallAxis(scratch), newCenter);
-        sp.pc = { x: r2(pc.x), y: r2(pc.y) };
-        setHolePoints(scratch, sp);
-      }
-      try {
-        checkPlacement(scratch, holeOffsetCm(scratch, sp), sp.width, sp.id, hole.id);
-      } catch (cause) {
-        const code = cause instanceof McpError ? cause.code : "GEOMETRY_CONFLICT";
-        throw new McpError(code,
-          `перенос проёма ${hole.id} уводит с места пару замены: второй участник ${pair.id} (${hole.plan === "c" ? "исходный" : "замена"}) не помещается на стене после переноса`, {
-            hint: "пара замены переносится согласованно; перенесите пару в пределы стены или удалите замену (opening_delete) перед переносом",
-            details: { kind: "replacement_pair_transfer_conflict", wall_id: wall.id, hole_id: hole.id, pair_id: pair.id },
-          });
-      }
-      assignCandidate(pair, scratch.holes[pair.id]!);
-    }
-  }
   assignCandidate(hole, candidate);
   return hole;
 }

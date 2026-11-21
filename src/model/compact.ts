@@ -66,6 +66,8 @@ export type CompactOpening = {
   demount?: boolean;
   /** Проём заменён проёмом листа «Перегородок» (hasReplacement, этап 103). */
   replaced?: boolean;
+  /** Этап 354: запись — замена исходного проёма (plan:c, replacement=1 в модели). */
+  replacement?: boolean;
 };
 
 export type CompactRoom = {
@@ -491,6 +493,9 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       if (hole.impost_offset !== undefined) c.impost_offset_mm = round0(cmToMm(hole.impost_offset as number));
       if (hole.demount === 1) c.demount = true;
       if (hole.hasReplacement) c.replaced = true;
+      // этап 354: у замены поле replacement (как в модели редактора, setReplacement)
+      const isReplacement = (hole as { replacement?: unknown })["replacement"] === 1;
+      if (isReplacement) c.replacement = true;
       return c;
     });
     // перепланировка (этап 103): план, материал, пометки демонтажа

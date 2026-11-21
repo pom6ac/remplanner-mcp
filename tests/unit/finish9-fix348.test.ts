@@ -384,6 +384,29 @@ test("348 M1: нормализатор потерял f0offset — NORMALIZATION
   });
 });
 
+test("352 n1: нормализатор снял custom_angle — NORMALIZATION_DROPPED (мутант sameOptional custom краснеет)", async () => {
+  const m = corridorModel();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    const f = floorOf(norm, firstRoomId(norm));
+    delete f["custom_angle"];
+  });
+  await ws.open("0", "1");
+  const rid = firstRoomId(m);
+  // угол с якорем: angle=30, custom_angle=1 (контекстное меню #cm-floor-anchor--angle)
+  ws.apply("finish_floor_set", (mm) => setFloorFinish(mm, rid, "laminate", {}));
+  ws.apply("finish_floor_offset_set", (mm) => setFloorOffset(mm, rid, 300));
+  // угол с якорем (контекстное меню #cm-floor-anchor--angle): angle=30, custom_angle=1
+  ws.apply("finish_floor_anchor_set", (mm) => setFloorAnchor(mm, rid, { x: 1500, y: -1500 }, 30));
+  await assert.rejects(ws.save(), (e: unknown) => {
+    assert.ok(e instanceof McpError);
+    assert.equal(e.code, "NORMALIZATION_DROPPED");
+    const details = (e as { details?: { finish_mismatches?: string[] } }).details;
+    assert.ok((details?.finish_mismatches ?? []).some((x) => x.includes("\"custom\"")), JSON.stringify(details));
+    return true;
+  });
+});
+
 // ---------- m2: нумерация зон — микрокомнаты и записи без is_class ----------
 
 test("348 m2: микрокомнаты (< 1 м² без проёмов) и зоны без is_class не нумеруются (ROOMS2.draw)", () => {

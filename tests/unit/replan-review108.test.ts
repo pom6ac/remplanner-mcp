@@ -169,72 +169,101 @@ function pairScenario(): { m: Model; wall: Wall; door: Wall["holes"][string]; re
   const m = baseModel();
   const wall = probeWall(m);
   const door = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 2000 });
-  const rep = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door.id, widthMm: 800 });
+  const rep = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door.id });
   delete door.at; // UI-модель: служебного at нет
   delete rep.at;
   return { m, wall, door, rep };
 }
 
-test("108 R4: update высоты исходного при живой паре проходит (партнёр исключён из пересечений)", () => {
-  const { m, wall, door } = pairScenario();
-  updateOpening(m, { wallId: wall.id, holeId: door.id, heightMm: 2200 });
-  assert.equal(door.height, 220);
-});
-
-test("108 R4: update высоты замены при живой паре проходит", () => {
-  const { m, wall, rep } = pairScenario();
-  updateOpening(m, { wallId: wall.id, holeId: rep.id, heightMm: 2200 });
-  assert.equal(rep.height, 220);
-});
-
-test("108 R4: перенос исходного согласованно переносит замену; delete исходного удаляет замену", () => {
+test("108 R4/354: размер и положение участников живой пары не меняются (исходный)", () => {
   const { m, wall, door, rep } = pairScenario();
-  updateOpening(m, { wallId: wall.id, holeId: door.id, offsetMm: 4000, offsetFrom: "axis" });
-  const door2 = wall.holes[door.id]!;
-  const rep2 = wall.holes[rep.id]!;
-  assert.ok(Math.abs(centerCm(wall, door2) - centerCm(wall, rep2)) < 0.05, `центры пары совпадают после переноса: ${centerCm(wall, door2)} vs ${centerCm(wall, rep2)}`);
-  assert.equal(centerCm(wall, door2), 440, "исходный на новом месте (ось, 4000 мм + полуширина)");
-  deleteOpening(m, wall.id, door.id);
-  assert.equal(wall.holes[rep.id], undefined, "замена удалена каскадом после переноса");
+  const before = structuredClone([wall.holes[door.id]!, wall.holes[rep.id]!]);
+  assert.throws(
+    () => updateOpening(m, { wallId: wall.id, holeId: door.id, heightMm: 2200 }),
+    (e: unknown) => {
+      const err = e as { code?: string; message?: string };
+      return err.code === "INVALID_ARGUMENT" && /door_must_change/.test(err.message ?? "");
+    },
+  );
+  assert.throws(
+    () => updateOpening(m, { wallId: wall.id, holeId: door.id, offsetMm: 4000, offsetFrom: "axis" }),
+    (e: unknown) => (e as { code?: string }).code === "INVALID_ARGUMENT",
+  );
+  assert.deepEqual([wall.holes[door.id]!, wall.holes[rep.id]!], before, "пара не изменена (отказ атомарен)");
 });
 
-test("108 R4: перенос замены согласованно переносит исходный", () => {
+test("108 R4/354: размер и положение замены не меняются (door_is_other_not_change); габарит наследуется", () => {
   const { m, wall, door, rep } = pairScenario();
-  updateOpening(m, { wallId: wall.id, holeId: rep.id, offsetMm: 4000, offsetFrom: "axis" });
-  const door2 = wall.holes[door.id]!;
-  const rep2 = wall.holes[rep.id]!;
-  assert.ok(Math.abs(centerCm(wall, door2) - centerCm(wall, rep2)) < 0.05);
-  assert.equal(door2.hasReplacement, 1, "связь пары сохранена");
+  assert.equal(rep.width, door.width, "замена наследует ширину исходного");
+  assert.equal(rep.height, door.height, "замена наследует высоту исходного");
+  assert.equal((rep as unknown as { replacement?: number }).replacement, 1, "у замены поле replacement=1");
+  const before = structuredClone([wall.holes[door.id]!, wall.holes[rep.id]!]);
+  assert.throws(
+    () => updateOpening(m, { wallId: wall.id, holeId: rep.id, heightMm: 2200 }),
+    (e: unknown) => {
+      const err = e as { code?: string; message?: string };
+      return err.code === "INVALID_ARGUMENT" && /door_is_other_not_change/.test(err.message ?? "");
+    },
+  );
+  assert.throws(
+    () => updateOpening(m, { wallId: wall.id, holeId: rep.id, centerMm: 5000 }),
+    (e: unknown) => (e as { code?: string }).code === "INVALID_ARGUMENT",
+  );
+  assert.deepEqual([wall.holes[door.id]!, wall.holes[rep.id]!], before, "пара не изменена");
 });
 
-test("108 R4: партнёр не помещается после переноса — атомарный отказ с подсказкой", () => {
+test("108 R4/354: явная ширина замены — INVALID_ARGUMENT (замена ставится в габарит исходного)", () => {
   const m = baseModel();
   const wall = probeWall(m);
   const door = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 2000 });
-  const rep = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door.id, widthMm: 1200 });
-  delete door.at;
-  delete rep.at;
-  const doorCenter = centerCm(wall, door);
   assert.throws(
-    () => updateOpening(m, { wallId: wall.id, holeId: door.id, centerMm: 5500 }),
+    () => addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door.id, widthMm: 1200 }),
     (e: unknown) => {
       const err = e as { code?: string; message?: string };
-      return err.code === "GEOMETRY_CONFLICT" && /замены|пар/.test(err.message ?? "");
+      return err.code === "INVALID_ARGUMENT" && /габарит исходного/.test(err.message ?? "");
     },
   );
-  assert.equal(centerCm(wall, wall.holes[door.id]!), doorCenter, "исходный не сдвинут (отказ атомарен)");
-  assert.equal(centerCm(wall, wall.holes[rep.id]!), centerCm(wall, rep), "замена не сдвинута");
 });
 
-test("108 R4: пара ищется по связи — перенос одной пары не ломает удаление другой", () => {
+test("108 R4/354: замена наследует ширину исходной двери 900 (не умолчание doorway 800)", () => {
+  const m = baseModel();
+  const wall = probeWall(m);
+  const door = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 1000, widthMm: 900 });
+  const rep = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door.id });
+  assert.equal(door.width, 90);
+  assert.equal(rep.width, 90, "габарит замены = габарит исходного (restore редактора)");
+  assert.equal(rep.height, door.height);
+});
+
+test("108 R4/354: окно поверх двери пару не образует — INVALID_ARGUMENT (setReplacement)", () => {
+  const m = baseModel();
+  const wall = probeWall(m);
+  const door = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 2000 });
+  assert.throws(
+    () => addOpening(m, { wallId: wall.id, type: "window", replacesHoleId: door.id }),
+    (e: unknown) => {
+      const err = e as { code?: string; message?: string };
+      return err.code === "INVALID_ARGUMENT" && /окно поверх двери/.test(err.message ?? "");
+    },
+  );
+});
+
+test("108 R4/354: снятие замены возвращает исходному правку размеров", () => {
+  const { m, wall, door, rep } = pairScenario();
+  deleteOpening(m, wall.id, rep.id);
+  assert.equal(door.hasReplacement, undefined, "hasReplacement снят");
+  updateOpening(m, { wallId: wall.id, holeId: door.id, heightMm: 2200 });
+  assert.equal(wall.holes[door.id]!.height, 220, "после снятия замены размер меняется");
+});
+
+test("108 R4: пара ищется по связи — delete одной пары не ломает другую", () => {
   const m = baseModel();
   const wall = probeWall(m);
   const door1 = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 1000 });
-  const rep1 = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door1.id, widthMm: 800 });
+  const rep1 = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door1.id });
   const door2 = addOpening(m, { wallId: wall.id, type: "door", offsetMm: 4000 });
-  const rep2 = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door2.id, widthMm: 800 });
+  const rep2 = addOpening(m, { wallId: wall.id, type: "doorway", replacesHoleId: door2.id });
   delete door1.at; delete rep1.at; delete door2.at; delete rep2.at;
-  updateOpening(m, { wallId: wall.id, holeId: door1.id, offsetMm: 2000, offsetFrom: "axis" });
   deleteOpening(m, wall.id, door1.id);
   assert.equal(wall.holes[rep1.id], undefined, "замена первой пары удалена");
   assert.ok(wall.holes[door2.id], "вторая пара не тронута");
@@ -268,7 +297,7 @@ test("108 R11: инструмент opening_delete — описание упом
   const text = (r: { content: unknown }): Record<string, unknown> =>
     JSON.parse((r.content as Array<{ text?: string }>)[0]!.text!) as Record<string, unknown>;
   const door = (text(await tools["opening_add"]!.handler({ wall_id: "W1", type: "door", offset_mm: 2000 }))["entity"] ?? {}) as { id: string };
-  const rep = (text(await tools["opening_add"]!.handler({ wall_id: "W1", type: "doorway", width_mm: 800, replaces: door.id }))["entity"] ?? {}) as { id: string };
+  const rep = (text(await tools["opening_add"]!.handler({ wall_id: "W1", type: "doorway", replaces: door.id }))["entity"] ?? {}) as { id: string };
   const del = text(await tools["opening_delete"]!.handler({ opening_id: door.id })) as { deleted: string[] };
   assert.deepEqual([...del.deleted].sort(), [door.id, rep.id].sort());
 });
