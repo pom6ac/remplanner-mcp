@@ -269,7 +269,7 @@ test("312 №1: после закладной finish_get видит отделк
   // закладная у правой стены: отделка по граням уходит в запись [1] (311-exp5)
   addCeilingRigel(model, "room1", { start: { x: 3700, y: 1005 }, end: { x: 3700, y: 2995 } });
   const fl = finishList(model, "room1")[0] as Record<string, unknown>;
-  assert.deepEqual(fl["ceiling"], { material: "gypsum_ceiling", level: 0, profile: "standard" }, "отделка зоны [1] видна в finish_get");
+  assert.deepEqual(fl["ceiling"], { material: "gypsum_ceiling", level: 0, profile: "standard", complex: false }, "отделка зоны [1] видна в finish_get");
   removeCeilingFinish(model, "room1");
   const fl2 = finishList(model, "room1")[0] as Record<string, unknown>;
   assert.equal(fl2["ceiling"], undefined, "remove снимает отделку в любой зоне");
@@ -293,16 +293,16 @@ test("312 №1: finish_ceiling_set в зонированной комнате �
   );
   // finish_get: одинаковый материал — ceiling; разные — ceiling_zones по записям
   const fl = finishList(model, "room1")[0] as Record<string, unknown>;
-  assert.deepEqual(fl["ceiling"], { material: "stretch_ceiling", level: 0, profile: "standard" });
+  assert.deepEqual(fl["ceiling"], { material: "stretch_ceiling", level: 0, profile: "standard", complex: false });
   assert.deepEqual(fl["ceiling_zones"], [
-    { zone: 1, material: "stretch_ceiling", level: 0, profile: "standard" },
-    { zone: 2, material: "stretch_ceiling", level: 0, profile: "standard" },
+    { zone: 1, material: "stretch_ceiling", level: 0, profile: "standard", complex: false },
+    { zone: 2, material: "stretch_ceiling", level: 0, profile: "standard", complex: false },
   ]);
   ceilings[1]!["material"] = "rack_ceiling";
   const fl2 = finishList(model, "room1")[0] as Record<string, unknown>;
   assert.deepEqual(fl2["ceiling_zones"], [
-    { zone: 1, material: "stretch_ceiling", level: 0, profile: "standard" },
-    { zone: 2, material: "rack_ceiling", level: 0, profile: "standard" },
+    { zone: 1, material: "stretch_ceiling", level: 0, profile: "standard", complex: false },
+    { zone: 2, material: "rack_ceiling", level: 0, profile: "standard", complex: false },
   ]);
   assert.equal(fl2["ceiling"], undefined, "разные материалы по зонам — поле ceiling не вводит в заблуждение");
 });

@@ -14,9 +14,10 @@ import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import type { Model, RulerEntity, CommentEntity } from "../../src/model/types.ts";
 import {
-  addRuler, updateRuler, addComment, updateComment, dimsMismatches,
+  addRuler, updateRuler, addComment, updateComment, dimsMismatches, commentsList,
   escapeCommentText, unescapeCommentText,
 } from "../../src/model/dims.ts";
+import { sheetPublic, commentTextWarnings } from "../../src/dto/dims.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
 
@@ -32,13 +33,38 @@ async function start(): Promise<Client> {
   return client;
 }
 
+/** Серверный контекст под PRO (ревью 331 Н8): comment_add/update — PRO-инструменты
+ *  (этап 328), полный путь обработчика проверяется только под тарифом pro;
+ *  тест-инъекции ServerContext (offlineTariff/offlineAnon) сеть не используют. */
+async function startPro(): Promise<Client> {
+  const ctx = new ServerContext({ offlineFixture: FIXTURE, offlineTariff: "pro", offlineAnon: false });
+  const server = buildServer(ctx);
+  const client = new Client({ name: "review116-pro", version: "0.0.0" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(b), client.connect(a)]);
+  return client;
+}
+
 type ToolCallResult = { isError?: boolean; content?: { type: string; text?: string }[] };
 const text = (r: unknown): string => ((r as ToolCallResult).content as { text: string }[])[0]!.text;
 
+/** Модель для comment-тестов модельного слоя (PRO-гейт comments проверяется в pro-gate.test.ts). */
+function baseCommentModel(): Model {
+  const m = JSON.parse(readFileSync(FIXTURE, "utf8")) as { model: Model };
+  const model = m.model;
+  model.comments = {};
+  return model;
+}
+
 // ---------- R1: канонизация текста комментария ----------
 
-test("116 R1: comment_add с двойными кавычками — warning и канонический текст в ответе и comments_list", async () => {
-  const client = await start();
+// Ревью 331 Н8: серверные тесты 116 R1 возвращены (обработчик comment_add/
+// comment_update: ответ text/warnings и comments_list) — под тарифом pro,
+// потому что комментарии PRO (этап 328). Свойства модельного слоя остаются
+// покрыты модельными тестами ниже.
+
+test("116 R1: comment_add с двойными кавычками — warning и канонический текст в ответе и comments_list (сервер, pro)", async () => {
+  const client = await startPro();
   const add = await client.callTool({ name: "comment_add", arguments: { point: { x: 1000, y: 1000 }, text: 'say "ok"' } });
   assert.ok(!add.isError, text(add));
   const res = JSON.parse(text(add)) as { text?: string; warnings?: string[] };
@@ -50,8 +76,8 @@ test("116 R1: comment_add с двойными кавычками — warning и 
   await client.close();
 });
 
-test("116 R1: comment_add с обратным апострофом — канонизируется в апостроф с warning", async () => {
-  const client = await start();
+test("116 R1: comment_add с обратным апострофом — канонизируется в апостроф с warning (сервер, pro)", async () => {
+  const client = await startPro();
   const add = await client.callTool({ name: "comment_add", arguments: { point: { x: 1000, y: 1000 }, text: "a`b" } });
   assert.ok(!add.isError, text(add));
   const res = JSON.parse(text(add)) as { text?: string; warnings?: string[] };
@@ -62,9 +88,10 @@ test("116 R1: comment_add с обратным апострофом — кано�
   await client.close();
 });
 
-test("116 R1: comment_update с кавычками — канонизация и warning; текст без спецсимволов — без warning", async () => {
-  const client = await start();
+test("116 R1: comment_update с кавычками — канонизация и warning; текст без спецсимволов — без warning (сервер, pro)", async () => {
+  const client = await startPro();
   const add = await client.callTool({ name: "comment_add", arguments: { point: { x: 1000, y: 1000 }, text: "первый" } });
+  assert.ok(!add.isError, text(add));
   const id = (JSON.parse(text(add)) as { id: string }).id;
   const upd = await client.callTool({ name: "comment_update", arguments: { comment_id: id, text: 'его "текст"' } });
   assert.ok(!upd.isError, text(upd));
@@ -75,6 +102,35 @@ test("116 R1: comment_update с кавычками — канонизация и
   const res2 = JSON.parse(text(upd2)) as { warnings?: string[] };
   assert.ok(!res2.warnings || res2.warnings.length === 0, "канонизация не меняет текст — warning нет");
   await client.close();
+});
+
+test("116 R1: comment_add с двойными кавычками — канонический текст и warning (модельный слой)", () => {
+  const m = baseCommentModel();
+  const comment = addComment(m, { point: { x: 100, y: 100 }, text: 'say "ok"' });
+  const warnings = commentTextWarnings('say "ok"', comment.text);
+  assert.equal(unescapeCommentText(comment.text), "say ''ok''", "в записи — итоговый (канонический) текст");
+  assert.ok(warnings.length > 0 && warnings.some((w) => w.includes("''ok''")), `warning о канонизации: ${JSON.stringify(warnings)}`);
+  const listed = commentsList(m);
+  assert.equal(listed[0]!.text, "say ''ok''", "commentsList возвращает ровно сохраняемый (отображаемый) текст");
+});
+
+test("116 R1: comment_add с обратным апострофом — канонизируется в апостроф с warning", () => {
+  const m = baseCommentModel();
+  const comment = addComment(m, { point: { x: 100, y: 100 }, text: "a`b" });
+  const warnings = commentTextWarnings("a`b", comment.text);
+  assert.equal(unescapeCommentText(comment.text), "a'b");
+  assert.ok(warnings.length > 0);
+  assert.equal(commentsList(m)[0]!.text, "a'b");
+});
+
+test("116 R1: comment_update с кавычками — канонизация и warning; текст без спецсимволов — без warning", () => {
+  const m = baseCommentModel();
+  const added = addComment(m, { point: { x: 100, y: 100 }, text: "первый" });
+  const upd = updateComment(m, { commentId: added.id, text: 'его "текст"' });
+  assert.equal(unescapeCommentText(upd.text), "его ''текст''");
+  assert.ok(commentTextWarnings('его "текст"', upd.text).length > 0);
+  const upd2 = updateComment(m, { commentId: added.id, text: "обычный текст" });
+  assert.equal(commentTextWarnings("обычный текст", upd2.text).length, 0, "канонизация не меняет текст — warning нет");
 });
 
 test("116 R1: mock save — комментарий канонизируется, сверка по отображаемому тексту не блокирует штатный save", async () => {
@@ -236,8 +292,8 @@ function saveMockPlain(server: { saveId: string; model: Record<string, unknown> 
 
 // ---------- R3: comment_update(url:null) удаляет URL ----------
 
-test("116 R3: comment_update с url:null снимает ссылку (handler), comments_list — url null", async () => {
-  const client = await start();
+test("116 R3: comment_update с url:null снимает ссылку (handler), comments_list — url null (сервер, pro)", async () => {
+  const client = await startPro();
   const add = await client.callTool({ name: "comment_add", arguments: { point: { x: 1000, y: 1000 }, text: "со ссылкой", url: "https://example.com/" } });
   assert.ok(!add.isError, text(add));
   const id = (JSON.parse(text(add)) as { id: string }).id;
@@ -247,6 +303,14 @@ test("116 R3: comment_update с url:null снимает ссылку (handler), 
   const comments = JSON.parse(text(list)) as { url: string | null }[];
   assert.equal(comments[0]!.url, null, "URL удалён, а не остался прежним");
   await client.close();
+});
+
+test("116 R3: comment_update с url:null снимает ссылку, commentsList — url null (модельный слой)", () => {
+  const m = baseCommentModel();
+  const added = addComment(m, { point: { x: 100, y: 100 }, text: "со ссылкой", url: "https://example.com/" });
+  updateComment(m, { commentId: added.id, url: null });
+  const listed = commentsList(m);
+  assert.equal(listed[0]!.url ?? null, null, "URL удалён, а не остался прежним");
 });
 
 // ---------- R4: публичные enum ----------
@@ -271,13 +335,11 @@ test("116 R4: dims_list возвращает offset_side auto|left|right и shee
   await client.close();
 });
 
-test("116 R4: comment_add принимает sheet plan; comments_list возвращает sheet plan", async () => {
-  const client = await start();
-  const add = await client.callTool({ name: "comment_add", arguments: { point: { x: 1000, y: 1000 }, text: "т", sheet: "plan" } });
-  assert.ok(!add.isError, text(add));
-  const list = await client.callTool({ name: "comments_list", arguments: {} });
-  assert.equal((JSON.parse(text(list)) as { sheet: string }[])[0]!.sheet, "plan");
-  await client.close();
+test("116 R4: comment_add принимает sheet plan; commentsList возвращает sheet plan", () => {
+  const m = baseCommentModel();
+  // модельный слой хранит внутренний sheet ("a"); публичный "plan" — sheetPublic (dto/dims)
+  addComment(m, { point: { x: 100, y: 100 }, text: "т", sheet: "a" });
+  assert.equal(sheetPublic(commentsList(m)[0]!.plan), "plan");
 });
 
 test("116 R4: dim_update принимает публичный offset_side (right), модель хранит формат редактора", async () => {

@@ -127,12 +127,25 @@ export function resolveCableLamp(model: Model, ref: string): string {
 /** Проём в полу по site-id или метке FH1…FH_n из model_get. */
 export function resolveFloorHole(model: Model, ref: string): { id: string } {
   const holes = model.level_holes ?? {};
-  if (holes[ref]) return holes[ref]!;
+  if (holes[ref] && (holes[ref]!.type ?? "floor_hole") === "floor_hole") return holes[ref]!;
   const m = /^FH(\d+)$/.exec(ref);
   if (m) {
-    const list = Object.values(holes);
+    const list = Object.values(holes).filter((h) => (h.type ?? "floor_hole") === "floor_hole");
     const hole = list[Number(m[1]) - 1];
     if (hole) return hole;
   }
   return throwNotFound(`проём в полу ${ref} не найден (id сайта или метка FH<n> из model_get)`);
+}
+
+/** Проём в потолке по site-id или метке CH1…CH_n из model_get (этап 328). */
+export function resolveCeilingHole(model: Model, ref: string): { id: string } {
+  const holes = model.level_holes ?? {};
+  if (holes[ref] && holes[ref]!.type === "ceiling_hole") return holes[ref]!;
+  const m = /^CH(\d+)$/.exec(ref);
+  if (m) {
+    const list = Object.values(holes).filter((h) => h.type === "ceiling_hole");
+    const hole = list[Number(m[1]) - 1];
+    if (hole) return hole;
+  }
+  return throwNotFound(`проём в потолке ${ref} не найден (id сайта или метка CH<n> из model_get)`);
 }

@@ -23,7 +23,7 @@ export const PARTITION_MATERIALS = {
   brick: "c_brick",
   gypsum: "c_gypsum",
   // PRO-пункты (is_pro в разметке редактора, проба 103-replan-scout): на бесплатном
-  // тарифе и анонимных проектах запись запрещена (NOT_AVAILABLE_ON_TARIFF)
+  // тарифе и анонимных проектах запись запрещена (гейт тарифа, src/server/pro.ts)
   glass: "c_glass",
   bar: "c_bar",
 } as const;

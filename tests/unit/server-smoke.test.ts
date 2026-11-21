@@ -8,6 +8,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { join } from "node:path";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { addLightLine, updateLightLine } from "../../src/model/lighting.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..");
 const FIXTURE = join(ROOT, "tests/fixtures/anon-rect-4000x3000.json");
@@ -46,6 +47,8 @@ const EXPECTED_TOOLS = [
   "shield_collector_add", "shield_collector_update", "shield_collector_delete",
   // §7.4e — проем в полу, терраса и участок (этап 64)
   "floor_hole_add", "floor_hole_update", "floor_hole_delete",
+  "finish_ceiling_complex_set",
+  "ceiling_hole_add", "ceiling_hole_update", "ceiling_hole_delete",
   "terrace_add", "terrace_border_update", "terrace_border_delete",
   "terrace_fence_add", "terrace_column_add", "terrace_column_update", "terrace_column_delete",
   "territory_add", "territory_border_update", "territory_border_delete",
@@ -221,10 +224,40 @@ test("smoke: схемы отвергают отрицательные разме
   }
 });
 
-test("smoke: световые линии — update принимает отрицательные координаты (85 №1: план может уходить в минус, как в add)", async () => {
+test("smoke: световые линии — PRO-гейт на анонимном проекте (328), отрицательные координаты — на модельном слое", async () => {
   let client: Client | undefined;
   try {
     client = await start();
+    // led_strip/stripe/line_light — PRO-инструменты (is_pro, эталон 328-pro-anon.json):
+    // на анонимном проекте (равен бесплатному тарифу) гейт возвращает NOT_AVAILABLE_ON_TARIFF
+    for (const addTool of ["led_strip_add", "stripe_add", "line_light_add"] as const) {
+      const add = await client.callTool({ name: addTool, arguments: { kind: "recessed", path: [{ x: -1000, y: -1000 }, { x: 0, y: -1000 }] } });
+      assert.ok(add.isError, `${addTool}: анонимный проект — гейт`);
+      const payload = JSON.parse(text(add)) as { code: string };
+      assert.equal(payload.code, "NOT_AVAILABLE_ON_TARIFF", `${addTool}: ${text(add)}`);
+    }
+    // свойство «отрицательные координаты допустимы» — модельный слой (85 №1)
+    const ctx = new ServerContext({ offlineFixture: FIXTURE });
+    const model = structuredClone(ctx.workspace().model);
+    const line = addLightLine(model, { kind: "line", path: [{ x: -1000, y: -1000 }, { x: 0, y: -1000 }] });
+    updateLightLine(model, { kind: "line", lineId: line.id, positions: [{ vertex: 0, x: -500, y: -2000 }] });
+    const strip = Object.values(model.line_strips ?? {})[0]!;
+    assert.deepEqual([strip.vertexes[0]!.point.x, strip.vertexes[0]!.point.y], [-50, -200]);
+  } finally {
+    if (client) await client.close();
+  }
+});
+
+// Ревью 331 Н8: схемный тест 85 №1 возвращён на полный путь — под тарифом pro
+// (led_strip_add/update — PRO-инструменты, этап 328; тест-инъекции ServerContext
+// offlineTariff/offlineAnon сеть не используют).
+test("smoke: световые линии — update принимает отрицательные координаты (85 №1, сервер под pro)", async () => {
+  const ctx = new ServerContext({ offlineFixture: FIXTURE, offlineTariff: "pro", offlineAnon: false });
+  const server = buildServer(ctx);
+  const client = new Client({ name: "smoke-pro-85", version: "0.0.0" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(b), client.connect(a)]);
+  try {
     for (const [addTool, updTool, idKey] of [
       ["led_strip_add", "led_strip_update", "led_strip_id"],
       ["stripe_add", "stripe_update", "stripe_id"],
@@ -243,7 +276,7 @@ test("smoke: световые линии — update принимает отри�
       assert.deepEqual(compact.entity!.from, [-500, -2000], `${updTool}: узел перенесён в минус`);
     }
   } finally {
-    if (client) await client.close();
+    await client.close();
   }
 });
 

@@ -9,16 +9,20 @@
 //      prev/next) — принадлежность объекта проверяется по project_list (ЛК)
 //      тем же путём, что MCP (322 N3а).
 // №4 — эталон контрольного проекта ФИКСИРОВАННЫЙ и ОБЩИЙ на пару READONLY
-//      (322 N4): файл .orca-reports/tmp/readonly-ref-<hash пары>.json
-//      создаётся, только если его нет, и никогда не перезаписывается; сверка
+//      (322 N4; ревью 329 №7): файл .orca-reports/tmp/readonly-ref-<hash пары>.json
+//      в КОРНЕВОМ репо (абсолютный путь, не относительно cwd/worktree);
+//      отсутствующий эталон — отказ (автосоздание — только по явному
+//      env-флагу REMPLANNER_PROBE_READONLY_REF_INIT=1, иначе молчаливое
+//      перебазирование — инцидент 328, 27→33→39); сверка
 //      с ним перед КАЖДОЙ фазой записи (assertUnchanged/guardedSave) и в
 //      finally (checkFinal); «ИЗМЕНИЛСЯ» — process.exit(1) ДО следующих
 //      записей (эскалация координатору, без повторных прогонов).
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fetchClientPage, loadModel, parseClientPage, type ClientProject, type LoadedModel } from "../../src/api.ts";
 import type { SessionState } from "../../src/session.ts";
+import { gitRepoRoot } from "../../src/repo-root.ts";
 import { sig } from "./probe-sig.ts";
 
 export type ProbeWriteEnv = {
@@ -193,28 +197,70 @@ export type ReadonlyGuard = {
   reference: LoadedModel;
 };
 
-/** Общий файл-эталон контрольного проекта на пару READONLY (322 N4; 323 N6 —
- *  ключ без dev-объекта): один файл на пару object/plan, не на пробу —
- *  изменение между прогонами разных проб не маскируется новым базисом,
- *  смена dev-объекта между прогонами не снимает новый эталон.
- *  Эталон создаётся, только если файла нет. */
+/**
+ * Корень репо по git — общий модуль src/repo-root.ts (ревью 333 Р2/Р3):
+ * генератор ключей и сторожа тестов используют ту же функцию, что и пробы.
+ */
+export { gitRepoRoot };
+
+/**
+ * Файл-эталон контрольного проекта на пару READONLY (322 N4; 323 N6 — ключ без
+ * dev-объекта; ревью 329 №7): АБСОЛЮТНЫЙ путь в КОРНЕВОМ .orca-reports/tmp репо,
+ * а не относительно cwd/worktree — иначе каждый worktree получает свой базис
+ * (инцидент 328: изменение 27→33 не было замечено). Корень — по git
+ * (gitRepoRoot, ревью 331 Н6), не по эвристике предков.
+ */
 export function readonlyRefPath(readonlyId: string, readonlyPlanId: string): string {
   const h = createHash("sha256").update(`${readonlyId}|${readonlyPlanId}`).digest("hex").slice(0, 12);
-  return `.orca-reports/tmp/readonly-ref-${h}.json`;
+  const root = gitRepoRoot();
+  if (root === null) {
+    throw new ProbeGuardError("не удалось определить корень репо (git rev-parse --git-common-dir) — эталон контрольного проекта нельзя привязать к репо — стоп (ревью 329 №7, 331 Н6)");
+  }
+  return join(root, ".orca-reports", "tmp", `readonly-ref-${h}.json`);
+}
+
+/**
+ * Решение «что делать с эталоном» в чистой функции (ревью 331 Н6): есть файл —
+ * load; файла нет и стоит явный env-флаг REMPLANNER_PROBE_READONLY_REF_INIT=1 —
+ * create; иначе — refuse (молчаливое автосоздание базиса запрещено — инцидент
+ * 328, 27→33→39). Юнит-тесты закрепляют все три ветки.
+ */
+export type ReadonlyRefDecision =
+  | { action: "load" }
+  | { action: "create" }
+  | { action: "refuse"; reason: string };
+
+export function readonlyRefDecision(refExists: boolean, initFlag: string | undefined): ReadonlyRefDecision {
+  if (refExists) return { action: "load" };
+  if (initFlag === "1") return { action: "create" };
+  return {
+    action: "refuse",
+    reason:
+      "эталон контрольного проекта отсутствует — СТОП (ревью 329 №7, 331 Н6). " +
+      "Молчаливое создание базиса запрещено. Создать базис можно явно одной командой:\n" +
+      "  REMPLANNER_PROBE_READONLY_REF_INIT=1 <проба> run\n" +
+      "Перебазирование существующего эталона (контрольный проект изменился) — только " +
+      "решение координатора с подтверждением пользователя.",
+  };
 }
 
 /**
  * Гард контрольного проекта (ревью 319 №4, 322 N4): эталон ФИКСИРОВАННЫЙ и
- * ОБЩИЙ на пару READONLY — файл refPath создаётся, только если его нет, и не
- * перезаписывается (изменение за прошлый прогон не маскируется новым базисом).
- * Каждая сверка — GET + семантический канон (sig) + save_id против эталона.
+ * ОБЩИЙ на пару READONLY — файл refPath никогда не перезаписывается. Ревью
+ * 329 №7: отсутствующий эталон — ОТКАЗ с понятным текстом (молчаливое
+ * автосоздание базиса запрещено — инцидент 328, изменение 27→33→39); создать
+ * базис можно только явно: env REMPLANNER_PROBE_READONLY_REF_INIT=1 при запуске
+ * пробы. Перебазирование (смена эталона после изменения контрольного проекта) —
+ * только решение координатора с подтверждением пользователя.
  */
 export async function readonlyGuard(session: SessionState, readonlyId: string, readonlyPlanId: string, refPath: string): Promise<ReadonlyGuard> {
   mkdirSync(dirname(refPath), { recursive: true });
   let reference: LoadedModel;
-  if (existsSync(refPath)) {
+  // решение — чистая функция readonlyRefDecision (ревью 331 Н6), ветки закреплены тестами
+  const decision = readonlyRefDecision(existsSync(refPath), process.env["REMPLANNER_PROBE_READONLY_REF_INIT"]);
+  if (decision.action === "load") {
     reference = JSON.parse(readFileSync(refPath, "utf8")) as LoadedModel;
-  } else {
+  } else if (decision.action === "create") {
     const cur = await loadModel(session, readonlyId, readonlyPlanId);
     if (cur.data_empty) {
       console.error("контрольный GET пустой (data_empty) — эталон не создаётся, отказ");
@@ -222,6 +268,10 @@ export async function readonlyGuard(session: SessionState, readonlyId: string, r
     }
     reference = cur;
     writeFileSync(refPath, JSON.stringify(reference, null, 1) + "\n");
+    console.error(`эталон контрольного проекта создан (явный флаг REMPLANNER_PROBE_READONLY_REF_INIT): ${refPath}`);
+  } else {
+    console.error(`эталон контрольного проекта: ${refPath}\n${decision.reason}`);
+    process.exit(1);
   }
   const changed = async (tag: string): Promise<boolean> => {
     try {

@@ -29,7 +29,7 @@ import {
 } from "../model/dims.ts";
 import { cmToMm, mmToCm } from "../model/units.ts";
 import type { LedStrip, StripLight, LineStrip } from "../model/types.ts";
-import { addFloorHole, updateFloorHole, deleteFloorHole } from "../model/floorhole.ts";
+import { addFloorHole, updateFloorHole, deleteFloorHole, addCeilingHole, updateCeilingHole, deleteCeilingHole } from "../model/floorhole.ts";
 import {
   MAX_POLYLINE_POINTS,
   MAX_POLYGON_VERTICES,
@@ -48,6 +48,7 @@ import {
 } from "../model/finish.ts";
 import { addZoneDelimiter, removeZoneDelimiter, zoneDelimiterList, ZONE_DELIMITER_PLANS, type ZoneDelimiterType } from "../model/zone.ts";
 import { addCeilingRigel, updateCeilingRigel, deleteCeilingRigel, ceilingRigelList, type CeilingRigelRec } from "../model/ceiling-rigels.ts";
+import { setCeilingComplex } from "../model/ceiling-complex.ts";
 import {
   addBorderRing, updateBorder, deleteBorder, addTerraceFence, addTerraceColumn, updateTerraceColumn, deleteTerraceColumn,
 } from "../model/terraces.ts";
@@ -64,10 +65,11 @@ import { throwNotFound } from "../dto/common.ts";
 import { resolveWall, wallRef, thickness, resolveWallMaterial } from "../dto/walls.ts";
 import { swing, resolveOpeningWall, openingAddArgs, openingUpdateParams } from "../dto/openings.ts";
 import { position, positionMove, resolveItem, normalizePosition, againstWallCenter, itemsInRoom, catalogFoundView, catalogEntryView } from "../dto/items.ts";
-import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGasLine, resolvePipe, resolveWarmFloor, resolveWarmWall, resolveLightLine, resolveFloorHole, resolveCableLamp } from "../dto/structures.ts";
+import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGasLine, resolvePipe, resolveWarmFloor, resolveWarmWall, resolveLightLine, resolveFloorHole, resolveCeilingHole, resolveCableLamp } from "../dto/structures.ts";
 import { resolveBorder, borderResponse } from "../dto/borders.ts";
 import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInternal, sheetPublic, commentTextWarnings } from "../dto/dims.ts";
 import { rawEditorPayload } from "../dto/model-payload.ts";
+import { PRO_TOOL_GROUPS, assertProToolAllowed, assertProPartialAllowed, type ProToolGroup } from "./pro.ts";
 
 // T19: инструменты стен, проёмов, предметов, каталога и чтения (design §7.2–7.4, §7.6).
 
@@ -157,22 +159,23 @@ const ZONE_TOOL_TEXTS: Record<ZoneDelimiterType, { add: string; remove: string }
 export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   const wsOf = () => ctx.workspace();
 
-  // Тарифный гейт PRO-материалов перегородок (этап 103): анонимный проект равен
-  // бесплатному тарифу (design §4), неизвестный тариф трактуется как бесплатный.
-  const assertProMaterialAllowed = async (): Promise<void> => {
-    const ws = wsOf();
-    if (ws.project?.anon) {
-      throw new McpError("NOT_AVAILABLE_ON_TARIFF", "стеклянная и реечная перегородки — PRO-инструменты; в анонимном проекте они недоступны", {
-        hint: "откройте проект PRO-аккаунта (project_open после входа) или используйте pgb/foam_block/brick/gypsum",
-        details: { tool: "wall_add", key: "wall_create_glass|wall_create_bar" },
-      });
-    }
-    const st = await ctx.authStatus();
-    if (st.tariff !== "pro") {
-      throw new McpError("NOT_AVAILABLE_ON_TARIFF", "стеклянная и реечная перегородки — только в PRO-версии (неизвестный или бесплатный тариф)", {
-        details: { tool: "wall_add", key: "wall_create_glass|wall_create_bar", tariff: st.tariff },
-      });
-    }
+  // Тарифный гейт PRO-инструментов (этап 328, единое правило — реестр src/server/pro.ts):
+  // инструмент, помеченный is_pro в разметке редактора, на тарифе без PRO отклоняется
+  // гейтом тарифа. Анонимный проект равен бесплатному тарифу (design §4),
+  // неизвестный тариф трактуется как бесплатный. Ревью 329 №1: копии гейтов
+  // (assertProMaterialAllowed/assertShieldAllowed) удалены — текст ошибки живёт
+  // только в pro.ts (проверяется тестом).
+  const PRO_BY_TOOL = new Map<string, ProToolGroup>(PRO_TOOL_GROUPS.flatMap((g) => g.tools.map((t) => [t, g])));
+  const proGate = async (tool: string): Promise<void> => {
+    const g = PRO_BY_TOOL.get(tool);
+    if (!g) throw new McpError("INTERNAL", `инструмент ${tool} отсутствует в реестре PRO (src/server/pro.ts)`);
+    await assertProToolAllowed(ctx, wsOf().project, tool, g.label);
+  };
+
+  // Частичные гейты (PRO_PARTIAL_TOOLS): инструмент гейтится только по
+  // is_pro-ключу (материал/покрытие/позиция каталога) — ревью 329 №1/№2.
+  const proGateKey = async (tool: string, key: string, hint?: string): Promise<void> => {
+    await assertProPartialAllowed(ctx, wsOf().project, tool, key, hint);
   };
 
   /**
@@ -187,24 +190,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   };
 
   // Конструктор электрощитка (лист «Электрощиток») — «старшие тарифы PRO»
-  // (анонс 24.12.2025): анонимный проект равен бесплатному тарифу (design §4),
-  // неизвестный тариф трактуется как бесплатный. На бесплатном тарифе поведение
-  // сервера не проверялось — открытый вопрос этапа 255.
-  const assertShieldAllowed = async (): Promise<void> => {
-    const ws = wsOf();
-    if (ws.project?.anon) {
-      throw new McpError("NOT_AVAILABLE_ON_TARIFF", "конструктор электрощитка доступен только на старших тарифах PRO; в анонимном проекте он недоступен", {
-        hint: "откройте проект PRO-аккаунта (project_open после входа)",
-        details: { tool: "shield_*" },
-      });
-    }
-    const st = await ctx.authStatus();
-    if (st.tariff !== "pro") {
-      throw new McpError("NOT_AVAILABLE_ON_TARIFF", "конструктор электрощитка доступен только на старших тарифах PRO (неизвестный или бесплатный тариф)", {
-        details: { tool: "shield_*", tariff: st.tariff },
-      });
-    }
-  };
+  // (анонс 24.12.2025; реестр PRO_TOOL_GROUPS seniorOnly): анонимный проект
+  // равен бесплатному тарифу (design §4), неизвестный тариф трактуется как
+  // бесплатный. На бесплатном тарифе поведение сервера не проверялось —
+  // открытый вопрос этапа 255. Ревью 329 №1: гейт через общий proGate.
 
   // Зонирование (класс ZoneDelimitering, этапы 260/296, PRO): обработчики
   // zone_<t>_add/remove генерируются из одной таблицы типов ZONE_TOOL_TEXTS
@@ -224,6 +213,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // PRO-гейт (этап 328, реестр): zone_c не в реестре — без гейта, как в редакторе
+        if (t !== "zone_c") await proGate(`${t}_add`);
         const res = ws.apply(`${t}_add`, (m) => addZoneDelimiter(m, a["room_id"] as string, {
           type: t,
           fromMm: a["from_mm"] as MmPoint,
@@ -351,7 +342,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const ws = wsOf();
         const isPartition = a["kind"] === "partition";
         const resolved = resolveWallMaterial(a["kind"] as "initial" | "partition" | undefined, a["material"] as string | undefined);
-        if (resolved.pro) await assertProMaterialAllowed();
+        if (resolved.pro) await proGateKey("wall_add", resolved.material, "откройте проект PRO-аккаунта (project_open после входа) или используйте pgb/foam_block/brick/gypsum");
         const { result: wall, warnings } = await ws.applyWalls("wall_add", (m) => addWall(m, {
           start: a["start"] as MmPoint, end: a["end"] as MmPoint,
           thicknessMm: (a["thickness_mm"] as number | undefined) ?? (isPartition ? 100 : undefined),
@@ -379,7 +370,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const ws = wsOf();
         const isPartition = a["kind"] === "partition";
         const resolved = resolveWallMaterial(a["kind"] as "initial" | "partition" | undefined, a["material"] as string | undefined);
-        if (resolved.pro) await assertProMaterialAllowed();
+        if (resolved.pro) await proGateKey("wall_add", resolved.material, "откройте проект PRO-аккаунта (project_open после входа) или используйте pgb/foam_block/brick/gypsum");
         const { result: walls, warnings } = await ws.applyWalls("walls_add_polyline", (m) => addPolyline(m, {
           points: a["points"] as MmPoint[],
           closed: a["closed"] as boolean | undefined,
@@ -466,7 +457,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         if (material !== undefined) {
           if (targetPlan === "c") {
             const resolved = resolveWallMaterial("partition", material);
-            if (resolved.pro) await assertProMaterialAllowed();
+            if (resolved.pro) await proGateKey("wall_add", resolved.material, "откройте проект PRO-аккаунта (project_open после входа) или используйте pgb/foam_block/brick/gypsum");
             material = resolved.material;
           } else {
             resolveWallMaterial("initial", material);
@@ -513,7 +504,12 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     wall_delete: tool(
-      "Удалить стену вместе с её проёмами (в ответе — число удалённых проёмов). Связанные стены теряют связь в узле.",
+      "Удалить стену вместе с её проёмами (в ответе — число удалённых проёмов). Связанные стены теряют связь в узле. " +
+        "Если у исчезающей или сливаемой комнаты есть отделка (пол, потолок, стороны стен, плинтусы, ниши), операция отклоняется — " +
+        "отделка не переживает удаление стены: снимите её до операции (пол — finish_floor_remove, стороны стен — finish_wall_remove, " +
+        "покрытие потолка — finish_ceiling_remove, плинтус пола — finish_floor_molding_remove, потолочный плинтус — " +
+        "finish_ceiling_molding_remove, закарнизная ниша — finish_ceiling_niche_remove; двухуровневый потолок — сначала " +
+        "finish_ceiling_set другим покрытием, затем finish_ceiling_remove; ниша и плинтусы — раньше ластиков) и повторите.",
       { wall_id: wallRef },
       async (a) => {
         const ws = wsOf();
@@ -601,6 +597,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "door_glass (Стеклянная дверь 80), door_garage (Гаражные ворота 300×225), " +
         "door_system_x2/x3/x4 (Каскадная система 2/3/4-створчатая 160/240/320), " +
         "door_system_penal_x2/x3/x4 (Раздвижная система 2/3/4-створчатая 160/240/320). " +
+        "PRO (is_pro, эталон 328-pro-anon.json): door_roto/_double, door_book/_double, door_bellows, door_glass, " +
+        "door_garage, door_system_x2/x3/x4, door_system_penal_x2/x3/x4 — на тарифе без PRO отказ " +
+        "гейта тарифа (единый реестр src/server/pro.ts); doorway, door, door_double, купе и пенал — не PRO. " +
         "Пункты меню «Двери-купе 2/3/4-дверные» (doors_coupe_2x/3x/4x), «Домофон» (door_remote) и «Видеодомофон» " +
         "(door_videoremote) — предметы каталога, ставятся item_add, а не opening_add. " +
         "Окна (пункты меню «Окна»): windowway (Проем без окна 120×150), window (Стандартное окно 120×150, подоконник 85), " +
@@ -646,6 +645,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // PRO-гейт по типу проёма (ревью 331 Н1): 13 PRO-типов дверей (roto,
+        // книжка, гармошка, стеклянная, гаражные, каскадные/раздвижные системы)
+        // — is_pro в разметке редактора (единый список PRO_EDITOR_KEYS)
+        await proGateKey("opening_add", a["type"] as string);
         const hole = ws.apply("opening_add", (m) =>
           addOpening(m, openingAddArgs(resolveWall(m, a["wall_id"] as string).id, a)));
         return ok(compactEntity(ws.model, (c) =>
@@ -850,6 +853,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async (a) => {
         const ws = wsOf();
         const entry = await ctx.toolEntry(a["name"] as string);
+        // PRO-гейт по ключу каталога (ревью 329 №2): is_pro-позиции (точки воды,
+        // розетки, выключатели, коробки, датчики — эталоны 328-pro-anon/sheets)
+        await proGateKey("item_add", entry.name);
         const item = ws.apply("item_add", (m) => addItem(m, {
           name: entry.name,
           position: normalizePosition(a["position"] as Record<string, unknown>, m, ws.rooms()),
@@ -1188,6 +1194,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("pipe_add");
         const pipe = ws.apply("pipe_add", (m) => addPipe(m, {
           kind: a["kind"] as PipeKind | ClimatePipeKind,
           path: (a["path"] as unknown[]).map((el) => {
@@ -1219,6 +1226,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("pipe_update");
         const pipe = ws.apply("pipe_update", (m) => updatePipe(m, {
           pipeId: resolvePipe(m, a["pipe_id"] as string).id,
           positions: (a["positions"] as { vertex: number; x_mm: number; y_mm: number }[]).map((p) => ({
@@ -1258,6 +1266,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("warm_floor_add");
         const wf = ws.apply("warm_floor_add", (m) => addWarmFloor(m, {
           kind: a["kind"] as "cable" | "infrared" | "water",
           corner1: a["corner1"] as MmPoint,
@@ -1278,6 +1287,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("warm_floor_update");
         const wf = ws.apply("warm_floor_update", (m) => updateWarmFloor(m, {
           warmFloorId: resolveWarmFloor(m, a["warm_floor_id"] as string).id,
           corner1: a["corner1"] as MmPoint | undefined,
@@ -1400,6 +1410,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("led_strip_add");
         const line = ws.apply("led_strip_add", (m) => addLightLine(m, { kind: "led", path: a["path"] as MmPoint[] }));
         return ok(compactEntity(ws.model, (c) => c.led_strips.find((g) => g.site_id === line.id) ?? null));
       },
@@ -1418,6 +1429,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("led_strip_update");
         const line = ws.apply("led_strip_update", (m) => updateLightLine(m, {
           kind: "led",
           lineId: resolveLightLine(m, "led", a["led_strip_id"] as string).id,
@@ -1453,6 +1465,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("stripe_add");
         const line = ws.apply("stripe_add", (m) => addLightLine(m, { kind: a["kind"] as LightKind, path: a["path"] as MmPoint[] }));
         return ok(compactEntity(ws.model, (c) => c.stripes_light.find((g) => g.site_id === line.id) ?? null));
       },
@@ -1471,6 +1484,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("stripe_update");
         const line = ws.apply("stripe_update", (m) => {
           const found = resolveLightLine(m, "recessed", a["stripe_id"] as string);
           const kind = found.type === "pendent_strip" ? "pendent" : found.type === "surface_stripe" ? "surface" : "recessed";
@@ -1510,6 +1524,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("line_light_add");
         const line = ws.apply("line_light_add", (m) => addLightLine(m, { kind: "line", path: a["path"] as MmPoint[] }));
         return ok(compactEntity(ws.model, (c) => c.line_strips.find((g) => g.site_id === line.id) ?? null));
       },
@@ -1528,6 +1543,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("line_light_update");
         const line = ws.apply("line_light_update", (m) => updateLightLine(m, {
           kind: "line",
           lineId: resolveLightLine(m, "line", a["line_light_id"] as string).id,
@@ -1572,6 +1588,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("cable_add");
         const cable = ws.apply("cable_add", (m) => addCable(m, {
           switchItemId: resolveItem(m, a["switch_item_id"] as string).id,
           switchSubId: a["switch_sub_id"] as string | undefined,
@@ -1629,6 +1646,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("wiring_add");
         const toolKey = a["kind"] as string;
         const cable = ws.apply("wiring_add", (m) => addElecCable(m, {
           tool: toolKey,
@@ -1673,6 +1691,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("wiring_update");
         const cable = ws.apply("wiring_update", (m) => {
           // метка CS/CW/CC<n> из model_get или id сайта (одна карта меток, как в wiring_delete)
           const compact = compactModel(m);
@@ -1734,7 +1753,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "После добавления вызывайте model_validate и project_save.",
       { item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта") },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_rail_add");
         const ws = wsOf();
         const shield = ws.apply("shield_rail_add", (m) => addShieldRail(m, resolveItem(m, a["item_id"] as string).id));
         return ok(compactEntity(ws.model, (c) => c.shields.find((s) => s.site_id === shield.id) ?? null));
@@ -1752,7 +1771,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         rail: mmInt.describe("индекс рейки (0-based)"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_rail_delete");
         const ws = wsOf();
         const res = ws.apply("shield_rail_delete", (m) =>
           deleteShieldRail(m, resolveItem(m, a["item_id"] as string).id, a["rail"] as number));
@@ -1791,7 +1810,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         comment: z.string().max(MAX_SERVICE_COMMENT_CHARS).optional().describe("подпись модуля"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_module_add");
         const ws = wsOf();
         const { shield } = ws.apply("shield_module_add", (m) => addShieldModule(m, resolveItem(m, a["item_id"] as string).id, {
           type: a["type"] as string,
@@ -1822,7 +1841,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         index: shieldIndexDin.optional().describe("изменение порядка: целевая DIN-позиция на рейке (в DIN, сетка 0.5)"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_module_update");
         const ws = wsOf();
         const shield = ws.apply("shield_module_update", (m) =>
           updateShieldModule(m, resolveItem(m, a["item_id"] as string).id, a["module_id"] as string, {
@@ -1845,7 +1864,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         module_id: z.string().min(1).describe("id модуля из model_get"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_module_delete");
         const ws = wsOf();
         const res = ws.apply("shield_module_delete", (m) =>
           deleteShieldModule(m, resolveItem(m, a["item_id"] as string).id, a["module_id"] as string));
@@ -1891,7 +1910,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         }).describe("целевой порт: {module_id, port}, {input} или {bus, port}"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_wire_add");
         const ws = wsOf();
         const { shield } = ws.apply("shield_wire_add", (m) => addShieldWire(m, resolveItem(m, a["item_id"] as string).id, {
           type: a["type"] as string,
@@ -1910,7 +1929,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         wire_id: z.string().min(1).describe("id провода из model_get"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_wire_delete");
         const ws = wsOf();
         ws.apply("shield_wire_delete", (m) => {
           deleteShieldWire(m, resolveItem(m, a["item_id"] as string).id, a["wire_id"] as string);
@@ -1934,7 +1953,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         sockets: mmInt.optional().describe("число гнёзд 4..25 (по умолчанию 6)"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_bus_add");
         const ws = wsOf();
         const { shield } = ws.apply("shield_bus_add", (m) => addShieldBus(m, resolveItem(m, a["item_id"] as string).id, {
           position: a["position"] as "T" | "B",
@@ -1958,7 +1977,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         sockets: mmInt.optional().describe("число гнёзд 4..25"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_bus_update");
         const ws = wsOf();
         const res = ws.apply("shield_bus_update", (m) =>
           updateShieldBus(m, resolveItem(m, a["item_id"] as string).id, a["bus_id"] as string, {
@@ -1981,7 +2000,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         bus_id: z.string().min(1).describe("id шины из model_get bus_list"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_bus_delete");
         const ws = wsOf();
         const res = ws.apply("shield_bus_delete", (m) =>
           deleteShieldBus(m, resolveItem(m, a["item_id"] as string).id, a["bus_id"] as string));
@@ -2006,7 +2025,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         modules: z.array(z.string().min(1)).min(2).max(48).describe("id модулей коллектора в порядке следования"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_collector_add");
         const ws = wsOf();
         const { shield } = ws.apply("shield_collector_add", (m) => addShieldCollector(m, resolveItem(m, a["item_id"] as string).id, {
           modules: a["modules"] as string[],
@@ -2024,7 +2043,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         modules: z.array(z.string().min(1)).min(2).max(48).optional().describe("новый набор модулей"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_collector_update");
         const ws = wsOf();
         const { shield } = ws.apply("shield_collector_update", (m) =>
           updateShieldCollector(m, resolveItem(m, a["item_id"] as string).id, a["collector_id"] as string, {
@@ -2042,7 +2061,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         collector_id: z.string().min(1).describe("id коллектора из model_get collector_list"),
       },
       async (a) => {
-        await assertShieldAllowed();
+        await proGate("shield_collector_delete");
         const ws = wsOf();
         ws.apply("shield_collector_delete", (m) => {
           deleteShieldCollector(m, resolveItem(m, a["item_id"] as string).id, a["collector_id"] as string);
@@ -2106,6 +2125,64 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
     ),
 
+    // ---------- Проем в потолке (лист «Потолки», инструмент «Проем в потолке», этап 328) ----------
+    // Класс LevelHoling редактора хранит проёмы пола и потолка в одной коллекции
+    // level_holes; ceiling_hole — plan "ceiling" (эталон 328-ceilinghole-etalon.json).
+    // НЕ PRO (разметка 328-pro-anon.json).
+    ceiling_hole_add: tool(
+      "Добавить проём в потолке (лист «Потолки», инструмент «Проем в потолке»): прямоугольник по двум " +
+        "противоположным углам (мм) внутри одной комнаты. Проём должен целиком лежать внутри одной комнаты " +
+        "и не пересекать другие проёмы в потолке (GEOMETRY_CONFLICT; проёмы пола — отдельный лист, " +
+        "с ними пересечение допустимо, как в редакторе). Лимитов размеров в панели редактора нет — " +
+        "только ненулевой размер. id — метка CH<n> из model_get. " +
+        "После добавления вызывайте model_validate и project_save.",
+      {
+        corner1: mmPoint.describe("первый угол прямоугольника, мм"),
+        corner2: mmPoint.describe("противоположный угол прямоугольника, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const hole = ws.apply("ceiling_hole_add", (m) => addCeilingHole(m, {
+          corner1: a["corner1"] as MmPoint,
+          corner2: a["corner2"] as MmPoint,
+        }, ws.rooms()));
+        return ok(compactEntity(ws.model, (c) => c.level_holes.find((h) => h.site_id === hole.id) ?? null));
+      },
+    ),
+
+    ceiling_hole_update: tool(
+      "Изменить проём в потолке: новые углы прямоугольника (corner1/corner2, мм; переданные — " +
+        "заменяются, непереданные остаются). Правила те же: внутри одной комнаты, без пересечения " +
+        "других проёмов потолка. ceiling_hole_id — id проёма (site_id) или метка CH<n> из model_get.",
+      {
+        ceiling_hole_id: z.string().min(1).describe("метка CH<n> из model_get или id сайта"),
+        corner1: mmPoint.optional().describe("новый первый угол, мм"),
+        corner2: mmPoint.optional().describe("новый противоположный угол, мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const hole = ws.apply("ceiling_hole_update", (m) => updateCeilingHole(m, {
+          holeId: resolveCeilingHole(m, a["ceiling_hole_id"] as string).id,
+          corner1: a["corner1"] as MmPoint | undefined,
+          corner2: a["corner2"] as MmPoint | undefined,
+        }, ws.rooms()));
+        return ok(compactEntity(ws.model, (c) => c.level_holes.find((h) => h.site_id === hole.id) ?? null));
+      },
+    ),
+
+    ceiling_hole_delete: tool(
+      "Удалить проём в потолке (метка CH<n> из model_get).",
+      { ceiling_hole_id: z.string().min(1).describe("метка CH<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("ceiling_hole_delete", (m) => {
+          deleteCeilingHole(m, resolveCeilingHole(m, a["ceiling_hole_id"] as string).id);
+          return true;
+        });
+        return ok({ deleted: a["ceiling_hole_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
     // ---------- Отделка (листы «Напольные покрытия»/«Отделка стен»/«Потолки», этап 94) ----------
     finish_floor_set: tool(
       "Задать комнате покрытие пола (лист «Напольные покрытия»; отделка хранится по комнате). " +
@@ -2125,6 +2202,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // PRO-гейт по покрытию (ревью 329 №2): PRO-покрытия листа «Напольные покрытия»
+        await proGateKey("finish_floor_set", a["cover"] as string);
         const res = ws.apply("finish_floor_set", (m) => setFloorFinish(m, a["room_id"] as string, a["cover"] as never, {
           angleDeg: a["angle_deg"] as number | undefined,
           plankLengthMm: a["plank_length_mm"] as number | undefined,
@@ -2165,6 +2244,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // PRO-гейт по отделке (ревью 329 №2): PRO-отделки листа «Отделка стен»
+        await proGateKey("finish_wall_set", a["type"] as string);
         const res = ws.apply("finish_wall_set", (m) => setWallFinish(
           m,
           a["room_id"] as string,
@@ -2199,7 +2280,12 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "gypsum_ceiling, stretch_ceiling, stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, " +
         "plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. Закарнизные ниши переживают " +
         "смену покрытия; на paint_ceiling/whitewash_ceiling при существующих нишах — отказ " +
-        "(сначала finish_ceiling_niche_remove). После правки вызывайте model_validate и project_save.",
+        "(сначала finish_ceiling_niche_remove). Двухуровневый потолок (complex): смена на ДРУГОЙ " +
+        "материал его НЕ переживает — снимается с warning complex_removed (как в редакторе); " +
+        "смена на тот же материал — no-op; переданные level/profile обновляются на месте, " +
+        "двухуровневая отделка сохраняется (как в редакторе); непокрытые зоны зонированного " +
+        "потолка покрываются тем же материалом. " +
+        "После правки вызывайте model_validate и project_save.",
       {
         room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
         material: z.string().min(1).describe("ключ покрытия потолка"),
@@ -2212,23 +2298,67 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           level: a["level"] as number | undefined,
           profile: a["profile"] as string | undefined,
         }));
-        return ok({ room_id: a["room_id"], material: a["material"], ceiling_id: res.id, hint: SCENARIO_HINT });
+        return ok({
+          room_id: a["room_id"], material: a["material"], ceiling_id: res.id,
+          // ревью 329 №5: снятие двухуровневого потолка не молча
+          ...(res.complexRemoved ? { warnings: ["complex_removed: двухуровневый потолок комнаты снят (смена материала его не переживает, как в редакторе)"] } : {}),
+          hint: SCENARIO_HINT,
+        });
       },
     ),
 
     finish_ceiling_remove: tool(
-      "Снять покрытие потолка комнаты (инструмент ceiling_remove). При закарнизных нишах — отказ " +
-        "(сначала finish_ceiling_niche_remove): ниши не стираются молча.",
+      "Снять покрытие потолка комнаты (инструмент ceiling_remove — ластик). При закарнизных нишах — отказ " +
+        "(сначала finish_ceiling_niche_remove): ниши не стираются молча. Двухуровневый потолок (complex) — " +
+        "отказ: в редакторе ластик complex не снимает (живая проба 328-complex, шаг 3; Ceiling.delete() " +
+        "заменяет запись целиком, комплексные поля с exist:false не живут) — снимите сменой материала " +
+        "(finish_ceiling_set с другим покрытием снимает комплекс с warning complex_removed, как в редакторе).",
       { room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты") },
       async (a) => {
         const ws = wsOf();
         ws.apply("finish_ceiling_remove", (m) => { removeCeilingFinish(m, a["room_id"] as string); return true; });
-        return ok({ room_id: a["room_id"], removed: "ceiling", hint: SCENARIO_HINT });
+        return ok({
+          room_id: a["room_id"], removed: "ceiling",
+          hint: SCENARIO_HINT,
+        });
+      },
+    ),
+
+    // ---------- Двухуровневый потолок (лист «Потолки», complex_ceiling, этап 328) ----------
+    // НЕ PRO (разметка 328-pro-anon.json). Поля записи ceilings: complex, offset 40,
+    // radius 10, level 15, level2 7.5, material gypsum_ceiling, material2 stretch_ceiling,
+    // type closed (эталон 328-complex-etalon.json); производные polygon2/polygon_new/
+    // polygons_layout/edges_new редактор пересчитывает сам. Снятие: в UI ластик
+    // двухуровневый потолок не снимает (проба 328-complex, шаг 3) — finish_ceiling_remove
+    // при complex тоже отказывает (ревью 331 Н4б); смена материала на ДРУГОЙ снимает
+    // комплекс с warning complex_removed, на тот же материал — no-op (ревью 331 Н4а).
+    // Текущее состояние — finish_get (complex/level2/material2).
+    finish_ceiling_complex_set: tool(
+      "Поставить двухуровневый потолок в зоне комнаты (лист «Потолки», инструмент «Двухуровневый " +
+        "потолок»): внутренний контур с отступом 400 мм от стен, радиус скругления 100 мм (умолчания " +
+        "редактора). Проверки редактора: площадь зоны потолка ≥ 4 м², внутренний контур без " +
+        "самопересечений (GEOMETRY_CONFLICT/INVALID_ARGUMENT); в террасе не ставится. at_mm — точка " +
+        "внутри зоны потолка (клик в редакторе); обязательна, если зон больше одной; при вложенных " +
+        "зонах выбирается зона наименьшей площади (как в редакторе). Повторный вызов по уже " +
+        "двухуровневой зоне — нет-op (как в редакторе). Снять: в редакторе ластик complex НЕ снимает " +
+        "(живая проба 328-complex, шаг 3) — finish_ceiling_remove при complex тоже отказывает; " +
+        "смена материала (finish_ceiling_set с ДРУГИМ покрытием) убирает двухуровневый потолок — " +
+        "с warning complex_removed в ответе (как в редакторе). " +
+        "После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        at_mm: mmPoint.optional().describe("точка внутри зоны потолка (клик), мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_ceiling_complex_set", (m) => setCeilingComplex(m, a["room_id"] as string, a["at_mm"] as MmPoint | undefined));
+        return ok({ room_id: a["room_id"], zone_index: res.index, ceiling_id: res.id, already: res.already, hint: SCENARIO_HINT });
       },
     ),
 
     finish_get: tool(
-      "Отделка комнат: покрытие пола (с параметрами раскладки), покрытие потолка и отделка сторон стен " +
+      "Отделка комнат: покрытие пола (с параметрами раскладки), покрытие потолка (включая " +
+        "двухуровневый: complex, level2, material2) и отделка сторон стен " +
         "по комнатам (тип, слой, высота, высота от пола), напольные и потолочный плинтусы, закарнизные ниши. " +
         "wall — метка W<n>; side — сторона стены, обращённая к комнате. Без room_id — по всем комнатам.",
       { room_id: z.string().min(1).optional().describe("метка R<n> из model_get или id комнаты") },
@@ -2254,6 +2384,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("finish_floor_molding_set");
         const res = ws.apply("finish_floor_molding_set", (m) => setFloorMolding(
           m,
           a["room_id"] as string,
@@ -2294,6 +2425,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("finish_ceiling_molding_set");
         const res = ws.apply("finish_ceiling_molding_set", (m) => setCeilingMolding(
           m,
           a["room_id"] as string,
@@ -2332,6 +2464,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        await proGate("finish_ceiling_niche_add");
         const res = ws.apply("finish_ceiling_niche_add", (m) => addCeilingNiche(
           m,
           a["room_id"] as string,
@@ -2743,6 +2876,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // PRO-гейт (ревью 329 №2, реестр pro.ts): комментарии закрыты за PRO в UI
+        await proGate("comment_add");
         const comment = ws.apply("comment_add", (m) => addComment(m, {
           point: a["point"] as MmPoint,
           text: a["text"] as string,
@@ -2783,6 +2918,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // PRO-гейт (ревью 329 №2, реестр pro.ts): комментарии закрыты за PRO в UI
+        await proGate("comment_update");
         const comment = ws.apply("comment_update", (m) => updateComment(m, {
           commentId: resolveComment(m, a["comment_id"] as string).id,
           text: a["text"] as string | undefined,

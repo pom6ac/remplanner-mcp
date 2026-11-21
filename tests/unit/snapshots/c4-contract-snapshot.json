@@ -297,6 +297,144 @@
    }
   },
   {
+   "name": "ceiling_hole_add",
+   "description": "Добавить проём в потолке (лист «Потолки», инструмент «Проем в потолке»): прямоугольник по двум противоположным углам (мм) внутри одной комнаты. Проём должен целиком лежать внутри одной комнаты и не пересекать другие проёмы в потолке (GEOMETRY_CONFLICT; проёмы пола — отдельный лист, с ними пересечение допустимо, как в редакторе). Лимитов размеров в панели редактора нет — только ненулевой размер. id — метка CH<n> из model_get. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "corner1": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "первый угол прямоугольника, мм"
+     },
+     "corner2": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "противоположный угол прямоугольника, мм"
+     }
+    },
+    "required": [
+     "corner1",
+     "corner2"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "ceiling_hole_delete",
+   "description": "Удалить проём в потолке (метка CH<n> из model_get).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ceiling_hole_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка CH<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "ceiling_hole_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "ceiling_hole_update",
+   "description": "Изменить проём в потолке: новые углы прямоугольника (corner1/corner2, мм; переданные — заменяются, непереданные остаются). Правила те же: внутри одной комнаты, без пересечения других проёмов потолка. ceiling_hole_id — id проёма (site_id) или метка CH<n> из model_get.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "ceiling_hole_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка CH<n> из model_get или id сайта"
+     },
+     "corner1": {
+      "description": "новый первый угол, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     },
+     "corner2": {
+      "description": "новый противоположный угол, мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     }
+    },
+    "required": [
+     "ceiling_hole_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "ceiling_rigel_add",
    "description": "Поставить потолочную закладную (лист «Потолки», инструмент «Потолочная закладная»; PRO). Полоса от стены до стены внутри комнаты: start/end — концы оси (мм); каждый конец магнитится к боковой грани стены, её торцу или грани колонны (в 30 мм; в редакторе радиус магнита равен ширине полосы — по умолчанию 10 см, до 100 см), угол оси к грани 45–135°, как в редакторе. Ось не пересекает разделители зон потолка, ригели и другие закладные комнаты. width_mm — толщина полосы (по умолчанию 100, панель 100..1000 мм). ceiling_type — отделка потолка на закладной. id — метка CR<n> для ceiling_rigel_update/delete. После правки вызывайте model_validate и project_save.",
    "inputSchema": {
@@ -998,6 +1136,46 @@
    }
   },
   {
+   "name": "finish_ceiling_complex_set",
+   "description": "Поставить двухуровневый потолок в зоне комнаты (лист «Потолки», инструмент «Двухуровневый потолок»): внутренний контур с отступом 400 мм от стен, радиус скругления 100 мм (умолчания редактора). Проверки редактора: площадь зоны потолка ≥ 4 м², внутренний контур без самопересечений (GEOMETRY_CONFLICT/INVALID_ARGUMENT); в террасе не ставится. at_mm — точка внутри зоны потолка (клик в редакторе); обязательна, если зон больше одной; при вложенных зонах выбирается зона наименьшей площади (как в редакторе). Повторный вызов по уже двухуровневой зоне — нет-op (как в редакторе). Снять: в редакторе ластик complex НЕ снимает (живая проба 328-complex, шаг 3) — finish_ceiling_remove при complex тоже отказывает; смена материала (finish_ceiling_set с ДРУГИМ покрытием) убирает двухуровневый потолок — с warning complex_removed в ответе (как в редакторе). После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "at_mm": {
+      "description": "точка внутри зоны потолка (клик), мм",
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ]
+     }
+    },
+    "required": [
+     "room_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "finish_ceiling_molding_remove",
    "description": "Снять потолочные плинтусы комнаты. Без wall_id — со всех сторон.",
    "inputSchema": {
@@ -1105,7 +1283,7 @@
   },
   {
    "name": "finish_ceiling_remove",
-   "description": "Снять покрытие потолка комнаты (инструмент ceiling_remove). При закарнизных нишах — отказ (сначала finish_ceiling_niche_remove): ниши не стираются молча.",
+   "description": "Снять покрытие потолка комнаты (инструмент ceiling_remove — ластик). При закарнизных нишах — отказ (сначала finish_ceiling_niche_remove): ниши не стираются молча. Двухуровневый потолок (complex) — отказ: в редакторе ластик complex не снимает (живая проба 328-complex, шаг 3; Ceiling.delete() заменяет запись целиком, комплексные поля с exist:false не живут) — снимите сменой материала (finish_ceiling_set с другим покрытием снимает комплекс с warning complex_removed, как в редакторе).",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -1123,7 +1301,7 @@
   },
   {
    "name": "finish_ceiling_set",
-   "description": "Задать комнате покрытие потолка (лист «Потолки», простые покрытия; многоуровневые потолки и короба — инструментами следующих этапов). Покрытия: paint_ceiling, whitewash_ceiling, gypsum_ceiling, stretch_ceiling, stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. Закарнизные ниши переживают смену покрытия; на paint_ceiling/whitewash_ceiling при существующих нишах — отказ (сначала finish_ceiling_niche_remove). После правки вызывайте model_validate и project_save.",
+   "description": "Задать комнате покрытие потолка (лист «Потолки», простые покрытия; многоуровневые потолки и короба — инструментами следующих этапов). Покрытия: paint_ceiling, whitewash_ceiling, gypsum_ceiling, stretch_ceiling, stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. Закарнизные ниши переживают смену покрытия; на paint_ceiling/whitewash_ceiling при существующих нишах — отказ (сначала finish_ceiling_niche_remove). Двухуровневый потолок (complex): смена на ДРУГОЙ материал его НЕ переживает — снимается с warning complex_removed (как в редакторе); смена на тот же материал — no-op; переданные level/profile обновляются на месте, двухуровневая отделка сохраняется (как в редакторе); непокрытые зоны зонированного потолка покрываются тем же материалом. После правки вызывайте model_validate и project_save.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -1295,7 +1473,7 @@
   },
   {
    "name": "finish_get",
-   "description": "Отделка комнат: покрытие пола (с параметрами раскладки), покрытие потолка и отделка сторон стен по комнатам (тип, слой, высота, высота от пола), напольные и потолочный плинтусы, закарнизные ниши. wall — метка W<n>; side — сторона стены, обращённая к комнате. Без room_id — по всем комнатам.",
+   "description": "Отделка комнат: покрытие пола (с параметрами раскладки), покрытие потолка (включая двухуровневый: complex, level2, material2) и отделка сторон стен по комнатам (тип, слой, высота, высота от пола), напольные и потолочный плинтусы, закарнизные ниши. wall — метка W<n>; side — сторона стены, обращённая к комнате. Без room_id — по всем комнатам.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -2211,7 +2389,7 @@
   },
   {
    "name": "opening_add",
-   "description": "Добавить проём на стену. Двери (пункты меню «Двери и проемы»): doorway (Проем без двери 80×210), door (Дверь стандартная 80×210), door_double (Дверь 2-створчатая 120), door_coupe (Дверь-купе сдвижная 80), door_coupe_double (Дверь-купе 2-створчатая 160), door_penal (Дверь-пенал раздвижная 80), door_penal_double (Дверь-пенал 2-створчатая 160), door_roto (Рото-дверь 80), door_roto_double (Рото-дверь 160), door_book (Дверь-книжка 80), door_book_double (Дверь-книжка 160), door_bellows (Дверь-гармошка 120), door_glass (Стеклянная дверь 80), door_garage (Гаражные ворота 300×225), door_system_x2/x3/x4 (Каскадная система 2/3/4-створчатая 160/240/320), door_system_penal_x2/x3/x4 (Раздвижная система 2/3/4-створчатая 160/240/320). Пункты меню «Двери-купе 2/3/4-дверные» (doors_coupe_2x/3x/4x), «Домофон» (door_remote) и «Видеодомофон» (door_videoremote) — предметы каталога, ставятся item_add, а не opening_add. Окна (пункты меню «Окна»): windowway (Проем без окна 120×150), window (Стандартное окно 120×150, подоконник 85), window_balcony (Балконный блок 180: окно+дверь, параметры window_*_mm/door_*_mm/door_position), window_door (Балконная дверь 80×225), french_window (Французское окно распашное 120×250), french_window_coupe (Французское окно раздвижное 120×250), french_window_double (Французское окно 4-створчатое 180×250). Положение: offset_mm + from (смещение края проёма от угла комнаты; from=end — от противоположного конца) или center_mm (центр от начала оси стены). Размеры в мм; двери: swing (сторона петель/открывания), casing (короб с наличниками; по умолчанию включён, у doorway и door_garage выключен); окна: sill_height_mm (подоконник), casements (створки), slope_angle_deg (угол рассвета), sill_thickness_mm/sill_overhang_mm/sill_overmeasure_mm (подоконник). Параметры применяются строго по типу: sill_height_mm и sill-параметры — только окна, части балконного блока (window_*_mm, door_*_mm, door_position) — только window_balcony, impost_height_mm — только window_door, casements у французских окон не принимается; door_position поддерживает только left (редактор сохраняет лишь левую дверь). Ширина/высота проверяются по лимитам типа из панели редактора. Проём должен целиком помещаться на стене и не пересекать другие проёмы и примыкания стен (GEOMETRY_CONFLICT).",
+   "description": "Добавить проём на стену. Двери (пункты меню «Двери и проемы»): doorway (Проем без двери 80×210), door (Дверь стандартная 80×210), door_double (Дверь 2-створчатая 120), door_coupe (Дверь-купе сдвижная 80), door_coupe_double (Дверь-купе 2-створчатая 160), door_penal (Дверь-пенал раздвижная 80), door_penal_double (Дверь-пенал 2-створчатая 160), door_roto (Рото-дверь 80), door_roto_double (Рото-дверь 160), door_book (Дверь-книжка 80), door_book_double (Дверь-книжка 160), door_bellows (Дверь-гармошка 120), door_glass (Стеклянная дверь 80), door_garage (Гаражные ворота 300×225), door_system_x2/x3/x4 (Каскадная система 2/3/4-створчатая 160/240/320), door_system_penal_x2/x3/x4 (Раздвижная система 2/3/4-створчатая 160/240/320). PRO (is_pro, эталон 328-pro-anon.json): door_roto/_double, door_book/_double, door_bellows, door_glass, door_garage, door_system_x2/x3/x4, door_system_penal_x2/x3/x4 — на тарифе без PRO отказ гейта тарифа (единый реестр src/server/pro.ts); doorway, door, door_double, купе и пенал — не PRO. Пункты меню «Двери-купе 2/3/4-дверные» (doors_coupe_2x/3x/4x), «Домофон» (door_remote) и «Видеодомофон» (door_videoremote) — предметы каталога, ставятся item_add, а не opening_add. Окна (пункты меню «Окна»): windowway (Проем без окна 120×150), window (Стандартное окно 120×150, подоконник 85), window_balcony (Балконный блок 180: окно+дверь, параметры window_*_mm/door_*_mm/door_position), window_door (Балконная дверь 80×225), french_window (Французское окно распашное 120×250), french_window_coupe (Французское окно раздвижное 120×250), french_window_double (Французское окно 4-створчатое 180×250). Положение: offset_mm + from (смещение края проёма от угла комнаты; from=end — от противоположного конца) или center_mm (центр от начала оси стены). Размеры в мм; двери: swing (сторона петель/открывания), casing (короб с наличниками; по умолчанию включён, у doorway и door_garage выключен); окна: sill_height_mm (подоконник), casements (створки), slope_angle_deg (угол рассвета), sill_thickness_mm/sill_overhang_mm/sill_overmeasure_mm (подоконник). Параметры применяются строго по типу: sill_height_mm и sill-параметры — только окна, части балконного блока (window_*_mm, door_*_mm, door_position) — только window_balcony, impost_height_mm — только window_door, casements у французских окон не принимается; door_position поддерживает только left (редактор сохраняет лишь левую дверь). Ширина/высота проверяются по лимитам типа из панели редактора. Проём должен целиком помещаться на стене и не пересекать другие проёмы и примыкания стен (GEOMETRY_CONFLICT).",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -4590,7 +4768,7 @@
   },
   {
    "name": "wall_delete",
-   "description": "Удалить стену вместе с её проёмами (в ответе — число удалённых проёмов). Связанные стены теряют связь в узле.",
+   "description": "Удалить стену вместе с её проёмами (в ответе — число удалённых проёмов). Связанные стены теряют связь в узле. Если у исчезающей или сливаемой комнаты есть отделка (пол, потолок, стороны стен, плинтусы, ниши), операция отклоняется — отделка не переживает удаление стены: снимите её до операции (пол — finish_floor_remove, стороны стен — finish_wall_remove, покрытие потолка — finish_ceiling_remove, плинтус пола — finish_floor_molding_remove, потолочный плинтус — finish_ceiling_molding_remove, закарнизная ниша — finish_ceiling_niche_remove; двухуровневый потолок — сначала finish_ceiling_set другим покрытием, затем finish_ceiling_remove; ниша и плинтусы — раньше ластиков) и повторите.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -6146,7 +6324,7 @@
      ]
     }
    ],
-   "note": "несколько этажей — PRO (NOT_AVAILABLE_ON_TARIFF)"
+   "note": "несколько этажей — PRO (на бесплатном тарифе запись этажа отклоняется гейтом тарифа, см. src/server/pro.ts)"
   },
   "plan_list": {
    "plans": [

@@ -1,0 +1,107 @@
+{
+ "_source": "синтетическая геометрия (переснято офлайн, ревью 329 №6): прямоугольник 30×30 см с круглыми координатами, форма записи — как у ceiling_hole редактора (эталон 328-ceilinghole-etalon.json, снятый drag'ом UI в dev-объекте, проба 328-scout): polygon 4 угла (см), matrix — кольцо 4×4 ({length:1}), vertexes — узлы \"node\", items, type \"ceiling_hole\", plan \"ceiling\" (лист «Потолки»), length — периметр в м (1.2), area — площадь м² (0.09), pc — центр, id_room — комната (синтетическая). Прежний эталон содержал реальные точки листа и заменён; производные поля пересчитаны согласованно с polygon.",
+ "id": "id1",
+ "plan": "ceiling",
+ "polygon": [
+  {
+   "x": 800,
+   "y": 400
+  },
+  {
+   "x": 830,
+   "y": 400
+  },
+  {
+   "x": 830,
+   "y": 430
+  },
+  {
+   "x": 800,
+   "y": 430
+  }
+ ],
+ "matrix": [
+  [
+   null,
+   {
+    "length": 1
+   },
+   null,
+   {
+    "length": 1
+   }
+  ],
+  [
+   {
+    "length": 1
+   },
+   null,
+   {
+    "length": 1
+   },
+   null
+  ],
+  [
+   null,
+   {
+    "length": 1
+   },
+   null,
+   {
+    "length": 1
+   }
+  ],
+  [
+   {
+    "length": 1
+   },
+   null,
+   {
+    "length": 1
+   },
+   null
+  ]
+ ],
+ "vertexes": [
+  {
+   "id": "id2",
+   "point": {
+    "x": 800,
+    "y": 400
+   },
+   "type": "node"
+  },
+  {
+   "id": "id3",
+   "point": {
+    "x": 830,
+    "y": 400
+   },
+   "type": "node"
+  },
+  {
+   "id": "id4",
+   "point": {
+    "x": 830,
+    "y": 430
+   },
+   "type": "node"
+  },
+  {
+   "id": "id5",
+   "point": {
+    "x": 800,
+    "y": 430
+   },
+   "type": "node"
+  }
+ ],
+ "type": "ceiling_hole",
+ "length": 1.2,
+ "id_room": "room1",
+ "area": 0.09,
+ "pc": {
+  "x": 815,
+  "y": 415
+ }
+}

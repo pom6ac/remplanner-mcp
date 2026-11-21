@@ -266,6 +266,8 @@ export type CompactWarmFloor = {
 export type CompactFloorHole = {
   id: string;
   site_id: string;
+  /** Вид проёма: floor_hole (пол, план a) или ceiling_hole (потолок, план ceiling). */
+  type: "floor_hole" | "ceiling_hole";
   /** Центр, мм. */
   x_mm: number;
   y_mm: number;
@@ -671,19 +673,28 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
   keyLabel = "XB";
   const territoryBorders = compactBorders(model.territory_borders);
 
-  const levelHoles: CompactFloorHole[] = Object.values(model.level_holes ?? {}).map((hole, i) => {
+  // Проёмы пола (FH<n>) и потолка (CH<n>, этап 328) — одна коллекция level_holes,
+  // метки по типу сквозные (как ZD/CR); нумерация — по полному списку своего типа.
+  const floorHoles = Object.values(model.level_holes ?? {}).filter((h) => (h.type ?? "floor_hole") === "floor_hole");
+  const ceilingHoles = Object.values(model.level_holes ?? {}).filter((h) => h.type === "ceiling_hole");
+  const compactHole = (hole: (typeof floorHoles)[number], label: string): CompactFloorHole => {
     const xs = hole.polygon.map((p) => p.x);
     const ys = hole.polygon.map((p) => p.y);
     return {
-      id: `FH${i + 1}`,
+      id: label,
       site_id: hole.id,
+      type: (hole.type ?? "floor_hole") as "floor_hole" | "ceiling_hole",
       x_mm: round0(cmToMm(hole.pc.x)),
       y_mm: round0(cmToMm(hole.pc.y)),
       width_mm: round0(cmToMm(Math.max(...xs) - Math.min(...xs))),
       depth_mm: round0(cmToMm(Math.max(...ys) - Math.min(...ys))),
       area_m2: hole.area ?? 0,
     };
-  });
+  };
+  const levelHoles: CompactFloorHole[] = [
+    ...floorHoles.map((h, i) => compactHole(h, `FH${i + 1}`)),
+    ...ceilingHoles.map((h, i) => compactHole(h, `CH${i + 1}`)),
+  ];
 
   // разделители зон (этап 260): один источник меток ZD<n> — zoneDelimiterList
   // (верхнеуровневое zone_delimiters + legacy per-room с миграцией; ревью 261 №7:
