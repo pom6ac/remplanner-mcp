@@ -115,6 +115,20 @@ async function readToolDefaults(tool: string): Promise<ToolDefaults | null> {
   } catch { return null; }
 }
 
+/** Живая запись пола комнаты из ROOMS2 (объект Floor редактора до сериализации). */
+async function readLiveFloor(roomId: string): Promise<ToolDefaults | null> {
+  const ed = ctx.workspaceOrNull?.editorOrNull() as unknown as { page?: { evaluate<T>(fn: string): Promise<T> } } | null;
+  if (!ed?.page) return null;
+  try {
+    const got = await ed.page.evaluate<ToolDefaults | null>(`(() => {
+      const r = (window.ROOMS2 || {})[${JSON.stringify(roomId)}];
+      const f = r && r.floors && r.floors[0];
+      return f ? { width: f.width, height: f.height, stitch_width: f.stitch_width, type_laying: f.type_laying, cover: f.cover } : null;
+    })()`);
+    return got && typeof got === "object" ? got : null;
+  } catch { return null; }
+}
+
 function roomsRef(siteId: string, roomsList: Array<{ id: string; site_id?: string }>): string {
   return roomsList.find((r) => r.site_id === siteId)?.id ?? siteId;
 }
@@ -236,23 +250,26 @@ try {
   await saveTagged("podium");
   // умолчания ламината с живой страницы (эталон бандла: 120/18/0.2/«1/2»)
   const lamLive = await readToolDefaults("laminate");
-  console.log("tools.laminate (страница):", JSON.stringify(lamLive), "| страница недоступна — эталон бандла" );
-  const expLam = lamLive ?? { width: 120, height: 18, stitch_width: 0.2, type_laying: "1/2" };
+  console.log("tools.laminate (страница):", lamLive ? JSON.stringify(lamLive) : "недоступна — эталон бандла");
   await call("finish_floor_set", { room_id: roomRef, cover: "laminate" });
-  const v1 = await call("model_validate", {});
-  console.log("validate (а):", JSON.stringify({ ok: v1["ok"] }));
+  const v1 = (await call("model_validate", {})) as Record<string, unknown>;
+  console.log("validate (а):", JSON.stringify(v1).slice(0, 600));
   await saveTagged("cover-change");
   await openAndGuard();
   const afterCover = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
   const lamRec = floorOf(afterCover, trial.roomId);
   console.log("(а) reopen после смены покрытия:", JSON.stringify({ cover: lamRec?.["cover"], width: lamRec?.["width"], height: lamRec?.["height"], stitch_width: lamRec?.["stitch_width"], type_laying: lamRec?.["type_laying"], f0offset: lamRec?.["f0offset"], anchor: lamRec?.["anchor"] }));
   if (!lamRec || lamRec["cover"] !== "laminate") throw new Error("(а): покрытие не сменилось на laminate");
-  if (lamRec["width"] !== expLam.width || lamRec["height"] !== expLam.height) {
-    throw new Error(`(а): размеры не равны умолчаниям ламината ${JSON.stringify(expLam)}: ${JSON.stringify(lamRec)}`);
+  // M1-R: панельные поля tile (40/40/0.3/tile) НЕ наследуются. На сервере после
+  // save/reopen их нет вовсе (наблюдение 353/проба 349: конструктор Floor в
+  // restore-контексте получает settings.width=0 и сериализация пустые поля
+  // опускает); в редакторе умолчания инструмента подставляются при отрисовке.
+  if (lamRec["width"] !== undefined || lamRec["height"] !== undefined || lamRec["stitch_width"] !== undefined || lamRec["type_laying"] !== undefined) {
+    throw new Error(`(а): панельные поля унаследовались/записались при смене покрытия (ожидались умолчания/отсутствие): ${JSON.stringify(lamRec)}`);
   }
-  if (lamRec["stitch_width"] !== expLam.stitch_width || lamRec["type_laying"] !== expLam.type_laying) {
-    throw new Error(`(а): шов/раскладка не равны умолчаниям ламината ${JSON.stringify(expLam)}`);
-  }
+  // наблюдение: что держит живой редактор в ROOMS2 для этой комнаты
+  const lamLiveRoom = await readLiveFloor(trial.roomId);
+  console.log("(а) живой ROOMS2 floors[0]:", lamLiveRoom ? JSON.stringify(lamLiveRoom) : "недоступно");
   if (lamRec["f0offset"] !== 30) throw new Error(`(а): подъём пола стёрт сменой покрытия: ${JSON.stringify(lamRec)}`);
   const anchorRec = lamRec["anchor"] as { p?: { x?: number; y?: number } } | undefined;
   if (!anchorRec?.p || Math.abs((anchorRec.p.x ?? 0) - ax) > 1 || Math.abs((anchorRec.p.y ?? 0) - ay) > 1) {
