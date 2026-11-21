@@ -130,15 +130,45 @@ try {
   out.node_items = nodeItems.map(([id, v]) => ({ id, ...v }));
   console.log("узел:", JSON.stringify(out.node_items));
 
-  // 2. труба water_pipe рисованием: drag от узла A до B
+  // 2. труба water_pipe рисованием: несколько техник (клик-клик, drag от узла, drag на узел)
   out.pick_pipe = await pickTool("water_pipe");
-  await dragAt(A, B);
+  const snapPipes = async (tag: string) => {
+    const s = await copy();
+    out[`pipes_${tag}`] = s.pipes ?? null;
+    out[`node_after_${tag}`] = Object.entries<any>(s.items ?? {}).filter(([id]) => nodeItems.some(([nid]) => nid === id)).map(([id, v]) => ({ id, name: v.name, pipes: v.pipes ?? null }));
+    console.log(`pipes_${tag}:`, JSON.stringify(out[`pipes_${tag}`]));
+    console.log(`node_after_${tag}:`, JSON.stringify(out[`node_after_${tag}`]));
+    return s;
+  };
+  const A2 = { x: cx - 80, y: cy - 40 };
+  // 2а: клик в пустом месте, клик на узел-предмет
+  await clickAt(A2);
+  await clickAt(A);
   await esc();
-  snap = await copy();
-  out.pipes = snap.pipes ?? null;
-  out.node_after_pipe = Object.entries<any>(snap.items ?? {}).filter(([id]) => nodeItems.some(([nid]) => nid === id)).map(([id, v]) => ({ id, name: v.name, pipes: v.pipes ?? null }));
-  console.log("pipe после drag:", JSON.stringify(out.pipes));
-  console.log("узел после pipe:", JSON.stringify(out.node_after_pipe));
+  let s1 = await snapPipes("click_click");
+  // 2б: drag от узла до пустого места
+  if (Object.keys((s1.pipes ?? {})).length === 0) {
+    await pickTool("water_pipe");
+    await dragAt(A, B);
+    await esc();
+    s1 = await snapPipes("drag_from_node");
+  }
+  // 2в: drag от пустого места на узел
+  if (Object.keys((s1.pipes ?? {})).length === 0) {
+    await pickTool("water_pipe");
+    await dragAt(B, A);
+    await esc();
+    s1 = await snapPipes("drag_to_node");
+  }
+  // 2г: drag между пустыми точками через узел не идёт — просто два узла
+  if (Object.keys((s1.pipes ?? {})).length === 0) {
+    await pickTool("water_pipe");
+    await dragAt({ x: cx - 80, y: cy + 40 }, { x: cx + 80, y: cy + 40 });
+    await esc();
+    s1 = await snapPipes("drag_empty");
+  }
+  out.pipes = s1.pipes ?? null;
+  out.node_after_pipe = out.node_after_click_click ?? out.node_after_drag_from_node ?? null;
 
   // 3. merge: waterspot_cold у стены, затем waterspot_hot кликом на неё
   out.pick_cold = await pickTool("waterspot_cold");
