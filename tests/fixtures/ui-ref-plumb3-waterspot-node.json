@@ -1,0 +1,63 @@
+{
+ "_source": "окно редактора remplanner.ru (анонимный проект, без cookies аккаунта): клик инструмента «Узел» (waterspot_node, лист «Водоснабжение») в комнату, diff project.copy(\"server\"); проба scripts/probes/360-ws-node.ts. id предмета/комнаты/зоны — случайные id анонимной сессии, координаты — точка клика на синтетической базе «коридор + 3 комнаты»; ID проектов/планов отсутствуют",
+ "menu_title": "Узел",
+ "tool_id": "plannertool_waterspot_node",
+ "catalog_defaults_cm": {
+  "id": 346,
+  "width": 4,
+  "height": 4,
+  "self_height": 0,
+  "plan": {
+   "waterplan": 27,
+   "water": 27
+  },
+  "anchor": "free",
+  "over_floor": false
+ },
+ "model_object": {
+  "name": "waterspot_node",
+  "pc": {
+   "x": 150,
+   "y": -250
+  },
+  "angle": 0,
+  "id_room": "_tho4l",
+  "width": 4,
+  "height": 4,
+  "plan": {
+   "water": 27
+  },
+  "id": "_wxtws",
+  "item_id": 346,
+  "self_height": 0,
+  "comment": {
+   "id": ""
+  },
+  "dimensions": {
+   "display": true
+  },
+  "f0offset": 0,
+  "dls": {
+   "l": {},
+   "r": {}
+  },
+  "dls_prs": {
+   "v": {},
+   "h": {}
+  },
+  "icon_center": {
+   "x": 150,
+   "y": -250
+  },
+  "center3d": {
+   "x": 150,
+   "y": -250
+  },
+  "id_room_zone": "_qq0p1"
+ },
+ "semantics": {
+  "over_floor": "поле в модели отсутствует (каталог over_floor:false) — высота вывода узлу не задаётся",
+  "context_menu": "#cm-waterspot (cm-waterspot--over-floor / --water-over-floor / --drainage-over-floor)",
+  "pipe_vertex": "при подключении к трубе вершина-предмет: подтверждение формата (тип вершины, props.pipes) — живая проба в dev-объекте, трубы PRO"
+ }
+}

@@ -1,0 +1,314 @@
+{
+ "_source": "окно редактора remplanner.ru (анонимный проект, без cookies): window.global_tools, группа waterspots и точки «Коммуникаций»; проба scripts/probes/360-ws-catalog.ts; служебные поля редактора (stroke_color, path и пр.) не выгружались — только поля, используемые MCP (id, group, width, height, plan, anchor, over_floor, offset, can_be_outside, is_magnetized); координат и ID проектов нет",
+ "global_version": 1616,
+ "tools": {
+  "waterspot_cold": {
+   "id": 209,
+   "group": "waterspots",
+   "width": 9,
+   "height": 9,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "free",
+   "over_floor": {
+    "value": 50,
+    "display": false
+   },
+   "offset": 4.5,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Вывод холодной воды"
+  },
+  "waterspot_hot": {
+   "id": 210,
+   "group": "waterspots",
+   "width": 9,
+   "height": 9,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "free",
+   "over_floor": {
+    "value": 50,
+    "display": false
+   },
+   "offset": 4.5,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Вывод горячей воды"
+  },
+  "waterspot_drainage": {
+   "id": 239,
+   "group": "waterspots",
+   "width": 15,
+   "height": 15,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "free",
+   "over_floor": {
+    "value": 0,
+    "display": false
+   },
+   "offset": 4.5,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Вывод канализации"
+  },
+  "waterspot_collector": {
+   "id": 240,
+   "group": "waterspots",
+   "width": 48,
+   "height": 10,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "wall",
+   "over_floor": {
+    "value": 150,
+    "display": false
+   },
+   "offset": 0,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Коллекторный узел"
+  },
+  "water_pipe": {
+   "id": 241,
+   "group": "waterspots",
+   "width": 0,
+   "height": 0,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "free",
+   "over_floor": false,
+   "offset": 0,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Водопроводная труба ХВС"
+  },
+  "water_hot_pipe": {
+   "id": 771,
+   "group": "waterspots",
+   "width": 0,
+   "height": 0,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "free",
+   "over_floor": false,
+   "offset": 0,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Водопроводная труба ГВС"
+  },
+  "waterspot_cold_hot": {
+   "id": 211,
+   "group": "waterspots",
+   "width": 16,
+   "height": 9,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "free",
+   "over_floor": {
+    "value": 50,
+    "display": false
+   },
+   "offset": 4.5,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Горячая + холодная вода"
+  },
+  "waterspot_drainage_cold": {
+   "id": 212,
+   "group": "waterspots",
+   "width": 21,
+   "height": 15,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "free",
+   "over_floor": {
+    "value": 50,
+    "display": false
+   },
+   "offset": 4.5,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Холодная вода + канализация"
+  },
+  "waterspot_drainage_cold_hot": {
+   "id": 213,
+   "group": "waterspots",
+   "width": 21,
+   "height": 15,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "free",
+   "over_floor": {
+    "value": 50,
+    "display": false
+   },
+   "offset": 4.5,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Холодная, горячая вода + канализация"
+  },
+  "drainage_pipe": {
+   "id": 242,
+   "group": "waterspots",
+   "width": 0,
+   "height": 0,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "free",
+   "over_floor": false,
+   "offset": 0,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Канализационная труба"
+  },
+  "waterspot_node": {
+   "id": 346,
+   "group": "waterspots",
+   "width": 4,
+   "height": 4,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "free",
+   "over_floor": false,
+   "offset": 0,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Узел"
+  },
+  "waterspot_drainage_hot": {
+   "id": 546,
+   "group": "waterspots",
+   "width": 21,
+   "height": 15,
+   "self_height": 0,
+   "plan": {
+    "waterplan": 27,
+    "water": 27
+   },
+   "anchor": "free",
+   "over_floor": {
+    "value": 50,
+    "display": false
+   },
+   "offset": 4.5,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Горячая вода + канализация"
+  },
+  "water": {
+   "id": 18,
+   "group": "furniture",
+   "width": 20,
+   "height": 20,
+   "self_height": 0,
+   "plan": {
+    "init": 1
+   },
+   "anchor": "free",
+   "over_floor": false,
+   "offset": 0,
+   "can_be_outside": false,
+   "is_magnetized": true,
+   "title": "Сантехнический стояк"
+  },
+  "water_column_hot": {
+   "id": 1512,
+   "group": "furniture",
+   "width": 10,
+   "height": 10,
+   "self_height": 0,
+   "plan": {
+    "init": 1
+   },
+   "anchor": "free",
+   "over_floor": false,
+   "offset": 0,
+   "can_be_outside": false,
+   "is_magnetized": true,
+   "title": "Стояк гор. водоснабжения"
+  },
+  "water_column_cold": {
+   "id": 1513,
+   "group": "furniture",
+   "width": 10,
+   "height": 10,
+   "self_height": 0,
+   "plan": {
+    "init": 1
+   },
+   "anchor": "free",
+   "over_floor": false,
+   "offset": 0,
+   "can_be_outside": false,
+   "is_magnetized": true,
+   "title": "Стояк хол. водоснабжения"
+  },
+  "drainage_column": {
+   "id": 1360,
+   "group": "furniture",
+   "width": 15,
+   "height": 15,
+   "self_height": 0,
+   "plan": {
+    "init": 1
+   },
+   "anchor": "free",
+   "over_floor": false,
+   "offset": 0,
+   "can_be_outside": false,
+   "is_magnetized": true,
+   "title": "Канализационный стояк"
+  },
+  "ceiling_water": {
+   "id": 1361,
+   "group": "furniture",
+   "width": 20,
+   "height": 18,
+   "self_height": 0,
+   "plan": {
+    "init": 1
+   },
+   "anchor": "wall",
+   "over_floor": false,
+   "offset": 0,
+   "can_be_outside": true,
+   "is_magnetized": true,
+   "title": "Ввод водоснабжения"
+  }
+ }
+}
