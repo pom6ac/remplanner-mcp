@@ -341,57 +341,31 @@ try {
   journal();
   console.log("(г) M2-R (redo → save, имя на новом id): PASS");
 
-  // ---- (д) наблюдение: rename → split (wall_move через противоположную стену) → merge ----
+  // ---- (д) наблюдение (f1 ревью 352): rename (НЕсохранённая отметка) → split
+  // (wall_move через противоположную стену) → merge обратно в исходный контур.
   // Наблюдение 353: MCP сам отказывает в split/merge, пока у комнаты есть покрытие
   // пола (защита отделки, INVALID_GEOMETRY) — для наблюдения имени снимаем покрытие
-  // (пробная комната, зачистка удаляет её целиком).
+  // (пробная комната, зачистка удаляет её целиком). Состояние РАБОЧЕЙ копии —
+  // rooms_list (имена/id), серверная модель при этом остаётся до-save.
   await roGuard.assertUnchanged("перед частью (д)");
   await call("finish_floor_remove", { room_id: roomRef });
+  await call("room_set_name", { room_id: roomRef, name: "Зал 9д" });
   const rw3 = await rightWallId();
   await call("wall_move", { wall_id: rw3, offset_mm: -5000 });
-  const splitMg = (await call("model_get", {})) as { rooms?: Array<{ id: string; site_id?: string }> };
-  const splitModel = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const splitRooms = (splitModel.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }>; zones?: Array<Record<string, unknown>>; floors?: FloorRec[] }>;
-  const splitRows = Object.entries(splitRooms).filter(([, room]) => {
-    const p = room.polygon ?? [];
-    return p.length >= 3 && p.some((q) => q.x >= Math.min(...px) - 1 && q.x <= Math.max(...px) + 1);
-  }).map(([rid, room]) => ({
-    id: rid,
-    ref: roomsRef(rid, splitMg.rooms ?? []),
-    name: typeof room.zones?.[0]?.["name"] === "string" ? room.zones![0]!["name"] : null,
-    cover: room.floors?.[0]?.["cover"] ?? null,
-  }));
-  console.log("(д) после split: комнат в колонке пробной:", JSON.stringify(splitRows));
-  for (const row of splitRows) probeRoomSites.add(row.id);
-  journal();
+  const splitRows = ((await call("rooms_list", {}))["rooms"] ?? []) as Array<{ id: string; name: string | null; floor?: string | null }>;
+  console.log("(д) после split, рабочая копия (rooms_list):", JSON.stringify(splitRows));
   const splitSave = await observeSave("split");
   // merge обратно в исходный контур
   await call("wall_move", { wall_id: rw3, offset_mm: 5000 });
-  const mergeMg = (await call("model_get", {})) as { rooms?: Array<{ id: string; site_id?: string }> };
-  const mergeModel = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const mergeRooms = (mergeModel.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }>; zones?: Array<Record<string, unknown>>; floors?: FloorRec[] }>;
-  const mergeRows = Object.entries(mergeRooms).filter(([, room]) => {
-    const p = room.polygon ?? [];
-    return p.length >= 3 && p.some((q) => q.x >= Math.min(...px) - 1 && q.x <= Math.max(...px) + 1);
-  }).map(([rid, room]) => ({
-    id: rid,
-    ref: roomsRef(rid, mergeMg.rooms ?? []),
-    name: typeof room.zones?.[0]?.["name"] === "string" ? room.zones![0]!["name"] : null,
-    cover: room.floors?.[0]?.["cover"] ?? null,
-  }));
-  console.log("(д) после merge: комнат в колонке пробной:", JSON.stringify(mergeRows));
-  for (const row of mergeRows) probeRoomSites.add(row.id);
-  journal();
+  const mergeRows = ((await call("rooms_list", {}))["rooms"] ?? []) as Array<{ id: string; name: string | null; floor?: string | null }>;
+  console.log("(д) после merge, рабочая копия (rooms_list):", JSON.stringify(mergeRows));
   const mergeSave = await observeSave("merge-back");
   console.log("(д) итог наблюдения:", JSON.stringify({ split_save: splitSave.verified, merge_save: mergeSave.verified, merge_save_raw: mergeSave.raw.slice(0, 400) }));
   // состояние сервера после наблюдения (для отчёта; на исход не влияет)
   await openAndGuard();
   const afterObs = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const obsRooms = (afterObs.model["rooms2"] ?? {}) as Record<string, { polygon?: Array<{ x: number; y: number }>; zones?: Array<Record<string, unknown>> }>;
-  const obsRows = Object.entries(obsRooms).filter(([, room]) => {
-    const p = room.polygon ?? [];
-    return p.length >= 3 && p.some((q) => q.x >= Math.min(...px) - 1 && q.x <= Math.max(...px) + 1);
-  }).map(([rid, room]) => ({
+  const obsRooms = (afterObs.model["rooms2"] ?? {}) as Record<string, { zones?: Array<Record<string, unknown>> }>;
+  const obsRows = Object.entries(obsRooms).map(([rid, room]) => ({
     id: rid,
     name: typeof room.zones?.[0]?.["name"] === "string" ? room.zones![0]!["name"] : null,
   }));
