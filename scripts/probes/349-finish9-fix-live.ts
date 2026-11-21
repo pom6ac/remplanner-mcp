@@ -104,6 +104,9 @@ async function makeTrialRoom(w: number, h: number): Promise<{ roomId: string; po
     if (!siteId) throw new Error("wall_add без site_id");
     wallSites.push(siteId);
     created.push({ kind: "wall", siteId });
+    // n3-R ревью 350: журнал пишется сразу после каждого created.push —
+    // жёсткое падение между wall_add и saveTagged не теряет стены из журнала
+    journal();
   }
   await saveTagged("trial-room");
   await openAndGuard();
@@ -170,7 +173,10 @@ try {
   const ax = Math.min(...px) + (Math.max(...px) - Math.min(...px)) * 0.6;
   const ay = Math.min(...py) + (Math.max(...py) - Math.min(...py)) * 0.6;
   await call("finish_floor_anchor_set", { room_id: roomRef, at_mm: { x: Math.round(ax * 10), y: Math.round(ay * 10) } });
-  // M1: смена покрытия БЕЗ параметров — подъём/якорь/параметры панели сохраняются
+  // M1: смена покрытия БЕЗ параметров — подъём/якорь переживают; панельные
+  // параметры НЕ наследуются (M1-R ревью 350): width/height после смены —
+  // умолчания нового покрытия (конструктор Floor), поэтому сверяем только
+  // f0offset/anchor/cover
   await call("finish_floor_set", { room_id: roomRef, cover: "parquet" });
   const v1 = await call("model_validate", {});
   console.log("validate 1:", JSON.stringify({ ok: v1["ok"] }));
@@ -185,7 +191,9 @@ try {
   if (!anchorRec?.p || Math.abs((anchorRec.p.x ?? 0) - ax) > 1 || Math.abs((anchorRec.p.y ?? 0) - ay) > 1) {
     throw new Error("M1: точка укладки стёрта сменой покрытия");
   }
-  if (floorRec["width"] !== 120 || floorRec["height"] !== 18) throw new Error(`M1: параметры панели стёрты сменой покрытия: ${JSON.stringify({ width: floorRec["width"], height: floorRec["height"] })}`);
+  // M1-R ревью 350: панельные параметры при смене покрытия — умолчания нового
+  // покрытия, прежние (120/18) переживать не обязаны; конкретное значение
+  // умолчаний паркета офлайн не сверялось — не проверяем
   console.log("M1 (сменa покрытия не стирает поля): PASS");
 
   // ---- часть 2 (M2): имя зоны переживает wall_move (новый id комнаты) ----

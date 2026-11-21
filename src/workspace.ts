@@ -218,13 +218,20 @@ export class Workspace {
    * kind "same" (та же комната с новой геометрией). При split/merge отметка
    * не переносится: имена комнат при смене топологии объясняются предупреждением
    * room_topology_changed, а не сверкой.
+   *
+   * M2-R ревью 350: наследники ДОПОЛНЯЮТ набор, а не вытесняют прежние id —
+   * undo/redo возвращают модель из снимка (с прежними id), отметки при этом не
+   * откатываются, и после «rename → wall_move → undo → save» отметка на
+   * прежнем id нужна для сверки с рабочей копией. Ложных совпадений это не
+   * даёт: отметка только разрешает сверку с рабочей копией, а id редактора
+   * случайны.
    */
   private remapRoomFieldEdited(prevRooms: Record<string, unknown> | undefined, nextRooms: Record<string, unknown> | undefined): void {
     if (this.roomFieldEdited.size === 0) return;
     const next = nextRooms ?? {};
     const { pairs } = matchRoomsByContour(prevRooms, next);
     const heirOf = roomHeirs(prevRooms, next, pairs, "normalize");
-    const remapped = new Set<string>();
+    const remapped = new Set(this.roomFieldEdited);
     for (const rid of this.roomFieldEdited) {
       const gid = pairs.get(rid);
       if (gid) { remapped.add(gid); continue; }

@@ -1,11 +1,16 @@
 // 349 — фикс по ревью 348 (PR #52, отделка ч.9):
 // - M1: finish_floor_set не стирает f0offset/anchor и прочие поля, которые
 //   редактор сохраняет при смене покрытия (мутация записи in place, бандл
-//   @3269759); полный путь через Workspace — краснеет без фикса;
+//   @3266628); полный путь через Workspace — краснеет без фикса;
+//   фикс-2 (ревью 350, M1-R): панельные поля (width/height/stitch_width/
+//   type_laying) при смене покрытия НЕ наследуются — в редакторе они из
+//   настроек нового инструмента; переносятся только при том же покрытии;
 // - M2: отметки пользовательских правок комнат (userEditedRooms) переживают
 //   смену id комнаты редактором после wall_move (полный путь через Workspace
 //   с mock-нормализатором, который перенумеровывает комнату); сырая правка
 //   мимо инструментов и потеря имени на сервере по-прежнему ловятся;
+//   фикс-2 (ревью 350, M2-R): при перенумерации отметки ДОПОЛНЯЮТСЯ
+//   наследниками — цепочка rename → wall_move → undo → save проходит;
 // - m2: номера зон — микрокомнаты и записи зон без is_class не нумеруются
 //   (ROOMS2.draw, бандл @93695).
 import test from "node:test";
@@ -194,9 +199,62 @@ test("348 M2: потеря имени на сервере после save — SI
   });
 });
 
+// ---------- M2-R 350: отметки дополняются наследниками (undo/redo) ----------
+
+test("350 M2-R: rename → wall_move (новый id) → undo → save без ложной NORMALIZATION_DROPPED", async () => {
+  const m = corridorModel();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    rebuildRoomsNearW5(norm);
+    renumberFirstRoom(norm); // редактор перенумеровывает комнату при каждой нормализации
+  });
+  await ws.open("0", "1");
+  const rid = firstRoomId(m);
+  ws.apply("room_set_name", (mm) => setRoomName(mm, rid, "Кабинет"));
+  ws.markRoomFieldEdited(rid);
+  await ws.applyWalls("wall_move", (mm) => moveWall(mm, { wallId: "w6", offsetMm: -500 }));
+  // M2-R: отметки ДОПОЛНЯЮТСЯ наследником, прежний id не выбрасывается
+  assert.ok(ws.roomFieldEditedRooms().has(rid), "отметка прежнего id сохранена");
+  assert.ok(ws.roomFieldEditedRooms().size >= 2, "наследник добавлен к отметкам");
+  ws.undo(1);
+  assert.equal(firstRoomId(ws.model), rid, "undo вернул прежний id комнаты");
+  // без фикса отметки заменяются {movedId}, и save отклоняется ложным
+  // NORMALIZATION_DROPPED — тест краснеет здесь
+  const res = await ws.save();
+  assert.equal(res.verified, true, JSON.stringify(res.warnings));
+  const after = roomsOf(server.model);
+  const named = Object.values(after).find((r) => ((r["zones"] as Array<Record<string, unknown>>)[0]?.["name"]) === "Кабинет");
+  assert.ok(named, "имя «Кабинет» дошло до сервера после undo");
+});
+
+test("350 M2-R: rename → wall_move → undo → redo → повторный wall_move → save — отметки переживают", async () => {
+  const m = corridorModel();
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {}, (norm) => {
+    rebuildRoomsNearW5(norm);
+    renumberFirstRoom(norm);
+  });
+  await ws.open("0", "1");
+  const rid = firstRoomId(m);
+  ws.apply("room_set_name", (mm) => setRoomName(mm, rid, "Кабинет"));
+  ws.markRoomFieldEdited(rid);
+  await ws.applyWalls("wall_move", (mm) => moveWall(mm, { wallId: "w6", offsetMm: -500 }));
+  ws.undo(1);
+  ws.redo(1);
+  // повторный wall_move — редактор перенумеровывает комнату снова
+  await ws.applyWalls("wall_move", (mm) => moveWall(mm, { wallId: "w6", offsetMm: 500 }));
+  assert.ok(ws.roomFieldEditedRooms().has(rid), "отметка прежнего id не вытеснена перенумерациями");
+  assert.ok(ws.roomFieldEditedRooms().size >= 2, "наследники добавлены к отметкам");
+  const res = await ws.save();
+  assert.equal(res.verified, true, JSON.stringify(res.warnings));
+  const after = roomsOf(server.model);
+  const named = Object.values(after).find((r) => ((r["zones"] as Array<Record<string, unknown>>)[0]?.["name"]) === "Кабинет");
+  assert.ok(named, "имя «Кабинет» дошло до сервера после undo/redo и повторного wall_move");
+});
+
 // ---------- M1: finish_floor_set сохраняет f0offset/anchor и поля редактора ----------
 
-test("348 M1: смена покрытия пола переносит f0offset/anchor/angle/custom_angle/id и параметры панели", () => {
+test("348 M1: смена покрытия пола переносит f0offset/anchor/angle/custom_angle/id; панельные поля — умолчания нового покрытия (M1-R)", () => {
   const m = corridorModel();
   const rid = firstRoomId(m);
   setFloorFinish(m, rid, "laminate", { plankLengthMm: 1200, plankWidthMm: 180, stitchWidthMm: 2, typeLaying: "1/2" });
@@ -206,7 +264,7 @@ test("348 M1: смена покрытия пола переносит f0offset/a
   // угол с якорем (контекстное меню #cm-floor-anchor--angle): angle=30, custom_angle=1
   setFloorAnchor(m, rid, { x: 1500, y: -1500 }, 30);
   // смена покрытия — как клик другого материала в редакторе: запись мутируется,
-  // f0offset/anchor/angle/custom_angle/id и параметры панели остаются
+  // f0offset/anchor/angle/custom_angle/id остаются
   setFloorFinish(m, rid, "parquet", {});
   const f0 = floorOf(m, rid);
   assert.equal(f0["cover"], "parquet");
@@ -215,22 +273,73 @@ test("348 M1: смена покрытия пола переносит f0offset/a
   assert.equal(f0["angle"], 30, "угол не сбрасывается сменой покрытия (сбрасывает только anchor_floor)");
   assert.equal(f0["custom_angle"], 1);
   assert.equal(f0["id"], firstId, "id записи редактор не меняет (мутация in place)");
-  assert.equal(f0["width"], 120, "размер плашки сохранён");
-  assert.equal(f0["height"], 18);
-  assert.equal(f0["stitch_width"], 0.2);
-  assert.equal(f0["type_laying"], "1/2");
+  // M1-R ревью 350: панельные поля при смене покрытия НЕ наследуются —
+  // в редакторе они из настроек нового инструмента (@3413380 tools[tool] →
+  // placeholder @3415531 → клик @3266628), width/height остаются конструктору
+  // Floor (умолчания нового покрытия); без фикса тест краснеет здесь
+  assert.equal(f0["width"], undefined, "размер плашки не переносится с прежнего покрытия");
+  assert.equal(f0["height"], undefined);
+  assert.equal(f0["stitch_width"], undefined);
+  assert.equal(f0["type_laying"], undefined);
   assert.equal(f0["polygons_layout"], undefined, "раскладка не переносится (редактор сбрасывает)");
   // явные параметры перезаписывают
   setFloorFinish(m, rid, "floor_tile", { plankLengthMm: 600, typeLaying: "tile" });
   const f1 = floorOf(m, rid);
   assert.equal(f1["width"], 60);
   assert.equal(f1["type_laying"], "tile");
+  assert.equal(f1["height"], undefined);
+  assert.equal(f1["stitch_width"], undefined);
   assert.equal(f1["f0offset"], 30, "подъём не сброшен");
-  // снятие покрытия сбрасывает подъём и якорь (ластик редактора)
+  // снятие покрытия сбрасывает подъём и якорь (ластик редактора), id записи сохраняется (n1-R)
   removeFloorFinish(m, rid);
   const f2 = floorOf(m, rid);
   assert.equal(f2["f0offset"], undefined);
   assert.equal(f2["anchor"], undefined);
+  assert.equal(f2["exist"], false);
+  assert.equal(f2["id"], firstId, "ластик редактора сохраняет id записи (Floor.delete)");
+});
+
+test("350 M1-R: смена покрытия без параметров — панельные поля прежнего покрытия не наследуются (tile 400×400 → laminate)", () => {
+  const m = corridorModel();
+  const rid = firstRoomId(m);
+  setFloorFinish(m, rid, "floor_tile", { typeLaying: "tile", plankLengthMm: 400, plankWidthMm: 400, stitchWidthMm: 3 });
+  setFloorFinish(m, rid, "laminate", {});
+  const f = floorOf(m, rid);
+  assert.equal(f["cover"], "laminate");
+  assert.equal(f["type_laying"], undefined, "раскладка «tile» не наследуется ламинатом");
+  assert.equal(f["width"], undefined, "размер плитки не наследуется ламинатом");
+  assert.equal(f["height"], undefined);
+  assert.equal(f["stitch_width"], undefined);
+  // явный typeLaying:'tile' для laminate — INVALID_ARGUMENT, унаследованным быть не может
+  assert.throws(() => setFloorFinish(m, rid, "laminate", { typeLaying: "tile" }), /tile/);
+});
+
+test("350 M1-R (m1): тот же материал — поля записи сохраняются; новые размеры перезаписывают только заданное", () => {
+  const m = corridorModel();
+  const rid = firstRoomId(m);
+  setFloorFinish(m, rid, "laminate", { plankLengthMm: 1200, plankWidthMm: 180, stitchWidthMm: 2, typeLaying: "1/2" });
+  setFloorOffset(m, rid, 300);
+  setFloorAnchor(m, rid, { x: 1500, y: -1500 }, 30);
+  const firstId = floorOf(m, rid)["id"];
+  // тот же материал без параметров — поля сохраняются (панель редактора не тронута)
+  setFloorFinish(m, rid, "laminate", {});
+  const f = floorOf(m, rid);
+  assert.equal(f["width"], 120);
+  assert.equal(f["height"], 18);
+  assert.equal(f["stitch_width"], 0.2);
+  assert.equal(f["type_laying"], "1/2");
+  assert.equal(f["f0offset"], 30);
+  assert.deepEqual(f["anchor"], { p: { x: 150, y: -150 } });
+  assert.equal(f["angle"], 30);
+  assert.equal(f["custom_angle"], 1);
+  // тот же материал, новый размер: явное перезаписывает, незаданное переносится
+  setFloorFinish(m, rid, "laminate", { plankLengthMm: 900 });
+  const f2 = floorOf(m, rid);
+  assert.equal(f2["width"], 90);
+  assert.equal(f2["height"], 18, "незаданная высота перенесена (тот же материал)");
+  assert.equal(f2["stitch_width"], 0.2);
+  assert.equal(f2["type_laying"], "1/2");
+  assert.equal(f2["id"], firstId, "id записи сохраняется");
 });
 
 test("348 M1: полный путь через Workspace — offset → anchor → смена покрытия → save verified, поля на сервере", async () => {
