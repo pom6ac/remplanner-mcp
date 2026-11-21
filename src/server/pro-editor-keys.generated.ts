@@ -1,8 +1,11 @@
 // СГЕНЕРИРОВАНО scripts/gen-pro-editor-keys.ts — не править руками.
-// Источник: .orca-reports/tmp/328-pro-anon.json (.orca-reports/tmp/328-pro-anon.json; этап 328,
-// разметка анонимного проекта = бесплатный тариф, design §4; снята пробой
-// scripts/probes/328-pro-anon.ts, ПДн нет — только ключи plannertool_* с
-// классом is_pro). Дата генерации: 2026-11-21.
+// Источник: .orca-reports/tmp/328-pro-anon.json (этап 328, разметка анонимного проекта = бесплатный
+// тариф, design §4; снята пробой scripts/probes/328-pro-anon.ts, ПДн нет —
+// только ключи plannertool_* с классом is_pro). Ключи сохраняются как в
+// разметке редактора, ВКЛЮЧАЯ ОПЕЧАТКИ редактора (пробел в «pumping _station»,
+// кириллическая «с» в начале «сhest_freezer_two_tier»/«сlay_sump»/
+// «сontrol_scales», дефисы): каталог сравнивается с гейтом точно, править их
+// здесь нельзя (ревью 333 Р5).
 // Полный список is_pro-ключей редактора — единый источник для PRO-гейта
 // (src/server/pro.ts, assertProPartialAllowed; ревью 331 Н1/Н2).
 export const PRO_EDITOR_KEYS: readonly string[] = [

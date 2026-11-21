@@ -30,7 +30,7 @@ async function start(): Promise<Client> {
   return client;
 }
 
-type CeilingView = { material: string; complex: boolean; level2?: number; material2?: string };
+type CeilingView = { material: string; level?: number; complex: boolean; level2?: number; material2?: string };
 
 async function ceilingOf(client: Client): Promise<CeilingView | undefined> {
   const res = await client.callTool({ name: "finish_get", arguments: { room_id: "R1" } });
@@ -82,6 +82,39 @@ test("ревью 331 Н4а: смена на тот же материал — no-
   }
 });
 
+test("ревью 333 Р1: тот же материал + level — уровень записан (no-op не глотает level/profile)", async () => {
+  const client = await start();
+  try {
+    assert.ok(!((await client.callTool({ name: "finish_ceiling_set", arguments: { room_id: "R1", material: "gypsum_ceiling" } })).isError));
+    const same = await client.callTool({ name: "finish_ceiling_set", arguments: { room_id: "R1", material: "gypsum_ceiling", level: 20 } });
+    assert.ok(!same.isError, text(same));
+    assert.ok(!(payload<{ warnings?: string[] }>(same).warnings ?? []).some((w) => w.startsWith("complex_removed")), "complex не снимается");
+    const c = await ceilingOf(client);
+    assert.equal(c!.level, 20, `уровень записан при том же материале: ${JSON.stringify(c)}`);
+    assert.equal(c!.complex, false, "complex не появился");
+  } finally {
+    await client.close();
+  }
+});
+
+test("ревью 333 Р1: тот же материал + level=-5 / profile=bogus — INVALID_ARGUMENT (валидация до no-op)", async () => {
+  const client = await start();
+  try {
+    assert.ok(!((await client.callTool({ name: "finish_ceiling_set", arguments: { room_id: "R1", material: "gypsum_ceiling" } })).isError));
+    const badLevel = await client.callTool({ name: "finish_ceiling_set", arguments: { room_id: "R1", material: "gypsum_ceiling", level: -5 } });
+    assert.ok(badLevel.isError, `ожидался отказ level=-5: ${text(badLevel)}`);
+    assert.equal(payload<{ code?: string }>(badLevel).code, "INVALID_ARGUMENT");
+    const badProfile = await client.callTool({ name: "finish_ceiling_set", arguments: { room_id: "R1", material: "gypsum_ceiling", profile: "bogus" } });
+    assert.ok(badProfile.isError, `ожидался отказ profile=bogus: ${text(badProfile)}`);
+    assert.equal(payload<{ code?: string }>(badProfile).code, "INVALID_ARGUMENT");
+    // модель не тронута: уровень остался прежним (0)
+    const c = await ceilingOf(client);
+    assert.equal(c!.level, 0, "после отказов уровень не изменился");
+  } finally {
+    await client.close();
+  }
+});
+
 test("ревью 331 Н4б: finish_ceiling_remove при complex — отказ с понятным текстом (ластик в редакторе complex не снимает)", async () => {
   const client = await start();
   try {
@@ -94,6 +127,23 @@ test("ревью 331 Н4б: finish_ceiling_remove при complex — отказ 
     // complex не тронут
     const c = await ceilingOf(client);
     assert.equal(c!.complex, true, "после отказа complex на месте");
+  } finally {
+    await client.close();
+  }
+});
+
+test("ревью 333 Р4: цепочка complex → set другим материалом (complex_removed) → finish_ceiling_remove проходит", async () => {
+  const client = await start();
+  try {
+    assert.ok(!((await client.callTool({ name: "finish_ceiling_complex_set", arguments: { room_id: "R1" } })).isError));
+    const change = await client.callTool({ name: "finish_ceiling_set", arguments: { room_id: "R1", material: "stretch_ceiling" } });
+    assert.ok(!change.isError, text(change));
+    assert.ok((payload<{ warnings?: string[] }>(change).warnings ?? []).some((w) => w.startsWith("complex_removed")), "complex снят сменой материала");
+    // после снятия complex ластик работает по обычной ветке
+    const rm = await client.callTool({ name: "finish_ceiling_remove", arguments: { room_id: "R1" } });
+    assert.ok(!rm.isError, `finish_ceiling_remove после снятия complex: ${text(rm)}`);
+    const c = await ceilingOf(client);
+    assert.ok(c === undefined || c.complex === false, "покрытие снято");
   } finally {
     await client.close();
   }

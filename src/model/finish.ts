@@ -665,24 +665,39 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
     throw new McpError("INVALID_ARGUMENT", `неизвестное покрытие потолка «${material}» (допустимо: ${CEILING_COVERS.join(", ")})`);
   }
   const { id, room } = resolveRoom(model, roomRef);
-  // ревью 331 Н4а: смена на тот же материал — no-op, как в редакторе (обработчик
-  // смены материала вызывается только при tool!==r.material): запись и
-  // двухуровневая отделка не трогаются, complexRemoved=false
-  const ceilings0 = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
-  const existRecs = ceilings0.filter((c) => c?.["exist"] === true);
-  if (existRecs.length > 0 && existRecs.every((c) => c["material"] === material)) {
-    return { id: (existRecs[0]!["id"] as string) ?? id, complexRemoved: false };
-  }
-  // ревью 329 №5: двухуровневый потолок при смене материала на ДРУГОЙ снимается
-  // (как в редакторе: r.exist=!0, r.complex=!1, delete offset/radius/material2) —
-  // caller получает complexRemoved для явного warning в ответе
-  const complexRemoved = ceilingHasComplex(room);
+  // ревью 333 Р1: валидация level/profile ДО раннего no-op выхода — иначе
+  // невалидные значения на том же материале проходили молча
   if (params.level !== undefined && (!Number.isInteger(params.level) || params.level < 0 || params.level > FINISH_LIMITS.ceilingLevelMax)) {
     throw new McpError("INVALID_ARGUMENT", `level должен быть целым числом от 0 до ${FINISH_LIMITS.ceilingLevelMax}`);
   }
   if (params.profile !== undefined && !(CEILING_PROFILES as readonly string[]).includes(params.profile)) {
     throw new McpError("INVALID_ARGUMENT", `неизвестный профиль потолка «${params.profile}» (поддержано: ${CEILING_PROFILES.join(", ")})`);
   }
+  // ревью 331 Н4а: смена на тот же материал — no-op, как в редакторе (обработчик
+  // смены материала вызывается только при tool!==r.material). Ревью 333 Р1:
+  // no-op ТОЛЬКО когда level/profile не переданы или совпадают с текущими
+  // (в редакторе уровень меняется отдельно от клика материалом); иначе
+  // level/profile обновляются на месте, complex-поля записи
+  // (complex/offset/radius/material2) сохраняются, complexRemoved=false.
+  const ceilings0 = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
+  const existRecs = ceilings0.filter((c) => c?.["exist"] === true);
+  if (existRecs.length > 0 && existRecs.every((c) => c["material"] === material)) {
+    const head = existRecs[0]!;
+    const levelSame = params.level === undefined || params.level === head["level"];
+    const profileSame = params.profile === undefined || params.profile === head["profile"];
+    if (levelSame && profileSame) {
+      return { id: (head["id"] as string) ?? id, complexRemoved: false };
+    }
+    for (const c of existRecs) {
+      if (params.level !== undefined) c["level"] = params.level;
+      if (params.profile !== undefined) c["profile"] = params.profile;
+    }
+    return { id: (head["id"] as string) ?? id, complexRemoved: false };
+  }
+  // ревью 329 №5: двухуровневый потолок при смене материала на ДРУГОЙ снимается
+  // (как в редакторе: r.exist=!0, r.complex=!1, delete offset/radius/material2) —
+  // caller получает complexRemoved для явного warning в ответе
+  const complexRemoved = ceilingHasComplex(room);
   const ceilings = Array.isArray(room.ceilings) ? [...room.ceilings] : [];
   while (ceilings.length < 1) ceilings.push({ exist: false });
   const hasNiches = roomHasCeilingNiches(room);

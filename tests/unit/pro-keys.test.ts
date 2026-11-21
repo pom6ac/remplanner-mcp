@@ -16,6 +16,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
+import { gitRepoRoot } from "../../src/repo-root.ts";
 import {
   PRO_EDITOR_KEYS, PRO_OPENING_KINDS, PRO_ITEM_KEYS, PRO_FLOOR_COVERS, PRO_WALL_COVERS,
   PRO_PARTIAL_TOOLS, assertProPartialAllowed,
@@ -25,16 +26,13 @@ import { OPENING_KINDS } from "../../src/model/openings.ts";
 const ROOT = join(import.meta.dirname, "..", "..");
 const FIXTURE = join(ROOT, "tests/fixtures/anon-rect-4000x3000.json");
 
-/** Ближайший каталог-предок с .orca-reports/tmp (для сверки с эталоном, если он есть). */
+/** Эталон в КОРНЕВОМ репо по git-common-dir (ревью 333 Р3: эвристика «ближайший
+ *  предок с .orca-reports/tmp» перехватывалась каталогом в ~ или ~/projects). */
 function findEtalon(): string | null {
-  let dir = import.meta.dirname;
-  for (;;) {
-    const candidate = join(dir, ".orca-reports", "tmp", "328-pro-anon.json");
-    if (existsSync(candidate)) return candidate;
-    const prev = dir;
-    dir = join(dir, "..");
-    if (dir === prev) return null;
-  }
+  const root = gitRepoRoot(import.meta.dirname);
+  if (root === null) return null;
+  const candidate = join(root, ".orca-reports", "tmp", "328-pro-anon.json");
+  return existsSync(candidate) ? candidate : null;
 }
 
 /** Синтетический бандл каталога, содержащий все is_pro-ключи как позиции

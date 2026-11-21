@@ -18,11 +18,11 @@
 //      finally (checkFinal); «ИЗМЕНИЛСЯ» — process.exit(1) ДО следующих
 //      записей (эскалация координатору, без повторных прогонов).
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fetchClientPage, loadModel, parseClientPage, type ClientProject, type LoadedModel } from "../../src/api.ts";
 import type { SessionState } from "../../src/session.ts";
+import { gitRepoRoot } from "../../src/repo-root.ts";
 import { sig } from "./probe-sig.ts";
 
 export type ProbeWriteEnv = {
@@ -198,21 +198,10 @@ export type ReadonlyGuard = {
 };
 
 /**
- * Корень репо по git (ревью 331 Н6): `git rev-parse --git-common-dir` — общий
- * каталог .git (в worktree указывает на основной репо), корень — его родитель.
- * Эвристика «самый внешний предок с .orca-reports» (ревью 329 №7) удалена:
- * каталог .orca-reports в ~ или ~/projects перехватывал бы эталон. null — git
- * недоступен (caller обязан отказать).
+ * Корень репо по git — общий модуль src/repo-root.ts (ревью 333 Р2/Р3):
+ * генератор ключей и сторожа тестов используют ту же функцию, что и пробы.
  */
-export function gitRepoRoot(cwd: string = import.meta.dirname): string | null {
-  try {
-    const out = execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd, encoding: "utf8" }).trim();
-    if (!out) return null;
-    return dirname(resolve(cwd, out));
-  } catch {
-    return null;
-  }
-}
+export { gitRepoRoot };
 
 /**
  * Файл-эталон контрольного проекта на пару READONLY (322 N4; 323 N6 — ключ без

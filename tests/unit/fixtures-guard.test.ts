@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { isSecretKey } from "../../src/errors.ts";
+import { gitRepoRoot } from "../../src/repo-root.ts";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 
@@ -415,24 +416,21 @@ test("ревью 159 m4: обфусцированный email через [at]", 
 
 // ---------- ревью 329 №6: фикстуры не содержат геометрии контрольного проекта ----------
 // Эталон контрольного проекта — .orca-reports/tmp/readonly-ref-*.json в КОРНЕВОМ
-// репо (worktree лежит в <root>/.worktrees/<имя>, поэтому ищем самый внешний
-// каталог-предок с .orca-reports). Файл не в git и в CI отсутствует — проверка
-// пропускается; локально ловит случай, когда в фикстуру попали реальные точки
-// плана пользователя.
+// репо, корень — по git-common-dir (ревью 333 Р3: эвристика «самый внешний
+// каталог-предок с .orca-reports» перехватывалась каталогом в ~ или ~/projects,
+// и сторож молча пропускал проверку). Файл не в git и в CI отсутствует —
+// проверка пропускается; локально ловит случай, когда в фикстуру попали
+// реальные точки плана пользователя.
 
-function findRootReportsTmp(from: string): string | null {
-  let found: string | null = null;
-  let dir = from;
-  for (;;) {
-    const prev = dir;
-    const candidate = join(dir, ".orca-reports", "tmp");
-    try {
-      if (statSync(candidate).isDirectory()) found = candidate;
-    } catch { /* нет каталога на этом уровне */ }
-    dir = join(dir, "..");
-    if (dir === prev) break;
+function rootReportsTmp(): string | null {
+  const root = gitRepoRoot(import.meta.dirname);
+  if (root === null) return null;
+  const dir = join(root, ".orca-reports", "tmp");
+  try {
+    return statSync(dir).isDirectory() ? dir : null;
+  } catch {
+    return null;
   }
-  return found;
 }
 
 function collectPoints(node: unknown, out: Set<string> = new Set()): Set<string> {
@@ -451,7 +449,7 @@ function collectPoints(node: unknown, out: Set<string> = new Set()): Set<string>
 }
 
 test("сторож фикстур: точки фикстур не совпадают с точками контрольного проекта (readonly-ref)", () => {
-  const rootTmp = findRootReportsTmp(FIXTURES);
+  const rootTmp = rootReportsTmp();
   if (rootTmp === null) return; // CI/чистое окружение — эталона нет, проверка неприменима
   const refFiles = readdirSync(rootTmp).filter((f) => /^readonly-ref-.*\.json$/.test(f));
   if (refFiles.length === 0) return;
