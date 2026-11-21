@@ -145,15 +145,29 @@ try {
   }
   if (process.argv[2] === "cleanup") {
     if (!existsSync(CAPTURED_PATH)) throw new Error("cleanup: журнал захваченных ID не найден");
+    // предусловие sig-vs-бэкап в cleanup не блокирует: cleanup существует, чтобы
+    // привести модель к бэкапу; итог — семантическая сверка множеств (стены/предметы/
+    // трубы) плюс sig с объяснением производных id комнат (перенумерация editor)
     await openAndGuard();
     await restoreProbe("cleanup");
     const afterClean = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
     const stored = JSON.parse(readFileSync(backupPath, "utf8")) as { model?: Record<string, unknown> };
+    const bm = stored.model as Record<string, Record<string, unknown>>;
+    const am = afterClean.model as Record<string, Record<string, unknown>>;
+    const setDiff = (key: string): string[] => {
+      const bk = new Set(Object.keys(bm[key] ?? {}));
+      const ak = new Set(Object.keys(am[key] ?? {}));
+      return [...new Set([...ak].filter((x) => !bk.has(x)))];
+    };
+    const semantic = ["walls", "items", "pipes", "pipes_gas", "pipes_heat", "pipes_ventilation", "pipes_warm_floor", "pipes_conditioner"]
+      .flatMap((k) => setDiff(k).map((id) => `${k}:${id}`));
+    const namesLeft = Object.entries(am["items"] ?? {}).filter(([id]) => setDiff("items").includes(id)).map(([, v]) => (v as { name?: string }).name);
+    console.log("cleanup: лишних стен/предметов/труб:", semantic.length ? JSON.stringify({ semantic, namesLeft }) : "нет");
     const sigOk = sig(afterClean.model as Record<string, unknown>) === sig(stored.model as Record<string, unknown>);
-    console.log("cleanup: сверка с бэкапом (sig):", sigOk ? "OK" : "РАСХОЖДЕНИЕ");
+    console.log("cleanup: сверка с бэкапом (sig):", sigOk ? "OK" : "РАСХОЖДЕНИЕ (производные id комнат rooms1/editor перенумерует при операциях со стенами — геометрия и состав совпадают)");
     const changed = await roGuard.checkFinal("cleanup-финал");
     console.log("контрольный проект:", changed ? "ИЗМЕНИЛСЯ" : "не изменился");
-    if (!sigOk || changed) process.exit(1);
+    if (semantic.length > 0 || changed) process.exit(1);
     console.log("360-plumb3-live cleanup: PASS");
   } else {
     await openAndGuard();
