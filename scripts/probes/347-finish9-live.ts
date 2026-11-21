@@ -175,8 +175,12 @@ try {
   if (process.argv[2] === "cleanup") {
     // откат пробы по бэкапу: трогаются ТОЛЬКО стены/комнаты, которых нет в бэкапе.
     // Отделка/поля снимаются инструментами, стены — wall_delete, затем save и sig-сверка.
-    const backupWalls = new Set(Object.keys(((before.model["walls"] ?? {}) as Record<string, unknown>)));
-    const backupRooms = new Set(Object.keys(((before.model["rooms2"] ?? before.model["rooms1"] ?? {}) as Record<string, unknown>)));
+    const backupPath = ".orca-reports/backup-".concat(OBJECT_ID, "-347.json");
+    if (!existsSync(backupPath)) throw new Error("cleanup: бэкап не найден");
+    const stored = JSON.parse(readFileSync(backupPath, "utf8")) as { model?: Record<string, unknown> };
+    const backupModel = (stored.model ?? {}) as Record<string, Record<string, unknown>>;
+    const backupWalls = new Set(Object.keys(backupModel["walls"] ?? {}));
+    const backupRooms = new Set(Object.keys((backupModel["rooms2"] ?? backupModel["rooms1"] ?? {}) as Record<string, unknown>));
     const wallsNow = (before.model["walls"] ?? {}) as Record<string, { p1?: { x?: number; y?: number }; p2?: { x?: number; y?: number } }>;
     const newWalls = Object.keys(wallsNow).filter((id) => !backupWalls.has(id));
     const roomsNow = (before.model["rooms2"] ?? {}) as Record<string, Record<string, unknown>>;
@@ -204,7 +208,7 @@ try {
       await saveTagged("cleanup");
       await openAndGuard();
       const afterClean = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-      const sigOkClean = sig(afterClean.model as Record<string, unknown>) === sig(before.model as Record<string, unknown>);
+      const sigOkClean = sig(afterClean.model as Record<string, unknown>) === sig(backupModel as unknown as Record<string, unknown>);
       console.log("cleanup: сверка с бэкапом (sig):", sigOkClean ? "OK" : "РАСХОЖДЕНИЕ");
       if (!sigOkClean) throw new Error("cleanup не восстановил бэкап");
     }
