@@ -319,10 +319,12 @@ try {
     console.log("cold после reopen:", coldRaw?.name, JSON.stringify(coldRaw?.over_floor));
     if (coldRaw?.name !== "waterspot_cold_hot") throw Error("reopen: имя вывода не cold_hot");
     if (coldRaw?.over_floor && "value_2" in coldRaw.over_floor) throw Error("reopen: value_2 остался после unset");
-    const png = await call("render_plan", { sheet: "waterplan" });
-    const pngLen = ((png as { png_bytes?: number }).png_bytes ?? 0) as number;
-    console.log("render waterplan:", pngLen, "байт");
-    if (!pngLen) throw new Error("render_plan пустой");
+    const pngRes = await client.callTool({ name: "render_plan", arguments: { sheet: "waterplan" } }, undefined, { timeout: 600_000 });
+    const pngContent = (pngRes as { content?: Array<{ type: string }> }).content ?? [];
+    const pngBytes = ((pngRes as { content?: Array<{ type: string; data?: string }> }).content ?? [])
+      .filter((c) => c.type === "image").reduce((s, c) => s + (c.data?.length ?? 0), 0);
+    console.log("render waterplan:", JSON.stringify({ isError: (pngRes as { isError?: boolean }).isError === true, content: pngContent.map((c) => c.type), pngBytes }));
+    if ((pngRes as { isError?: boolean }).isError || pngBytes === 0) throw new Error("render_plan пустой");
 
     // ---- 6. зачистка ----
     await restoreProbe("run");
