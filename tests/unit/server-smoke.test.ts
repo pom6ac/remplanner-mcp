@@ -60,6 +60,8 @@ const EXPECTED_TOOLS = [
   "finish_floor_molding_set", "finish_floor_molding_remove",
   "finish_ceiling_molding_set", "finish_ceiling_molding_remove",
   "finish_ceiling_niche_add", "finish_ceiling_niche_remove",
+  // §7.4g — подъём пола, точка укладки, имя/цвет зоны помещения (этап 347)
+  "finish_floor_offset_set", "finish_floor_anchor_set", "room_set_name", "room_set_color",
   // §7.4g — зонирование потолка (этап 260) и пола/гидроизоляции/стяжки (этап 296)
   "zone_ceiling_add", "zone_ceiling_remove",
   "zone_floor_add", "zone_floor_remove",

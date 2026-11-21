@@ -8,6 +8,7 @@ import { parseSwitchVertexId } from "./electric.ts";
 import { zoneDelimiterList } from "./zone.ts";
 import { ceilingRigelList } from "./ceiling-rigels.ts";
 import { ceilingFinishZones } from "./finish.ts";
+import { zoneNumbersByEditorRule } from "./room-fields.ts";
 
 // Компактное представление модели для агента (< 5 КБ): метки W/R/O/I, мм.
 
@@ -70,6 +71,11 @@ export type CompactOpening = {
 export type CompactRoom = {
   id: string;
   name: string | null;
+  /** Цвет зоны помещения (этап 347, палитра #cm-room2; null — не задан). */
+  color: string | null;
+  /** Номер зоны помещения (этап 347, производное редактора: зоны по убыванию
+   *  площади, number_by_area; null — номер не назначен). */
+  number: number | null;
   /** Площадь по внутренним граням (как показывает редактор), м². */
   area_m2: number;
   /** Площадь по осевым линиям, м² (null для комнат из rooms2 — осевой контур не восстанавливается). */
@@ -517,18 +523,28 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     };
   });
 
-  const compactRooms: CompactRoom[] = roomList.map((room, i) => {
+  const compactRooms: CompactRoom[] = (() => {
+    const zoneNumbers = zoneNumbersByEditorRule(model);
+    return roomList.map((room, i) => {
     let perimeter = 0;
     for (let j = 0; j < room.polygon.length; j++) {
       const a = room.polygon[j]!;
       const b = room.polygon[(j + 1) % room.polygon.length]!;
       perimeter += Math.hypot(b.x - a.x, b.y - a.y);
     }
+    const room2 = room.roomId ? (model.rooms2 as Record<string, Record<string, unknown>> | undefined)?.[room.roomId] : undefined;
+    const zone0 = room2 && Array.isArray(room2["zones"]) ? (room2["zones"] as Array<Record<string, unknown>>)[0] : undefined;
     const name = room.roomId && roomNames?.[room.roomId]
       ? ((roomNames[room.roomId] as { zones?: Array<{ name?: string }> }).zones?.[0]?.name ?? null)
       : null;
+    // этап 347: цвет зоны помещения — пользовательское поле (палитра #cm-room2)
+    const color = zone0 && typeof zone0["color"] === "string" ? zone0["color"] as string : null;
+    // этап 347: номер зоны — производное редактора (number_by_area: зоны всех
+    // помещений по убыванию площади, ROOMS2.draw); пересчитывается правилом
+    // редактора, а не берётся из записи (после локальных операций со стенами
+    // записанное значение устаревает до пересчёта редактором)
+    const zoneNumber = room.roomId ? zoneNumbers.get(room.roomId)?.get(0) ?? null : null;
     // этап 94: покрытие пола/потолка комнаты видно в компактном API
-    const room2 = room.roomId ? (model.rooms2 as Record<string, Record<string, unknown>> | undefined)?.[room.roomId] : undefined;
     // рёбра контура комнаты в мм (ревью 274 №3): записи edges rooms2 или
     // производные из полигона — тот же порядок, что в warm_wall_add (edge)
     const edgesRec = room2 ? room2["edges"] : undefined;
@@ -556,6 +572,10 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     return {
       id: `R${i + 1}`,
       name,
+      // этап 347: цвет зоны (null — не задан, как в редакторе белый = без цвета)
+      color,
+      // этап 347: номер зоны — производное редактора (по убыванию площади зон)
+      number: zoneNumber,
       area_m2: Math.round((room.areaCm2 / 10_000) * 100) / 100,
       area_axis_m2: room.axisAreaCm2 === null ? null : Math.round((room.axisAreaCm2 / 10_000) * 100) / 100,
       perimeter_mm: round0(cmToMm(perimeter)),
@@ -563,7 +583,8 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       floor: floorRec && floorRec["exist"] === true && typeof floorRec["cover"] === "string" ? floorRec["cover"] as string : null,
       ceiling: ceilingZone ? ceilingZone.material : null,
     };
-  });
+    });
+  })();
 
   const items: CompactItem[] = Object.values(model.items ?? {}).map((item, i) => {
     // ревью 90 R5: состав под-розеток и высота установки видны в компактном API

@@ -199,6 +199,21 @@ export class Workspace {
    *  «база → рабочая копия». С ревью 319 №1 — и снимок zone_c-делителей: комнаты
    *  с изменённым набором делителей считаются от той же базы. */
   private roomSaveBase: { rooms: Record<string, unknown>; walls: Record<string, { p1: Point; p2: Point; depth?: number }>; zoneDelimiters: Record<string, unknown> } | null = null;
+  /** Комнаты с правками пользовательских полей через MCP (room_set_name/
+   *  room_set_color, этап 347): сверка комнат до записи — от рабочей копии,
+   *  а не от базы, где правки ещё не сохранены. Сырые правки модели мимо
+   *  инструментов сюда не попадают. */
+  private roomFieldEdited = new Set<string>();
+
+  /** Отметить комнату с правкой пользовательских полей (этап 347). */
+  markRoomFieldEdited(roomId: string): void {
+    this.roomFieldEdited.add(roomId);
+  }
+
+  /** Комнаты с правками полей (для сверки комнат при save — SaveHost). */
+  roomFieldEditedRooms(): Set<string> {
+    return this.roomFieldEdited;
+  }
 
   constructor(deps: WorkspaceDeps, options: { offline?: boolean } = {}) {
     this.deps = deps;
@@ -283,6 +298,7 @@ export class Workspace {
       anon: opts.anon ?? false,
     };
     this.roomSaveBase = this.captureRoomBase();
+    this.roomFieldEdited = new Set();
     this.snapshots = [];
     this.historyIndex = -1;
     this.pushSnapshot("open");
@@ -643,6 +659,10 @@ export class Workspace {
                   : (this.modelInternal! as unknown as Record<string, unknown>)),
                 norm.model as unknown as Record<string, unknown>,
               ),
+              // этап 347: комнаты с правками полей через room_set_name/room_set_color
+              // сверяются с рабочей копией — база поля ещё не содержит
+              userEditedRooms: this.roomFieldEdited,
+              workingRooms: (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined,
             },
           );
       warnings.push(...roomsNormCheck.warnings);
@@ -817,13 +837,16 @@ export class Workspace {
       setRoomsCache: (rooms) => { this.roomsCache = rooms; },
       roomSaveBase: () => this.roomSaveBase,
       roomChangePolicy: (nowWalls) => this.roomChangePolicy(nowWalls),
+      roomFieldEditedRooms: () => this.roomFieldEdited,
       hasEditor: () => this.editorInternal !== null,
       ensureEditor: () => this.ensureEditor(),
       writeBackup: () => this.writeBackup(),
       onVerified: (model) => {
         this.modelInternal = model;
-        // база сверки комнат — серверная истина после записи (этап 128)
+        // база сверки комнат — серверная истина после записи (этап 128);
+        // правки полей (этап 347) теперь в базе — отметки снимаются
         this.roomSaveBase = this.captureRoomBase();
+        this.roomFieldEdited = new Set();
       },
       onSaved: () => {
         this.snapshots = [];

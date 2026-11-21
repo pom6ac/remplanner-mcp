@@ -1,0 +1,42 @@
+{
+  "_source": "синтетическая геометрия (этап 347): две прямоугольные комнаты 300×300 и 200×200 см с круглыми координатами; форма записи — как у Room2/Zone редактора (Room2.serialize: zones — записи Zone.serialize: id, polygon, edges, pc, area (м²), name, color, is_micro_zone, number_by_area). Имя зоны — контекстное меню #cm-room2--zone-name (пустое и \"?\" — \"none\"); цвет — палитра #cm-room2 (hex #rrggbb, белый удаляет); number_by_area — зоны всех помещений по убыванию площади (ROOMS2.draw). Имена и цвета комнат синтетические, id обезличены (0).",
+  "rooms": {
+    "A": {
+      "id": "A",
+      "role": "room",
+      "name": "none",
+      "polygon": [{ "x": 300, "y": -300 }, { "x": 300, "y": 0 }, { "x": 0, "y": 0 }, { "x": 0, "y": -300 }],
+      "area": 9,
+      "zones": [
+        {
+          "id": "0",
+          "polygon": [{ "x": 300, "y": -300 }, { "x": 300, "y": 0 }, { "x": 0, "y": 0 }, { "x": 0, "y": -300 }],
+          "pc": { "x": 150, "y": -150 },
+          "area": 9,
+          "name": "Комната 9",
+          "color": "#f5e9d0",
+          "is_micro_zone": 0,
+          "number_by_area": 1
+        }
+      ]
+    },
+    "B": {
+      "id": "B",
+      "role": "room",
+      "name": "none",
+      "polygon": [{ "x": 500, "y": -200 }, { "x": 500, "y": 0 }, { "x": 300, "y": 0 }, { "x": 300, "y": -200 }],
+      "area": 4,
+      "zones": [
+        {
+          "id": "0",
+          "polygon": [{ "x": 500, "y": -200 }, { "x": 500, "y": 0 }, { "x": 300, "y": 0 }, { "x": 300, "y": -200 }],
+          "pc": { "x": 400, "y": -100 },
+          "area": 4,
+          "name": "none",
+          "is_micro_zone": 0,
+          "number_by_area": 2
+        }
+      ]
+    }
+  }
+}
