@@ -1,0 +1,22 @@
+{
+  "_source": "синтетическая геометрия (этап 347): прямоугольная комната 280×280 см с круглыми координатами (база — эталон ui-ref-finish-floor.json, этап 94); форма записи — как у Floor редактора (Floor.serialize); поле anchor={p:{x,y}} — точка начала укладки, ставится инструментом anchor_floor листа «Напольные покрытия» (PRO, бандл: mouseup anchor_floor → floor.anchor={p:pc}, angle=0, custom_angle удаляется). Точка внутри полигона пола. Производные поля (polygons_layout) пересчитаны согласованно; id обезличены (0).",
+  "room": { "polygon": [{ "x": 290, "y": -290 }, { "x": 290, "y": -10 }, { "x": 10, "y": -10 }, { "x": 10, "y": -290 }] },
+  "floors": [
+    {
+      "exist": true,
+      "id": "0",
+      "polygon": [{ "x": 290, "y": -290 }, { "x": 290, "y": -10 }, { "x": 10, "y": -10 }, { "x": 10, "y": -290 }],
+      "cover": "laminate",
+      "angle": 0,
+      "pc": { "x": 150, "y": -150 },
+      "width": 120,
+      "height": 18,
+      "stitch_width": 0.2,
+      "f0offset": 0,
+      "anchor": { "p": { "x": 200, "y": -200 } },
+      "type_laying": "1/2",
+      "polygons_layout": [],
+      "polygons_layout_points": []
+    }
+  ]
+}

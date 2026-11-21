@@ -48,14 +48,20 @@ function roomsOf(rooms: Record<string, unknown> | undefined): RoomsMap {
 }
 
 /**
- * Пользовательские поля комнаты: имя помещения (zones[0].name) и состав зон
- * (имя + is_micro_zone, как мультимножество — порядок редактор вправе менять).
+ * Пользовательские поля комнаты: имя помещения (zones[0].name), состав зон
+ * (имя + цвет + is_micro_zone, как мультимножество — порядок редактор вправе
+ * менять). Цвет зоны — пользовательское поле этапа 347 (палитра #cm-room2);
+ * номер зоны (number_by_area) — производное редактора, не сверяется.
  */
 export function roomUserSig(room: unknown): { name: string | null; zones: string[] } {
   const rec = (room ?? {}) as RoomRec;
   const zoneList = Array.isArray(rec.zones) ? rec.zones : [];
   const zones = zoneList
-    .map((z) => JSON.stringify([String(z?.["name"] ?? ""), Boolean(z?.["is_micro_zone"])]))
+    .map((z) => JSON.stringify([
+      String(z?.["name"] ?? ""),
+      Boolean(z?.["is_micro_zone"]),
+      typeof z?.["color"] === "string" ? z["color"] : null,
+    ]))
     .sort();
   const name = typeof rec["name"] === "string" ? rec["name"] : null;
   return { name, zones };
@@ -65,8 +71,10 @@ export function roomUserSig(room: unknown): { name: string | null; zones: string
 const DEFAULT_ZONE_NAME = "none";
 
 function userZoneKey(zoneSig: string): string | null {
-  const [name, micro] = (JSON.parse(zoneSig) as [string, boolean]);
+  const [name, micro, color] = JSON.parse(zoneSig) as [string, boolean, string | null];
   if (micro) return zoneSig;
+  // цвет зоны — пользовательское поле (этап 347): зона с цветом обязана сохраниться
+  if (color !== null) return zoneSig;
   if (name !== "" && name !== DEFAULT_ZONE_NAME) return zoneSig;
   return null;
 }
@@ -329,6 +337,16 @@ export type RoomsCompareOpts = {
   /** Комнаты, получившие новый zone_c-делитель (этап 318): деление зон
    *  редактором штатно сбрасывает имена/состав зон (безымянные наследники). */
   zoneDivisionRooms?: Set<string>;
+  /**
+   * Комнаты, чьи пользовательские поля (имя/цвет/состав зон) изменены через
+   * MCP (room_set_name/room_set_color, этап 347) с последней базы: ожидание
+   * для них — рабочая копия (workingRooms), а не база, иначе штатный save
+   * блокировался бы «поле поменялось». Правки, сделанные мимо инструментов
+   * (сырая правка модели), этим множеством не покрыты — сверка от базы
+   * ловит их как потерю. workingRooms обязателен вместе с userEditedRooms.
+   */
+  userEditedRooms?: Set<string>;
+  workingRooms?: Record<string, unknown>;
 };
 /**
  * Затронутость комнат для сверки разделителей зон (ревью 263 N1, 265 R1) —
@@ -389,9 +407,57 @@ export function roomsSaveCompare(
   const warnings: string[] = [];
   const { pairs: exact } = matchRoomsByContour(expectedRooms, gotRooms);
   const heirOf = roomHeirs(expectedRooms, gotRooms, exact, mode);
+  /**
+   * M2 ревью 348: рабочая комната (workingRooms) для каждой комнаты got — по
+   * каноническому контуру; при изменившемся контуре (правка после wall_move)
+   * — наследник kind "same" классификации roomHeirs (та же комната с новой
+   * геометрией). Отметки userEditedRooms стоят на id рабочей копии.
+   */
+  const workOfGot = new Map<string, string>();
+  if (opts.workingRooms && Object.keys(opts.workingRooms).length > 0) {
+    const workPairs = matchRoomsByContour(opts.workingRooms, gotRooms);
+    for (const [wid, gk] of workPairs.pairs) workOfGot.set(gk, wid);
+    const workHeirs = roomHeirs(opts.workingRooms, gotRooms, workPairs.pairs, "normalize");
+    for (const [wid, h] of workHeirs) {
+      if (h && h.kind === "same" && !workOfGot.has(h.key)) workOfGot.set(h.key, wid);
+    }
+  }
   const sameMatch = (rid: string): string | undefined => {
     const h = heirOf.get(rid);
     return h && h.kind === "same" ? h.key : undefined;
+  };
+  /**
+   * Ожидание для комнаты, чьи пользовательские поля пользователь изменил через
+   * MCP (этап 347): сигнатура рабочей копии, если она отличается от базы и
+   * комната совпала по контуру (без смены топологии — при split/merge имя не
+   * сверяется предупреждением выше по коду). undefined — правок не было.
+   *
+   * M2 ревью 348: отметка userEditedRooms стоит на id комнаты РАБОЧЕЙ копии,
+   * а id меняется редактором при wall_move/split/merge ($Restorer.restore_rooms).
+   * Комната рабочей копии сопоставляется с got[gid] по каноническому контуру,
+   * при изменившемся контуре — по классификации наследников roomHeirs (kind
+   * "same" — та же комната с новой геометрией); отметка проверяется по
+   * найденному рабочему id (и по самому rid — правка до смены контура).
+   */
+  const userEditedSig = (rid: string, room: unknown, gid: string | undefined, opts: RoomsCompareOpts): { name: string | null; zones: string[] } | undefined => {
+    if (!opts.userEditedRooms || opts.userEditedRooms.size === 0 || !opts.workingRooms) return undefined;
+    const baseSig = roomUserSig(room);
+    const differs = (workSig: { name: string | null; zones: string[] }): boolean =>
+      workSig.name !== baseSig.name || workSig.zones.length !== baseSig.zones.length || workSig.zones.some((z, i) => z !== baseSig.zones[i]);
+    /** Рабочая комната, соответствующая got[gid]: контур, затем наследник "same". */
+    const workIdOfGot = (g: string): string | undefined => {
+      const work = workOfGot.get(g);
+      return work;
+    };
+    for (const cand of [gid !== undefined ? workIdOfGot(gid) : undefined, rid]) {
+      if (cand === undefined || !opts.userEditedRooms.has(cand)) continue;
+      const work = opts.workingRooms[cand];
+      if (!work) continue;
+      const workSig = roomUserSig(work);
+      if (!differs(workSig)) return undefined;
+      return workSig;
+    }
+    return undefined;
   };
 
   // каждая ожидаемая комната: найдена по контуру и хранит пользовательские поля
@@ -414,7 +480,11 @@ export function roomsSaveCompare(
       problems.push(`room ${rid}: комната исчезла или изменилась при ${mode === "save" ? "сохранении (сервер)" : "нормализации"}`);
       continue;
     }
-    const mismatch = sigMismatch(roomUserSig(room), roomUserSig(got[gid]), opts.zoneDivisionRooms?.has(rid) ?? false);
+    const mismatch = sigMismatch(
+      userEditedSig(rid, room, gid, opts) ?? roomUserSig(room),
+      roomUserSig(got[gid]),
+      opts.zoneDivisionRooms?.has(rid) ?? false,
+    );
     if (mismatch) problems.push(`room ${rid}: ${mismatch}`);
   }
 

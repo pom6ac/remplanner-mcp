@@ -101,6 +101,8 @@ export type SaveHost = {
   setRoomsCache(rooms: EditorRoom[]): void;
   roomSaveBase(): RoomSaveBase | null;
   roomChangePolicy(nowWalls?: Record<string, unknown>): RoomsChangePolicy;
+  /** Комнаты с правками пользовательских полей через MCP (этап 347). */
+  roomFieldEditedRooms(): Set<string>;
   /** Запущен ли редактор (влияет на семантику SAVE_CONFLICT). */
   hasEditor(): boolean;
   ensureEditor(): Promise<EditorLike>;
@@ -543,6 +545,10 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
               : (host.model() as unknown as Record<string, unknown>)),
             norm.model as unknown as Record<string, unknown>,
           ),
+          // этап 347: комнаты с правками полей через room_set_name/room_set_color
+          // сверяются с рабочей копией — база поля ещё не содержит
+          userEditedRooms: host.roomFieldEditedRooms(),
+          workingRooms: (host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, unknown> | undefined,
         },
       );
   const roomsNormProblems = roomsNormCheck.problems;

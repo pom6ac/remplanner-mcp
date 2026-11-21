@@ -121,7 +121,8 @@ tool_timeout_sec = 120
   ниши, плинтусы, комментарии, перегородки glass/bar; `shield_*` — старшие тарифы). Частичный гейт
   по ключу: `item_add` — is_pro-позиции каталога (точки воды, розетки, выключатели, коробки,
   датчики), `finish_floor_set`/`finish_wall_set` — PRO-покрытия (керамогранит, метлах, мозаика,
-  фартук и др.). Удаление (delete/remove) не гейтится: ластик в редакторе не помечен is_pro.
+  фартук и др.), `finish_floor_anchor_set` — точка начала укладки (`anchor_floor`). Удаление
+  (delete/remove) не гейтится: ластик в редакторе не помечен is_pro.
   В офлайн-режиме (`REMPLANNER_OFFLINE_FIXTURE`) тариф неизвестен и трактуется как бесплатный —
   все PRO-инструменты и is_pro-ключи отказывают.
 - **X-пересечения стен не поддержаны** (`UNSUPPORTED_JUNCTION`): стену в точке примыкания нужно
@@ -252,6 +253,12 @@ finish_ceiling_complex_set  # двухуровневый потолок (лис�
                           #  площадь зоны ≥ 4 м², снятия нет (ластик complex не снимает)
 finish_floor_molding_set / finish_ceiling_molding_set  # плинтусы (напольные 7 видов и потолочный, PRO)
 finish_ceiling_niche_add  # закарнизная ниша (PRO; требует потолок не краску/побелку)
+finish_floor_offset_set   # подъём пола-подиума (0..1000 мм, 0 — сброс; apply_to_all_zero —
+                          #  «Применить ко всем» редактора)
+finish_floor_anchor_set   # точка начала укладки покрытия (PRO): точка в мм внутри пола,
+                          #  сбрасывает угол раскладки; at_mm=null — снять (ластик)
+room_set_name / room_set_color  # имя помещения и цвет зоны (null/"#ffffff" — снять);
+                          #  номер зоны (по площади) виден в rooms_list/model_get
 finish_wall_set type=wall_apron|painting_tile|wallpaper_tiles  # фартук и комбинированные (PRO, слои 1+2)
 zone_ceiling_add / zone_ceiling_remove  # линии-разделители зон потолка (PRO): концы
                           #  на рёбрах комнаты или гранях ригелей/закладных, без пересечений

@@ -45,7 +45,9 @@ import {
   resolveRoom as resolveRoomFinish, finishList,
   FLOOR_MOLDING_TYPES, setFloorMolding, removeFloorMolding, setCeilingMolding, removeCeilingMolding,
   addCeilingNiche, removeCeilingNiche,
+  setFloorOffset, setFloorAnchor,
 } from "../model/finish.ts";
+import { setRoomName, setRoomColor } from "../model/room-fields.ts";
 import { addZoneDelimiter, removeZoneDelimiter, zoneDelimiterList, ZONE_DELIMITER_PLANS, type ZoneDelimiterType } from "../model/zone.ts";
 import { addCeilingRigel, updateCeilingRigel, deleteCeilingRigel, ceilingRigelList, type CeilingRigelRec } from "../model/ceiling-rigels.ts";
 import { setCeilingComplex } from "../model/ceiling-complex.ts";
@@ -574,6 +576,42 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       async () => {
         const ws = wsOf();
         return ok(compactModel(ws.model, ws.rooms()).rooms);
+      },
+    ),
+
+    room_set_name: tool(
+      "Задать имя помещения (контекстное меню комнаты, поле «Имя»; этап 347). name=null или \"\" " +
+        "снимает имя (в редакторе — «none»). Длина до 100 символов, управляющие символы и " +
+        "переводы строк запрещены. Имя хранится в первой зоне комнаты (zones[0].name) и " +
+        "видно в rooms_list/model_get. Имена и цвета зон переживают деление комнаты стеной " +
+        "(переносятся по совпадению контура зон, как в редакторе). После правки вызывайте " +
+        "model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        name: z.string().max(100).nullable().describe("имя помещения (null — снять имя)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("room_set_name", (m) => setRoomName(m, a["room_id"] as string, a["name"] as string | null));
+        ws.markRoomFieldEdited(res.id);
+        return ok({ room_id: a["room_id"], name: res.name, hint: SCENARIO_HINT });
+      },
+    ),
+
+    room_set_color: tool(
+      "Задать цвет зоны помещения (палитра в контекстном меню комнаты; этап 347). color — " +
+        "hex #rrggbb (например #f5e9d0); null и #ffffff снимают цвет (как белый в палитре " +
+        "редактора). Цвет хранится в первой зоне комнаты (zones[0].color) и виден в " +
+        "rooms_list/model_get. После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        color: z.string().max(7).nullable().describe("hex-цвет #rrggbb (null или #ffffff — снять цвет)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("room_set_color", (m) => setRoomColor(m, a["room_id"] as string, a["color"] as string | null));
+        ws.markRoomFieldEdited(res.id);
+        return ok({ room_id: a["room_id"], color: res.color, hint: SCENARIO_HINT });
       },
     ),
 
@@ -2222,6 +2260,48 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const ws = wsOf();
         ws.apply("finish_floor_remove", (m) => { removeFloorFinish(m, a["room_id"] as string); return true; });
         return ok({ room_id: a["room_id"], removed: "floor", hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_floor_offset_set: tool(
+      "Задать подъём пола комнаты (пол-подиум; контекстное меню покрытия пола, поле " +
+        "«Подъём пола»): offset_mm от 0 до 1000 (редактор: 0..100 см), 0 — сброс. " +
+        "Подъём задаётся на существующее покрытие пола (сначала finish_floor_set). " +
+        "apply_to_all_zero=true повторяет кнопку «Применить ко всем» редактора: значение " +
+        "ставится всем полам всех комнат с нулевым подъёмом, включая записи без покрытия " +
+        "(у Floor умолчание 0; по умолчанию — только эта комната, как отмена диалога редактора). " +
+        "После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        offset_mm: mmInt.describe("подъём пола, мм (0..1000; 0 — сброс)"),
+        apply_to_all_zero: z.boolean().optional().describe("применить ко всем полам с нулевым подъёмом (кнопка «Применить ко всем» редактора)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_floor_offset_set", (m) => setFloorOffset(m, a["room_id"] as string, a["offset_mm"] as number, a["apply_to_all_zero"] === true));
+        return ok({ room_id: a["room_id"], offset_mm: a["offset_mm"], updated_floors: res.updated, hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_floor_anchor_set: tool(
+      "Задать точку начала укладки покрытия пола (инструмент anchor_floor листа «Напольные " +
+        "покрытия», PRO) — from_mm/at_mm: точка внутри полигона пола (мм, из model_get), " +
+        "раскладка ляжет от неё. Без angle_deg угол раскладки сбрасывается в 0 (как клик " +
+        "инструментом в редакторе); с angle_deg — угол задаётся вместе с якорем (контекстное " +
+        "меню якоря). at_mm=null удаляет якорь (ластик по якорю; PRO-гейта нет — удаление " +
+        "в редакторе не закрыто тарифом). Точка ставится только на существующее покрытие " +
+        "пола. После правки вызывайте model_validate и project_save.",
+      {
+        room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
+        at_mm: mmPoint.nullable().describe("точка внутри полигона пола в мм (или null — снять якорь)"),
+        angle_deg: z.number().finite().optional().describe("угол раскладки с якорем, градусы (0..360 не включительно; по умолчанию 0, как клик инструментом)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const at = a["at_mm"] as { x: number; y: number } | null;
+        if (at !== null) await proGateKey("finish_floor_anchor_set", "anchor_floor");
+        const res = ws.apply("finish_floor_anchor_set", (m) => setFloorAnchor(m, a["room_id"] as string, at, a["angle_deg"] as number | undefined));
+        return ok({ room_id: a["room_id"], anchor: res.anchor, hint: SCENARIO_HINT });
       },
     ),
 

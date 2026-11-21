@@ -1335,6 +1335,59 @@
    }
   },
   {
+   "name": "finish_floor_anchor_set",
+   "description": "Задать точку начала укладки покрытия пола (инструмент anchor_floor листа «Напольные покрытия», PRO) — from_mm/at_mm: точка внутри полигона пола (мм, из model_get), раскладка ляжет от неё. Без angle_deg угол раскладки сбрасывается в 0 (как клик инструментом в редакторе); с angle_deg — угол задаётся вместе с якорем (контекстное меню якоря). at_mm=null удаляет якорь (ластик по якорю; PRO-гейта нет — удаление в редакторе не закрыто тарифом). Точка ставится только на существующее покрытие пола. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "at_mm": {
+      "anyOf": [
+       {
+        "type": "object",
+        "properties": {
+         "x": {
+          "type": "integer",
+          "minimum": -1000000,
+          "maximum": 1000000,
+          "description": "мм, целое (может быть отрицательным), X вправо"
+         },
+         "y": {
+          "type": "integer",
+          "minimum": -1000000,
+          "maximum": 1000000,
+          "description": "мм, целое (может быть отрицательным), Y вниз"
+         }
+        },
+        "required": [
+         "x",
+         "y"
+        ],
+        "description": "точка плана в мм, X вправо, Y вниз"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "точка внутри полигона пола в мм (или null — снять якорь)"
+     },
+     "angle_deg": {
+      "description": "угол раскладки с якорем, градусы (0..360 не включительно; по умолчанию 0, как клик инструментом)",
+      "type": "number"
+     }
+    },
+    "required": [
+     "room_id",
+     "at_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "finish_floor_molding_remove",
    "description": "Снять напольные плинтусы комнаты (инструмент «ластик» на плинтусе). Без wall_id — со всех сторон.",
    "inputSchema": {
@@ -1395,6 +1448,35 @@
      "room_id",
      "wall_id",
      "type"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "finish_floor_offset_set",
+   "description": "Задать подъём пола комнаты (пол-подиум; контекстное меню покрытия пола, поле «Подъём пола»): offset_mm от 0 до 1000 (редактор: 0..100 см), 0 — сброс. Подъём задаётся на существующее покрытие пола (сначала finish_floor_set). apply_to_all_zero=true повторяет кнопку «Применить ко всем» редактора: значение ставится всем полам всех комнат с нулевым подъёмом, включая записи без покрытия (у Floor умолчание 0; по умолчанию — только эта комната, как отмена диалога редактора). После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "offset_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "подъём пола, мм (0..1000; 0 — сброс)"
+     },
+     "apply_to_all_zero": {
+      "description": "применить ко всем полам с нулевым подъёмом (кнопка «Применить ко всем» редактора)",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "room_id",
+     "offset_mm"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"
    }
@@ -3596,6 +3678,68 @@
      "origin",
      "width",
      "depth"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "room_set_color",
+   "description": "Задать цвет зоны помещения (палитра в контекстном меню комнаты; этап 347). color — hex #rrggbb (например #f5e9d0); null и #ffffff снимают цвет (как белый в палитре редактора). Цвет хранится в первой зоне комнаты (zones[0].color) и виден в rooms_list/model_get. После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "color": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 7
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "hex-цвет #rrggbb (null или #ffffff — снять цвет)"
+     }
+    },
+    "required": [
+     "room_id",
+     "color"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "room_set_name",
+   "description": "Задать имя помещения (контекстное меню комнаты, поле «Имя»; этап 347). name=null или \"\" снимает имя (в редакторе — «none»). Длина до 100 символов, управляющие символы и переводы строк запрещены. Имя хранится в первой зоне комнаты (zones[0].name) и видно в rooms_list/model_get. Имена и цвета зон переживают деление комнаты стеной (переносятся по совпадению контура зон, как в редакторе). После правки вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка R<n> из model_get или id комнаты"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 100
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "description": "имя помещения (null — снять имя)"
+     }
+    },
+    "required": [
+     "room_id",
+     "name"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"
    }
@@ -5939,6 +6083,8 @@
     {
      "id": "R1",
      "name": null,
+     "color": null,
+     "number": null,
      "area_m2": 10.64,
      "area_axis_m2": null,
      "perimeter_mm": 132000,
@@ -6247,6 +6393,8 @@
    {
     "id": "R1",
     "name": null,
+    "color": null,
+    "number": null,
     "area_m2": 10.64,
     "area_axis_m2": null,
     "perimeter_mm": 132000,

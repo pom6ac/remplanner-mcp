@@ -102,8 +102,9 @@ export const PRO_OPENING_KINDS: readonly string[] = Object.keys(OPENING_KINDS)
  *  каталога недоступен на free. Ключи, обслуживаемые другими инструментами
  *  (трубы, проводка, световые линии, зоны, плинтусы, покрытия), до item_add не
  *  доходят по смыслу (в реальном каталоге их не существует — NOT_FOUND до
- *  гейта), а ключи без инструмента MCP (anchor_floor, cap_*, isolation_*,
- *  plaster_* — отчёт 331) в списке оставлены: они никогда не попадают в гейт,
+ *  гейта), а ключи без частичного гейта инструмента (cap_*, isolation_*,
+ *  plaster_* — отчёт 331; anchor_floor обслуживается finish_floor_anchor_set
+ *  с этапа 347) в списке оставлены: они никогда не попадают в гейт item_add,
  *  но сторож-тест (pro-keys.test.ts) проверяет весь эталон целиком. */
 export const PRO_ITEM_KEYS: readonly string[] = PRO_EDITOR_KEYS;
 
@@ -143,6 +144,9 @@ export const PRO_PARTIAL_TOOLS: Record<string, ProPartial> = {
   finish_floor_set: { editorKeys: PRO_FLOOR_COVERS, label: "PRO-покрытия пола (керамогранит, метлах, мозаика, шестигранная плитка)" },
   // PRO-отделки стен (включая двухслойные и фартук)
   finish_wall_set: { editorKeys: PRO_WALL_COVERS, label: "PRO-отделки стен" },
+  // точка укладки пола — инструмент anchor_floor листа «Напольные покрытия» (этап 347).
+  // Удаление якоря (at_mm=null) не гейтится — ластик в редакторе не помечен is_pro
+  finish_floor_anchor_set: { editorKeys: ["anchor_floor"], label: "точка начала укладки покрытия пола" },
 };
 
 /** Все инструменты реестра, которые гейтятся (add/update). */

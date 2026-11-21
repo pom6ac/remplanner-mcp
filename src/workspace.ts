@@ -21,7 +21,7 @@ import { roomPolygons } from "./model/items.ts";
 import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmatchedDanglingEnds, wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm, assertNoNewWarmFloorCrossing, type DanglingEnd } from "./model/walls.ts";
 import { dist } from "./model/geometry.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
-import { finishCompare, finishLossHint } from "./model/finish.ts";
+import { finishCompare, finishLossHint, matchRoomsByContour, roomHeirs } from "./model/finish.ts";
 import { zoneDelimiterCompare, roomsWithChangedZoneCDividers, resurrectedZoneCDividers } from "./model/zone.ts";
 import { ceilingRigelCompare } from "./model/ceiling-rigels.ts";
 import { warmWallsCompare } from "./verify/warmwall.ts";
@@ -199,6 +199,52 @@ export class Workspace {
    *  «база → рабочая копия». С ревью 319 №1 — и снимок zone_c-делителей: комнаты
    *  с изменённым набором делителей считаются от той же базы. */
   private roomSaveBase: { rooms: Record<string, unknown>; walls: Record<string, { p1: Point; p2: Point; depth?: number }>; zoneDelimiters: Record<string, unknown> } | null = null;
+  /** Комнаты с правками пользовательских полей через MCP (room_set_name/
+   *  room_set_color, этап 347): сверка комнат до записи — от рабочей копии,
+   *  а не от базы, где правки ещё не сохранены. Сырые правки модели мимо
+   *  инструментов сюда не попадают. */
+  private roomFieldEdited = new Set<string>();
+
+  /** Отметить комнату с правкой пользовательских полей (этап 347). */
+  markRoomFieldEdited(roomId: string): void {
+    this.roomFieldEdited.add(roomId);
+  }
+
+  /**
+   * M2 ревью 348: после замены рабочей копии нормализованной моделью (applyWalls)
+   * id комнат меняется редактором ($Restorer.restore_rooms — wall_move/split/merge
+   * пересоздают комнаты) — отметки пользовательских правок полей переносятся на
+   * id-наследников: точное совпадение контура, иначе классификация roomHeirs
+   * kind "same" (та же комната с новой геометрией). При split/merge отметка
+   * не переносится: имена комнат при смене топологии объясняются предупреждением
+   * room_topology_changed, а не сверкой.
+   *
+   * M2-R ревью 350: наследники ДОПОЛНЯЮТ набор, а не вытесняют прежние id —
+   * undo/redo возвращают модель из снимка (с прежними id), отметки при этом не
+   * откатываются, и после «rename → wall_move → undo → save» отметка на
+   * прежнем id нужна для сверки с рабочей копией. Ложных совпадений это не
+   * даёт: отметка только разрешает сверку с рабочей копией, а id редактора
+   * случайны.
+   */
+  private remapRoomFieldEdited(prevRooms: Record<string, unknown> | undefined, nextRooms: Record<string, unknown> | undefined): void {
+    if (this.roomFieldEdited.size === 0) return;
+    const next = nextRooms ?? {};
+    const { pairs } = matchRoomsByContour(prevRooms, next);
+    const heirOf = roomHeirs(prevRooms, next, pairs, "normalize");
+    const remapped = new Set(this.roomFieldEdited);
+    for (const rid of this.roomFieldEdited) {
+      const gid = pairs.get(rid);
+      if (gid) { remapped.add(gid); continue; }
+      const h = heirOf.get(rid);
+      if (h && h.kind === "same") remapped.add(h.key);
+    }
+    this.roomFieldEdited = remapped;
+  }
+
+  /** Комнаты с правками полей (для сверки комнат при save — SaveHost). */
+  roomFieldEditedRooms(): Set<string> {
+    return this.roomFieldEdited;
+  }
 
   constructor(deps: WorkspaceDeps, options: { offline?: boolean } = {}) {
     this.deps = deps;
@@ -283,6 +329,7 @@ export class Workspace {
       anon: opts.anon ?? false,
     };
     this.roomSaveBase = this.captureRoomBase();
+    this.roomFieldEdited = new Set();
     this.snapshots = [];
     this.historyIndex = -1;
     this.pushSnapshot("open");
@@ -643,6 +690,10 @@ export class Workspace {
                   : (this.modelInternal! as unknown as Record<string, unknown>)),
                 norm.model as unknown as Record<string, unknown>,
               ),
+              // этап 347: комнаты с правками полей через room_set_name/room_set_color
+              // сверяются с рабочей копией — база поля ещё не содержит
+              userEditedRooms: this.roomFieldEdited,
+              workingRooms: (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined,
             },
           );
       warnings.push(...roomsNormCheck.warnings);
@@ -718,7 +769,14 @@ export class Workspace {
         });
       }
       // нормализованная копия становится канонической
+      const prevModelRooms = (this.modelInternal!["rooms2"] ?? this.modelInternal!["rooms1"]) as Record<string, unknown> | undefined;
       this.modelInternal = toModel(structuredClone(norm.model as unknown as Record<string, unknown>));
+      // M2 ревью 348: id комнат сменился редактором — отметки правок полей
+      // переносятся на наследников до следующей сверки
+      this.remapRoomFieldEdited(
+        prevModelRooms,
+        (this.modelInternal["rooms2"] ?? this.modelInternal["rooms1"]) as Record<string, unknown> | undefined,
+      );
       if ((norm.rooms ?? []).length > 0) this.roomsCache = norm.rooms!;
     }
     this.project.dirty = true;
@@ -817,13 +875,16 @@ export class Workspace {
       setRoomsCache: (rooms) => { this.roomsCache = rooms; },
       roomSaveBase: () => this.roomSaveBase,
       roomChangePolicy: (nowWalls) => this.roomChangePolicy(nowWalls),
+      roomFieldEditedRooms: () => this.roomFieldEdited,
       hasEditor: () => this.editorInternal !== null,
       ensureEditor: () => this.ensureEditor(),
       writeBackup: () => this.writeBackup(),
       onVerified: (model) => {
         this.modelInternal = model;
-        // база сверки комнат — серверная истина после записи (этап 128)
+        // база сверки комнат — серверная истина после записи (этап 128);
+        // правки полей (этап 347) теперь в базе — отметки снимаются
         this.roomSaveBase = this.captureRoomBase();
+        this.roomFieldEdited = new Set();
       },
       onSaved: () => {
         this.snapshots = [];

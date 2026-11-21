@@ -1,6 +1,6 @@
 import type { Model, Point } from "./types.ts";
 import { newId } from "./types.ts";
-import { roundTenthMm as r2 } from "./units.ts";
+import { roundTenthMm as r2, cmToMm, mmToCm } from "./units.ts";
 import { edgeInwardNormal } from "./rooms.ts";
 import { zoneDelimiterList } from "./zone.ts";
 import { ceilingRigelList } from "./ceiling-rigels.ts";
@@ -83,6 +83,8 @@ export const FINISH_LIMITS = {
   moldingEdgeMinMm: 250,
   /** Минимальная длина ребра для закарнизной ниши (UI: > 1.5*depth = 30 см). */
   nicheEdgeMinMm: 300,
+  /** Подъём пола (f0offset): контекстное меню пола, LIB.correctValue(t,0,100) см (бандл #cm-floor--floor0-offset). */
+  floorOffsetMaxMm: 1000,
 } as const;
 
 /** Геометрия частей по эталонам 245 (см): отступ линии от ребра внутрь комнаты и подрезка.
@@ -153,6 +155,26 @@ function floorEntry(cover: string, room: RoomRec, id: string, extra: Record<stri
   };
 }
 
+/**
+ * Поля записи пола, которые обработчик клика материалом в редакторе ПЕРЕЗАПИСЫВАЕТ
+ * (бандл @3266628: r.exist/type_laying/cover/width/height/stitch_width/
+ * polygons_layout/polygons_layout_points); polygon/pc — форма комнаты. Всё
+ * остальное (f0offset, anchor, angle, custom_angle, id и любые прочие ключи
+ * записи) редактор при смене покрытия СОХРАНЯЕТ — мутация записи in place, —
+ * поэтому setFloorFinish переносит их из прежней записи (M1 ревью 348).
+ */
+const FLOOR_ENTRY_REWRITTEN_KEYS = new Set([
+  "exist", "id", "polygon", "pc", "cover",
+  "type_laying", "width", "height", "stitch_width",
+  "polygons_layout", "polygons_layout_points",
+]);
+
+/** Прежняя запись пола с покрытием (exist===true и cover) — источник переноса полей. */
+function aliveFloorPrev(room: RoomRec): Record<string, unknown> | undefined {
+  const f = (Array.isArray(room.floors) ? room.floors : [])[0] as Record<string, unknown> | undefined;
+  return f && f["exist"] === true && typeof f["cover"] === "string" ? f : undefined;
+}
+
 export type FloorFinishParams = {
   /** мм (в модели см). */
   plankLengthMm?: number;
@@ -196,21 +218,158 @@ export function setFloorFinish(model: Model, roomRef: string, cover: FloorCover,
   if (params.plankWidthMm !== undefined) extra.height = r2(params.plankWidthMm / 10);
   if (params.stitchWidthMm !== undefined) extra.stitch_width = r2(params.stitchWidthMm / 10);
   if (params.typeLaying !== undefined) extra.type_laying = params.typeLaying;
+  const prev = aliveFloorPrev(room);
+  // M1 ревью 348: смена покрытия не стирает пользовательские поля прежней записи —
+  // редактор мутирует запись in place (бандл @3266628 меняет только
+  // exist/type_laying/cover/width/height/stitch_width/polygons_layout[,_points]),
+  // поэтому f0offset/anchor/angle/custom_angle/id и прочие ключи переносятся.
+  // M1-R ревью 350: панельные поля (width/height/stitch_width/type_laying) при
+  // СМЕНЕ покрытия НЕ наследуются — в редакторе они берутся из настроек нового
+  // инструмента (выбор инструмента: t=copy.object(tools[tool]) @3413380 →
+  // placeholder #pm-floor--width/height @3415531; клик @3266628:
+  // r.type_laying=settings.type_laying, r.width=e||settings.width||r.width,
+  // r.stitch_width=settings.stitch_width||.5), т.е. это умолчания нового
+  // покрытия, а не размер прежней записи; width/height остаются конструктору
+  // Floor (e.width||settings.width||0). Поля панели переносятся из прежней
+  // записи только при ТОМ ЖЕ покрытии (prev.cover===cover, путь «тот же
+  // материал», m1-R ревью 350) и только если параметр не задан явно.
+  const sameCover = prev !== undefined && prev["cover"] === cover;
+  const floorId = prev && typeof prev["id"] === "string" ? prev["id"] as string : `_f${newId(8)}`;
+  const entry = floorEntry(cover, room, floorId, extra);
+  if (prev) {
+    for (const [k, v] of Object.entries(prev)) {
+      if (FLOOR_ENTRY_REWRITTEN_KEYS.has(k) || k in entry) continue;
+      entry[k] = structuredClone(v);
+    }
+    if (sameCover) {
+      for (const [k, v] of [["width", params.plankLengthMm], ["height", params.plankWidthMm], ["stitch_width", params.stitchWidthMm], ["type_laying", params.typeLaying]] as const) {
+        if (v === undefined && prev[k] !== undefined) entry[k] = structuredClone(prev[k]);
+      }
+    }
+  }
   const floors = Array.isArray(room.floors) ? [...room.floors] : [];
   while (floors.length < 1) floors.push({ exist: false });
-  floors[0] = floorEntry(cover, room, `_f${newId(8)}`, extra);
+  floors[0] = entry;
   room.floors = floors;
   return { id: floors[0]!.id as string };
 }
 
-/** Снять покрытие пола комнаты. */
+/** Снять покрытие пола комнаты. Ластик редактора (Floor.delete, бандл ~2540000)
+ *  пишет {id, polygon, exist:false} — id прежней записи сохраняется (n1-R ревью 350). */
 export function removeFloorFinish(model: Model, roomRef: string): void {
   const { room } = resolveRoom(model, roomRef);
   const polygon = room.polygon ?? room.points ?? [];
   const floors = Array.isArray(room.floors) ? [...room.floors] : [];
   while (floors.length < 1) floors.push({ exist: false });
-  floors[0] = { exist: false, polygon: polygon.map((p) => ({ x: r2(p.x), y: r2(p.y) })) };
+  const prevId = typeof (floors[0] as Record<string, unknown> | undefined)?.["id"] === "string"
+    ? (floors[0] as Record<string, unknown>)["id"] as string
+    : undefined;
+  floors[0] = {
+    exist: false,
+    polygon: polygon.map((p) => ({ x: r2(p.x), y: r2(p.y) })),
+    ...(prevId !== undefined ? { id: prevId } : {}),
+  };
   room.floors = floors;
+}
+
+/**
+ * Подъём пола (f0offset, этап 347): контекстное меню покрытия пола
+ * (#cm-floor--floor0-offset, бандл @3532222). Значение в см: LIB.lengthInSystemUnits →
+ * LIB.correctValue(t, 0, 100); 0 — сброс. Подъём задаётся только на существующее
+ * покрытие пола (меню открывается на полигоне пола). При установке ненулевого
+ * подъёма, пока есть другие полы с подъёмом 0, редактор предлагает применить
+ * ко всем таким полам (модальное окно cm-floor--modal, кнопка confirm) —
+ * параметр applyToAllZero повторяет эту кнопку; отмена (по умолчанию) — только
+ * текущий пол, как в редакторе.
+ */
+export function setFloorOffset(model: Model, roomRef: string, offsetMm: number, applyToAllZero = false): { updated: number } {
+  if (!Number.isFinite(offsetMm) || offsetMm < 0 || offsetMm > FINISH_LIMITS.floorOffsetMaxMm) {
+    throw new McpError("INVALID_ARGUMENT", `offset_mm должен быть числом от 0 до ${FINISH_LIMITS.floorOffsetMaxMm} мм (редактор: 0..100 см)`);
+  }
+  const { room } = resolveRoom(model, roomRef);
+  const floors = Array.isArray(room.floors) ? room.floors as Array<Record<string, unknown>> : [];
+  const f0 = floors[0];
+  if (!f0 || f0["exist"] !== true || typeof f0["cover"] !== "string") {
+    throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет покрытия пола — подъём пола задаётся на покрытие (сначала finish_floor_set)`);
+  }
+  const v = mmToCm(offsetMm);
+  f0["f0offset"] = v;
+  let updated = 1;
+  if (applyToAllZero) {
+    // кнопка «Применить ко всем» (#cm-floor--floor0-offset--confirm, бандл
+    // @3536116): значение ставится всем записям полов ВСЕХ комнат с f0offset==0,
+    // включая записи без покрытия (у Floor умолчание f0offset=0 — конструктор
+    // `e.f0offset||0`); FIELD m3 ревью 348 — раньше менялись только полы с покрытием.
+    for (const r of Object.values(roomsOf(model))) {
+      for (const f of (Array.isArray(r.floors) ? r.floors : []) as Array<Record<string, unknown>>) {
+        if (!f || f === f0) continue;
+        if ((num(f["f0offset"]) ?? 0) !== 0) continue;
+        f["f0offset"] = v;
+        updated++;
+      }
+    }
+  }
+  return { updated };
+}
+
+/**
+ * Точка начала укладки покрытия пола (anchor, инструмент anchor_floor листа
+ * «Напольные покрытия», PRO — ключ в PRO_EDITOR_KEYS): клик по полу ставит
+ * floor.anchor={p: точка}, сбрасывает угол раскладки (angle=0, custom_angle
+ * удаляется — бандл, mouseup anchor_floor); угол с якорем можно задать
+ * контекстным меню #cm-floor-anchor--angle (angle=значение, custom_angle=1) —
+ * параметр angleDeg. Удаление — ластик по якорю (anchor удаляется, гейта нет:
+ * удаление в редакторе не помечено is_pro). atMm=null — удалить якорь.
+ */
+export function setFloorAnchor(
+  model: Model,
+  roomRef: string,
+  atMm: { x: number; y: number } | null,
+  angleDeg?: number,
+): { anchor: { x_mm: number; y_mm: number } | null } {
+  const { room } = resolveRoom(model, roomRef);
+  const floors = Array.isArray(room.floors) ? room.floors as Array<Record<string, unknown>> : [];
+  const f0 = floors[0];
+  if (!f0 || f0["exist"] !== true || typeof f0["cover"] !== "string") {
+    throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет покрытия пола — точка укладки ставится на покрытие (сначала finish_floor_set)`);
+  }
+  if (atMm === null) {
+    delete f0["anchor"];
+    return { anchor: null };
+  }
+  if (!Number.isFinite(atMm.x) || !Number.isFinite(atMm.y)) {
+    throw new McpError("INVALID_ARGUMENT", "at_mm.x/at_mm.y должны быть конечными числами (мм)");
+  }
+  if (angleDeg !== undefined) {
+    if (!Number.isFinite(angleDeg) || angleDeg < 0 || angleDeg >= 360) {
+      throw new McpError("INVALID_ARGUMENT", "angle_deg должен быть числом от 0 (включительно) до 360 (не включительно)");
+    }
+  }
+  const poly = (Array.isArray(f0["polygon"]) && (f0["polygon"] as Point[]).length >= 3
+    ? f0["polygon"] : (room.polygon ?? room.points ?? [])) as Point[];
+  if (poly.length < 3) {
+    throw new McpError("INVALID_ARGUMENT", `у покрытия пола комнаты ${roomRef} нет полигона — точка укладки не ставится`);
+  }
+  const p = { x: mmToCm(atMm.x), y: mmToCm(atMm.y) };
+  // как в редакторе: клик по полу — точка внутри полигона пола (isPointOverPolygon);
+  // точка на границе в пределах допуска координат тоже принимается
+  const onEdge = poly.some((a, i) => {
+    const b = poly[(i + 1) % poly.length]!;
+    return projD(p, a, b) <= COORD_TOL;
+  });
+  if (!pointInPolygon(p, poly) && !onEdge) {
+    throw new McpError("INVALID_ARGUMENT", "at_mm вне полигона покрытия пола — точка укладки ставится внутри пола (координаты — из model_get, мм)");
+  }
+  f0["anchor"] = { p };
+  if (angleDeg !== undefined) {
+    f0["angle"] = angleDeg;
+    f0["custom_angle"] = 1;
+  } else {
+    // как в редакторе (mouseup anchor_floor): угол сбрасывается, custom_angle снимается
+    f0["angle"] = 0;
+    delete f0["custom_angle"];
+  }
+  return { anchor: { x_mm: cmToMm(p.x), y_mm: cmToMm(p.y) } };
 }
 
 export type WallFinishParams = {
@@ -882,7 +1041,16 @@ export function removeCeilingFinish(model: Model, roomRef: string): CeilingFinis
 //   освобождений — порча после записи не «verified».
 
 export type FinishSig = {
-  floor?: { cover: string; width?: number; height?: number; stitch?: number; angle?: number; laying?: string };
+  floor?: {
+    cover: string; width?: number; height?: number; stitch?: number; angle?: number; laying?: string;
+    /** Подъём пола (f0offset, этап 347): явно заданное пользователем значение, см. */
+    f0?: number;
+    /** Точка укладки (anchor.p, этап 347): явно задана PRO-инструментом, см. */
+    anchor?: { x: number; y: number };
+    /** Пользовательский угол (custom_angle=1 — меню #cm-floor-anchor--angle;
+     *  n2-R ревью 350: потери после restore не проходят мимо сверки). */
+    custom?: number;
+  };
   ceiling?: { material: string; level?: number; profile?: string };
   walls?: Array<{ pid?: string; line: [Point, Point]; type: string; layer: number; height: number; fromFloor: number }>;
   /** Напольные плинтусы (245): части по рёбрам комнаты (полная проекция — ревью 246 №10). */
@@ -984,6 +1152,14 @@ function floorSig(room: RoomRec): FinishSig["floor"] | undefined {
   const cover = typeof f.cover === "string" ? f.cover : undefined;
   if (!cover) return undefined;
   const angle = num(f.angle);
+  // якорь (точка укладки, этап 347): явно заданный пользователем PRO-инструментом,
+  // сравнивается по координатам с допуском COORD_TOL (бандл restoreTotal копирует
+  // anchor как есть — restoreOneToOne/restoreTotal, позиции не пересчитываются)
+  const anchorRaw = f.anchor as { p?: { x?: unknown; y?: unknown } } | undefined;
+  const ap = anchorRaw?.p;
+  const anchor = ap && num(ap.x) !== undefined && num(ap.y) !== undefined
+    ? { x: num(ap.x)!, y: num(ap.y)! }
+    : undefined;
   return {
     cover,
     width: num(f.width),
@@ -991,6 +1167,14 @@ function floorSig(room: RoomRec): FinishSig["floor"] | undefined {
     stitch: num(f.stitch_width),
     angle: angle !== undefined ? ((angle % 360) + 360) % 360 : undefined,
     laying: typeof f.type_laying === "string" ? f.type_laying : undefined,
+    // подъём пола (этап 347): явно заданное пользователем значение (0 — умолчание);
+    // раньше сверялся как «производный», но задаётся пользователем контекстным меню
+    // и обязан сохраняться (new-entity-section.md)
+    f0: num(f.f0offset),
+    anchor,
+    // n2-R ревью 350: custom_angle (угол с якорем задан контекстным меню) —
+    // явно заданное пользователем поле, теряю не проходит мимо сверки
+    custom: num(f.custom_angle),
   };
 }
 
@@ -1215,7 +1399,7 @@ function sameOptional(exp: number | undefined, got: number | undefined, defaults
 
 function sameFloor(exp: NonNullable<FinishSig["floor"]>, got: NonNullable<FinishSig["floor"]>): boolean {
   // пользовательские параметры обязательны: исчезновение явно заданного значения — расхождение;
-  // производные поля (polygons_layout, patch, f0offset) не сверяются
+  // производные поля (polygons_layout, patch) не сверяются
   if (exp.cover !== got.cover) return false;
   if (!sameOptional(exp.width, got.width, [])) return false;
   if (!sameOptional(exp.height, got.height, [])) return false;
@@ -1223,6 +1407,19 @@ function sameFloor(exp: NonNullable<FinishSig["floor"]>, got: NonNullable<Finish
   if (!sameOptional(exp.stitch, got.stitch, [0])) return false;
   if (!sameOptional(exp.angle, got.angle, [0])) return false;
   if (exp.laying !== undefined && got.laying !== exp.laying) return false;
+  // этап 347: подъём пола — явно заданное значение (0 — умолчание, отсутствие
+  // эквивалентно нулю); точка укладки — симметрично по наличию, координаты с
+  // допуском COORD_TOL: редактор копирует anchor как есть, но не создаёт сам
+  // (появление якоря без пользовательского — подмена)
+  if (!sameOptional(exp.f0, got.f0, [0])) return false;
+  if ((exp.anchor === undefined) !== (got.anchor === undefined)) return false;
+  if (exp.anchor && got.anchor &&
+      (Math.abs(exp.anchor.x - got.anchor.x) > COORD_TOL || Math.abs(exp.anchor.y - got.anchor.y) > COORD_TOL)) {
+    return false;
+  }
+  // n2-R ревью 350: custom_angle сверяется симметрично по наличию; снятие
+  // custom_angle без сброса угла (mouseup anchor_floor сбрасывает оба) не ловим
+  if (!sameOptional(exp.custom, got.custom, [])) return false;
   return true;
 }
 
@@ -1838,6 +2035,32 @@ export function finishMismatches(
  * снятие двухуровневого завершается тем же finish_ceiling_remove, чужое покрытие
  * потолка снимается тем же ластиком, что и своё (дедуп по инструменту, не по виду).
  */
+/**
+ * Шаги снятия по видам потери (n1 ревью 344/342/339): дедуп по инструменту —
+ * инструмент, уже названный в шагах (в том числе внутри составного шага
+ * ceiling_complex), повторно не называется. Сравнение по границе слова, не по
+ * подстроке: иначе инструмент с именем-подстрокой (finish_wall_remove и
+ * будущий finish_wall_remove_all) молча выпадает из шагов. Реестр — параметр
+ * (сторож-тест проверяет дедуп на синтетических именах).
+ */
+export function finishLossSteps(
+  losses: readonly FinishLoss[],
+  registry: readonly FinishLossRule[] = FINISH_LOSS_REGISTRY,
+): string[] {
+  const kinds = new Set(losses.map((l) => l.kind));
+  const rules = registry
+    .filter((r) => kinds.has(r.kind))
+    .sort((a, b) => a.order - b.order);
+  const steps: string[] = [];
+  for (const r of rules) {
+    const tool = r.tool;
+    if (tool === null) continue;
+    if (steps.some((s) => new RegExp(`\\b${tool.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(s))) continue;
+    steps.push(tool);
+  }
+  return steps;
+}
+
 export function finishLossHint(losses: readonly FinishLoss[]): string {
   const kinds = new Set(losses.map((l) => l.kind));
   const rules = FINISH_LOSS_REGISTRY
@@ -1848,14 +2071,7 @@ export function finishLossHint(losses: readonly FinishLoss[]): string {
     return "отделка комнаты, которая исчезает или сливается при изменении стен, не переживает операцию — какие именно расхождения — в details.finish_mismatches; проверьте текущую отделку через finish_get, снимите её до операции и повторите";
   }
   const what = withTool.map((r) => r.label);
-  const steps: string[] = [];
-  for (const r of withTool) {
-    const tool = r.tool as string;
-    // n9 ревью 339, n1 ревью 342: инструмент, уже названный в шагах (в том числе
-    // внутри составного шага ceiling_complex), повторно не называется
-    if (steps.some((s) => s.includes(tool))) continue;
-    steps.push(tool);
-  }
+  const steps = finishLossSteps(losses);
   const extra = withTool.length < rules.length
     ? "; есть и расхождения без однозначного инструмента — см. details.finish_mismatches и finish_get"
     : "";
@@ -1963,6 +2179,9 @@ export function finishList(model: Model, roomRef?: string): Record<string, unkno
         ...(floor.height !== undefined ? { plank_width_mm: Math.round(floor.height * 10) } : {}),
         ...(floor.stitch !== undefined ? { stitch_width_mm: Math.round(floor.stitch * 10) } : {}),
         ...(floor.laying !== undefined ? { type_laying: floor.laying } : {}),
+        // этап 347: подъём пола и точка укладки видны в finish_get
+        offset_mm: Math.round((floor.f0 ?? 0) * 10),
+        ...(floor.anchor ? { anchor: { x_mm: Math.round(floor.anchor.x * 10), y_mm: Math.round(floor.anchor.y * 10) } } : {}),
       } } : {}),
       ...(ceiling ? { ceiling: {
         material: ceiling.material,
