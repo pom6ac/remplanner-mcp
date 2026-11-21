@@ -592,6 +592,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "door_glass (Стеклянная дверь 80), door_garage (Гаражные ворота 300×225), " +
         "door_system_x2/x3/x4 (Каскадная система 2/3/4-створчатая 160/240/320), " +
         "door_system_penal_x2/x3/x4 (Раздвижная система 2/3/4-створчатая 160/240/320). " +
+        "PRO (is_pro, эталон 328-pro-anon.json): door_roto/_double, door_book/_double, door_bellows, door_glass, " +
+        "door_garage, door_system_x2/x3/x4, door_system_penal_x2/x3/x4 — на тарифе без PRO отказ " +
+        "гейта тарифа (единый реестр src/server/pro.ts); doorway, door, door_double, купе и пенал — не PRO. " +
         "Пункты меню «Двери-купе 2/3/4-дверные» (doors_coupe_2x/3x/4x), «Домофон» (door_remote) и «Видеодомофон» " +
         "(door_videoremote) — предметы каталога, ставятся item_add, а не opening_add. " +
         "Окна (пункты меню «Окна»): windowway (Проем без окна 120×150), window (Стандартное окно 120×150, подоконник 85), " +
@@ -637,6 +640,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // PRO-гейт по типу проёма (ревью 331 Н1): 13 PRO-типов дверей (roto,
+        // книжка, гармошка, стеклянная, гаражные, каскадные/раздвижные системы)
+        // — is_pro в разметке редактора (единый список PRO_EDITOR_KEYS)
+        await proGateKey("opening_add", a["type"] as string);
         const hole = ws.apply("opening_add", (m) =>
           addOpening(m, openingAddArgs(resolveWall(m, a["wall_id"] as string).id, a)));
         return ok(compactEntity(ws.model, (c) =>
@@ -2268,8 +2275,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "gypsum_ceiling, stretch_ceiling, stretch_ceiling_tissue, rack_ceiling, wooden_ceiling, " +
         "plastic_panels_ceiling, armstrong_ceiling, grillato_ceiling. Закарнизные ниши переживают " +
         "смену покрытия; на paint_ceiling/whitewash_ceiling при существующих нишах — отказ " +
-        "(сначала finish_ceiling_niche_remove). Двухуровневый потолок (complex) смене материала " +
-        "НЕ переживает — снимается, как в редакторе; ответ содержит warning complex_removed. " +
+        "(сначала finish_ceiling_niche_remove). Двухуровневый потолок (complex): смена на ДРУГОЙ " +
+        "материал его НЕ переживает — снимается с warning complex_removed (как в редакторе); " +
+        "смена на тот же материал — no-op, двухуровневая отделка сохраняется (как в редакторе). " +
         "После правки вызывайте model_validate и project_save.",
       {
         room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),
@@ -2293,18 +2301,17 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     finish_ceiling_remove: tool(
-      "Снять покрытие потолка комнаты (инструмент ceiling_remove). При закарнизных нишах — отказ " +
-        "(сначала finish_ceiling_niche_remove): ниши не стираются молча. Двухуровневый потолок " +
-        "(complex) снимается вместе с покрытием — как смена материала в редакторе; ответ содержит " +
-        "warning complex_removed.",
+      "Снять покрытие потолка комнаты (инструмент ceiling_remove — ластик). При закарнизных нишах — отказ " +
+        "(сначала finish_ceiling_niche_remove): ниши не стираются молча. Двухуровневый потолок (complex) — " +
+        "отказ: в редакторе ластик complex не снимает (живая проба 328-complex, шаг 3; Ceiling.delete() " +
+        "заменяет запись целиком, комплексные поля с exist:false не живут) — снимите сменой материала " +
+        "(finish_ceiling_set с другим покрытием снимает комплекс с warning complex_removed, как в редакторе).",
       { room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты") },
       async (a) => {
         const ws = wsOf();
-        const res = ws.apply("finish_ceiling_remove", (m) => removeCeilingFinish(m, a["room_id"] as string));
+        ws.apply("finish_ceiling_remove", (m) => { removeCeilingFinish(m, a["room_id"] as string); return true; });
         return ok({
           room_id: a["room_id"], removed: "ceiling",
-          // ревью 329 №5: снятие complex — с явным предупреждением
-          ...(res.complexRemoved ? { warnings: ["complex_removed: снят двухуровневый потолок комнаты (offset/radius/material2/level2)"] } : {}),
           hint: SCENARIO_HINT,
         });
       },
@@ -2315,10 +2322,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     // radius 10, level 15, level2 7.5, material gypsum_ceiling, material2 stretch_ceiling,
     // type closed (эталон 328-complex-etalon.json); производные polygon2/polygon_new/
     // polygons_layout/edges_new редактор пересчитывает сам. Снятие: в UI ластик
-    // двухуровневый потолок не снимает, но комплекс не переживает ни смену материала,
-    // ни снятие покрытия (finish_ceiling_set/finish_ceiling_remove) — ответ содержит
-    // warning complex_removed (ревью 329 №5). Текущее состояние — finish_get
-    // (complex/level2/material2).
+    // двухуровневый потолок не снимает (проба 328-complex, шаг 3) — finish_ceiling_remove
+    // при complex тоже отказывает (ревью 331 Н4б); смена материала на ДРУГОЙ снимает
+    // комплекс с warning complex_removed, на тот же материал — no-op (ревью 331 Н4а).
+    // Текущее состояние — finish_get (complex/level2/material2).
     finish_ceiling_complex_set: tool(
       "Поставить двухуровневый потолок в зоне комнаты (лист «Потолки», инструмент «Двухуровневый " +
         "потолок»): внутренний контур с отступом 400 мм от стен, радиус скругления 100 мм (умолчания " +
@@ -2326,9 +2333,10 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "самопересечений (GEOMETRY_CONFLICT/INVALID_ARGUMENT); в террасе не ставится. at_mm — точка " +
         "внутри зоны потолка (клик в редакторе); обязательна, если зон больше одной; при вложенных " +
         "зонах выбирается зона наименьшей площади (как в редакторе). Повторный вызов по уже " +
-        "двухуровневой зоне — нет-op (как в редакторе). Снять: ластик complex не снимает, но снятие " +
-        "покрытия (finish_ceiling_remove) или смена материала (finish_ceiling_set) убирают " +
-        "двухуровневый потолок — с warning complex_removed в ответе. " +
+        "двухуровневой зоне — нет-op (как в редакторе). Снять: в редакторе ластик complex НЕ снимает " +
+        "(живая проба 328-complex, шаг 3) — finish_ceiling_remove при complex тоже отказывает; " +
+        "смена материала (finish_ceiling_set с ДРУГИМ покрытием) убирает двухуровневый потолок — " +
+        "с warning complex_removed в ответе (как в редакторе). " +
         "После правки вызывайте model_validate и project_save.",
       {
         room_id: z.string().min(1).describe("метка R<n> из model_get или id комнаты"),

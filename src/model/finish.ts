@@ -651,9 +651,13 @@ export type CeilingFinishParams = {
  *  записях); на краску/побелку ниша в UI не ставится, поэтому при нишах такой
  *  материал отклоняется до правки. */
 /** Результат смены/снятия покрытия потолка: complexRemoved — была ли снята
- *  двухуровневая отделка (ревью 329 №5: в редакторе смена материала и снятие
- *  потолка делают complex=false и стирают offset/radius/material2 — MCP делает
- *  то же, но сообщает об этом явно, не молча). */
+ *  двухуровневая отделка (ревью 329 №5: в редакторе смена материала на ДРУГОЙ
+ *  делает complex=false и стирает offset/radius/material2 — бандл 268-app.js:
+ *  «tool!==r.material&&(r.exist=!0,r.complex=!1,…delete r.offset,delete
+ *  r.radius,delete r.material2…»); MCP делает то же и сообщает об этом явно.
+ *  Ревью 331 Н4а: смена на ТОТ же материал в редакторе — no-op (условие
+ *  tool!==r.material ложно, обработчик не вызывается) — MCP тоже не меняет
+ *  запись и complex не трогает (complexRemoved=false). */
 export type CeilingFinishResult = { id: string; complexRemoved: boolean };
 
 export function setCeilingFinish(model: Model, roomRef: string, material: CeilingCover, params: CeilingFinishParams): CeilingFinishResult {
@@ -661,8 +665,16 @@ export function setCeilingFinish(model: Model, roomRef: string, material: Ceilin
     throw new McpError("INVALID_ARGUMENT", `неизвестное покрытие потолка «${material}» (допустимо: ${CEILING_COVERS.join(", ")})`);
   }
   const { id, room } = resolveRoom(model, roomRef);
-  // ревью 329 №5: двухуровневый потолок при смене материала снимается (как в
-  // редакторе: r.exist=!0, r.complex=!1, delete offset/radius/material2) —
+  // ревью 331 Н4а: смена на тот же материал — no-op, как в редакторе (обработчик
+  // смены материала вызывается только при tool!==r.material): запись и
+  // двухуровневая отделка не трогаются, complexRemoved=false
+  const ceilings0 = Array.isArray(room.ceilings) ? room.ceilings as Array<Record<string, unknown>> : [];
+  const existRecs = ceilings0.filter((c) => c?.["exist"] === true);
+  if (existRecs.length > 0 && existRecs.every((c) => c["material"] === material)) {
+    return { id: (existRecs[0]!["id"] as string) ?? id, complexRemoved: false };
+  }
+  // ревью 329 №5: двухуровневый потолок при смене материала на ДРУГОЙ снимается
+  // (как в редакторе: r.exist=!0, r.complex=!1, delete offset/radius/material2) —
   // caller получает complexRemoved для явного warning в ответе
   const complexRemoved = ceilingHasComplex(room);
   if (params.level !== undefined && (!Number.isInteger(params.level) || params.level < 0 || params.level > FINISH_LIMITS.ceilingLevelMax)) {
@@ -752,13 +764,24 @@ function ceilingHasComplex(room: RoomRec): boolean {
 /** Снять покрытие потолка комнаты. При закарнизных нишах — отказ с подсказкой
  *  finish_ceiling_niche_remove (по стандарту UI, как в setCeilingFinish):
  *  молчаливо стирать ниши нельзя (ревью 248 A). Зонированный потолок: exist:false
- *  ставится во ВСЕ записи, полигоны зон сохраняются (ревью 311 №1). Двухуровневая
- *  отделка снимается вместе с покрытием (в редакторе ластик не снимает complex,
- *  но смене материала/снятию потолка complex не переживает) — ревью 329 №5:
- *  caller сообщает об этом warning'ом, не молча. */
+ *  ставится во ВСЕ записи, полигоны зон сохраняются (ревью 311 №1).
+ *  Ревью 331 Н3/Н4б (решение координатора): при двухуровневой отделке — ОТКАЗ:
+ *  в редакторе ластик (ceiling_remove) complex не снимает (живая проба
+ *  328-complex, шаг 3; бандл 268-app.js: Ceiling.delete() заменяет запись на
+ *  {polygon, edges, exist:!1} — комплексные поля с exist:false сохранить нельзя,
+ *  а клик ластика по complex-зоне до delete не доходит). Путь снятия — смена
+ *  материала (setCeilingFinish с другим материалом снимает комплекс с warning
+ *  complex_removed, как в редакторе). */
 export function removeCeilingFinish(model: Model, roomRef: string): CeilingFinishResult {
   const { room } = resolveRoom(model, roomRef);
-  const complexRemoved = ceilingHasComplex(room);
+  if (ceilingHasComplex(room)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `у комнаты ${roomRef} двухуровневый потолок — в редакторе ластик (ceiling_remove) его не снимает ` +
+        "(живая проба 328-complex, шаг 3); смените материал (finish_ceiling_set с другим покрытием) — " +
+        "двухуровневая отделка снимется с предупреждением complex_removed",
+    );
+  }
   if (roomHasCeilingNiches(room)) {
     throw new McpError(
       "INVALID_ARGUMENT",
@@ -782,11 +805,11 @@ export function removeCeilingFinish(model: Model, roomRef: string): CeilingFinis
       list[i] = entry;
     }
     room.ceilings = list;
-    return { id: "", complexRemoved };
+    return { id: "", complexRemoved: false };
   }
   list[0] = { exist: false, polygon: polygon.map((p) => ({ x: r2(p.x), y: r2(p.y) })) };
   room.ceilings = list;
-  return { id: "", complexRemoved };
+  return { id: "", complexRemoved: false };
 }
 
 // ---------- семантическая сверка ----------

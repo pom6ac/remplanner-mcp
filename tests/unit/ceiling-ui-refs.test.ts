@@ -444,13 +444,17 @@ test("ревью 329 №4в: normalize потерял complex-поля при sp
   let saves = 0;
   const ws = saveMock(server, () => { saves++; }, (norm) => {
     const rooms = (norm as { rooms2?: Record<string, Record<string, unknown>> }).rooms2!;
+    // ревью 331 Н5: имитация теряет ТОЛЬКО complex-поля (complex/material2/level2/
+    // offset/radius) — level 15 и material сохранены, как у complex-записи
+    // эталона (328-complex-etalon.json); иначе тест краснеет из-за level 15→0,
+    // а потерю complex-полей не ловит
     rooms["room1"] = {
       polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 150 }, { x: 0, y: 150 }],
-      ceilings: [{ exist: true, material: "gypsum_ceiling", level: 0, profile: "standard" }],
+      ceilings: [{ exist: true, material: "gypsum_ceiling", level: 15, profile: "standard" }],
     };
     rooms["room2"] = {
       polygon: [{ x: 0, y: 150 }, { x: 400, y: 150 }, { x: 400, y: 300 }, { x: 0, y: 300 }],
-      ceilings: [{ exist: true, material: "gypsum_ceiling", level: 0, profile: "standard" }],
+      ceilings: [{ exist: true, material: "gypsum_ceiling", level: 15, profile: "standard" }],
     };
   });
   await ws.open("0", "1");

@@ -18,8 +18,9 @@
 //      finally (checkFinal); «ИЗМЕНИЛСЯ» — process.exit(1) ДО следующих
 //      записей (эскалация координатору, без повторных прогонов).
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fetchClientPage, loadModel, parseClientPage, type ClientProject, type LoadedModel } from "../../src/api.ts";
 import type { SessionState } from "../../src/session.ts";
 import { sig } from "./probe-sig.ts";
@@ -197,28 +198,61 @@ export type ReadonlyGuard = {
 };
 
 /**
+ * Корень репо по git (ревью 331 Н6): `git rev-parse --git-common-dir` — общий
+ * каталог .git (в worktree указывает на основной репо), корень — его родитель.
+ * Эвристика «самый внешний предок с .orca-reports» (ревью 329 №7) удалена:
+ * каталог .orca-reports в ~ или ~/projects перехватывал бы эталон. null — git
+ * недоступен (caller обязан отказать).
+ */
+export function gitRepoRoot(cwd: string = import.meta.dirname): string | null {
+  try {
+    const out = execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd, encoding: "utf8" }).trim();
+    if (!out) return null;
+    return dirname(resolve(cwd, out));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Файл-эталон контрольного проекта на пару READONLY (322 N4; 323 N6 — ключ без
  * dev-объекта; ревью 329 №7): АБСОЛЮТНЫЙ путь в КОРНЕВОМ .orca-reports/tmp репо,
  * а не относительно cwd/worktree — иначе каждый worktree получает свой базис
- * (инцидент 328: изменение 27→33 не было замечено). Корень ищется самым внешним
- * каталогом-предком с .orca-reports (worktree лежит в <root>/.worktrees/<имя>).
+ * (инцидент 328: изменение 27→33 не было замечено). Корень — по git
+ * (gitRepoRoot, ревью 331 Н6), не по эвристике предков.
  */
 export function readonlyRefPath(readonlyId: string, readonlyPlanId: string): string {
   const h = createHash("sha256").update(`${readonlyId}|${readonlyPlanId}`).digest("hex").slice(0, 12);
-  let dir = import.meta.dirname;
-  let rootReports: string | null = null;
-  for (;;) {
-    const prev = dir;
-    try {
-      if (statSync(join(dir, ".orca-reports")).isDirectory()) rootReports = join(dir, ".orca-reports");
-    } catch { /* нет каталога на этом уровне */ }
-    dir = join(dir, "..");
-    if (dir === prev) break;
+  const root = gitRepoRoot();
+  if (root === null) {
+    throw new ProbeGuardError("не удалось определить корень репо (git rev-parse --git-common-dir) — эталон контрольного проекта нельзя привязать к репо — стоп (ревью 329 №7, 331 Н6)");
   }
-  if (rootReports === null) {
-    throw new ProbeGuardError("не найден корневой каталог .orca-reports — эталон контрольного проекта нельзя привязать к репо — стоп (ревью 329 №7)");
-  }
-  return join(rootReports, "tmp", `readonly-ref-${h}.json`);
+  return join(root, ".orca-reports", "tmp", `readonly-ref-${h}.json`);
+}
+
+/**
+ * Решение «что делать с эталоном» в чистой функции (ревью 331 Н6): есть файл —
+ * load; файла нет и стоит явный env-флаг REMPLANNER_PROBE_READONLY_REF_INIT=1 —
+ * create; иначе — refuse (молчаливое автосоздание базиса запрещено — инцидент
+ * 328, 27→33→39). Юнит-тесты закрепляют все три ветки.
+ */
+export type ReadonlyRefDecision =
+  | { action: "load" }
+  | { action: "create" }
+  | { action: "refuse"; reason: string };
+
+export function readonlyRefDecision(refExists: boolean, initFlag: string | undefined): ReadonlyRefDecision {
+  if (refExists) return { action: "load" };
+  if (initFlag === "1") return { action: "create" };
+  return {
+    action: "refuse",
+    reason:
+      "эталон контрольного проекта отсутствует — СТОП (ревью 329 №7, 331 Н6). " +
+      "Молчаливое создание базиса запрещено. Создать базис можно явно одной командой:\n" +
+      "  REMPLANNER_PROBE_READONLY_REF_INIT=1 <проба> run\n" +
+      "Перебазирование существующего эталона (контрольный проект изменился) — только " +
+      "решение координатора с подтверждением пользователя.",
+  };
 }
 
 /**
@@ -233,9 +267,11 @@ export function readonlyRefPath(readonlyId: string, readonlyPlanId: string): str
 export async function readonlyGuard(session: SessionState, readonlyId: string, readonlyPlanId: string, refPath: string): Promise<ReadonlyGuard> {
   mkdirSync(dirname(refPath), { recursive: true });
   let reference: LoadedModel;
-  if (existsSync(refPath)) {
+  // решение — чистая функция readonlyRefDecision (ревью 331 Н6), ветки закреплены тестами
+  const decision = readonlyRefDecision(existsSync(refPath), process.env["REMPLANNER_PROBE_READONLY_REF_INIT"]);
+  if (decision.action === "load") {
     reference = JSON.parse(readFileSync(refPath, "utf8")) as LoadedModel;
-  } else if (process.env["REMPLANNER_PROBE_READONLY_REF_INIT"] === "1") {
+  } else if (decision.action === "create") {
     const cur = await loadModel(session, readonlyId, readonlyPlanId);
     if (cur.data_empty) {
       console.error("контрольный GET пустой (data_empty) — эталон не создаётся, отказ");
@@ -245,13 +281,7 @@ export async function readonlyGuard(session: SessionState, readonlyId: string, r
     writeFileSync(refPath, JSON.stringify(reference, null, 1) + "\n");
     console.error(`эталон контрольного проекта создан (явный флаг REMPLANNER_PROBE_READONLY_REF_INIT): ${refPath}`);
   } else {
-    console.error(
-      `эталон контрольного проекта отсутствует: ${refPath} — СТОП (ревью 329 №7).\n` +
-      "Молчаливое создание базиса запрещено. Создать базис можно явно одной командой:\n" +
-      "  REMPLANNER_PROBE_READONLY_REF_INIT=1 <проба> run\n" +
-      "Перебазирование существующего эталона (контрольный проект изменился) — только " +
-      "решение координатора с подтверждением пользователя.",
-    );
+    console.error(`эталон контрольного проекта: ${refPath}\n${decision.reason}`);
     process.exit(1);
   }
   const changed = async (tag: string): Promise<boolean> => {

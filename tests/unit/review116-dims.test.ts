@@ -33,6 +33,18 @@ async function start(): Promise<Client> {
   return client;
 }
 
+/** Серверный контекст под PRO (ревью 331 Н8): comment_add/update — PRO-инструменты
+ *  (этап 328), полный путь обработчика проверяется только под тарифом pro;
+ *  тест-инъекции ServerContext (offlineTariff/offlineAnon) сеть не используют. */
+async function startPro(): Promise<Client> {
+  const ctx = new ServerContext({ offlineFixture: FIXTURE, offlineTariff: "pro", offlineAnon: false });
+  const server = buildServer(ctx);
+  const client = new Client({ name: "review116-pro", version: "0.0.0" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(b), client.connect(a)]);
+  return client;
+}
+
 type ToolCallResult = { isError?: boolean; content?: { type: string; text?: string }[] };
 const text = (r: unknown): string => ((r as ToolCallResult).content as { text: string }[])[0]!.text;
 
@@ -46,7 +58,53 @@ function baseCommentModel(): Model {
 
 // ---------- R1: канонизация текста комментария ----------
 
-test("116 R1: comment_add с двойными кавычками — канонический текст и warning (модельный слой; PRO-гейт comments — pro-gate.test.ts)", () => {
+// Ревью 331 Н8: серверные тесты 116 R1 возвращены (обработчик comment_add/
+// comment_update: ответ text/warnings и comments_list) — под тарифом pro,
+// потому что комментарии PRO (этап 328). Свойства модельного слоя остаются
+// покрыты модельными тестами ниже.
+
+test("116 R1: comment_add с двойными кавычками — warning и канонический текст в ответе и comments_list (сервер, pro)", async () => {
+  const client = await startPro();
+  const add = await client.callTool({ name: "comment_add", arguments: { point: { x: 1000, y: 1000 }, text: 'say "ok"' } });
+  assert.ok(!add.isError, text(add));
+  const res = JSON.parse(text(add)) as { text?: string; warnings?: string[] };
+  assert.equal(res.text, "say ''ok''", `в ответе — итоговый текст: ${text(add)}`);
+  assert.ok(Array.isArray(res.warnings) && res.warnings.length > 0 && res.warnings.some((w) => w.includes("''ok''")), `warning о канонизации: ${text(add)}`);
+  const list = await client.callTool({ name: "comments_list", arguments: {} });
+  const comments = JSON.parse(text(list)) as { text: string }[];
+  assert.equal(comments[0]!.text, "say ''ok''", "comments_list возвращает ровно сохраняемый (отображаемый) текст");
+  await client.close();
+});
+
+test("116 R1: comment_add с обратным апострофом — канонизируется в апостроф с warning (сервер, pro)", async () => {
+  const client = await startPro();
+  const add = await client.callTool({ name: "comment_add", arguments: { point: { x: 1000, y: 1000 }, text: "a`b" } });
+  assert.ok(!add.isError, text(add));
+  const res = JSON.parse(text(add)) as { text?: string; warnings?: string[] };
+  assert.equal(res.text, "a'b");
+  assert.ok(res.warnings && res.warnings.length > 0);
+  const list = await client.callTool({ name: "comments_list", arguments: {} });
+  assert.equal((JSON.parse(text(list)) as { text: string }[])[0]!.text, "a'b");
+  await client.close();
+});
+
+test("116 R1: comment_update с кавычками — канонизация и warning; текст без спецсимволов — без warning (сервер, pro)", async () => {
+  const client = await startPro();
+  const add = await client.callTool({ name: "comment_add", arguments: { point: { x: 1000, y: 1000 }, text: "первый" } });
+  assert.ok(!add.isError, text(add));
+  const id = (JSON.parse(text(add)) as { id: string }).id;
+  const upd = await client.callTool({ name: "comment_update", arguments: { comment_id: id, text: 'его "текст"' } });
+  assert.ok(!upd.isError, text(upd));
+  const res = JSON.parse(text(upd)) as { text?: string; warnings?: string[] };
+  assert.equal(res.text, "его ''текст''");
+  assert.ok(res.warnings && res.warnings.length > 0);
+  const upd2 = await client.callTool({ name: "comment_update", arguments: { comment_id: id, text: "обычный текст" } });
+  const res2 = JSON.parse(text(upd2)) as { warnings?: string[] };
+  assert.ok(!res2.warnings || res2.warnings.length === 0, "канонизация не меняет текст — warning нет");
+  await client.close();
+});
+
+test("116 R1: comment_add с двойными кавычками — канонический текст и warning (модельный слой)", () => {
   const m = baseCommentModel();
   const comment = addComment(m, { point: { x: 100, y: 100 }, text: 'say "ok"' });
   const warnings = commentTextWarnings('say "ok"', comment.text);
@@ -234,7 +292,20 @@ function saveMockPlain(server: { saveId: string; model: Record<string, unknown> 
 
 // ---------- R3: comment_update(url:null) удаляет URL ----------
 
-test("116 R3: comment_update с url:null снимает ссылку, commentsList — url null", () => {
+test("116 R3: comment_update с url:null снимает ссылку (handler), comments_list — url null (сервер, pro)", async () => {
+  const client = await startPro();
+  const add = await client.callTool({ name: "comment_add", arguments: { point: { x: 1000, y: 1000 }, text: "со ссылкой", url: "https://example.com/" } });
+  assert.ok(!add.isError, text(add));
+  const id = (JSON.parse(text(add)) as { id: string }).id;
+  const upd = await client.callTool({ name: "comment_update", arguments: { comment_id: id, url: null } });
+  assert.ok(!upd.isError, text(upd));
+  const list = await client.callTool({ name: "comments_list", arguments: {} });
+  const comments = JSON.parse(text(list)) as { url: string | null }[];
+  assert.equal(comments[0]!.url, null, "URL удалён, а не остался прежним");
+  await client.close();
+});
+
+test("116 R3: comment_update с url:null снимает ссылку, commentsList — url null (модельный слой)", () => {
   const m = baseCommentModel();
   const added = addComment(m, { point: { x: 100, y: 100 }, text: "со ссылкой", url: "https://example.com/" });
   updateComment(m, { commentId: added.id, url: null });

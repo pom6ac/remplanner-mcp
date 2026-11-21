@@ -461,16 +461,18 @@ test("сторож фикстур: точки фикстур не совпада
   }
   assert.ok(refPoints.size > 0, "в readonly-ref-*.json не найдено точек — unexpected");
   // Исключения — только с обоснованием (переснятие — отдельная задача).
+  // Ревью 331 Н7: ключ исключения — пара «файл + точка», а не файл целиком:
+  // новые совпадающие точки в той же фикстуре сторож не пропустит молча.
   const ALLOW_REF_POINT_HITS = new Map<string, string>([
     // эталон 57-comm-ui3 (магнит к колонне) снят с dev-копии плана; совпадает одна
     // точка wall_line.p1 — переснятие эталона вне задачи 330 (ревью 329 №6, бэклог)
-    ["ui-ref-comm-water.json", "совпадение единственной точки; переснятие — отдельная задача"],
+    ["ui-ref-comm-water.json|921.2,210.7", "совпадение единственной точки; переснятие — отдельная задача"],
   ]);
   const offenders: string[] = [];
   for (const name of readdirSync(FIXTURES).filter((f) => f.endsWith(".json")).sort()) {
     const pts = collectPoints(JSON.parse(readFileSync(join(FIXTURES, name), "utf8")));
     for (const p of pts) {
-      if (refPoints.has(p) && !ALLOW_REF_POINT_HITS.has(name)) offenders.push(`${name}: точка (${p}) есть в контрольном эталоне`);
+      if (refPoints.has(p) && !ALLOW_REF_POINT_HITS.has(`${name}|${p}`)) offenders.push(`${name}: точка (${p}) есть в контрольном эталоне`);
     }
   }
   assert.deepEqual(offenders, [], "в фикстурах точки из контрольного проекта (ПДн) — переснять на синтетические");

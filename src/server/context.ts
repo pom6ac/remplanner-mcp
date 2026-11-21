@@ -71,12 +71,22 @@ export class ServerContext {
   private authStatusCache = new AuthStatusCache();
   /** Подменяемый источник статуса ЛК (тесты 258 №4). */
   private readonly statusFn: (session: SessionState) => Promise<ClientPageInfo>;
+  /** Тест-инъекция (ревью 331 Н2/Н8): тариф офлайна для полного пути PRO-гейта
+   *  (offlineTariff) и неанонимный офлайн-проект (offlineAnon). Сеть не
+   *  используется: authStatus в офлайне возвращает инжектированный тариф. */
+  private readonly offlineTariff: ClientPageInfo["tariff"] | null;
+  private readonly offlineAnon: boolean;
 
-  constructor(options: { offlineFixture?: string; deps?: Partial<WorkspaceDeps>; status?: (session: SessionState) => Promise<ClientPageInfo> } = {}) {
+  constructor(options: { offlineFixture?: string; deps?: Partial<WorkspaceDeps>; status?: (session: SessionState) => Promise<ClientPageInfo>; tools?: ToolsBundle; offlineTariff?: ClientPageInfo["tariff"]; offlineAnon?: boolean } = {}) {
     this.depsOverride = options.deps ?? null;
     this.fixturePath = options.offlineFixture ?? null;
     this.mode = options.offlineFixture ? "offline" : "anon";
     this.statusFn = options.status ?? checkStatus;
+    // инжектированный бандл каталога (тесты item_add без сайта): возвращается
+    // до чтения catalog-sample.json (tools() проверяет кеш первым шагом)
+    this.toolsBundle = options.tools ?? null;
+    this.offlineTariff = options.offlineTariff ?? null;
+    this.offlineAnon = options.offlineAnon ?? false;
   }
 
   session(): SessionState {
@@ -158,7 +168,9 @@ export class ServerContext {
       saveId: "offline",
       dirty: false,
       openedAt: new Date().toISOString(),
-      anon: true,
+      // тест-инъекция (ревью 331 Н2/Н8): offlineAnon:false — полный путь гейта
+      // под тариф из offlineTariff (по умолчанию офлайн-проект анонимный)
+      anon: this.offlineAnon,
     };
     (ws as unknown as { modelInternal: Model }).modelInternal = model;
     // единственный снимок истории в офлайне
@@ -234,6 +246,10 @@ export class ServerContext {
   /** Статус ЛК для гейтов shield_* и PRO: кеш с TTL, промах — свежий GET. */
   async authStatus(): Promise<AuthStatusInfo> {
     if (this.mode === "offline") {
+      if (this.offlineTariff !== null) {
+        // тест-инъекция (ревью 331 Н2/Н8): полный путь гейта под заданный тариф
+        return { logged_in: true, tariff: this.offlineTariff, mode: "offline", projects_limit: null, account_email_masked: null };
+      }
       return { logged_in: false, tariff: "unknown", mode: "offline", projects_limit: null, account_email_masked: null };
     }
     // сессия инициализирует режим (auth_status — первый вызов инструмента, 258 №4)
@@ -254,6 +270,9 @@ export class ServerContext {
    */
   async authStatusFresh(): Promise<AuthStatusInfo> {
     if (this.mode === "offline") {
+      if (this.offlineTariff !== null) {
+        return { logged_in: true, tariff: this.offlineTariff, mode: "offline", projects_limit: null, account_email_masked: null };
+      }
       return { logged_in: false, tariff: "unknown", mode: "offline", projects_limit: null, account_email_masked: null };
     }
     const session = this.session();

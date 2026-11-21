@@ -1,5 +1,7 @@
 import type { ServerContext } from "./context.ts";
 import { McpError } from "../errors.ts";
+import { PRO_EDITOR_KEYS } from "./pro-editor-keys.generated.ts";
+import { OPENING_KINDS } from "../model/openings.ts";
 
 /**
  * Единый реестр PRO-инструментов и один тарифный гейт (этап 328, пункт 3):
@@ -20,11 +22,14 @@ import { McpError } from "../errors.ts";
  * line_light/cable/wiring/pipe/warm_floor/finish-PRO-инструменты не гейтились
  * вовсе. Ревью 329 №1/№2: копии удалены — весь NOT_AVAILABLE_ON_TARIFF живёт
  * только здесь (проверяется тестом), инструментов реестра — через proGate,
- * частичных (PRO_PARTIAL_TOOLS) — через assertProPartialAllowed. Ключи
- * частичных гейтов item_add/finish_floor_set/finish_wall_set — из эталонов
- * .orca-reports/tmp/328-pro-anon.json и 328-pro-sheets.json (листы waterplan/
- * sockets/light_connections/security/cables; PRO-покрытия «Полы» и «Отделка
- * стен» — разметка анонимного проекта, plannertool-ключи с is_pro).
+ * частичных (PRO_PARTIAL_TOOLS) — через assertProPartialAllowed. Ревью 331
+ * Н1/Н2: ключи частичных гейтов — из ЕДИНОГО сгенерированного списка
+ * PRO_EDITOR_KEYS (эталон .orca-reports/tmp/328-pro-anon.json, анонимная
+ * разметка без ПДн; генератор scripts/gen-pro-editor-keys.ts): item_add гейтит
+ * весь список, opening_add — производные PRO_OPENING_KINDS (13 PRO-типов
+ * дверей), wall_add переводит c_glass/c_bar в wall_create_glass/bar. Ключи
+ * листов (waterplan/sockets/light_connections/security/cables; PRO-покрытия
+ * «Полы» и «Отделка стен») входят в тот же список.
  * comment_add/update — PRO по coverage §3/§4 (кнопка «Текстовый комментарий»
  * закрыта за PRO; в анонимной разметке 328 ключ comment не встречается, гейт
  * консервативный по решению координатора). Каждому инструменту реестра — тест
@@ -77,22 +82,30 @@ export const PRO_TOOL_GROUPS: readonly ProToolGroup[] = [
   { tools: [...SHIELD_TOOLS], editorKeys: ["shield"], seniorOnly: true, label: "конструктор электрощитка" },
 ] as const;
 
-/** Ключи каталога предметов (plannertool_* с is_pro, эталоны 328-pro-anon/
- *  328-pro-sheets.json — листы waterplan/sockets/light_connections/security/
- *  cables), которые ставятся item_add. */
-export const PRO_ITEM_KEYS: readonly string[] = [
-  // лист «Водоснабжение» (waterplan)
-  "waterspot_cold", "waterspot_hot", "waterspot_drainage", "waterspot_collector",
-  // лист «Розетки» (sockets)
-  "floor_socket", "ceiling_socket", "furniture_socket",
-  // лист «Выключатели» (light_connections)
-  "light_switch_triple", "light_dimmer", "light_switch_through", "light_switch_through_double",
-  "light_switch_cross", "light_switch_cross_double", "light_switch_master",
-  // лист «Электропроводка» (cables)
-  "electric_box", "electric_box_wall", "electric_kup",
-  // лист «Безопасность» (security)
-  "motion_sensor", "light_sensor", "water_leakage_panel", "water_leakage_sensor", "alarm_panel",
-] as const;
+/**
+ * ЕДИНЫЙ источник is_pro-ключей (ревью 331 Н1/Н2, решение координатора):
+ * сгенерированный полный список из эталона разметки .orca-reports/tmp/
+ * 328-pro-anon.json (файл src/server/pro-editor-keys.generated.ts, генератор
+ * scripts/gen-pro-editor-keys.ts). Частичные гейты НЕ ведут своих списков —
+ * ключ инструмента сверяется с этим одним списком (assertProPartialAllowed).
+ */
+export { PRO_EDITOR_KEYS };
+
+/** PRO-типы проёмов (ревью 331 Н1): пересечение типов opening_add с эталоном —
+ *  13 PRO-типов дверей (рото, книжка, гармошка, стеклянная, гаражные, каскадные
+ *  и раздвижные системы). Производится от единого списка, не пишется руками. */
+export const PRO_OPENING_KINDS: readonly string[] = Object.keys(OPENING_KINDS)
+  .filter((k) => PRO_EDITOR_KEYS.includes(k))
+  .sort();
+
+/** Гейт item_add — по полному единому списку (ревью 331 Н2): любой is_pro-ключ
+ *  каталога недоступен на free. Ключи, обслуживаемые другими инструментами
+ *  (трубы, проводка, световые линии, зоны, плинтусы, покрытия), до item_add не
+ *  доходят по смыслу (в реальном каталоге их не существует — NOT_FOUND до
+ *  гейта), а ключи без инструмента MCP (anchor_floor, cap_*, isolation_*,
+ *  plaster_* — отчёт 331) в списке оставлены: они никогда не попадают в гейт,
+ *  но сторож-тест (pro-keys.test.ts) проверяет весь эталон целиком. */
+export const PRO_ITEM_KEYS: readonly string[] = PRO_EDITOR_KEYS;
 
 /** PRO-покрытия пола (лист «Напольные покрытия», разметка 328-pro-anon.json). */
 export const PRO_FLOOR_COVERS: readonly string[] = ["stoneware_wood", "stoneware_marble", "metlah", "mosaic", "hex_tile"] as const;
@@ -106,15 +119,26 @@ export const PRO_WALL_COVERS: readonly string[] = [
 /**
  * Инструменты-исключения с частичным гейтом внутри инструмента (по ключу):
  * гейтится только обращение к is_pro-ключу, остальное — как у бесплатного
- * тарифа. Ключи — из эталонов 328-pro-anon/328-pro-sheets.json.
+ * тарифа. Ревью 331 Н1/Н2: списки ключей НЕ ведутся вручную — item_add гейтит
+ * по всему PRO_EDITOR_KEYS, opening_add по PRO_OPENING_KINDS (оба выведены из
+ * единого эталона); покрытия floor/wall — подмножества того же эталона
+ * (проверяется сторожем pro-keys.test.ts). wall_add: ключ модели c_glass/c_bar
+ * переводится в ключ редактора wall_create_glass/bar.
  */
-export const PRO_PARTIAL_TOOLS: Record<string, { editorKeys: readonly string[]; label: string }> = {
-  // wall_add kind=partition material=glass|bar — ключи wall_create_glass/bar (PRO,
-  // лист «Перегородки», эталон 328-pro-sheets.json); в гейт передаётся код модели
-  // c_glass/c_bar (resolveWallMaterial, src/dto/walls.ts)
-  wall_add: { editorKeys: ["c_glass", "c_bar"], label: "стеклянная и реечная перегородки" },
-  // item_add по is_pro-ключам каталога (эталоны 328)
-  item_add: { editorKeys: PRO_ITEM_KEYS, label: "PRO-предметы каталога (точки воды, розетки, выключатели, коробки, датчики)" },
+type ProPartial = { editorKeys: readonly string[]; label: string; toEditorKey?: (key: string) => string };
+export const PRO_PARTIAL_TOOLS: Record<string, ProPartial> = {
+  // wall_add kind=partition material=glass|bar — ключи редактора wall_create_glass/bar
+  // (PRO, эталон 328); в гейт передаётся код модели c_glass/c_bar
+  // (resolveWallMaterial, src/dto/walls.ts)
+  wall_add: {
+    editorKeys: ["wall_create_glass", "wall_create_bar"],
+    label: "стеклянная и реечная перегородки",
+    toEditorKey: (key) => (key === "c_glass" ? "wall_create_glass" : key === "c_bar" ? "wall_create_bar" : key),
+  },
+  // item_add по полному единому списку is_pro-ключей каталога (эталон 328)
+  item_add: { editorKeys: PRO_ITEM_KEYS, label: "PRO-предметы каталога (полный список is_pro-ключей, src/server/pro-editor-keys.generated.ts)" },
+  // PRO-типы дверей opening_add (13 типов, ревью 331 Н1)
+  opening_add: { editorKeys: PRO_OPENING_KINDS, label: "PRO-типы дверей (рото, книжка, гармошка, стеклянная, гаражные, каскадные и раздвижные системы)" },
   // PRO-покрытия пола
   finish_floor_set: { editorKeys: PRO_FLOOR_COVERS, label: "PRO-покрытия пола (керамогранит, метлах, мозаика, шестигранная плитка)" },
   // PRO-отделки стен (включая двухслойные и фартук)
@@ -157,11 +181,13 @@ export async function assertProToolAllowed(ctx: ProGateContext, project: { anon:
 }
 
 /**
- * Частичный гейт (ревью 329 №1/№2): инструмент гейтится только по is_pro-ключу
- * (материал/покрытие/позиция каталога из PRO_PARTIAL_TOOLS). Если ключ не PRO —
- * ничего не делает (как у бесплатного тарифа). Для is_pro-ключа — то же правило,
- * что у полного гейта: анонимный проект = бесплатный тариф, неизвестный тариф
- * трактуется как бесплатный.
+ * Частичный гейт (ревью 329 №1/№2): инструмент гейтится только по is_pro-ключу.
+ * Ревью 331 Н1/Н2: ключ (после перевода в ключ редактора, если инструмент
+ * оперирует кодом модели — wall_add) сверяется с ЕДИНЫМ списком
+ * PRO_EDITOR_KEYS (эталон 328-pro-anon.json, src/server/pro-editor-keys.generated.ts).
+ * Если ключ не PRO — ничего не делает (как у бесплатного тарифа). Для
+ * is_pro-ключа — то же правило, что у полного гейта: анонимный проект =
+ * бесплатный тариф, неизвестный тариф трактуется как бесплатный.
  */
 export async function assertProPartialAllowed(
   ctx: ProGateContext,
@@ -172,7 +198,8 @@ export async function assertProPartialAllowed(
 ): Promise<void> {
   const partial = PRO_PARTIAL_TOOLS[tool];
   if (!partial) throw new McpError("INTERNAL", `инструмент ${tool} отсутствует в реестре частичных PRO-гейтов (src/server/pro.ts)`);
-  if (!partial.editorKeys.includes(key)) return;
+  const editorKey = partial.toEditorKey ? partial.toEditorKey(key) : key;
+  if (!PRO_EDITOR_KEYS.includes(editorKey)) return;
   if (project?.anon) {
     throw new McpError(
       "NOT_AVAILABLE_ON_TARIFF",
