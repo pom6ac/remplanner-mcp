@@ -71,7 +71,10 @@ console.log("holes after save+reload:", holesAfterReload.map((h: any) => `${h.id
 out["holes_after_reload"] = holesAfterReload;
 
 // — живое воспроизведение падения 356: проём, записанный как пишет MCP (без точек) —
-// та же форма, которую кладёт addOpening на plan:c (pc/p1/p2/width/height/depth/…, без l1/r1/l2/r2)
+// та же форма, которую кладёт addOpening на plan:c (pc/p1/p2/width/height/depth/…, без l1).
+// ВАЖНО: holes_get выполняется только для стен, доступных на текущем листе, поэтому
+// падение ловим с листа plan:"a" (init), как при save MCP — в 356 страница была не на
+// листе «Перегородки», и setHolesFloor0Offset обошёл перегородку с проёмом без точек.
 const crash = await page.evaluate((partId: string) => {
   const w: any = window as any;
   const wall = w.WALLS[partId];
@@ -79,41 +82,44 @@ const crash = await page.evaluate((partId: string) => {
   const pc = { x: 150, y: -190 };
   const hole: any = {
     id, plan: "c", type: "single", group: "doors", pc, width: 80, height: 210, depth: 4,
-    at: 100, floor_height: undefined, opening: "r-l", casing: 1, casements: 1, slope_angle: 0,
-    p1: { x: 150, y: -230 }, p2: { x: 150, y: -110 },
+    at: 110, opening: "r-l", casing: 1, casements: 1, slope_angle: 0,
+    p1: { x: 150, y: -180 }, p2: { x: 150, y: -100 },
   };
   wall.holes[id] = hole;
+  return id;
+}, partId);
+await switchSheet(page, "init");
+const crashResult = await page.evaluate(() => {
+  const w: any = window as any;
   try {
     w.$Project.draw({ rooms: 1 });
     return { crashed: false };
   } catch (e: any) {
     return { crashed: true, name: e?.name, message: e?.message, stack: String(e?.stack ?? "").split("\n").slice(0, 4).join(" | ") };
   }
-}, partId);
-console.log("MCP-shaped hole draw:", JSON.stringify(crash));
-out["mcp_shaped_hole"] = { crashed: crash.crashed, name: crash.name, message: crash.message, stack: crash.stack };
+});
+console.log("MCP-shaped hole on plan a, draw:", JSON.stringify(crashResult));
+out["mcp_shaped_hole"] = { crashed: crashResult.crashed, name: crashResult.name, message: crashResult.message, stack: crashResult.stack };
 
 // и тот же проём после дописывания точек (как после фикса) — draw проходит
-const fixed = await page.evaluate((partId: string) => {
+const fixed = await page.evaluate((holeId: string) => {
   const w: any = window as any;
-  const wall = w.WALLS[partId];
-  for (const h of Object.values<any>(wall.holes)) {
-    if (h.l1 !== undefined) continue;
-    const dx = h.p2.x - h.p1.x, dy = h.p2.y - h.p1.y;
-    const len = Math.hypot(dx, dy);
-    const ox = (wall.depth / 2) * dy / len, oy = -(wall.depth / 2) * dx / len;
-    h.l1 = { x: h.p1.x + ox, y: h.p1.y + oy };
-    h.l2 = { x: h.p2.x + ox, y: h.p2.y + oy };
-    h.r1 = { x: h.p1.x - ox, y: h.p1.y - oy };
-    h.r2 = { x: h.p2.x - ox, y: h.p2.y - oy };
-  }
+  const wall = Object.values<any>(w.WALLS).find((wl: any) => wl.holes && wl.holes[holeId]);
+  const h = wall.holes[holeId];
+  const dx = h.p2.x - h.p1.x, dy = h.p2.y - h.p1.y;
+  const len = Math.hypot(dx, dy);
+  const ox = (wall.depth / 2) * dy / len, oy = -(wall.depth / 2) * dx / len;
+  h.l1 = { x: h.p1.x + ox, y: h.p1.y + oy };
+  h.l2 = { x: h.p2.x + ox, y: h.p2.y + oy };
+  h.r1 = { x: h.p1.x - ox, y: h.p1.y - oy };
+  h.r2 = { x: h.p2.x - ox, y: h.p2.y - oy };
   try {
     w.$Project.draw({ rooms: 1 });
     return { crashed: false };
   } catch (e: any) {
     return { crashed: true, message: e?.message };
   }
-}, partId);
+}, crash);
 console.log("MCP-shaped hole + edge points draw:", JSON.stringify(fixed));
 out["fixed_draw"] = fixed;
 
