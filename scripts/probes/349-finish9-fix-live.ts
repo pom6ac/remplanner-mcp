@@ -342,7 +342,11 @@ try {
   console.log("(г) M2-R (redo → save, имя на новом id): PASS");
 
   // ---- (д) наблюдение: rename → split (wall_move через противоположную стену) → merge ----
+  // Наблюдение 353: MCP сам отказывает в split/merge, пока у комнаты есть покрытие
+  // пола (защита отделки, INVALID_GEOMETRY) — для наблюдения имени снимаем покрытие
+  // (пробная комната, зачистка удаляет её целиком).
   await roGuard.assertUnchanged("перед частью (д)");
+  await call("finish_floor_remove", { room_id: roomRef });
   const rw3 = await rightWallId();
   await call("wall_move", { wall_id: rw3, offset_mm: -5000 });
   const splitMg = (await call("model_get", {})) as { rooms?: Array<{ id: string; site_id?: string }> };
