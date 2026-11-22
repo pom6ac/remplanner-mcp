@@ -580,19 +580,50 @@ export function refreshCablesForItem(model: Model, itemId: string): void {
  * MCP: слой задаётся явно (1 — снять), pc пересчитывается тем же правилом с
  * сохранением собственного отступа пластины предмета (height/2 − offset), угол
  * и over_floor не трогаются. Перенос against_wall (resnap) ставит предмет на
- * базу слоя 1 и держит смещение слоя поверх неё, как dragmoveWall редактора
- * (major 371 №1); явный layer в том же вызове ставится относительно новой
- * позиции. Слои 4+ не поддерживаются (get_offset_layer2 обрабатывает только 2 и 3).
+ * базу слоя 1; у типов с can_move_between_walls (CAN_MOVE_BETWEEN_WALLS)
+ * dragmoveWall редактора слой снимает — он ставится заново только сцепкой с
+ * другой розеткой, в MCP — явным layer; у прочей пристенной электрики
+ * (выключатели) смещение слоя сохраняется поверх новой базы (major 371 №1);
+ * явный layer в том же вызове ставится относительно новой позиции.
+ * Слои 4+ не поддерживаются (get_offset_layer2 обрабатывает только 2 и 3).
  */
 export const SOCKET_LAYER_OFFSET_CM: Record<number, { flat: number; slope: number }> = {
   2: { flat: 26, slope: 22 },
   3: { flat: 52, slope: 44 },
 };
 
-/** Слой предмета: число 2/3 или отсутствие слоя (1, в модели null). */
+/**
+ * Типы каталога с can_move_between_walls: true (catalog-sample.json, весь
+ * известный набор из живого каталога сайта). dragmoveWall бандла у таких
+ * предметов первым делом снимает привязку к прежней опоре (projection,
+ * slope_side, hole_group, layer = void 0): слой ставится заново только
+ * сцепкой с другой розеткой (чужой.layer + 1). У прочей пристенной
+ * электрики (выключатели и виды вне набора) флага в каталоге нет — общая
+ * ветка dragmoveWall (if (this.baseline)) смещение слоя сохраняет.
+ */
+export const CAN_MOVE_BETWEEN_WALLS = new Set([
+  "socket", "socket_thermo", "furniture_socket", "bra", "bra_shades",
+]);
+
+/** Тип каталога предмета-группы (имя под-розетки socket_group[0]). */
+export function socketCatalogType(item: ItemProps): string | null {
+  const subs = item.socket_group as SocketGroupSub[] | undefined;
+  return Array.isArray(subs) && subs[0] ? subs[0].name : null;
+}
+
+/** Слой вертикального блока как число (строку "2" редактор трактует как 2 —
+ *  бандл 2==layer); отсутствие/null/нечисловое — null. */
+export function socketLayerNum(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Слой предмета: число 2/3 (строка «2» — тоже 2, как в редакторе) или
+ *  отсутствие слоя (1, в модели null). */
 export function socketLayerOf(item: ItemProps): number {
-  const l = item.layer;
-  return typeof l === "number" ? l : 1;
+  const n = socketLayerNum(item.layer);
+  return n !== null && n >= 2 ? n : 1;
 }
 
 /**
