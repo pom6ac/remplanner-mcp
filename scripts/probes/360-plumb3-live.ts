@@ -379,8 +379,10 @@ try {
     console.log("4b props снятого вывода:", JSON.stringify(end4bRaw?.pipes ?? {}));
     if (end4bRaw?.pipes && "drainage_pipe_id" in end4bRaw.pipes) throw new Error("4b: висячая ссылка drainage_pipe_id осталась");
     // ---- 4c (365). распад conditioner_drainage / warm_floor_pipe: ключи обратных ссылок ----
-    // (365 major 3): pipe_node_delete середины — у предметов ссылки drainage_pipe_id/
-    // pipe_warm_floor_id на куски (PIPE_LINK_KEY_BY_TYPE), сверка model_validate
+    // (365 major 3): pipe_node_delete середины 5-вершинной трубы — у предметов ссылки
+    // drainage_pipe_id/pipe_warm_floor_id на куски (PIPE_LINK_KEY_BY_TYPE);
+    // сверка ссылок — в сцене 5 после save→reopen (в компактной модели бокса нет)
+    const climateChecks: { kind: string; s1: string; s2: string; box: string; key: string }[] = [];
     for (const kind of ["conditioner_drainage", "warm_floor_pipe"] as const) {
       const toolName = kind === "conditioner_drainage" ? "conditioner" : "radiator_collector";
       const idsX = await itemSiteIds();
@@ -416,24 +418,11 @@ try {
         throw new Error(`4c ${kind}: распад на 2 куска не получен: ${JSON.stringify(dnX)}`);
       }
       for (const pid of dnX.created_pipes!) created.push({ kind: "pipe", siteId: pid });
-      const box = kind === "conditioner_drainage" ? "pipes_conditioner" : "pipes_warm_floor";
-      const key = kind === "conditioner_drainage" ? "drainage_pipe_id" : "pipe_warm_floor_id";
-      // рабочая копия (ещё не сохранена) — через model_get: компакт отдаёт
-      // connected (id предметов-вершин) по каждой коллекции
-      const mgX = (await call("model_get", {})) as Record<string, unknown>;
-      const rawX = (mgX["items"] ?? []) as Array<{ site_id?: string } & Record<string, unknown>>;
-      const rawPieces = (mgX[box] ?? []) as Array<{ site_id?: string; connected?: string[] }>;
-      for (const [label, sid] of [["левый", s1], ["правый", s2]] as const) {
-        const held = (rawX.find((it) => it.site_id === sid)?.[box] ?? {}) as Record<string, unknown>;
-        const ref = held[key];
-        const pieceId = rawPieces.find((p) => p.connected?.includes(sid))?.site_id;
-        console.log(`4c ${kind} ${label} ${box}.${key}:`, JSON.stringify(ref), "кусок:", pieceId);
-        if (!pieceId) throw new Error(`4c ${kind}: ${label} не в вершинах ни одного куска`);
-        const ok = Array.isArray(ref) ? ref.includes(pieceId) : ref === pieceId;
-        if (!ok) throw new Error(`4c ${kind}: ${label} ссылка ${key}=${JSON.stringify(ref)} не на свой кусок ${pieceId} (ключи PIPE_LINK_KEY_BY_TYPE, 365 major 3)`);
-        // ошибочный ключ `${kind}_id` не появляется (365 major 3)
-        if (held && key !== `${kind}_id` && `${kind}_id` in held) throw new Error(`4c ${kind}: появился ошибочный ключ ${kind}_id`);
-      }
+      climateChecks.push({
+        kind, s1, s2,
+        box: kind === "conditioner_drainage" ? "pipes_conditioner" : "pipes_warm_floor",
+        key: kind === "conditioner_drainage" ? "drainage_pipe_id" : "pipe_warm_floor_id",
+      });
     }
 
     // ---- 5. validate → save → reopen → сверка → PNG ----
@@ -464,6 +453,21 @@ try {
     console.log("4b после reopen:", raw4bEnd?.name, "pipes:", JSON.stringify(raw4bEnd?.pipes ?? {}));
     if (raw4bEnd?.name !== "waterspot_cold_hot") throw Error("4b reopen: имя не cold_hot");
     if (raw4bEnd?.pipes && "drainage_pipe_id" in raw4bEnd.pipes) throw Error("4b reopen: висячая ссылка drainage_pipe_id");
+    // 365 major 3: у предметов климата ссылки на СВОИ куски по PIPE_LINK_KEY_BY_TYPE
+    for (const cc of climateChecks) {
+      const climateRaw = (am as Record<string, Record<string, unknown>>)[cc.box] as Record<string, { id?: string; vertexes?: Array<{ id: string }> }> | undefined;
+      const climateItems = (am.items ?? {}) as Record<string, Record<string, unknown>>;
+      for (const [label, sid] of [["левый", cc.s1], ["правый", cc.s2]] as const) {
+        const held = (climateItems[sid]?.[cc.box] ?? {}) as Record<string, unknown>;
+        const ref = held[cc.key];
+        const pieceId = Object.values(climateRaw ?? {}).find((p) => p.vertexes?.some((v) => v.id === sid))?.id;
+        console.log(`4c ${cc.kind} reopen ${label} ${cc.box}.${cc.key}:`, JSON.stringify(ref), "кусок:", pieceId);
+        if (!pieceId) throw new Error(`4c ${cc.kind}: ${label} не в вершинах ни одного куска`);
+        const ok = Array.isArray(ref) ? ref.includes(pieceId) : ref === pieceId;
+        if (!ok) throw new Error(`4c ${cc.kind}: ${label} ссылка ${cc.key}=${JSON.stringify(ref)} не на свой кусок ${pieceId} (365 major 3)`);
+        if (cc.key !== `${cc.kind}_id` && `${cc.kind}_id` in held) throw new Error(`4c ${cc.kind}: появился ошибочный ключ ${cc.kind}_id`);
+      }
+    }
     const pngRes = await client.callTool({ name: "render_plan", arguments: { sheet: "waterplan" } }, undefined, { timeout: 600_000 });
     const pngContent = (pngRes as { content?: Array<{ type: string }> }).content ?? [];
     const pngBytes = ((pngRes as { content?: Array<{ type: string; data?: string }> }).content ?? [])
