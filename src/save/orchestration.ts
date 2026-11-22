@@ -8,6 +8,7 @@ import type { EditorRoom } from "../editor/adapter.ts";
 import type { Model, Point } from "../model/types.ts";
 import { MODEL_ENTITY_COLLECTIONS, PUBLIC_COLLECTION_KEYS, type ModelEntityCollection } from "../model/collections.ts";
 import { modelCounts, modelIsContentEmpty, toModel } from "../model/canonical.ts";
+import { assertModelSafeForEditor } from "../model/strings.ts";
 import {
   prepareForRestore,
   wallAxisSegments,
@@ -182,6 +183,10 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
   // Ревью v0.1.1 финал F-1: стена, чья ось покрыта локальными стенами, не потеряна —
   // нормализация редактора могла сменить её идентификатор; это отдельное замечание
   const serverModel = fresh.model as Model;
+  // ревью 378 №14/№15 (единая точка): если редактор ещё не запущен, ensureEditor
+  // ниже откроет страницу, которая САМА загрузит и отрисует серверную модель —
+  // с опасными строками листов запуск отменяется ещё до openEditor
+  assertModelSafeForEditor(serverModel);
   const localWallSegments = wallAxisSegments(host.model().walls);
   const serverWallsMissing = missingIds(new Set(Object.keys(serverModel.walls ?? {})), new Set(Object.keys(host.model().walls)));
   const renamedWalls = serverWallsMissing.filter((id) => wallAxisCoveredBy(serverModel.walls?.[id] as { p1: Point; p2: Point } | undefined, localWallSegments));

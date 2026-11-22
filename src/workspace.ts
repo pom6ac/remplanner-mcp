@@ -9,7 +9,7 @@ import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, Edit
 import type { Model, Point } from "./model/types.ts";
 import { MODEL_ENTITY_COLLECTIONS, PUBLIC_COLLECTION_KEYS } from "./model/collections.ts";
 import { modelCounts, modelIsContentEmpty, modelHash, toModel, type ModelCounts } from "./model/canonical.ts";
-import { findUnsafeEditorStrings, type UnsafeStringHit } from "./model/strings.ts";
+import { assertModelSafeForEditor, findUnsafeEditorStrings, type UnsafeStringHit } from "./model/strings.ts";
 import { runSave, type SaveHost, type SaveOutcome } from "./save/orchestration.ts";
 
 // Канонические помощники переехали в src/model/canonical.ts, тип SaveOutcome —
@@ -994,20 +994,14 @@ export class Workspace {
 
   /** Ленивый запуск редактора (каталог, рендер, сохранение). */
   async ensureEditor(): Promise<EditorLike> {
+    // ревью 378 №14/№15 (единая точка, assertModelSafeForEditor): проверка
+    // КАЖДЫЙ раз перед запуском/использованием редактора — по ТЕКУЩЕЙ рабочей
+    // копии, а не по кешу от момента открытия: закрывает повторный project_open
+    // при запущенном редакторе, undo/redo и reload после save. Страница редактора
+    // сама загружает серверную модель и исполняет addIconToPage (innerHTML) —
+    // с опасными строками Chromium не запускаем вовсе.
+    assertModelSafeForEditor(this.model);
     if (!this.editorInternal) {
-      // major 376 №3: restore проекта в Chromium исполняет addIconToPage
-      // (innerHTML имени листа) — с опасными строками редактор не открываем
-      if (this.unsafeEditorStrings.length > 0) {
-        const u = this.unsafeEditorStrings[0]!;
-        throw new McpError(
-          "INVALID_ARGUMENT",
-          `модель проекта содержит строку, которую редактор вставляет в HTML без экранирования (custom_plans/pictures: ${u.collection}[${u.id}].${u.field}) — редактор в Chromium MCP не запускается: сохранение и render_plan заблокированы (fail-closed)`,
-          {
-            hint: "переименуйте/удалите пользовательский лист на сайте в браузере или попросите пользователя это сделать; опасные строки в ответе не воспроизводятся",
-            details: { unsafe_count: this.unsafeEditorStrings.length, first: { collection: u.collection, field: u.field, id: u.id } },
-          },
-        );
-      }
       const p = this.project!;
       // инцидент 2026-11-15: анонимный проект — редактор без аккаунтных cookies;
       // аккаунтный проект — чужой object_id редактора запрещён

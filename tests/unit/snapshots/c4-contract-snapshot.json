@@ -5526,6 +5526,7 @@
       "description": "метка TL<n> из model_get или id сайта"
      },
      "width_mm": {
+      "description": "толщина линии, мм (2..1500)",
       "type": "integer",
       "minimum": 2,
       "maximum": 1500

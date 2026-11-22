@@ -350,6 +350,19 @@ export class ServerContext {
     return this.toolsBundle;
   }
 
+  /**
+   * Каталог БЕЗ запуска редактора (ревью 378 №19): уже загруженный кэш или
+   * офлайн-фикстура; null — каталог ещё не скачан. Для путей, где флаг каталога
+   * — необязательное уточнение (item_update без against_wall), запуск Chromium
+   * и сети внутри инструмента недопустим.
+   */
+  async toolsIfLoaded(): Promise<ToolsBundle | null> {
+    if (this.mode === "offline") {
+      try { return await this.tools(); } catch { return null; }
+    }
+    return this.toolsBundle;
+  }
+
   /** Позиция каталога по точному имени (для item_add). */
   async toolEntry(name: string): Promise<ToolEntry> {
     const tools = await this.tools();

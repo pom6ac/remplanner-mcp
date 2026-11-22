@@ -161,7 +161,9 @@ try {
     const del = await call("sheet_delete", { sheet_id: sheetAdd.id }) as { deleted: Record<string, number> };
     check((del.deleted["freelines"] ?? 0) >= 1 && (del.deleted["free_figures"] ?? 0) >= 1 && (del.deleted["thick_lines"] ?? 0) >= 1,
       `sheet_delete: каскад ${JSON.stringify(del.deleted)}`);
-    for (const c of created) if (["freeline", "thick_line", "figure"].includes(c.kind)) c.siteId = undefined;
+    // minor 378 №18: siteId снимается и у самого листа — иначе finally получает
+    // NOT_FOUND по листу и делает лишний restore-save на dev-объект
+    for (const c of created) if (["sheet", "freeline", "thick_line", "figure"].includes(c.kind)) c.siteId = undefined;
     const save2 = await gsave("удаление листа (каскад)");
     check(save2["verified"] === true, "save verified (удаление листа)");
 
@@ -174,11 +176,14 @@ try {
     const pic = await call("image_add", { url: up.url, center: { x: 6000, y: 4000 }, width_original_px: up.width_original_px, height_original_px: up.height_original_px }) as { id: string; width_mm: number };
     created.push({ kind: "picture", siteId: pic.id });
     journal();
-    const mgPic = await call("model_get", {}) as Record<string, unknown>;
-    const pics1 = asList(mgPic["pictures"]) as Array<{ site_id: string; text?: string }>;
-    const pic1 = pics1.find((p) => p.site_id === pic.id);
-    // compact model_get опускает пустую подпись (text "") — отсутствие поля = ""
-    check(pic1 !== undefined && (pic1.text ?? "") === "", `image_add без text: text=${JSON.stringify(pic1?.text ?? "нет записи")} (major 376 №1)`);
+    const mgPic = await call("model_get", { detail: "full" }) as Record<string, unknown>;
+    const pics1 = asList(mgPic["pictures"]) as Array<{ id?: string; site_id?: string; text?: string }>;
+    // minor 378 №17: проверка НЕ вакуумная — через model_get detail=full (сырая
+    // модель сайта): поле text ПРИСУТСТВУЕТ в записи и пусто (compact опускает
+    // text:"", поэтому «отсутствие поля» в compact ничего не доказывает)
+    const pic1 = pics1.find((p) => (p.site_id ?? p.id) === pic.id);
+    check(pic1 !== undefined && "text" in pic1 && pic1.text === "",
+      `image_add без text: в сырой модели text ${pic1 === undefined ? "записи нет" : `"text" in rec = ${String("text" in pic1)}, text=${JSON.stringify(pic1.text)}`} (major 376 №1)`);
     const save3 = await gsave("изображение без подписи");
     check(save3["verified"] === true, "save verified (изображение без подписи — restore бандла не падает)");
     await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });

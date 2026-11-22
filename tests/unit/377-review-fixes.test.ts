@@ -139,12 +139,13 @@ test("377 major2: полный путь через Workspace — подпись 
 test("377 major3: sheet_add/sheet_update отклоняют строки, исполнимые как HTML (INVALID_ARGUMENT)", () => {
   const m = baseModel();
   const s = addSheet(m, { name: "Лист 377" });
-  for (const bad of ["<img src=x onerror=alert(1)>", "a&b", 'кварт"ал', "it's", "бек`тик", "x>y"]) {
+  // ревью 378 №16: апостроф НЕ опасен — допускается на входе (см. 379)
+  for (const bad of ["<img src=x onerror=alert(1)>", "a&b", 'кварт"ал', "бек`тик", "x>y"]) {
     assert.throws(() => addSheet(m, { name: bad }), INVALID, `sheet_add отклоняет ${JSON.stringify(bad)}`);
     assert.throws(() => updateSheet(m, s.id, { name: bad }), INVALID, `sheet_update отклоняет ${JSON.stringify(bad)}`);
   }
-  // допустимые: кириллица, цифры, базовая пунктуация
-  for (const ok of ["Лист 377", "Санузел, этаж 2 (черновик)", "Кухня №3 — 12 м²", "«Проект»", "50% готов"]) {
+  // допустимые: кириллица, цифры, базовая пунктуация, апостроф (rev 378 №16)
+  for (const ok of ["Лист 377", "Санузел, этаж 2 (черновик)", "Кухня №3 — 12 м²", "«Проект»", "50% готов", "Mom's room"]) {
     const rec = updateSheet(m, s.id, { name: ok });
     assert.equal(rec.name, ok, `допустимое имя ${JSON.stringify(ok)}`);
   }

@@ -223,12 +223,15 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
   /** minor 376 №12: флаг can_move_between_walls из записи каталога (как в бандле
    *  canMoveBetweenWalls(){return!!this.model().can_move_between_walls});
-   *  каталог недоступен — undefined (офлайн-фолбэк CAN_MOVE_BETWEEN_WALLS). */
+   *  каталог недоступен — undefined (офлайн-фолбэк CAN_MOVE_BETWEEN_WALLS).
+   *  Ревью 378 №19: только из УЖЕ загруженного каталога (toolsIfLoaded) —
+   *  без запуска редактора и сети внутри item_update. */
   const catalogCanMoveBetweenWalls = async (item: ItemProps): Promise<boolean | undefined> => {
     const type = socketCatalogType(item);
     if (!type) return undefined;
     try {
-      const raw = (await ctx.tools())[type];
+      const tools = await ctx.toolsIfLoaded();
+      const raw = tools === null ? undefined : tools[type];
       return raw ? raw["can_move_between_walls"] === true : undefined;
     } catch {
       return undefined;
@@ -990,11 +993,14 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
-        // minor 376 №12: флаг can_move_between_walls из записи каталога — до
-        // ws.apply (каталог асинхронный, мутация синхронная); undefined — офлайн-фолбэк
-        const catalogCanMove = await catalogCanMoveBetweenWalls(
-          resolveItem(ws.model, a["item_id"] as string),
-        );
+        // minor 376 №12 + ревью 378 №19: флаг can_move_between_walls из каталога
+        // — до ws.apply (мутация синхронная), НО только когда он реально нужен
+        // (перенос against_wall) и только из уже загруженного каталога
+        // (toolsIfLoaded) — без запуска редактора на каждый item_update
+        const pos0 = a["position"] as Record<string, unknown> | undefined;
+        const catalogCanMove = pos0 && "against_wall" in pos0
+          ? await catalogCanMoveBetweenWalls(resolveItem(ws.model, a["item_id"] as string))
+          : undefined;
         const item = ws.apply("item_update", (m) => {
           const target = resolveItem(m, a["item_id"] as string);
           const pos = a["position"] as Record<string, unknown> | undefined;
@@ -3298,7 +3304,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "(null — убрать персональный), стиль контура, заливку, лист.",
       {
         line_id: z.string().min(1).describe("метка TL<n> из model_get или id сайта"),
-        width_mm: z.number().finite().int().min(THICK_LINE_WIDTH_MM_MIN).max(THICK_LINE_WIDTH_MM_MAX).optional(),
+        width_mm: z.number().finite().int().min(THICK_LINE_WIDTH_MM_MIN).max(THICK_LINE_WIDTH_MM_MAX).optional()
+          .describe(`толщина линии, мм (${THICK_LINE_WIDTH_MM_MIN}..${THICK_LINE_WIDTH_MM_MAX})`),
         plan: z.string().max(70).optional(),
         color: z.union([z.string().regex(/^#[0-9a-fA-F]{6}$/), z.null()]).optional(),
         width_stroke: z.number().finite().min(0.5).max(10).optional(),
