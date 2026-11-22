@@ -94,7 +94,7 @@ export function isSafeSheetDateForOpen(d: unknown): boolean {
 
 export type UnsafeStringHit = { collection: string; id: string; field: string; value: string };
 
-type SheetRec = { id?: unknown; name?: unknown; after_plan?: unknown; date?: unknown };
+type SheetRec = { id?: unknown; name?: unknown; after_plan?: unknown; date?: unknown; content?: unknown };
 
 /** Краткое представление не строкового значения для details (без данных модели). */
 function jsonPreview(v: unknown): string {
@@ -112,7 +112,11 @@ function jsonPreview(v: unknown): string {
  * точка проверки перед передачей модели в Chromium — assertModelSafeForEditor).
  * Проверяются те поля, которые бандл реально вставляет в HTML/селекторы:
  * custom_plans — ключ и ПОЛЕ id (строго), date (число), name (innerHTML),
- * after_plan (селекторы); pictures.text — < > & (консервативно, svg-текст).
+ * after_plan (селекторы), content (селектор `.custom_plan_content
+ * input[value="…"]`, ревью 383 №34); pictures.text — < > & (консервативно,
+ * svg-текст). Граница (ревью 383 №34, по бандлу): прочие поля ответа сервера
+ * floors/switches/units HTML-стоков не имеют — switches приводится к boolean,
+ * units идёт в селектор и l10n[...]→.text(), floors — геометрия и new Item.
  * Ревью 380 №22: fail-closed ПО ТИПУ — бандл берёт поля записи без приведения
  * (this.id=e.id||LIB.id(), this.name=e.name, this.after_plan=e.after_plan) и
  * вставляет в шаблон/конкатенацию, поэтому не строковое значение (массив,
@@ -144,6 +148,21 @@ export function findUnsafeEditorStrings(model: Model): UnsafeStringHit[] {
     checkBundleField("after_plan", s.after_plan, (x) => !isSafeSheetAfterPlanForOpen(x));
     if (s.date !== undefined && !isSafeSheetDateForOpen(s.date)) {
       out.push({ collection: "custom_plans", id: key, field: "date", value: String(s.date) });
+    }
+    // ревью 383 №34: content бандл подставляет в кавычечный jQuery-селектор
+    // '.custom_plan_content input[value="'+i.content[e]+'"]' (обработчик
+    // .custom .edit) — тот же класс стока, что after_plan; проверяем ПО ТИПУ
+    // (массив) и посимвольно тем же правилом, что after_plan
+    if (s.content !== undefined && s.content !== null) {
+      if (!Array.isArray(s.content)) {
+        out.push({ collection: "custom_plans", id: recId, field: "content", value: jsonPreview(s.content) });
+      } else {
+        for (const el of s.content as unknown[]) {
+          if (typeof el !== "string" || !isSafeSheetAfterPlanForOpen(el)) {
+            out.push({ collection: "custom_plans", id: recId, field: "content", value: typeof el === "string" ? el : jsonPreview(el) });
+          }
+        }
+      }
     }
   }
   const pictures = (model.pictures ?? {}) as Record<string, { text?: unknown }>;

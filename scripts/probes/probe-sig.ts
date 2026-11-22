@@ -9,7 +9,22 @@
 // канон дополнил: округление чисел комнатных записей до 1e-2 см, псевдоним
 // комнат по ОТСОРТИРОВАННОМУ набору канонических полигонов (устойчив к
 // перестановке), состав контейнеров отделки — только записи exist:true.
-export function sig(m: unknown): string {
+// Этап 384 (фикс по ревью 383 №28): канон НЕ скрывает пользовательские данные —
+// floorMoldings/ceilingMoldings исключены из USER_DATA_ARR (плинтус хранится в
+// parts записи, бандл: t.floorMoldings[e].parts[o]=$FloorLining.get_new_line(i)),
+// сериализация записей отделки без replacer-массива (JSON.stringify(roundDeep(e))):
+// replacer фильтрует ключи на ВСЕХ уровнях вложенности и прятал exist:true-состав
+// (parts/params/polygon). Стороны плинтуса без exist:true пропускаются — их число
+// следует за перегенерированной нарезкой рёбер. №30: ключи prs_disabled (oid
+// развёрток, бандл связывает i.edges_prs[e].oid===O для O in i.prs_disabled)
+// канонизируются через oid → ed{edge_index}, а не вместе с безусловным
+// обнулением oid в edges_prs — иначе при перегенерации oid ключи станут
+// висячими, и sig это скрыл бы.
+/**
+ * Каноническая форма GET-модели для сверок (384: экспортирована для
+ * поканонического диффа в пробах сверки восстановления, sig = JSON(canon)).
+ */
+export function canon(m: unknown): unknown {
   const c = structuredClone(m) as Record<string, unknown>;
   for (const k of ["errors", "logs", "log_plan", "session", "version", "drawing", "params", "final", "signals", "smeta_water_pipes", "save_id", "is_forced"]) delete c[k];
   for (const k of ["borders", "drawings"]) {
@@ -30,7 +45,7 @@ export function sig(m: unknown): string {
   // перегенерированной нарезкой рёбер — состав пользовательской отделки это
   // только записи exist:true (382)
   const USER_DATA_ARR = [
-    "floorMoldings", "ceilingMoldings", "warms_walls",
+    "warms_walls",
     "floors", "hydroisolations", "hydroisolations_walls",
     "plasters", "plasters_ceilings", "plasters_slopes",
     "isolations", "isolations_slopes", "decors", "decors_slopes",
@@ -84,14 +99,38 @@ export function sig(m: unknown): string {
           if (Array.isArray(rec[uk])) {
             rec[uk] = (rec[uk] as Array<Record<string, unknown>>)
               .filter((e) => e && e["exist"] === true)
-              .map((e) => JSON.stringify(roundDeep(e), Object.keys(e).sort()))
+              // без replacer-массива (384 №28): он фильтрует ключи на всех
+              // уровнях вложенности; ключи сортирует roundDeep
+              .map((e) => JSON.stringify(roundDeep(e)))
               .sort();
           }
         }
         // округление шума координат (382): до канонов, читающих числа
         for (const kk of Object.keys(rec)) rec[kk] = roundDeep(rec[kk]);
         if (Array.isArray(rec["edges_prs"])) {
-          rec["edges_prs"] = (rec["edges_prs"] as Array<Record<string, unknown>>).map((e) => ({ ...e, oid: null }));
+          const ep = rec["edges_prs"] as Array<Record<string, unknown>>;
+          // №30 (ревью 383): oid перегенерируется, но он СВЯЗЫВАЕТ пользовательский
+          // prs_disabled (бандл: i.edges_prs[e].oid===O для O in i.prs_disabled) —
+          // ключи prs_disabled канонизируются через oid → ed{edge_index}; висячий
+          // ключ (oid нет в edges_prs) остаётся как есть — не скрываем
+          const oidToEdges = new Map<string, string[]>();
+          ep.forEach((e, i) => {
+            const oid = e["oid"];
+            if (typeof oid === "string" && oid !== "") {
+              const list = oidToEdges.get(oid) ?? [];
+              list.push(`ed${i}`);
+              oidToEdges.set(oid, list);
+            }
+          });
+          rec["edges_prs"] = ep.map((e) => ({ ...e, oid: null }));
+          if (rec["prs_disabled"] !== null && typeof rec["prs_disabled"] === "object" && !Array.isArray(rec["prs_disabled"])) {
+            const canon: Record<string, unknown> = {};
+            for (const oid of Object.keys(rec["prs_disabled"] as Record<string, unknown>).sort()) {
+              const edges = oidToEdges.get(oid);
+              canon[edges && edges.length > 0 ? [...new Set(edges)].sort().join("|") : oid] = "";
+            }
+            rec["prs_disabled"] = canon;
+          }
         }
         if (Array.isArray(rec["edges"])) {
           rec["edges"] = (rec["edges"] as Array<Record<string, unknown>>).map((e, i) => ({ ...e, id: `ed${i}` }));
@@ -120,21 +159,6 @@ export function sig(m: unknown): string {
           }
           rec["rigels"] = canon;
         }
-        for (const kk of ["floorMoldings", "ceilingMoldings"]) {
-          if (Array.isArray(rec[kk])) {
-            rec[kk] = (rec[kk] as Array<Record<string, unknown>>).map((side) => {
-              const s = structuredClone(side);
-              if (s && typeof s === "object" && s["parts"] && typeof s["parts"] === "object") {
-                const parts: Record<string, unknown> = {};
-                for (const p of Object.values(s["parts"] as Record<string, Record<string, unknown>>)) {
-                  parts[JSON.stringify(p, Object.keys(p).sort())] = { ...p, id: null, id_room: null, id_ceiling: null };
-                }
-                s["parts"] = parts;
-              }
-              return s;
-            });
-          }
-        }
         if (Array.isArray(rec["ceilings"])) {
           // производные (перестраиваются редактором при каждом save: полигоны/рёбра
           // зон, precision, edges_ceiling) — в каноническую форму: exist + отделка
@@ -152,13 +176,17 @@ export function sig(m: unknown): string {
         for (const dk of ["edges_ceiling", "demolines_ceiling_moldings"]) {
           delete rec[dk];
         }
-        // moldings: состав exist:true частей (длина массива следует за рёбрами комнаты)
+        // moldings: состав частей сторон exist:true (длина массива следует за
+        // рёбрами комнаты, стороны-заглушки без exist:true — шум нарезки рёбер,
+        // 384 №28; parts записи плинтуса — пользовательские данные, сериализуем
+        // полностью через roundDeep, без replacer)
         for (const mk of ["floorMoldings", "ceilingMoldings"]) {
           if (Array.isArray(rec[mk])) {
             const parts: string[] = [];
             for (const side of rec[mk] as Array<Record<string, unknown>>) {
+              if (!side || side["exist"] !== true) continue;
               const p = (side?.["parts"] ?? {}) as Record<string, Record<string, unknown>>;
-              for (const q of Object.values(p)) parts.push(JSON.stringify(q, Object.keys(q).sort()));
+              for (const q of Object.values(p)) parts.push(JSON.stringify(roundDeep(q)));
             }
             rec[mk] = parts.sort();
           }
@@ -194,5 +222,10 @@ export function sig(m: unknown): string {
     }
     return v;
   };
-  return JSON.stringify(aliasAll(c));
+  return aliasAll(c);
+}
+
+/** Канон в строку (JSON). Ключи объектов отсортированы внутри canon. */
+export function sig(m: unknown): string {
+  return JSON.stringify(canon(m));
 }

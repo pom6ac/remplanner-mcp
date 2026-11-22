@@ -21,11 +21,11 @@ function fixtureModel(): Model {
 
 const COMPAT_PRESENT = { WALLS: true, ROOMS2: true, restore: true, draw: true, copy: true, save: true, canvas: true, wall_link1: true, wall_link2: true, wall_calc: true };
 
-/** Мок страницы для openEditorInContext: goto/waitForFunction/evaluate без сети. */
+/** Мок страницы для openEditorInContext: goto/waitForFunction/evaluate без сети.
+ *  Перехват ответа модели — context.route (383 №33): мок не делает сетевых запросов. */
 function guardPage(opts: { objectId: string; planId: string }) {
   let savedPlanCalled = false;
   const page = {
-    async route() {}, // перехват ответа модели (382): мок не делает сетевых запросов
     async goto() { return {}; },
     async waitForResponse() { return null; },
     async waitForFunction() { return true; },
@@ -49,19 +49,24 @@ function guardPage(opts: { objectId: string; planId: string }) {
     },
     on() {}, off() {},
   };
-  return { page: page as never, wasSaved: () => savedPlanCalled };
+  return {
+    page: page as never,
+    context: {
+      async route() {},
+      newPage: async () => page,
+      close: async () => {},
+    } as never,
+    wasSaved: () => savedPlanCalled,
+  };
 }
 
 test("guard: редактор открыл ЧУЖОЙ object_id (не тот, что запрошен) → EDITOR_PROJECT_MISMATCH, контекст закрыт", async () => {
   let closed = 0;
-  const { page } = guardPage({ objectId: "1234567", planId: "765432" });
-  const context = {
-    newPage: async () => page,
-    close: async () => { closed++; },
-  };
+  const { context } = guardPage({ objectId: "1234567", planId: "765432" });
+  const ctx = { ...(context as Record<string, unknown>), close: async () => { closed++; } } as never;
   await assert.rejects(
     // НЕ анонимный поток: запрошен проект 123, редактор открыл 1234567
-    openEditorInContext({ cookies: [] } as never, "123", "1", context as never, 2000),
+    openEditorInContext({ cookies: [] } as never, "123", "1", ctx as never, 2000),
     (e: unknown) => {
       assert.ok(e instanceof Error);
       assert.equal((e as { code?: string }).code, "EDITOR_PROJECT_MISMATCH");
@@ -73,10 +78,10 @@ test("guard: редактор открыл ЧУЖОЙ object_id (не тот, ч
 
 test("guard: plan_id не совпал с запрошенным (не аноним) → EDITOR_PROJECT_MISMATCH", async () => {
   let closed = 0;
-  const { page } = guardPage({ objectId: "123", planId: "999031" });
-  const context = { newPage: async () => page, close: async () => { closed++; } };
+  const { context } = guardPage({ objectId: "123", planId: "999031" });
+  const ctx = { ...(context as Record<string, unknown>), close: async () => { closed++; } } as never;
   await assert.rejects(
-    openEditorInContext({ cookies: [] } as never, "123", "1", context as never, 2000),
+    openEditorInContext({ cookies: [] } as never, "123", "1", ctx as never, 2000),
     (e: unknown) => (e as { code?: string }).code === "EDITOR_PROJECT_MISMATCH",
   );
   assert.equal(closed, 1);

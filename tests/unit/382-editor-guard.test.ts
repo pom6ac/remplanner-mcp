@@ -173,25 +173,23 @@ type FakeRoute = {
   continue(): Promise<void>;
 };
 
-/** Мок страницы: перехватчик page.route регистрируется, goto «делает» GET модели. */
-function routePage(payload: string, opts: { method?: string; fetchFails?: boolean } = {}) {
+/** Мок страницы: перехватчик context.route (383 №33) регистрируется, goto «делает» GET модели. */
+function routePage(payload: string, opts: { method?: string; fetchFails?: boolean } = {}, onClose: () => void = () => {}) {
   const calls = { fulfill: 0, abort: 0, routeRegistered: 0, cont: 0 };
   let handler: ((route: FakeRoute) => Promise<void>) | null = null;
+  // payload в коробке: ревью 383 №32а — страница может перезагрузиться и получить ВТОРОЙ ответ
+  const payloadBox = { current: payload };
   const makeRoute = (method: string): FakeRoute => ({
     request: (): { method(): string } => ({ method: () => method }),
     fetch: async () => {
       if (opts.fetchFails) throw new Error("network down");
-      return { text: async () => payload };
+      return { text: async () => payloadBox.current };
     },
     fulfill: async () => { calls.fulfill++; },
     abort: async () => { calls.abort++; },
     continue: async () => { calls.cont++; },
   });
   const page = {
-    async route(_re: unknown, h: (route: FakeRoute) => Promise<void>) {
-      calls.routeRegistered++;
-      handler = h;
-    },
     async goto() {
       await handler?.(makeRoute(opts.method ?? "GET"));
       return {};
@@ -211,7 +209,24 @@ function routePage(payload: string, opts: { method?: string; fetchFails?: boolea
     },
     on() {}, off() {},
   };
-  return { page: page as never, calls };
+  const context = {
+    async route(_re: unknown, h: (route: FakeRoute) => Promise<void>) {
+      calls.routeRegistered++;
+      handler = h;
+    },
+    newPage: async () => page,
+    close: async () => { onClose(); },
+  };
+  return {
+    page: page as never,
+    context: context as never,
+    calls,
+    /** Имитация повторной загрузки модели страницей (reload, restore_project). */
+    reloadModel: async (p: string): Promise<void> => {
+      payloadBox.current = p;
+      await handler?.(makeRoute(opts.method ?? "GET"));
+    },
+  };
 }
 
 const SAFE_PAYLOAD = JSON.stringify({ object_id: "123", plan_id: "1", save_id: "s1", units: "cm", data: JSON.stringify({ walls: {} }) });
@@ -224,8 +239,7 @@ const evilPayload = (): string =>
 
 test("382 major21: сервер вернул опасный лист — route.abort, страница модель НЕ получила, отказ INVALID_ARGUMENT", async () => {
   let closed = 0;
-  const { page, calls } = routePage(evilPayload());
-  const context = { newPage: async () => page, close: async () => { closed++; } };
+  const { context, calls } = routePage(evilPayload(), {}, () => { closed++; });
   await assert.rejects(
     openEditorInContext({ cookies: [] } as never, "123", "1", context as never, 2000),
     (e: unknown) => {
@@ -242,8 +256,7 @@ test("382 major21: сервер вернул опасный лист — route.a
 });
 
 test("382 major21: безопасный ответ модели — fulfill, редактор открывается", async () => {
-  const { page, calls } = routePage(SAFE_PAYLOAD);
-  const context = { newPage: async () => page, close: async () => {} };
+  const { context, calls } = routePage(SAFE_PAYLOAD);
   const handle = await openEditorInContext({ cookies: [] } as never, "123", "1", context as never, 2000);
   assert.equal(calls.fulfill, 1, "проверенный ответ отдан странице");
   assert.equal(calls.abort, 0);
@@ -258,8 +271,7 @@ test("382 major21: непроверяемый ответ (не JSON / нет dat
     ["сбой сети при fetch", SAFE_PAYLOAD, { fetchFails: true }],
   ] as const) {
     let closed = 0;
-    const { page, calls } = routePage(payload, { ...opts });
-    const context = { newPage: async () => page, close: async () => { closed++; } };
+    const { context, calls } = routePage(payload, { ...opts }, () => { closed++; });
     await assert.rejects(
       openEditorInContext({ cookies: [] } as never, "123", "1", context as never, 2000),
       INVALID,
@@ -299,8 +311,7 @@ test("382 major21: assertPlannerModelResponse — таблица ответов 
 
 /** Workspace с deps.openEditor = настоящий openEditorInContext на мок-контексте. */
 function wsWithRealOpenEditor(payload: string): { ws: Workspace; calls: { fulfill: number; abort: number } } {
-  const { page, calls } = routePage(payload);
-  const context = { newPage: async () => page, close: async () => {} };
+  const { context, calls } = routePage(payload);
   const editor: EditorLike = {
     objectId: "123", planId: "1",
     async normalize(m) {
@@ -386,4 +397,40 @@ test("382 nit26: toolsIfLoaded онлайн возвращает дисковы�
   const tools = await ctx.toolsIfLoaded();
   assert.ok(tools !== null, "каталог из дискового кэша — не null");
   assert.ok(typeof tools === "object" && Object.keys(tools as object).length > 0, "бандл из кэша не пуст");
+});
+
+// ---------- ревью 383 №32: reload:101, липкая ошибка, таймер ----------
+
+test("383 minor32б: reload:101 в ответе модели — SESSION_EXPIRED и abort (не INVALID_ARGUMENT «нет data»)", async () => {
+  const { context, calls } = routePage(JSON.stringify({ reload: 101 }), {}, () => {});
+  await assert.rejects(
+    openEditorInContext({ cookies: [] } as never, "123", "1", context as never, 2000),
+    (e: unknown) => (e as { code?: string }).code === "SESSION_EXPIRED",
+    "истекшая сессия при загрузке модели — SESSION_EXPIRED",
+  );
+  assert.equal(calls.abort, 1, "модель не отдана странице");
+});
+
+test("383 minor32а: второй опасный ответ после открытия — липкая ошибка читается в методах handle", async () => {
+  const { context, calls, reloadModel } = routePage(SAFE_PAYLOAD);
+  const handle = await openEditorInContext({ cookies: [] } as never, "123", "1", context as never, 2000);
+  assert.equal(calls.fulfill, 1, "первый ответ безопасен — редактор открыт");
+  await reloadModel(evilPayload());
+  assert.equal(calls.abort, 1, "повторный опасный ответ — abort");
+  const m = baseModel();
+  await assert.rejects(() => handle.normalize(m as unknown as Record<string, unknown>), INVALID, "normalize: липкая ошибка — отказ");
+  await assert.rejects(() => handle.save(2000), INVALID, "save: липкая ошибка — отказ");
+  await assert.rejects(() => handle.renderPng({}), INVALID, "renderPng: липкая ошибка — отказ");
+  await assert.rejects(() => handle.compatInfo(), INVALID, "compatInfo: липкая ошибка — отказ");
+  await handle.close().catch(() => {});
+});
+
+test("383 minor32а: безопасная работа не нарушена (без reload ошибки методы работают)", async () => {
+  const { context, calls } = routePage(SAFE_PAYLOAD);
+  const handle = await openEditorInContext({ cookies: [] } as never, "123", "1", context as never, 2000);
+  const m = { ...baseModel(), walls: {} };
+  const res = await handle.normalize(m as unknown as Record<string, unknown>);
+  assert.ok(res.model !== undefined, "normalize проходит без reload-ошибки");
+  assert.equal(calls.abort, 0);
+  await handle.close().catch(() => {});
 });

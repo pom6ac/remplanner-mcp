@@ -9,10 +9,9 @@
 // БЕЗ REF_INIT — эталон уже существует), checkEditorPlanMatch fail-closed
 // перед каждым project_open, assertUnchanged перед каждой записью, бэкап
 // backup-<OBJECT_ID>-382.json непосредственно перед ПЕРВЫМ прогоном (не
-// перезаписывается), sig модели в конце и в catch, restore не нужен
-// (новых объектов нет — стена возвращается wall_move назад, сверка sig с
-// бэкапом обязательна), ≤30 запросов/мин (лимитер MCP), save не чаще раза
-// в 5 с. Лог КАЖДОГО прогона — .orca-reports/tmp/382-<n>.log.
+// перезаписывается), sig модели в конце и в catch, restore в finally (384,
+// ревью 383 №29: если после save стена осталась сдвинутой — wall_move назад +
+// save verified), ≤30 запросов/мин (лимитер MCP), save не чаще раза в 5 с. Лог КАЖДОГО прогона — .orca-reports/tmp/382-<n>.log.
 //   REMPLANNER_PROBE_OBJECT_ID=… REMPLANNER_PROBE_PLAN_ID=… \
 //   REMPLANNER_PROBE_READONLY_ID=… REMPLANNER_PROBE_READONLY_PLAN_ID=… \
 //   node scripts/probes/382-guard-live.ts run
@@ -64,13 +63,20 @@ const wallsOf = (mg: Record<string, unknown>): CompactWall[] =>
 const shiftMm = (w0: CompactWall, w1: CompactWall): number =>
   Math.hypot(w1.from[0] - w0.from[0], w1.from[1] - w0.from[1]);
 
+// область видимости для finally (384, ревью 383 №29 — restore по журналу в finally)
+let wall0: CompactWall | null = null;
+let roGuard: Awaited<ReturnType<typeof import("./probe-guard.ts")["readonlyGuard"]>> | null = null;
+let gsave: (tag: string) => Promise<Record<string, unknown>> = async () => {
+  throw new Error("gsave не инициализирован (падение до первого save)");
+};
+
 try {
   const { probeWriteEnv, assertTargetPair, readonlyGuard, readonlyRefPath } = await import("./probe-guard.ts");
   const ids = probeWriteEnv();
   await assertTargetPair(ctx.session(), ids.objectId, ids.planId);
-  const roGuard = await readonlyGuard(ctx.session(), ids.readonlyId, ids.readonlyPlanId, readonlyRefPath(ids.readonlyId, ids.readonlyPlanId));
-  const gsave = async (tag: string): Promise<Record<string, unknown>> => {
-    await roGuard.assertUnchanged(tag);
+  roGuard = await readonlyGuard(ctx.session(), ids.readonlyId, ids.readonlyPlanId, readonlyRefPath(ids.readonlyId, ids.readonlyPlanId));
+  gsave = async (tag: string): Promise<Record<string, unknown>> => {
+    await roGuard!.assertUnchanged(tag);
     const r = await call("project_save", {}) as { verified?: boolean; warnings?: unknown[]; details?: unknown };
     console.log(`save ${tag}:`, JSON.stringify({ verified: r["verified"], warnings: (r["warnings"] ?? []).length }));
     if (!r["verified"]) throw new Error(`save ${tag} не verified: ${JSON.stringify(r["details"] ?? r).slice(0, 500)}`);
@@ -105,36 +111,37 @@ try {
   const mg0 = await call("model_get", {}) as Record<string, unknown>;
   // стена без проёмов — возврат смещением назад точно восстановит ось
   const candidates = wallsOf(mg0).filter((w) => Array.isArray(w.openings) && w.openings.length === 0);
-  const wall0 = candidates[0];
-  check(wall0 !== undefined, `выбрана стена без проёмов для мутации (всего стен: ${wallsOf(mg0).length}, без проёмов: ${candidates.length})`);
-  if (wall0 === undefined) throw new Error("нет стены без проёмов — сцена прервана");
-  console.log("wall:", wall0.site_id, "from", wall0.from, "to", wall0.to, "len", wall0.len_mm);
+  wall0 = candidates[0] ?? null;
+  check(wall0 !== null, `выбрана стена без проёмов для мутации (всего стен: ${wallsOf(mg0).length}, без проёмов: ${candidates.length})`);
+  if (wall0 === null) throw new Error("нет стены без проёмов — сцена прервана");
+  const wall = wall0;
+  console.log("wall:", wall.site_id, "from", wall.from, "to", wall.to, "len", wall.len_mm);
 
-  await call("wall_move", { wall_id: wall0.site_id, offset_mm: 20 });
+  await call("wall_move", { wall_id: wall.site_id, offset_mm: 20 });
   const mg1 = await call("model_get", {}) as Record<string, unknown>;
-  const wall1 = wallsOf(mg1).find((w) => w.site_id === wall0.site_id);
-  check(wall1 !== undefined && shiftMm(wall0, wall1!) > 15, `wall_move +20: ось сдвинулась (${wall1 ? shiftMm(wall0, wall1).toFixed(1) : "?"} мм)`);
+  const wall1 = wallsOf(mg1).find((w) => w.site_id === wall.site_id);
+  check(wall1 !== undefined && shiftMm(wall, wall1!) > 15, `wall_move +20: ось сдвинулась (${wall1 ? shiftMm(wall, wall1).toFixed(1) : "?"} мм)`);
   const save1 = await gsave("wall_move +20");
   check(save1["verified"] === true, "save verified (wall_move +20)");
   const mg2 = await call("model_get", {}) as Record<string, unknown>;
-  const wall2 = wallsOf(mg2).find((w) => w.site_id === wall0.site_id);
-  check(wall2 !== undefined && shiftMm(wall0, wall2!) > 15, "после save и GET стена осталась сдвинутой");
+  const wall2 = wallsOf(mg2).find((w) => w.site_id === wall.site_id);
+  check(wall2 !== undefined && shiftMm(wall, wall2!) > 15, "после save и GET стена осталась сдвинутой");
 
   // ==== reopen при запущенном редакторе (повторный project_open) ====
   await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
   await assertEditorPlanMatch(editorOf(), ids.planId);
   await call("render_plan", {});
   const mg3 = await call("model_get", {}) as Record<string, unknown>;
-  const wall3 = wallsOf(mg3).find((w) => w.site_id === wall0.site_id);
-  check(wall3 !== undefined && shiftMm(wall0, wall3!) > 15, "reopen: сдвиг сохранился, редактор открылся с проверенной серверной моделью");
+  const wall3 = wallsOf(mg3).find((w) => w.site_id === wall.site_id);
+  check(wall3 !== undefined && shiftMm(wall, wall3!) > 15, "reopen: сдвиг сохранился, редактор открылся с проверенной серверной моделью");
 
   // ==== wall-мутация обратно: −20 мм, save verified ====
-  await call("wall_move", { wall_id: wall0.site_id, offset_mm: -20 });
+  await call("wall_move", { wall_id: wall.site_id, offset_mm: -20 });
   const save2 = await gsave("wall_move −20 (возврат)");
   check(save2["verified"] === true, "save verified (возврат стены)");
   const mg4 = await call("model_get", {}) as Record<string, unknown>;
-  const wall4 = wallsOf(mg4).find((w) => w.site_id === wall0.site_id);
-  const back = wall4 !== undefined ? shiftMm(wall0, wall4!) : NaN;
+  const wall4 = wallsOf(mg4).find((w) => w.site_id === wall.site_id);
+  const back = wall4 !== undefined ? shiftMm(wall, wall4!) : NaN;
   check(back < 2, `стена возвращена на место (сдвиг ${back.toFixed(2)} мм ≤ 2)`);
 
   // ==== sig: модель dev-объекта == бэкап до первого прогона ====
@@ -146,6 +153,7 @@ try {
   await roGuard.checkFinal("end");
 } catch (e) {
   console.error("FAIL:", String((e as Error).message ?? e).slice(0, 600));
+  exitCode = 1;
   try {
     const { probeWriteEnv } = await import("./probe-guard.ts");
     const ids = probeWriteEnv();
@@ -158,9 +166,31 @@ try {
       console.error("FAIL-restore: бэкапа ещё нет (падение до первой записи) — сверка невозможна, записей не было");
     }
   } catch (fe) { console.error("FAIL-restore check:", String((fe as Error).message).slice(0, 300)); }
-  await client.close().catch(() => {});
-  try { await closeBrowser(); } catch { /* */ }
-  process.exit(1);
+} finally {
+  // 384 (ревью 383 №29): restore по журналу в finally — если после save стена
+  // осталась сдвинутой (>2 мм), возвращаем wall_move назад + save verified
+  try {
+    if (wall0 !== null) {
+      const ids = (await import("./probe-guard.ts")).probeWriteEnv();
+      const cur = await loadModel(ctx.session(), ids.objectId, ids.planId);
+      const w = wallsOf(cur.model).find((x) => x.site_id === wall0!.site_id);
+      const off = w ? shiftMm(wall0, w) : NaN;
+      if (Number.isFinite(off) && off > 2) {
+        console.error(`finally-restore: стена ${wall0.site_id} смещена на ${off.toFixed(1)} мм — wall_move(-${off.toFixed(1)}) + save`);
+        await call("wall_move", { wall_id: wall0.site_id, offset_mm: -off });
+        const r = await gsave("finally-restore (возврат стены)");
+        if (r["verified"] !== true) throw new Error("save finally-restore не verified");
+        console.error("finally-restore: стена возвращена, save verified");
+      } else {
+        console.log(`finally-restore: стена на месте (сдвиг ${Number.isFinite(off) ? off.toFixed(2) : "н/д"} мм ≤ 2) — restore не нужен`);
+      }
+    } else {
+      console.log("finally-restore: записей не было (стена не выбиралась) — restore не нужен");
+    }
+  } catch (fe) {
+    console.error("finally-restore НЕ УДАЛСЯ — восстановите по журналу/бэкапу:", String((fe as Error).message ?? fe).slice(0, 300));
+    exitCode = 1;
+  }
 }
 await client.close();
 try { await closeBrowser(); } catch { /* */ }

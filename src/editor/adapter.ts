@@ -170,6 +170,10 @@ export async function openEditor(
   const context: BrowserContext = await browser.newContext({
     viewport: { width: 1600, height: 1000 },
     locale: "ru-RU",
+    // ревью 383 №33: перехват ответа модели стоит на контексте, а page.route
+    // не видит запросы service worker — блокируем их целиком (в бандле
+    // navigator.serviceWorker нет, но защита не должна зависеть от бандла)
+    serviceWorkers: "block",
   });
   try {
     if (session.cookies.length > 0) {
@@ -191,7 +195,7 @@ export async function openEditorInContext(
   session: SessionState,
   objectId: string,
   planId: string,
-  context: Pick<BrowserContext, "newPage"> & { close(): Promise<void>; addCookies?: unknown },
+  context: Pick<BrowserContext, "newPage" | "route"> & { close(): Promise<void>; addCookies?: unknown },
   timeoutMs: number = BROWSER_TIMEOUT_MS,
   opts: OpenEditorOptions = {},
 ): Promise<EditorHandle> {
@@ -207,24 +211,35 @@ export async function openEditorInContext(
     // между свежим GET в runSave и GET самой страницы (№27). Каким бы путём ни
     // пришёл вызов (render_plan, wall-мутации, каталог, undo/redo, import,
     // повторный open, save), страницу не получает ничто, кроме проверенной модели.
+    // Ревью 383 №33: route на КОНТЕКСТЕ (page.route не видит service worker).
     let unsafeModelError: unknown = null;
     let modelResponseDone: () => void = () => {};
     const modelResponseSeen = new Promise<void>((resolve) => {
       modelResponseDone = resolve;
     });
-    await page.route(PLANNER_MODEL_URL_RE, async (route) => {
+    await context.route(PLANNER_MODEL_URL_RE, async (route) => {
       try {
         if (route.request().method() !== "GET") {
           await route.continue();
           return;
         }
         const response = await route.fetch();
-        assertPlannerModelResponse(await response.text());
+        const rawBody = await response.text();
+        // ревью 383 №32б: reload:101 (истекшая сессия) — SESSION_EXPIRED до
+        // разбора модели, а не INVALID_ARGUMENT «нет строки data»
+        let parsed: unknown;
+        try { parsed = JSON.parse(rawBody); } catch { parsed = null; }
+        if (isReloadResponse(parsed)) {
+          throw new McpError("SESSION_EXPIRED", "сессия истекла (reload:101) при загрузке модели редактором", {
+            hint: "выполните npm run login",
+          });
+        }
+        assertPlannerModelResponse(rawBody);
         await route.fulfill({ response });
       } catch (e) {
         // fail-closed: любая ошибка проверки (опасные строки, нестандартный
-        // ответ, сбой сети) — abort и отказ INVALID_ARGUMENT, страница модель
-        // не получает; текст ошибки без тела ответа сервера
+        // ответ, сбой сети) — abort и отказ, страница модель не получает;
+        // текст ошибки без тела ответа сервера
         unsafeModelError = e instanceof McpError
           ? e
           : new McpError(
@@ -240,10 +255,20 @@ export async function openEditorInContext(
     // Дождаться проверенного ответа модели (route.fulfill) или таймаута — как раньше
     // waitForResponse с catch: без ответа restore/draw гоняются с асинхронной
     // инициализацией редактора (copy('server') пуст).
-    await Promise.race([
-      modelResponseSeen,
-      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
-    ]);
+    // Ревью 383 №32в: таймер очищается.
+    let raceTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        modelResponseSeen,
+        new Promise((resolve) => { raceTimer = setTimeout(resolve, timeoutMs); }),
+      ]);
+    } finally {
+      clearTimeout(raceTimer);
+    }
+    // ревью 383 №32а: ошибка проверки ответа модели «липкая» — страница может
+    // перезагрузиться (i.reload, restore_project) и получить второй, опасный
+    // ответ уже после открытия; ошибка остаётся читаемой во всех методах handle
+    const unsafeError = (): unknown => unsafeModelError;
     if (unsafeModelError !== null) throw unsafeModelError;
     await page
       .waitForFunction(PAGE.readyCheck, undefined, { timeout: timeoutMs, polling: 250 })
@@ -278,7 +303,7 @@ export async function openEditorInContext(
         });
       }
     }
-    return buildHandle(page, context, objectId, planId, compat, saveLimiter, opts);
+    return buildHandle(page, context, objectId, planId, compat, saveLimiter, opts, unsafeError);
   } catch (e) {
     await context.close().catch(() => {});
     throw e;
@@ -295,17 +320,29 @@ export function buildHandle(
   /** Квота сохранений; подменяется в офлайн-тестах, по умолчанию общая (R2-10). */
   limiter: { acquire(): Promise<void> } = saveLimiter,
   opts: OpenEditorOptions = {},
+  /**
+   * Липкая ошибка проверки ответа модели (ревью 383 №32а): страница может
+   * перезагрузиться и получить опасный ответ уже после открытия — ошибка
+   * проверяется в каждом методе handle, редактор не продолжает работу молча.
+   */
+  unsafeError: () => unknown = () => null,
 ): EditorHandle {
   // Целевой проект (инцидент 2026-11-15): фактические id страницы на момент открытия.
   // Для анонимных проектов редактор создаёт свои id — целевой тот, что сообщил редактор.
   const expectedObjectId = opts.anonymous ? (compat.object_id ?? objectId) : (compat.object_id || objectId);
   const expectedPlanId = opts.anonymous ? (compat.plan_id ?? planId) : (compat.plan_id || planId);
+  // ревью 383 №32а: липкая ошибка — проверяется в каждом методе handle
+  const failIfUnsafe = (): void => {
+    const stuck = unsafeError();
+    if (stuck !== null && stuck !== undefined) throw stuck;
+  };
   const handle: EditorHandle = {
     objectId: expectedObjectId,
     planId: expectedPlanId,
     compat,
     page,
     async normalize(model, waitMs = 1200): Promise<NormalizeResult> {
+      failIfUnsafe();
       // ревью 378 №14/№15: граница передачи модели в Chromium — restore ниже
       // исполняет CustomPlans.restore → addIconToPage (innerHTML имени листа,
       // data-id/data-date) прямо в page.evaluate. Проверка перед КАЖДОЙ
@@ -377,6 +414,7 @@ export function buildHandle(
       return last as NormalizeResult;
     },
     async save(timeoutMs = BROWSER_TIMEOUT_MS): Promise<EditorSaveResult> {
+      failIfUnsafe();
       // квота сохранений сайта (≤ 1 в 5 с, R2-10): браузерный save не минует лимитер
       await limiter.acquire();
       await page.evaluate(PAGE.clearFog);
@@ -469,9 +507,11 @@ export function buildHandle(
       }
     },
     async renderPng(options?: RenderOptions): Promise<Buffer> {
+      failIfUnsafe();
       return renderPlan(page, options ?? {});
     },
     async compatInfo(): Promise<CompatInfo> {
+      failIfUnsafe();
       const info = await readCompat(page);
       handle.compat = info;
       return info;
