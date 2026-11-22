@@ -56,7 +56,7 @@ const check = (ok: boolean, msg: string): void => {
 const editorOf = (): Parameters<typeof assertEditorPlanMatch>[0] | null =>
   (ctx as unknown as { workspaceOrNull: { editorOrNull: () => Parameters<typeof assertEditorPlanMatch>[0] | null } | null }).workspaceOrNull?.editorOrNull?.() ?? null;
 
-type CompactWall = { site_id: string; from: [number, number]; to: [number, number]; len_mm: number; openings: unknown[] };
+type CompactWall = { site_id: string; id?: string; from: [number, number]; to: [number, number]; len_mm: number; openings: unknown[] };
 const wallsOf = (mg: Record<string, unknown>): CompactWall[] =>
   (Array.isArray(mg["walls"]) ? mg["walls"] : Object.values((mg["walls"] ?? {}) as Record<string, CompactWall>)) as CompactWall[];
 
@@ -174,7 +174,8 @@ try {
     if (wall0 !== null) {
       const ids = (await import("./probe-guard.ts")).probeWriteEnv();
       const cur = await loadModel(ctx.session(), ids.objectId, ids.planId);
-      const w = wallsOf(cur.model).find((x) => x.site_id === wall0!.site_id);
+      // в RAW серверной модели стена — поле id (site_id — форма model_get)
+      const w = wallsOf(cur.model).find((x) => (x.site_id ?? x.id) === wall0!.site_id);
       const off = w ? shiftMm(wall0, w) : NaN;
       if (Number.isFinite(off) && off > 2) {
         console.error(`finally-restore: стена ${wall0.site_id} смещена на ${off.toFixed(1)} мм — wall_move(-${off.toFixed(1)}) + save`);
@@ -182,8 +183,24 @@ try {
         const r = await gsave("finally-restore (возврат стены)");
         if (r["verified"] !== true) throw new Error("save finally-restore не verified");
         console.error("finally-restore: стена возвращена, save verified");
+      } else if (Number.isFinite(off)) {
+        console.log(`finally-restore: стена на месте (сдвиг ${off.toFixed(2)} мм ≤ 2) — restore не нужен`);
       } else {
-        console.log(`finally-restore: стена на месте (сдвиг ${Number.isFinite(off) ? off.toFixed(2) : "н/д"} мм ≤ 2) — restore не нужен`);
+        // стена не найдена в RAW модели — состояние неизвестно, сверка sig с бэкапом (fail-closed)
+        const backupPath = `.orca-reports/backup-${ids.objectId}-384.json`;
+        if (existsSync(backupPath)) {
+          const ref = JSON.parse(readFileSync(backupPath, "utf8")) as LoadedModel;
+          const same = sig(cur.model) === sig(ref.model);
+          if (!same) {
+            console.error("finally-restore: стена не найдена в RAW модели и sig РАСХОЖДЕНИЕ с бэкапом — восстановите по журналу/бэкапу");
+            exitCode = 1;
+          } else {
+            console.log("finally-restore: стена не найдена в RAW модели, но sig совпадает с бэкапом — модель не изменена");
+          }
+        } else {
+          console.error("finally-restore: стена не найдена в RAW модели, бэкапа нет — состояние неизвестно, проверьте журнал");
+          exitCode = 1;
+        }
       }
     } else {
       console.log("finally-restore: записей не было (стена не выбиралась) — restore не нужен");
