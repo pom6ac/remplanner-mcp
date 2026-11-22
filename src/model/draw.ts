@@ -37,6 +37,10 @@ export const FREE_FIGURE_TYPES: readonly string[] = [
 /** Умолчания бандла (defs): фигура 50×50 см, толстая линия 20 см (widthDef). */
 export const DEF_FIGURE_SIZE_CM = 50;
 export const DEF_THICK_LINE_WIDTH_CM = 20;
+/** Индивидуальная ширина толстой линии, мм (заявление отчёта 375, minor 376 №8:
+ *  раньше width_mm: 0 проходил — ширина 0 см). */
+export const THICK_LINE_WIDTH_MM_MIN = 2;
+export const THICK_LINE_WIDTH_MM_MAX = 1500;
 
 type StrokeStyle = {
   color_custom?: string;
@@ -59,15 +63,21 @@ function validateStyle(style: StrokeStyle): void {
   }
 }
 
-/** План: встроенный лист или пользовательский (custom_<id>). */
+/** План: встроенный «исходный» (plan/a), мебель (furniture) или существующий
+ *  пользовательский лист (custom_<id>). Minor 376 №6: произвольная строка
+ *  (no_such_sheet, zzz) ставила объект на несуществующий лист — объект
+ *  становился невидимым; белый список = контракт инструментов раздела. */
 export function validateDrawPlan(model: Model, plan: string): string {
+  if (plan === "plan" || plan === "furniture") return plan;
   if (plan.startsWith("custom_")) {
     const id = plan.slice("custom_".length);
     const known = (model.custom_plans as Record<string, unknown> | undefined)?.[id];
     if (!known) throw new McpError("NOT_FOUND", `пользовательский лист ${plan} не найден`);
     return plan;
   }
-  return plan;
+  throw new McpError("INVALID_ARGUMENT", `plan — «plan», «furniture» или custom_<id> существующего пользовательского листа (получено «${plan.slice(0, 40)}»)`, {
+    details: { kind: "bad_plan", plan },
+  });
 }
 
 function polylineRec(
@@ -88,6 +98,12 @@ function polylineRec(
   if (pts.length < 2) throw new McpError("INVALID_ARGUMENT", "нужны минимум 2 точки (мм)");
   if (pts.length > 200) throw new McpError("INVALID_ARGUMENT", "максимум 200 точек ломаной");
   validateStyle({ color_custom: params.color, width_stroke: params.widthStroke, type_stroke: params.typeStroke });
+  if (coll === "thick_lines" && params.widthMm !== undefined &&
+      (params.widthMm < THICK_LINE_WIDTH_MM_MIN || params.widthMm > THICK_LINE_WIDTH_MM_MAX)) {
+    throw new McpError("INVALID_ARGUMENT", `width_mm — ширина толстой линии ${THICK_LINE_WIDTH_MM_MIN}..${THICK_LINE_WIDTH_MM_MAX} мм`, {
+      details: { kind: "bad_width_mm", width_mm: params.widthMm },
+    });
+  }
   const n = pts.length;
   const ids: string[] = [];
   for (let i = 0; i < n; i++) ids.push(newId());

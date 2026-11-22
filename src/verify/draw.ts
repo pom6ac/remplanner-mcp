@@ -1,4 +1,5 @@
 import type { VerificationMismatches } from "./types.ts";
+import { unescapeCommentText } from "../model/dims.ts";
 
 /**
  * Пользовательские поля нижней панели и листов (этап 375): пользовательские
@@ -100,6 +101,15 @@ export function drawLineUserMismatches(
     if ((e.type ?? "") !== (g.type ?? "")) out.push(`${id}: тип изменился (на сервере «${g.type ?? ""}»; ожидалось «${e.type ?? ""}»)`);
     if ((e.plan ?? "") !== (g.plan ?? "")) out.push(`${id}: лист изменился (на сервере «${g.plan ?? ""}»; ожидалось «${e.plan ?? ""}»)`);
     if ((e.color_custom ?? undefined) !== (g.color_custom ?? undefined)) out.push(`${id}: цвет изменился (ожидалось ${e.color_custom ?? "нет"}; на сервере ${g.color_custom ?? "нет"})`);
+    // minor 376 №7: сверка по семантической проекции — пользовательские поля
+    // стиля, которые задаёт сам MCP: наличие отдельно, значение при наличии
+    // с обеих сторон
+    for (const [field, title] of [["width_stroke", "толщина контура"], ["type_stroke", "стиль контура"], ["fill", "заливка"]] as const) {
+      const ev = e[field] as string | number | undefined;
+      const gv = g[field] as string | number | undefined;
+      if (ev !== undefined && gv === undefined) out.push(`${id}: ${title} потеряна после сохранения (ожидалось ${JSON.stringify(ev)})`);
+      else if (ev !== undefined && gv !== undefined && ev !== gv) out.push(`${id}: ${title} изменилась (ожидалось ${JSON.stringify(ev)}; на сервере ${JSON.stringify(gv)})`);
+    }
     out.push(...polylineMismatch(e, g, id));
     // индивидуальная ширина толстой линии — в ячейках matrix (ширины рёбер)
     const eW = lineEdgeWidth(e);
@@ -142,6 +152,14 @@ export function figureUserMismatches(
     if (!near(e.width, g.width) || !near(e.height, g.height)) out.push(`${id}: размеры изменились (ожидалось ${e.width}×${e.height}; на сервере ${g.width}×${g.height})`);
     if (e.angle !== undefined && !near(e.angle, g.angle, 0.5)) out.push(`${id}: угол изменился (ожидалось ${e.angle}; на сервере ${g.angle})`);
     if ((e.color ?? undefined) !== (g.color ?? undefined)) out.push(`${id}: цвет изменился (ожидалось ${e.color ?? "нет"}; на сервере ${g.color ?? "нет"})`);
+    // minor 376 №7: пользовательские поля стиля фигуры — наличие отдельно,
+    // значение при наличии с обеих сторон
+    for (const [field, title] of [["width_stroke", "толщина контура"], ["type_stroke", "стиль контура"], ["fill", "заливка"]] as const) {
+      const ev = e[field] as string | number | undefined;
+      const gv = g[field] as string | number | undefined;
+      if (ev !== undefined && gv === undefined) out.push(`${id}: ${title} потеряна после сохранения (ожидалось ${JSON.stringify(ev)})`);
+      else if (ev !== undefined && gv !== undefined && ev !== gv) out.push(`${id}: ${title} изменилась (ожидалось ${JSON.stringify(ev)}; на сервере ${JSON.stringify(gv)})`);
+    }
   }
   for (const id of Object.keys(got)) {
     if (!(id in expected)) out.push(`${id}: на сервере появилась лишняя фигура`);
@@ -166,7 +184,10 @@ export function pictureUserMismatches(
     const gpc = (g as { pc?: { x?: number; y?: number } }).pc;
     if (!near(epc?.x, gpc?.x) || !near(epc?.y, gpc?.y)) out.push(`${id}: центр сместился (ожидалось ${epc?.x},${epc?.y}; на сервере ${gpc?.x},${gpc?.y})`);
     if (!near(e.width, g.width) || !near(e.height, g.height)) out.push(`${id}: размеры изменились (ожидалось ${e.width}×${e.height}; на сервере ${g.width}×${g.height})`);
-    if ((e.text ?? undefined) !== (g.text ?? undefined)) out.push(`${id}: подпись изменилась (ожидалось «${e.text ?? ""}»; на сервере «${g.text ?? ""}»)`);
+    // major 376 №2: текст в модели — server-форма (' → `, " → ``), у обеих
+    // сторон; сравнение по видимому тексту (unescape), как у комментариев
+    if (unescapeCommentText(e.text ?? "") !== unescapeCommentText(g.text ?? "")) out.push(`${id}: подпись изменилась (ожидалось «${unescapeCommentText(e.text ?? "")}»; на сервере «${unescapeCommentText(g.text ?? "")}»)`);
+    if ((e.font_size ?? undefined) !== (g.font_size ?? undefined)) out.push(`${id}: размер шрифта подписи изменился (ожидалось ${e.font_size ?? "нет"}; на сервере ${g.font_size ?? "нет"})`);
     if (e.width_original !== undefined && !near(e.width_original, g.width_original, 0.5)) out.push(`${id}: ширина исходника изменилась (ожидалось ${e.width_original}; на сервере ${g.width_original})`);
     if (e.height_original !== undefined && !near(e.height_original, g.height_original, 0.5)) out.push(`${id}: высота исходника изменилась (ожидалось ${e.height_original}; на сервере ${g.height_original})`);
   }

@@ -8,6 +8,7 @@ import { parseSwitchVertexId } from "./electric.ts";
 import { zoneDelimiterList } from "./zone.ts";
 import { ceilingRigelList } from "./ceiling-rigels.ts";
 import { ceilingFinishZones } from "./finish.ts";
+import { unescapeCommentText } from "./dims.ts";
 import { zoneNumbersByEditorRule } from "./room-fields.ts";
 
 // Компактное представление модели для агента (< 5 КБ): метки W/R/O/I, мм.
@@ -1071,7 +1072,8 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       center_mm: [round0(cmToMm(p.pc?.x ?? 0)), round0(cmToMm(p.pc?.y ?? 0))] as [number, number],
       width_mm: round0(cmToMm(p.width ?? 0)),
       height_mm: round0(cmToMm(p.height ?? 0)),
-      ...(p.text ? { text: p.text } : {}),
+      // major 376 №2: подпись наружу — видимым текстом (server-форма → unescape)
+      ...(p.text ? { text: unescapeCommentText(p.text) } : {}),
     }));
 
   return {

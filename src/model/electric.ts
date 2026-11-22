@@ -593,9 +593,12 @@ export const SOCKET_LAYER_OFFSET_CM: Record<number, { flat: number; slope: numbe
 };
 
 /**
- * Типы каталога с can_move_between_walls: true (catalog-sample.json, весь
- * известный набор из живого каталога сайта). dragmoveWall бандла у таких
- * предметов первым делом снимает привязку к прежней опоре (projection,
+ * Офлайн-фолбэк типов каталога с can_move_between_walls: true (catalog-sample.json,
+ * весь известный набор из живого каталога сайта). minor 376 №12: в онлайне флаг
+ * читается из записи каталога (tools[name].can_move_between_walls, бандл
+ * canMoveBetweenWalls(){return!!this.model().can_move_between_walls}) — этот
+ * набор используется, только когда каталог недоступен. dragmoveWall бандла у
+ * таких предметов первым делом снимает привязку к прежней опоре (projection,
  * slope_side, hole_group, layer = void 0): слой ставится заново только
  * сцепкой с другой розеткой (чужой.layer + 1). У прочей пристенной
  * электрики (выключатели и виды вне набора) флага в каталоге нет — общая

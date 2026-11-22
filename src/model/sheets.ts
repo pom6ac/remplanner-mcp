@@ -2,6 +2,7 @@ import type { Model, CustomPlanEntity } from "./types.ts";
 export type { CustomPlanEntity };
 import { newId } from "./types.ts";
 import { McpError } from "../errors.ts";
+import { assertSafeEditorString } from "./strings.ts";
 
 /**
  * Пользовательские листы (этап 375, бандл app.3.0 — класс CustomPlan):
@@ -55,7 +56,9 @@ function validateName(name: string): string {
       details: { kind: "bad_name" },
     });
   }
-  return trimmed;
+  // major 376 №3 (ИБ): имя листа редактор вставляет в HTML вкладки без
+  // экранирования (CustomPlan.addIconToPage → innerHTML) — строгий белый список
+  return assertSafeEditorString(trimmed, "имя листа");
 }
 
 function validateAfterPlan(afterPlan: string): string {

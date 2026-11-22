@@ -185,7 +185,10 @@ test("375: picture — вписывание в 200×200 по бандлу, ва�
   assert.equal(p.width, PICTURE_FIT_CM, "большая сторона 200 см");
   assert.equal(p.height, 133.33, "133.33 см (округление до сотых)");
   assert.equal(p.type, "user");
-  assert.equal(p.font_size, undefined, "подписи нет — font_size не пишется");
+  // major 376 №1: подпись пишется ВСЕГДА (Picture ctor: text||"", font_size||10) —
+  // Pictures.restore бандла делает e.text.replace и падает на записи без text
+  assert.equal(p.text, "", "без подписи — text \"\"");
+  assert.equal(p.font_size, 10, "font_size 10 всегда");
   // маленькая картинка ставится в натуральную величину
   const p2 = addPicture(m, { url: "u2.png", center: PT, widthOriginalPx: 100, heightOriginalPx: 100, plan: "a" });
   assert.equal(p2.width, 100);

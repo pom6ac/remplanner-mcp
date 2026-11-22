@@ -72,8 +72,9 @@ import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGas
 import { resolveBorder, borderResponse } from "../dto/borders.ts";
 import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInternal, sheetPublic, commentTextWarnings, drawPlanInternal, drawPlanPublic } from "../dto/dims.ts";
 import { addSheet, updateSheet, deleteSheet, sheetPlanKey, sheetByName, SHEET_AFTER_PLANS, SHEET_CONTENT_KEYS, SHEET_DEFAULT_AFTER_PLAN } from "../model/sheets.ts";
-import { addFreeline, addThickLine, addFigure, updateLine, updateFigure, deleteLine, deleteFigure, resolveLine, resolveFigure, validateDrawPlan, FREE_FIGURE_TYPES } from "../model/draw.ts";
-import { addPicture, updatePicture, resolvePicture, deletePicture, parseImageSize, type PictureEntity } from "../model/pictures.ts";
+import { addFreeline, addThickLine, addFigure, updateLine, updateFigure, deleteLine, deleteFigure, resolveLine, resolveFigure, validateDrawPlan, FREE_FIGURE_TYPES, THICK_LINE_WIDTH_MM_MIN, THICK_LINE_WIDTH_MM_MAX } from "../model/draw.ts";
+import { addPicture, updatePicture, resolvePicture, deletePicture, parseImageSize, pictureTextWarnings, type PictureEntity } from "../model/pictures.ts";
+import { socketCatalogType } from "../model/electric.ts";
 import { uploadPicture } from "../api.ts";
 import { PICTURE_MAX_BYTES } from "../limits.ts";
 import { rawEditorPayload } from "../dto/model-payload.ts";
@@ -207,7 +208,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     throw new McpError("NOT_FOUND", `лист ${ref} не найден`);
   };
 
-  /** Ответ изображения в публичном формате (мм). */
+  /** Ответ изображения в публичном формате (мм); подпись — видимым текстом
+   *  (unescape server-формы, major 376 №2). */
   const pictureView = (pic: PictureEntity, planPublic: (v: string) => string) => ok({
     id: pic.id,
     url: pic.url,
@@ -215,13 +217,22 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     center_mm: [Math.round(Number(pic.pc?.x ?? 0) * 10), Math.round(Number(pic.pc?.y ?? 0) * 10)],
     width_mm: Math.round(Number(pic.width) * 10 * 100) / 100,
     height_mm: Math.round(Number(pic.height) * 10 * 100) / 100,
-    ...(pic.text ? { text: pic.text } : {}),
+    ...(pic.text ? { text: unescapeCommentText(pic.text) } : {}),
     hint: SCENARIO_HINT,
   });
 
-  /** id изображения после удаления (по метке или уже несуществующей ссылке — без ошибки). */
-  const resolvePictureSilent = (m: Model, ref: string): string | undefined => {
-    try { return resolvePicture(m, ref).id; } catch { return undefined; }
+  /** minor 376 №12: флаг can_move_between_walls из записи каталога (как в бандле
+   *  canMoveBetweenWalls(){return!!this.model().can_move_between_walls});
+   *  каталог недоступен — undefined (офлайн-фолбэк CAN_MOVE_BETWEEN_WALLS). */
+  const catalogCanMoveBetweenWalls = async (item: ItemProps): Promise<boolean | undefined> => {
+    const type = socketCatalogType(item);
+    if (!type) return undefined;
+    try {
+      const raw = (await ctx.tools())[type];
+      return raw ? raw["can_move_between_walls"] === true : undefined;
+    } catch {
+      return undefined;
+    }
   };
 
   const compactEntity = (model: Model, predicate: (c: ReturnType<typeof compactModel>) => unknown) => {
@@ -979,6 +990,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // minor 376 №12: флаг can_move_between_walls из записи каталога — до
+        // ws.apply (каталог асинхронный, мутация синхронная); undefined — офлайн-фолбэк
+        const catalogCanMove = await catalogCanMoveBetweenWalls(
+          resolveItem(ws.model, a["item_id"] as string),
+        );
         const item = ws.apply("item_update", (m) => {
           const target = resolveItem(m, a["item_id"] as string);
           const pos = a["position"] as Record<string, unknown> | undefined;
@@ -1014,6 +1030,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
               // скрытая связь «пришёл idWall»
               resnapToWall: true,
               rooms: ws.rooms(),
+              canMoveBetweenWalls: catalogCanMove,
               // ревью 269 М1, 271 N1: у видов с pc в стене (faceOffsetCm !== null)
               // комната по пробной точке на внутренней грани; againstWallCenter
               // отдаёт пробную точку только для них — у обычных видов undefined,
@@ -3252,7 +3269,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "с толщиной width_mm (по умолчанию редактора 200 мм), лист, цвет, стиль контура.",
       {
         points: z.array(mmPoint).min(2).max(200).describe("вершины ломаной в мм, 2..200 точек по порядку"),
-        width_mm: mmInt.optional().describe("толщина линии, мм (по умолчанию 200 — defs.thick_line.width)"),
+        width_mm: z.number().finite().int().min(THICK_LINE_WIDTH_MM_MIN).max(THICK_LINE_WIDTH_MM_MAX).optional()
+          .describe(`толщина линии, мм (${THICK_LINE_WIDTH_MM_MIN}..${THICK_LINE_WIDTH_MM_MAX}; по умолчанию 200 — defs.thick_line.width)`),
         plan: z.string().max(70).optional().describe("лист: plan (по умолчанию), furniture или custom_<id>"),
         color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
         width_stroke: z.number().finite().min(0.5).max(10).optional().describe("толщина контура 0.5..10 (по умолчанию 1)"),
@@ -3280,7 +3298,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "(null — убрать персональный), стиль контура, заливку, лист.",
       {
         line_id: z.string().min(1).describe("метка TL<n> из model_get или id сайта"),
-        width_mm: mmInt.optional(),
+        width_mm: z.number().finite().int().min(THICK_LINE_WIDTH_MM_MIN).max(THICK_LINE_WIDTH_MM_MAX).optional(),
         plan: z.string().max(70).optional(),
         color: z.union([z.string().regex(/^#[0-9a-fA-F]{6}$/), z.null()]).optional(),
         width_stroke: z.number().finite().min(0.5).max(10).optional(),
@@ -3463,7 +3481,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           text: a["text"] as string | undefined,
           plan: drawPlanInternal(validateDrawPlan(m, (a["plan"] as string | undefined) ?? "plan")),
         }));
-        return pictureView(pic, drawPlanPublic);
+        // major 376 №2: warning канонизации подписи (как у комментариев)
+        const warnings = pictureTextWarnings(a["text"] as string | undefined, pic.text ?? "");
+        return { ...pictureView(pic, drawPlanPublic), ...(warnings.length > 0 ? { warnings } : {}) };
       },
     ),
 
@@ -3490,18 +3510,24 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             plan: a["plan"] !== undefined ? drawPlanInternal(validateDrawPlan(m, a["plan"] as string)) : undefined,
           });
         });
-        return pictureView(pic, drawPlanPublic);
+        const warnings = pictureTextWarnings(
+          a["text"] === undefined ? undefined : a["text"] === null ? "" : (a["text"] as string),
+          pic.text ?? "",
+        );
+        return { ...pictureView(pic, drawPlanPublic), ...(warnings.length > 0 ? { warnings } : {}) };
       },
     ),
 
     image_delete: tool(
       "Удалить изображение с плана (image_id из model_get pictures). Файл на хранилище сайта " +
-        "не удаляется (редактор его тоже не удаляет).",
+        "не удаляется (редактор его тоже не удаляет). deleted — id удалённого изображения.",
       { image_id: z.string().min(1).describe("метка PIC<n> из model_get или id сайта") },
       async (a) => {
         const ws = wsOf();
-        const id = ws.apply("image_delete", (m) => (deletePicture(m, a["image_id"] as string), resolvePictureSilent(m, a["image_id"] as string)));
-        return ok({ deleted: id ?? a["image_id"], hint: SCENARIO_HINT });
+        // minor 376 №5: id удаляемого резолвится ДО удаления — после удаления
+        // метка PIC<n> указывает на следующее изображение
+        const id = ws.apply("image_delete", (m) => deletePicture(m, a["image_id"] as string));
+        return ok({ deleted: id, hint: SCENARIO_HINT });
       },
     ),
 

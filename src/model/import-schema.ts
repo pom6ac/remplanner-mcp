@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { McpError } from "../errors.ts";
 import { MODEL_ENTITY_COLLECTIONS } from "./collections.ts";
+import { EDITOR_ID_RE, EDITOR_STRING_RE, isSafePictureText } from "./strings.ts";
+import { isPictureUrl } from "./pictures.ts";
 import {
   MAX_IMPORT_WALLS,
   MAX_IMPORT_ENTITIES,
@@ -140,11 +142,14 @@ const comment = z.looseObject({
   plan: idStr.optional(),
 });
 
-/** Пользовательский лист (этап 375, CustomPlan): {id, name, after_plan, content, date}. */
+/** Пользовательский лист (этап 375, CustomPlan): {id, name, after_plan, content, date}.
+ *  Major 376 №3 (ИБ): имя редактор вставляет в HTML вкладки без экранирования,
+ *  id/after_plan попадают в jQuery-селекторы — строгие предикаты (белый список
+ *  символов для name/after_plan, [A-Za-z0-9_-] для id). */
 const customPlan = z.looseObject({
-  id: idStr,
-  name: z.string().max(60),
-  after_plan: shortStr.optional(),
+  id: z.string().regex(EDITOR_ID_RE),
+  name: z.string().max(60).regex(EDITOR_STRING_RE),
+  after_plan: z.string().max(30).regex(EDITOR_STRING_RE).optional(),
   content: z.array(shortStr).max(16).optional(),
   date: z.number().finite().optional(),
 });
@@ -163,16 +168,19 @@ const freeFigure = z.looseObject({
   color: z.string().max(32).optional(),
 });
 
-/** Изображение на плане (Picture): url на хранилище сайта + размеры. */
+/** Изображение на плане (Picture): url на хранилище сайта + размеры.
+ *  Minor 376 №9: url — тот же предикат, что у image_add (редактор грузит
+ *  urlStorageImages||/storage/images/+url — traversal/схемы отсечены);
+ *  подпись — без < > & (major 376 №3). */
 const picture = z.looseObject({
   id: idStr,
-  url: z.string().max(200).optional(),
+  url: z.string().max(200).refine(isPictureUrl).optional(),
   pc: point.optional(),
   width: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
   height: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
   width_original: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
   height_original: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
-  text: z.string().max(200).optional(),
+  text: z.string().max(200).refine(isSafePictureText).optional(),
   font_size: z.number().finite().optional(),
   plan: idStr.optional(),
 });

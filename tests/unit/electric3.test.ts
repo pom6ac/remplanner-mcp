@@ -281,11 +281,12 @@ test("375 (373 F1): против переноса у выключателя (б�
   assert.ok(Math.abs(distFromAxis(m, probe) - (base + 52)) < 0.11);
 });
 
-test("375 (373 F2): against_wall сбрасывает привязку к прежней опоре (slope_side, id_hole, hole_group)", () => {
+test("375 (373 F2): against_wall сбрасывает привязку к прежней опоре (slope_side, hole_group); id_hole не трогает (minor 376 №13)", () => {
   const m = baseModel();
   const wid = topWall(m);
   // предмет с формой эталона ui-ref-electric3-slope: slope_side строкой стороны,
-  // id_hole/hole_group редактор пишет вместе с ним (dragmoveWall откоса)
+  // id_hole/hole_group редактор пишет вместе с ним (dragmoveWall откоса);
+  // minor 376 №13: dragmoveWall бандла id_hole НЕ сбрасывает — MCP тоже не удаляет
   const it = addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 1000 } });
   const loose = it as unknown as Record<string, unknown>;
   loose["slope_side"] = "1";
@@ -296,7 +297,7 @@ test("375 (373 F2): against_wall сбрасывает привязку к пре
   assert.ok(Math.abs(distFromAxis(m, it) - (base + 22)) < 0.11, `скос: смещение 22 (${distFromAxis(m, it)})`);
   moveAgainstWall(m, it, topWall(m), 2500);
   assert.equal(loose["slope_side"], undefined, "slope_side сброшен");
-  assert.equal(loose["id_hole"], undefined, "id_hole сброшен");
+  assert.equal(loose["id_hole"], "hole1", "id_hole сохранён — как в dragmoveWall бандла");
   assert.equal(loose["hole_group"], undefined, "hole_group сброшен");
   assert.equal(it.layer, null, "слой снят (F1, socket)");
   assert.ok(Math.abs(distFromAxis(m, it) - base) < 0.11, `расстояние = база пластины (${distFromAxis(m, it)})`);
@@ -312,6 +313,7 @@ test("375 (373 F2): against_wall сбрасывает привязку к пре
   moveAgainstWall(m, sw, topWall(m), 2500);
   assert.equal(swLoose["slope_side"], undefined, "slope_side сброшен у выключателя");
   assert.equal(swLoose["hole_group"], undefined, "hole_group сброшен у выключателя");
+  assert.equal(swLoose["id_hole"], "hole2", "id_hole сохранён у выключателя");
   assert.equal(sw.layer, 2, "слой выключателя сохранён");
   assert.ok(Math.abs(distFromAxis(m, sw) - (swBase + 26)) < 0.11, `без скоса: 26 (${distFromAxis(m, sw)})`);
 });

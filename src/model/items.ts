@@ -561,6 +561,9 @@ export type UpdateItemParams = {
    *  электрики — 2/3 поставить, 1 снять (в модели null). Правило pc —
    *  applySocketGroupLayer (electric.ts, get_offset_layer2 бандла). */
   layer?: number;
+  /** minor 376 №12: флаг can_move_between_walls из записи каталога (tools);
+   *  undefined — офлайн-фолбэк CAN_MOVE_BETWEEN_WALLS. */
+  canMoveBetweenWalls?: boolean;
 };
 
 /** item_update: перемещение, поворот, размеры. */
@@ -606,12 +609,12 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   let layerMoved = false;
   if (params.resnapToWall === true && Array.isArray(props.socket_group)) {
     // ревью 373 F2: сброс привязки к прежней опоре — dragmoveWall бандла
-    // (ветка canMoveBetweenWalls) первым делом снимает projection/slope_side/
-    // hole_group/layer; id_hole пишется вместе со slope_side (откос) и без
-    // неё на новой стене не имеет смысла. Слой — ниже (F1).
+    // (ветка canMoveBetweenWalls) снимает projection/slope_side/hole_group/layer;
+    // id_hole он НЕ сбрасывает (minor 376 №13: сброс id_hole — без доказательства
+    // по бандлу, новое значение пишется только вместе со slope_side) — MCP
+    // больше не удаляет id_hole, поведение как в редакторе. Слой — ниже (F1).
     const loose = props as unknown as Record<string, unknown>;
     delete loose["slope_side"];
-    delete loose["id_hole"];
     delete loose["hole_group"];
     // major 371 №1: перенос against_wall ставит предмет на базу слоя 1 (правило
     // пластины againstWallCenter), а редактор при перетаскивании вдоль стены
@@ -622,7 +625,9 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
     // сцепкой с другой розеткой (чужой.layer + 1), в MCP — явным params.layer;
     // у прочей пристенной электрики (выключатели, флага в каталоге нет) общая
     // ветка dragmoveWall смещение слоя сохраняет
-    const canMove = CAN_MOVE_BETWEEN_WALLS.has(socketCatalogType(props) ?? "");
+    // minor 376 №12: флаг читается из каталога (can_move_between_walls записи
+    // tools) — CAN_MOVE_BETWEEN_WALLS только офлайн-фолбэк
+    const canMove = params.canMoveBetweenWalls ?? CAN_MOVE_BETWEEN_WALLS.has(socketCatalogType(props) ?? "");
     layerMoved = applySocketGroupLayer(model, props, params.layer ?? (canMove ? 1 : socketLayerOf(props)), { prevOffsetCm: 0 });
   } else if (params.layer !== undefined) {
     layerMoved = applySocketGroupLayer(model, props, params.layer);

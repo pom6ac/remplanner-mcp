@@ -190,7 +190,7 @@ export class ServerContext {
   }
 
   /** Открыть проект (загрузка по HTTP в каноническую модель). */
-  async open(objectId: string, planId = "1", opts: { anon?: boolean; session?: SessionState } = {}): Promise<{ project: OpenProject; compact: CompactModel }> {
+  async open(objectId: string, planId = "1", opts: { anon?: boolean; session?: SessionState } = {}): Promise<{ project: OpenProject; compact: CompactModel; warnings: string[] }> {
     if (this.workspaceInternal === null) {
       const base = this.deps({ session: opts.session, anon: opts.anon });
       const deps: WorkspaceDeps = { ...base, ...this.depsOverride };
@@ -205,7 +205,13 @@ export class ServerContext {
       this.workspaceInternal = new Workspace(deps);
     }
     const project = await this.workspaceInternal.open(objectId, planId, { anon: opts.anon });
-    return { project, compact: compactModel(this.workspaceInternal.model) };
+    // major 376 №3 (ИБ): предупреждение о строках модели, которые редактор
+    // вставляет в HTML без экранирования (пользовательские листы); редактор с
+    // таким проектом в Chromium MCP не запускается (ensureEditor fail-closed)
+    const warnings = [...this.workspaceInternal.unsafeStrings].map((u) =>
+      `модель содержит строку, которую редактор вставляет в HTML без экранирования (${u.collection}[${u.id.slice(0, 20)}].${u.field}) — редактор/сохранение заблокированы`,
+    );
+    return { project, compact: compactModel(this.workspaceInternal.model), warnings };
   }
 
   /**

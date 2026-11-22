@@ -2,6 +2,8 @@ import type { Model, Point, PictureEntity } from "./types.ts";
 export type { PictureEntity };
 import { newId } from "./types.ts";
 import { McpError } from "../errors.ts";
+import { canonicalCommentText, escapeCommentText, unescapeCommentText } from "./dims.ts";
+import { isSafePictureText } from "./strings.ts";
 
 /**
  * Изображения на плане (этап 375, бандл app.3.0 — класс Picture, коллекция
@@ -14,8 +16,14 @@ import { McpError } from "../errors.ts";
  * /storage/images/ + url); width/height — размер на плане (см), редактор
  * вписывает картинку в 200×200 (бандл: >200 → пропорционально до 200);
  * width_original/height_original — размеры исходного файла (px);
- * text/font_size — подпись (restore заменяет ` на ' и `` на " —
- * canonизация уже на входе MCP: см. tools).
+ * text/font_size — подпись. Формат текста — тот же, что у комментариев
+ * (Comments.copy("server")/restore бандла): в модели хранится server-форма
+ * (escapeCommentText(canonicalCommentText(text)); ' → `, " → ``), restore и
+ * copy('server') Pictures бандла проходят её без изменений (major 376 №2).
+ * Подпись пишется ВСЕГДА (text: "" и font_size: 10 — как Picture ctor бандла,
+ * major 376 №1): Pictures.restore бандла первой строкой делает
+ * e.text.replace — запись без text падает TypeError на restore, а сверка до
+ * save сравнивает undefined с "".
  *
  * Загрузка файла — POST /setup/api/load_picture/ (FormData: file, type =
  * jpeg|png|svg; ответ {status:"success", url}; лимит размера 5 242 880 байт,
@@ -35,6 +43,11 @@ export const MAX_PICTURE_TEXT_CHARS = 200;
  *  пути и прочие схемы отсечены — traversal/инъекция). */
 const URL_RE = /^[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+){0,2}\.(png|jpe?g)$/;
 
+/** Предикат url хранилища (для схемы импорта, minor 376 №9). */
+export function isPictureUrl(url: string): boolean {
+  return URL_RE.test(url.replace(/^images\//, ""));
+}
+
 export function validatePictureUrl(url: string): string {
   const u = url.replace(/^images\//, "");
   if (u.length === 0 || u.length > 200 || !URL_RE.test(u)) {
@@ -43,6 +56,30 @@ export function validatePictureUrl(url: string): string {
     });
   }
   return u;
+}
+
+/**
+ * Подпись изображения: < > & запрещены (консервативный белый список — подпись
+ * рисуется svg.js как SVG-текст, но тот же класс входа, что имя листа);
+ * ` " ' канонизируются в server-форму (major 376 №2), как у комментариев.
+ * Бросает McpError для < > &, возвращает server-форму.
+ */
+export function canonicalPictureText(text: string): string {
+  const cut = text.slice(0, MAX_PICTURE_TEXT_CHARS);
+  if (!isSafePictureText(cut)) {
+    throw new McpError("INVALID_ARGUMENT", "text подписи: символы < > & запрещены (строка попадает в документ редактора)", {
+      details: { kind: "unsafe_string", field: "text" },
+    });
+  }
+  return escapeCommentText(canonicalCommentText(cut));
+}
+
+/** Warning канонизации подписи (как у комментариев, dto/dims commentTextWarnings). */
+export function pictureTextWarnings(input: string | undefined, stored: string): string[] {
+  const shown = unescapeCommentText(stored);
+  return input !== undefined && shown !== input
+    ? [`подпись канонизирована под формат редактора (обратный апостроф «\`» → «'», двойные кавычки «"» → «''»): «${shown}»`]
+    : [];
 }
 
 export function addPicture(
@@ -71,7 +108,11 @@ export function addPicture(
   } else {
     throw new McpError("INVALID_ARGUMENT", "нужны width_mm и height_mm, либо width_original_px и height_original_px (см. image_upload)");
   }
-  const text = params.text !== undefined ? params.text.slice(0, MAX_PICTURE_TEXT_CHARS) : undefined;
+  // major 376 №1: подпись пишется ВСЕГДА (text "" + font_size 10 — конструктор
+  // Picture бандла text=e.text||"", font_size=e.font_size||10): Pictures.restore
+  // бандла делает e.text.replace и падает на записи без text; serialize
+  // редактора всегда отдаёт text.
+  const text = canonicalPictureText(params.text ?? "");
   const rec: PictureEntity = {
     id: newId(),
     url,
@@ -80,7 +121,8 @@ export function addPicture(
     height: Math.round(heightCm * 100) / 100,
     width_original: params.widthOriginalPx ?? 0,
     height_original: params.heightOriginalPx ?? 0,
-    ...(text !== undefined ? { text, font_size: 10 } : {}),
+    text,
+    font_size: 10,
     plan: params.plan ?? "plan",
     prs: {},
     level_layer: 7,
@@ -103,13 +145,10 @@ export function updatePicture(
     rec.height = Math.round((params.heightMm / 10) * 100) / 100;
   }
   if (params.text !== undefined) {
-    if (params.text === null) {
-      delete rec.text;
-      delete rec.font_size;
-    } else {
-      rec.text = params.text.slice(0, MAX_PICTURE_TEXT_CHARS);
-      rec.font_size ??= 10;
-    }
+    // major 376 №1: text:null — подпись в пустую (""), а НЕ удаление поля:
+    // serialize редактора всегда отдаёт text, Picture ctor — text||""
+    rec.text = canonicalPictureText(params.text === null ? "" : params.text);
+    rec.font_size ??= 10;
   }
   if (params.plan !== undefined) rec.plan = params.plan;
   return rec;
@@ -127,9 +166,13 @@ export function resolvePicture(model: Model, ref: string): PictureEntity {
   throw new McpError("NOT_FOUND", `изображение ${ref} не найдено`);
 }
 
-export function deletePicture(model: Model, ref: string): void {
+/** Удаление по метке PIC<n> или id сайта; возвращает id удалённой записи
+ *  (minor 376 №5: ответ image_delete должен называть именно удалённое —
+ *  после удаления метка PIC<n> указывает на следующее изображение). */
+export function deletePicture(model: Model, ref: string): string {
   const rec = resolvePicture(model, ref);
   delete (model.pictures as Record<string, PictureEntity>)[rec.id];
+  return rec.id;
 }
 
 /**
