@@ -206,6 +206,9 @@ try {
     await openAndGuard();
     await roGuard.assertUnchanged("перед сценой");
 
+    // ---- сцена: пробная комната (нужна сценам 1, 2, 4a–4c) ----
+    const trialRoomId = await makeTrialRoom(500, 400);
+
     // ---- 1. группы выводов воды ----
     const myWallSites = created.filter((c) => c.kind === "wall").map((c) => c.siteId!);
     const wallsList = ((await call("model_get", {}))["walls"] ?? []) as Array<{ id: string; site_id: string }>;
@@ -243,7 +246,6 @@ try {
 
     // ---- 2. узел waterspot_node + трубы ----
     // центр пробной комнаты — по рёбрам СВОЕЙ комнаты (захвачена по id, ревью 364 №9)
-    const trialRoomId = await makeTrialRoom(500, 400);
     const roomsAll = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string; edges?: Array<{ from: [number, number] }> }>;
     const trial = roomsAll.find((r) => r.id === trialRoomId);
     if (!trial?.edges?.length) throw new Error("пробная комната не найдена в model_get");
