@@ -209,8 +209,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
   };
 
   /** Ответ изображения в публичном формате (мм); подпись — видимым текстом
-   *  (unescape server-формы, major 376 №2). */
-  const pictureView = (pic: PictureEntity, planPublic: (v: string) => string) => ok({
+   *  (unescape server-формы, major 376 №2). Payload — обёртку ok() ставит caller. */
+  const pictureView = (pic: PictureEntity, planPublic: (v: string) => string) => ({
     id: pic.id,
     url: pic.url,
     plan: planPublic(String(pic.plan ?? "a")),
@@ -3483,7 +3483,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         }));
         // major 376 №2: warning канонизации подписи (как у комментариев)
         const warnings = pictureTextWarnings(a["text"] as string | undefined, pic.text ?? "");
-        return { ...pictureView(pic, drawPlanPublic), ...(warnings.length > 0 ? { warnings } : {}) };
+        return ok({ ...pictureView(pic, drawPlanPublic), ...(warnings.length > 0 ? { warnings } : {}) });
       },
     ),
 
@@ -3514,7 +3514,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           a["text"] === undefined ? undefined : a["text"] === null ? "" : (a["text"] as string),
           pic.text ?? "",
         );
-        return { ...pictureView(pic, drawPlanPublic), ...(warnings.length > 0 ? { warnings } : {}) };
+        return ok({ ...pictureView(pic, drawPlanPublic), ...(warnings.length > 0 ? { warnings } : {}) });
       },
     ),
 

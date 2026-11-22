@@ -177,7 +177,8 @@ try {
     const mgPic = await call("model_get", {}) as Record<string, unknown>;
     const pics1 = asList(mgPic["pictures"]) as Array<{ site_id: string; text?: string }>;
     const pic1 = pics1.find((p) => p.site_id === pic.id);
-    check(pic1 !== undefined && pic1.text === "", `image_add без text: text="${pic1?.text ?? "нет записи"}" (major 376 №1)`);
+    // compact model_get опускает пустую подпись (text "") — отсутствие поля = ""
+    check(pic1 !== undefined && (pic1.text ?? "") === "", `image_add без text: text=${JSON.stringify(pic1?.text ?? "нет записи")} (major 376 №1)`);
     const save3 = await gsave("изображение без подписи");
     check(save3["verified"] === true, "save verified (изображение без подписи — restore бандла не падает)");
     await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
