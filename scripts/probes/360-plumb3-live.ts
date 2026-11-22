@@ -281,12 +281,21 @@ try {
     const delNode = await call("pipe_node_delete", { pipe_id: pipe3Site, vertex: 1 });
     console.log("pipe_node_delete:", JSON.stringify(delNode));
     const dn = delNode as { deleted_pipes?: string[]; created_pipes?: string[] };
-    if (!dn.deleted_pipes?.includes(pipe3Site) || (dn.created_pipes?.length ?? 0) !== 1) {
-      throw new Error(`каскад узла: ${JSON.stringify(dn)}`);
+    // ревью 364 №3 (бандл 1===A.length → rebuildGraph): после удаления среднего узла
+    // остаётся один кусок С РЁБРАМИ [узел, вывод] — та же труба (id сохранён),
+    // изолированный узел уходит; deleted/created пустые
+    if (dn.deleted_pipes?.length || dn.created_pipes?.length) {
+      throw new Error(`каскад узла: ожидались пустые deleted/created (кусок жив), факт ${JSON.stringify(dn)}`);
     }
-    created.push({ kind: "pipe", siteId: dn.created_pipes![0]! });
-    // вершина-предмет узлом не удаляется
-    const delItemVertex = await tryCall("pipe_node_delete", { pipe_id: dn.created_pipes![0]!, vertex: 1 });
+    const pipesList = ((await call("model_get", {}))["pipes"] ?? []) as Array<{ site_id?: string; vertexes?: number; connected?: string[] }>;
+    const pipe3After = pipesList.find((p) => p.site_id === pipe3Site);
+    console.log("pipe3 после node_delete:", JSON.stringify(pipe3After));
+    if (!pipe3After) throw new Error("труба пропала после удаления узла (ожидался кусок [узел, вывод])");
+    if (pipe3After.vertexes !== 2 || !pipe3After.connected?.includes(coldSite)) {
+      throw new Error(`кусок трубы ${JSON.stringify(pipe3After)} (ожидалось 2 вершины, вывод подключён)`);
+    }
+    // вершина-предмет узлом не удаляется (вывод — вершина 1 куска)
+    const delItemVertex = await tryCall("pipe_node_delete", { pipe_id: pipe3Site, vertex: 1 });
     if (delItemVertex.ok || !String(delItemVertex.err).includes("INVALID_ARGUMENT")) {
       throw new Error(`вершина-предмет удалилась pipe_node_delete: ${delItemVertex.err ?? "без ошибки"}`);
     }
@@ -386,15 +395,25 @@ try {
       const i2 = await wsItem(s2) as unknown as { x_mm?: number; y_mm?: number };
       if (i1?.x_mm === undefined || i2?.x_mm === undefined) throw new Error(`4c ${kind}: нет координат`);
       const pAdd = await call("pipe_add", { kind, path: [
-        { item_id: s1 }, { x: Math.round((i1.x_mm! + i2.x_mm!) / 2), y: i1.y_mm! - 400 }, { item_id: s2 },
+        { item_id: s1 },
+        { x: Math.round(i1.x_mm! + (i2.x_mm! - i1.x_mm!) * 0.25), y: i1.y_mm! - 400 },
+        { x: Math.round((i1.x_mm! + i2.x_mm!) / 2), y: i1.y_mm! - 400 },
+        { x: Math.round(i1.x_mm! + (i2.x_mm! - i1.x_mm!) * 0.75), y: i1.y_mm! - 400 },
+        { item_id: s2 },
       ] });
       const pSite = (pAdd as { entity?: { site_id?: string } }).entity?.site_id;
       if (!pSite) throw new Error(`4c ${kind}: pipe_add без site_id`);
       created.push({ kind: "pipe", siteId: pSite });
-      const del = await call("pipe_node_delete", { pipe_id: pSite, vertex: 1 });
+      const peX = (pAdd as { entity?: { vertexes?: number } }).entity;
+      if (peX?.vertexes !== 5) throw new Error(`4c ${kind}: у трубы ${String(peX?.vertexes)} вершин (ожидалось 5)`);
+      // удаление СРЕДНЕЙ вершины 5-вершинной трубы: оба куска с рёбрами — распад
+      // на 2 новые трубы (deleteByItem бандла, 365 major 3)
+      const del = await call("pipe_node_delete", { pipe_id: pSite, vertex: 2 });
       const dnX = del as { deleted_pipes?: string[]; created_pipes?: string[] };
       console.log(`4c ${kind} pipe_node_delete:`, JSON.stringify(dnX));
-      if ((dnX.created_pipes?.length ?? 0) !== 2) throw new Error(`4c ${kind}: распад на 2 куска не получен: ${JSON.stringify(dnX)}`);
+      if ((dnX.created_pipes?.length ?? 0) !== 2 || !dnX.deleted_pipes?.includes(pSite)) {
+        throw new Error(`4c ${kind}: распад на 2 куска не получен: ${JSON.stringify(dnX)}`);
+      }
       for (const pid of dnX.created_pipes!) created.push({ kind: "pipe", siteId: pid });
       const box = kind === "conditioner_drainage" ? "pipes_conditioner" : "pipes_warm_floor";
       const key = kind === "conditioner_drainage" ? "drainage_pipe_id" : "pipe_warm_floor_id";
