@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Добавлено (этап 375 — нижняя панель и листы)
+
+- **Пользовательские листы** (`sheet_add`/`sheet_update`/`sheet_delete`): модель `custom_plans`
+  `{id, name, after_plan, content, date}`; лист адресуется в `plan` других инструментов как
+  `custom_<id>` или по имени. after_plan — «first» или встроенный лист (позиция вкладки),
+  content — что видно на листе (`plan`/`furniture_santeh`/`light`/`electro_points`). Удаление —
+  каскад объектов листа, как `CustomPlan.delete` редактора (комментарии, фигуры, изображения,
+  свободные/толстые линии, размеры). Листы видны в `model_get` (`custom_plans`), счётчики —
+  в `will_delete`/`model_get` (аддитивно).
+- **«Нарисовать элемент»** (кнопка нижней панели, **PRO** — `#freelines_opener` is_pro):
+  `freeline_add/update/delete` (свободные линии-ломаные, 2..200 точек), `thick_line_add/update/delete`
+  (толстые линии, ширина 2..1500 мм в ячейках matrix `{length, width}`), `figure_add/update/delete`
+  (14 типов фигур бандла: rect, rect_round, round, hexagon, …). Свободная геометрия: привязок
+  к стенам нет, mm-вход, план — встроенный лист или `custom_<id>`, цвет/стиль контура/заливка.
+- **Изображения на плане**: `image_upload` — загрузка на хранилище сайта тем же
+  POST /setup/api/load_picture/, что у кнопки «Изображение» (вход — только base64; только
+  растровые jpeg/png по сигнатуре файла; лимит 5 242 880 байт — как в редакторе) и
+  `image_add`/`image_update`/`image_delete` (url, центр, размеры: явные или вписывание в
+  200×200 см по правилу бандла, подпись). Кнопка `#addimage_opener` в разметке бесплатного
+  тарифа без is_pro (проба 375-sheets-ui) — тарифным гейтом не закрыта.
+- `model_get`/compact: аддитивные коллекции `custom_plans`, `freelines`, `thick_lines`,
+  `free_figures`, `pictures` (метки S<n>/FL<n>/TL<n>/DE<n>/PIC<n> + site_id).
+- Коллекции зарегистрированы в общем реестре (clear/import/счётчики), схема импорта —
+  с лимитами; сверка после save — по пользовательским полям в обе стороны
+  (`sheet_mismatches`, `freelines_mismatches`, `thick_lines_mismatches`,
+  `free_figures_mismatches`, `picture_mismatches`).
+- Эталоны `tests/fixtures/ui-ref-sheet-custom.json`, `ui-ref-draw-freeline.json`,
+  `ui-ref-draw-thick-line.json`, `ui-ref-draw-figure.json`, `ui-ref-picture.json`
+  (синтетические, по бандлу app.3.0); живая проверка в dev-объекте — проба
+  `375-sheets-live` (save verified → reopen → сверка → render PNG → зачистка → sig == backup).
+
 ### Исправлено (этап 375 — follow-up ревью 373, электрика ч.3)
 
 - **F1: `item_update against_wall` у розеток и бра снимает слой вертикального
