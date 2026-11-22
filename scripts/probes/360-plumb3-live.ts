@@ -384,9 +384,10 @@ try {
     for (const kind of ["conditioner_drainage", "warm_floor_pipe"] as const) {
       const toolName = kind === "conditioner_drainage" ? "conditioner" : "radiator_collector";
       const idsX = await itemSiteIds();
-      const a1 = await tryCall("item_add", { name: toolName, position: { center: { x: roomCx - 1500, y: roomCy - 900 } } });
+      // conditioner и коллектор тёплого пола — у стены (anchor: wall)
+      const a1 = await tryCall("item_add", { name: toolName, position: { against_wall: { wall_id: wallId.id, offset_mm: 1200 } } });
       if (!a1.ok) { console.log(`4c ${kind}: предмет ${toolName} недоступен в каталоге dev-аккаунта — сцена пропущена (${String(a1.err).slice(0, 120)})`); continue; }
-      const a2 = await tryCall("item_add", { name: toolName, position: { center: { x: roomCx + 500, y: roomCy - 900 } } });
+      const a2 = await tryCall("item_add", { name: toolName, position: { against_wall: { wall_id: wallId.id, offset_mm: 3200 } } });
       if (!a2.ok) { console.log(`4c ${kind}: второй предмет не создан — сцена пропущена`); continue; }
       const s1 = await captureAddedItem(a1.res!, idsX);
       const s2 = await captureAddedItem(a2.res!, idsX);
