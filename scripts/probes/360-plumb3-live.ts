@@ -383,21 +383,24 @@ try {
     // drainage_pipe_id/pipe_warm_floor_id на куски (PIPE_LINK_KEY_BY_TYPE);
     // сверка ссылок — в сцене 5 после save→reopen (в компактной модели бокса нет)
     const climateChecks: { kind: string; s1: string; s2: string; box: string; key: string }[] = [];
-    for (const kind of ["conditioner_drainage", "warm_floor_pipe"] as const) {
-      const toolName = kind === "conditioner_drainage" ? "conditioner" : "radiator_collector";
+    // kind для pipe_add — ключ CLIMATE_PIPE_KINDS ("warm_floor"), тип трубы — "warm_floor_pipe"
+    for (const [kind, pipeKind, typeName, toolName] of [
+      ["conditioner_drainage", "conditioner_drainage", "conditioner_drainage", "conditioner"],
+      ["warm_floor_pipe", "warm_floor", "warm_floor_pipe", "radiator_collector"],
+    ] as const) {
       const idsX = await itemSiteIds();
       // conditioner и коллектор тёплого пола — у стены (anchor: wall)
       const a1 = await tryCall("item_add", { name: toolName, position: { against_wall: { wall_id: wallId.id, offset_mm: 1200 } } });
-      if (!a1.ok) { console.log(`4c ${kind}: предмет ${toolName} недоступен в каталоге dev-аккаунта — сцена пропущена (${String(a1.err).slice(0, 120)})`); continue; }
+      if (!a1.ok) { console.log(`4c ${typeName}: предмет ${toolName} недоступен в каталоге dev-аккаунта — сцена пропущена (${String(a1.err).slice(0, 120)})`); continue; }
       const a2 = await tryCall("item_add", { name: toolName, position: { against_wall: { wall_id: wallId.id, offset_mm: 3200 } } });
-      if (!a2.ok) { console.log(`4c ${kind}: второй предмет не создан — сцена пропущена`); continue; }
+      if (!a2.ok) { console.log(`4c ${typeName}: второй предмет не создан — сцена пропущена`); continue; }
       const s1 = await captureAddedItem(a1.res!, idsX);
       const s2 = await captureAddedItem(a2.res!, idsX);
       created.push({ kind: "item", siteId: s1 }, { kind: "item", siteId: s2 });
       const i1 = await wsItem(s1) as unknown as { x_mm?: number; y_mm?: number };
       const i2 = await wsItem(s2) as unknown as { x_mm?: number; y_mm?: number };
-      if (i1?.x_mm === undefined || i2?.x_mm === undefined) throw new Error(`4c ${kind}: нет координат`);
-      const pAdd = await call("pipe_add", { kind, path: [
+      if (i1?.x_mm === undefined || i2?.x_mm === undefined) throw new Error(`4c ${typeName}: нет координат`);
+      const pAdd = await call("pipe_add", { kind: pipeKind, path: [
         { item_id: s1 },
         { x: Math.round(i1.x_mm! + (i2.x_mm! - i1.x_mm!) * 0.25), y: i1.y_mm! - 400 },
         { x: Math.round((i1.x_mm! + i2.x_mm!) / 2), y: i1.y_mm! - 400 },
@@ -405,21 +408,21 @@ try {
         { item_id: s2 },
       ] });
       const pSite = (pAdd as { entity?: { site_id?: string } }).entity?.site_id;
-      if (!pSite) throw new Error(`4c ${kind}: pipe_add без site_id`);
+      if (!pSite) throw new Error(`4c ${typeName}: pipe_add без site_id`);
       created.push({ kind: "pipe", siteId: pSite });
       const peX = (pAdd as { entity?: { vertexes?: number } }).entity;
-      if (peX?.vertexes !== 5) throw new Error(`4c ${kind}: у трубы ${String(peX?.vertexes)} вершин (ожидалось 5)`);
+      if (peX?.vertexes !== 5) throw new Error(`4c ${typeName}: у трубы ${String(peX?.vertexes)} вершин (ожидалось 5)`);
       // удаление СРЕДНЕЙ вершины 5-вершинной трубы: оба куска с рёбрами — распад
       // на 2 новые трубы (deleteByItem бандла, 365 major 3)
       const del = await call("pipe_node_delete", { pipe_id: pSite, vertex: 2 });
       const dnX = del as { deleted_pipes?: string[]; created_pipes?: string[] };
       console.log(`4c ${kind} pipe_node_delete:`, JSON.stringify(dnX));
       if ((dnX.created_pipes?.length ?? 0) !== 2 || !dnX.deleted_pipes?.includes(pSite)) {
-        throw new Error(`4c ${kind}: распад на 2 куска не получен: ${JSON.stringify(dnX)}`);
+        throw new Error(`4c ${typeName}: распад на 2 куска не получен: ${JSON.stringify(dnX)}`);
       }
       for (const pid of dnX.created_pipes!) created.push({ kind: "pipe", siteId: pid });
       climateChecks.push({
-        kind, s1, s2,
+        kind: typeName, s1, s2,
         box: kind === "conditioner_drainage" ? "pipes_conditioner" : "pipes_warm_floor",
         key: kind === "conditioner_drainage" ? "drainage_pipe_id" : "pipe_warm_floor_id",
       });
