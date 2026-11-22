@@ -28,6 +28,11 @@ export function capturedSnapshot(created: readonly ProbeCreated[], ownRoomIds: r
     rooms: [...ownRoomIds],
     walls: created.filter((c) => c.kind === "wall" && c.siteId).map((c) => c.siteId),
     delimiters: created.filter((c) => c.kind === "delimiter" && c.siteId).map((c) => c.siteId),
+    // этап 360: предметы и трубы проб тоже в журнале (зачистка pipe_delete → item_delete);
+    // этап 367: контуры тёплого пола пробы (warm_floor_delete, до стен)
+    items: created.filter((c) => c.kind === "item" && c.siteId).map((c) => c.siteId),
+    pipes: created.filter((c) => c.kind === "pipe" && c.siteId).map((c) => c.siteId),
+    warm_floors: created.filter((c) => c.kind === "warm_floor" && c.siteId).map((c) => c.siteId),
   };
 }
 

@@ -15,7 +15,7 @@ import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { sig } from "./probe-sig.ts";
-import { assertEditorPlanMatch } from "./probe-guard.ts";
+import { assertEditorPlanMatch, guardedSave } from "./probe-guard.ts";
 import { restoreByCaptured, logCaptured, type ProbeCreated } from "./probe-restore.ts";
 
 const phase = process.argv[2] ?? "dev";
@@ -57,6 +57,11 @@ try {
   const ids = probeWriteEnv();
   await assertTargetPair(ctx.session(), ids.objectId, ids.planId);
   const roGuard = await readonlyGuard(ctx.session(), ids.readonlyId, ids.readonlyPlanId, readonlyRefPath(ids.readonlyId, ids.readonlyPlanId));
+  // ревью 366 №6: гард контрольного проекта непосредственно перед КАЖДОЙ записью —
+  // gsave доступен и cleanup-фазе (restore-save/cleanup-save не после одного
+  // гарда в начале фазы, а каждый со своим assertUnchanged)
+  const gsave = (tag: string): Promise<Record<string, unknown>> =>
+    guardedSave(roGuard, async () => call("project_save", {}))(tag) as Promise<Record<string, unknown>>;
   const backupPath = `.orca-reports/backup-${ids.objectId}-359.json`;
   if (isCleanup) {
     // восстановление по захваченным ID предыдущего dev-прогона (env командной строки):
@@ -69,22 +74,31 @@ try {
     await assertEditorPlanMatch(edC, ids.planId);
     const openingIds = (process.env["REMPLANNER_PROBE_OPENING_IDS"] ?? "").split(",").filter(Boolean);
     const wallSiteIds = (process.env["REMPLANNER_PROBE_WALL_SITE_IDS"] ?? "").split(",").filter(Boolean);
+    console.log("cleanup: удаляю проёмы по захваченным ID:", JSON.stringify(openingIds));
     for (const oid of openingIds) {
       const r = await tryCall("opening_delete", { opening_id: oid });
-      console.log("opening_delete", oid, r ? "ok" : "fail");
+      console.log("opening_delete", oid, r && !("__error" in r) ? "ok" : `fail: ${String((r as { __error?: string })?.__error ?? "").slice(0, 120)}`);
     }
+    console.log("cleanup: удаляю стены по захваченным site_id:", JSON.stringify(wallSiteIds));
     const created: ProbeCreated[] = wallSiteIds.map((siteId) => ({ kind: "wall", siteId }));
-    await restoreByCaptured({
-      call,
-      created,
-      ownRoomIds: [],
-      save: async () => {
-        const saveR = await call("project_save", {});
-        console.log("cleanup save verified:", saveR["verified"]);
-        return saveR;
-      },
-      log: (line) => console.log("restore:", line),
-    });
+    // ревью 366 №6: при пустом журнале restore-save не нужен — записи нет
+    if (created.length > 0) {
+      await restoreByCaptured({
+        call,
+        created,
+        ownRoomIds: [],
+        save: () => gsave("cleanup"),
+        log: (line) => console.log("restore:", line),
+      });
+    } else {
+      console.log("cleanup: журнал пуст — restore-save пропущен");
+    }
+    // печать site_id каждой удалённой стены (ревью 361 №3): после restore в модели
+    // не должно остаться ни одной стены из журнала
+    const wallsAfterCleanup = ((await call("model_get", {}))["walls"] ?? []) as Array<{ site_id?: string }>;
+    const leftWalls = wallSiteIds.filter((sid) => wallsAfterCleanup.some((w) => w.site_id === sid));
+    console.log("cleanup: удалены стены:", JSON.stringify(wallSiteIds.filter((sid) => !leftWalls.includes(sid))),
+      leftWalls.length ? `ОСТАЛИСЬ: ${JSON.stringify(leftWalls)}` : "(все)");
     const after: LoadedModel = await loadModel(ctx.session(), ids.objectId, ids.planId);
     const ref = JSON.parse(readFileSync(backupPath, "utf8")) as LoadedModel;
     const same = sig(after.model) === sig(ref.model);
@@ -110,6 +124,14 @@ try {
   console.log("гард «план в редакторе == серверу» (fail-closed): OK");
 
   const created: ProbeCreated[] = [];
+  let restored = false;
+  // журнал захваченных ID с меткой прогона (ревью 361 №3): не перезаписывает
+  // журнал предыдущего прогона
+  const capturedPath = `.orca-reports/tmp/359-captured-${stamp}.json`;
+  const journal = (): void => {
+    logCaptured(capturedPath, created, []);
+    console.log("журнал захваченных ID:", capturedPath);
+  };
   try {
     // — пробная комната из перегородок правее/ниже всей геометрии —
     const rawWalls = (before.model["walls"] ?? {}) as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>;
@@ -127,9 +149,8 @@ try {
       const r = await call("wall_add", { start: mm(s), end: mm(e), thickness_mm: 100, kind: "partition" });
       created.push({ kind: "wall", siteId: (r["entity"] as { site_id?: string })?.site_id });
     }
-    logCaptured(".orca-reports/tmp/359-captured.json", created, []);
-    await roGuard.assertUnchanged("trial-room");
-    const save0 = await call("project_save", {});
+    journal();
+    const save0 = await gsave("trial-room");
     console.log("save0 (перегородки) verified:", save0["verified"]);
     check(save0["verified"] === true, "save verified (пробная комната из перегородок)");
 
@@ -141,8 +162,8 @@ try {
     const door = await call("opening_add", { wall_id: partWall1.id, type: "door", center_mm: 1500 }) as { entity?: Record<string, unknown> };
     console.log("door on partition:", JSON.stringify(door.entity));
     created.push({ kind: "opening", siteId: String(door["entity"]?.id ?? door["entity"]?.site_id ?? "") });
-    logCaptured(".orca-reports/tmp/359-captured.json", created, []);
-    const save1 = await call("project_save", {});
+    journal();
+    const save1 = await gsave("дверь на перегородке");
     console.log("save1 (дверь на перегородке) verified:", save1["verified"]);
     check(save1["verified"] === true, "save verified (дверь на перегородке — падение 356 исправлено)");
 
@@ -151,9 +172,8 @@ try {
     const windowAdd = await call("opening_add", { wall_id: partWall3.id, type: "window", center_mm: 1500, width_mm: 1000, sill_height_mm: 850 }) as { entity?: Record<string, unknown> };
     console.log("window on partition:", JSON.stringify(windowAdd.entity));
     created.push({ kind: "opening", siteId: String(windowAdd["entity"]?.id ?? windowAdd["entity"]?.site_id ?? "") });
-    logCaptured(".orca-reports/tmp/359-captured.json", created, []);
-    await roGuard.assertUnchanged("door+window");
-    const save2 = await call("project_save", {});
+    journal();
+    const save2 = await gsave("окно на перегородке");
     console.log("save2 (окно на перегородке) verified:", save2["verified"]);
     check(save2["verified"] === true, "save verified (окно на перегородке)");
 
@@ -162,9 +182,8 @@ try {
     const doorwayAdd = await call("opening_add", { wall_id: partWall1.id, type: "doorway", center_mm: 2500 }) as { entity?: Record<string, unknown> };
     console.log("doorway on partition:", JSON.stringify(doorwayAdd.entity));
     created.push({ kind: "opening", siteId: String(doorwayAdd["entity"]?.id ?? doorwayAdd["entity"]?.site_id ?? "") });
-    logCaptured(".orca-reports/tmp/359-captured.json", created, []);
-    await roGuard.assertUnchanged("door+window+doorway");
-    const save3 = await call("project_save", {});
+    journal();
+    const save3 = await gsave("проём без заполнения");
     console.log("save3 (проём без заполнения) verified:", save3["verified"]);
     check(save3["verified"] === true, "save verified (проём без заполнения на перегородке)");
 
@@ -208,25 +227,36 @@ try {
       dels.push(...(del["deleted"] ?? []));
     }
     check(dels.length === 3, `удалены все три проёма перегородки: ${dels.length}`);
-    await roGuard.assertUnchanged("delete-openings");
-    const save4 = await call("project_save", {});
+    const save4 = await gsave("проёмы удалены");
     console.log("save4 (проёмы удалены) verified:", save4["verified"]);
     check(save4["verified"] === true, "save verified (проёмы перегородки удалены)");
 
-    // — restore: свои перегородки общим probe-restore по захваченным ID —
-    await roGuard.assertUnchanged("restore");
-    await restoreByCaptured({
-      call,
-      created,
-      ownRoomIds: [],
-      save: async () => {
-        const saveR = await call("project_save", {});
-        console.log("restore save:", saveR["verified"]);
-        return saveR;
-      },
-      log: (line) => console.log("restore:", line),
-    });
   } finally {
+    // ревью 361 №1: restore — в finally (при пустом created — no-op); любое
+    // исключение после первой записи не оставляет пробные стены/проёмы
+    if (!restored) {
+      restored = true;
+      try {
+        await roGuard.assertUnchanged("restore");
+        // ревью 366 №6: при пустом created restore-save не нужен (restoreByCaptured
+        // иначе всегда делает project_save); записи — через gsave (гард перед записью)
+        const nothingToRestore = !created.some((c) => c.siteId);
+        if (nothingToRestore) {
+          console.log("restore: захватов нет — restore-save пропущен");
+        } else {
+          await restoreByCaptured({
+            call,
+            created,
+            ownRoomIds: [],
+            save: () => gsave("restore"),
+            log: (line) => console.log("restore:", line),
+          });
+        }
+      } catch (e) {
+        console.log("restore error:", String((e as Error).message).slice(0, 250));
+        exitCode = 1;
+      }
+    }
     const after: LoadedModel = await loadModel(ctx.session(), ids.objectId, ids.planId);
     const ref = JSON.parse(readFileSync(backupPath, "utf8")) as LoadedModel;
     const same = sig(after.model) === sig(ref.model);

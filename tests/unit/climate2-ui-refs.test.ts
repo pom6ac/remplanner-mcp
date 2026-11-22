@@ -232,12 +232,18 @@ test("250: атомарность — NOT_FOUND и неподключаемый 
   assert.deepEqual(m, before);
 });
 
-test("250: item_delete радиатора/кондиционера с трубой — отказ (нет висячих вершин)", () => {
+test("250: item_delete радиатора/кондиционера с трубой — каскад (этап 360, как в редакторе)", () => {
   const { m, radiator, cond } = scenario();
-  addPipe(m, { kind: "heat_hot", path: [{ itemId: radiator.id }, { x: 1500, y: -100 }] });
-  addPipe(m, { kind: "conditioner_drainage", path: [{ itemId: cond.id }, { x: 500, y: 2000 }] });
-  assert.throws(() => deleteItem(m, radiator.id), (e: unknown) => e instanceof McpError && String((e as McpError).message).includes("трубе"));
-  assert.throws(() => deleteItem(m, cond.id), (e: unknown) => e instanceof McpError && String((e as McpError).message).includes("трубе"));
+  const p1 = addPipe(m, { kind: "heat_hot", path: [{ itemId: radiator.id }, { x: 1500, y: -100 }] });
+  const p2 = addPipe(m, { kind: "conditioner_drainage", path: [{ itemId: cond.id }, { x: 500, y: 2000 }] });
+  // труба из двух вершин удаляется целиком (GraphLines.deleteByItem)
+  const res1 = deleteItem(m, radiator.id);
+  assert.deepEqual(res1.deleted_pipes, [p1.id], "труба из 2 вершин удалена с предметом");
+  assert.deepEqual(res1.created_pipes, []);
+  assert.equal((m as unknown as { pipes_heat?: Record<string, unknown> }).pipes_heat?.[p1.id], undefined);
+  const res2 = deleteItem(m, cond.id);
+  assert.deepEqual(res2.deleted_pipes, [p2.id]);
+  assert.equal((m as unknown as { pipes_conditioner?: Record<string, unknown> }).pipes_conditioner?.[p2.id], undefined);
 });
 
 // ---------- трасса кондиционера (cables_conditioner) ----------

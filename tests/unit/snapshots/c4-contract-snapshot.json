@@ -2073,7 +2073,7 @@
   },
   {
    "name": "item_delete",
-   "description": "Удалить предмет (метка I<n> из model_get). Привязанные к предмету размеры (dim_add attach) сохраняются с отвязкой концов, комментарий предмета удаляется; у электрощитка конструктор удаляется вместе с предметом (deleted_shields). В ответе — deleted_shields/detached_rulers/deleted_comments.",
+   "description": "Удалить предмет (метка I<n> из model_get). Привязанные к предмету размеры (dim_add attach) сохраняются с отвязкой концов, комментарий предмета удаляется; у электрощитка конструктор удаляется вместе с предметом (deleted_shields). Предмет-вершина трубы (вывод воды, стояк) удаляется с каскадом, как в редакторе: труба из двух вершин удаляется целиком, внутренняя вершина делит трубу на куски (created_pipes — новые id кусков). Узел waterspot_node — обычный предмет, не вершина трубы: каскада у него нет (ревью 364 №6). В ответе — deleted_shields/detached_rulers/deleted_comments/deleted_pipes/created_pipes.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -3030,6 +3030,31 @@
     },
     "required": [
      "pipe_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "pipe_node_delete",
+   "description": "Удалить узел трубы (контекстное меню узла в редакторе, #cm-tree-node → «Удалить»): pipe_id — метка TP/PW/PC/PH/PV<n>, vertex — индекс вершины (0-based, как в model_get pipes[].vertexes), тип вершины — node. Каскад как в редакторе (GraphLines.deleteByItem): труба из двух вершин удаляется целиком; удаление внутреннего узла делит трубу на куски (в ответе created_pipes — новые id кусков, deleted_pipes — id исходной трубы); концевой узел укорачивает трубу. Вершины-предметы удаляются item_delete (тот же каскад).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "pipe_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка TP<n>/PW<n>/PC<n>/PH<n>/PV<n> из model_get или id сайта"
+     },
+     "vertex": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "индекс вершины (0-based)"
+     }
+    },
+    "required": [
+     "pipe_id",
+     "vertex"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"
    }
@@ -5399,6 +5424,65 @@
     },
     "required": [
      "warm_wall_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "waterspot_merge",
+   "description": "Объединить выводы воды «как в редакторе» (лист «Водоснабжение»): поставить одиночный вывод part на существующий вывод item_id — существующий вывод переименовывается в комбинированный (id сохраняется, подключённые трубы остаются на месте), габариты берутся из каталога. Допустимые пары — как в редакторе (GroupWaterSpots): cold+hot→waterspot_cold_hot, cold+drainage→waterspot_drainage_cold, hot+drainage→waterspot_drainage_hot, drainage+hot→waterspot_drainage_hot, drainage+cold→waterspot_drainage_cold, cold_hot+drainage→waterspot_drainage_cold_hot, drainage_cold+hot→waterspot_drainage_cold_hot, drainage_hot+cold→waterspot_drainage_cold_hot (часть part — имя инструмента: waterspot_cold, waterspot_hot, waterspot_drainage, waterspot_cold_hot, waterspot_drainage_cold, waterspot_drainage_hot). У пристенного вывода (against_wall) в комбинированном с канализацией появляется over_floor.value_2 — высота вывода канализации (умолчание 40 см; у цели-канализации value и value_2 меняются местами, value=50); у свободного вывода и результата waterspot_cold_hot высоты не меняются. MCP не сдвигает иконку канализации на 3 см (производная UI-подгонка, projection восстанавливает редактор). Части waterspot_cold/hot/drainage — PRO-инструменты редактора: на бесплатном тарифе объединение ими отклоняется гейтом тарифа. После объединения вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "существующий вывод (метка I<n> или id сайта)"
+     },
+     "part": {
+      "type": "string",
+      "enum": [
+       "waterspot_cold",
+       "waterspot_hot",
+       "waterspot_drainage",
+       "waterspot_cold_hot",
+       "waterspot_drainage_cold",
+       "waterspot_drainage_hot"
+      ],
+      "description": "какой одиночный вывод «ставится» на цель (имя инструмента редактора)"
+     }
+    },
+    "required": [
+     "item_id",
+     "part"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "waterspot_unset",
+   "description": "Разделить комбинированный вывод воды (контекстное меню точки в редакторе → «Убрать …»): снимаемая часть part удаляется — вывод переименовывается в остаток (id сохраняется), габариты — из каталога; у пристенного вывода высота канализации возвращается из over_floor.value_2 в value (у остатка-воды value сохраняется). Каскад труб — как в редакторе: подключённая труба снимаемой части (props.pipes.<вид>_id) теряет вершину предмета: труба из двух вершин удаляется, внутренняя — делится на куски (created_pipes). Снимаемые части: waterspot_drainage_cold_hot → hot/cold/drainage; waterspot_drainage_hot → hot/drainage; waterspot_drainage_cold → cold/drainage; waterspot_cold_hot → cold/hot (part — имя инструмента снимаемой части). После разделения вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "item_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "комбинированный вывод (метка I<n> или id сайта)"
+     },
+     "part": {
+      "type": "string",
+      "enum": [
+       "waterspot_cold",
+       "waterspot_hot",
+       "waterspot_drainage"
+      ],
+      "description": "какая часть снимается (имя инструмента редактора)"
+     }
+    },
+    "required": [
+     "item_id",
+     "part"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"
    }

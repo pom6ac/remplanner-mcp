@@ -2,6 +2,7 @@ import type { ServerContext } from "./context.ts";
 import { McpError } from "../errors.ts";
 import { PRO_EDITOR_KEYS } from "./pro-editor-keys.generated.ts";
 import { OPENING_KINDS } from "../model/openings.ts";
+import { WS_SINGLE_SPOTS } from "../model/waterspots.ts";
 
 /**
  * Единый реестр PRO-инструментов и один тарифный гейт (этап 328, пункт 3):
@@ -98,6 +99,17 @@ export const PRO_OPENING_KINDS: readonly string[] = Object.keys(OPENING_KINDS)
   .filter((k) => PRO_EDITOR_KEYS.includes(k))
   .sort();
 
+/**
+ * Одиночные выводы воды — PRO-ключи объединения waterspot_merge (этап 360):
+ * merge делается в редакторе кликом ПРО-инструмента одиночного вывода на цель,
+ * поэтому гейтится ключ part (waterspot_cold/hot/drainage — все PRO в эталоне
+ * 328-pro-anon); разделение (unset) — контекстное меню комбинированного вывода
+ * (free) и не гейтится. Производится от единого списка, не пишется руками.
+ */
+export const PRO_WATER_SPOT_SINGLES: readonly string[] = [...WS_SINGLE_SPOTS]
+  .filter((k) => PRO_EDITOR_KEYS.includes(k))
+  .sort();
+
 /** Гейт item_add — по полному единому списку (ревью 331 Н2): любой is_pro-ключ
  *  каталога недоступен на free. Ключи, обслуживаемые другими инструментами
  *  (трубы, проводка, световые линии, зоны, плинтусы, покрытия), до item_add не
@@ -147,6 +159,9 @@ export const PRO_PARTIAL_TOOLS: Record<string, ProPartial> = {
   // точка укладки пола — инструмент anchor_floor листа «Напольные покрытия» (этап 347).
   // Удаление якоря (at_mm=null) не гейтится — ластик в редакторе не помечен is_pro
   finish_floor_anchor_set: { editorKeys: ["anchor_floor"], label: "точка начала укладки покрытия пола" },
+  // объединение выводов воды (этап 360): гейтится ключ part — одиночные выводы
+  // (PRO-инструменты, клик на цель); разделение unset — не гейтится (контекстное меню)
+  waterspot_merge: { editorKeys: PRO_WATER_SPOT_SINGLES, label: "одиночные выводы воды (объединение в комбинированный)" },
 };
 
 /** Все инструменты реестра, которые гейтятся (add/update). */

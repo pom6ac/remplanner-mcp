@@ -955,16 +955,19 @@ test("90 R4: кабельный эталон согласован — верши
 
 // ---------- регрессия прежних разделов ----------
 
-test("88: регрессия — трубы и связи сосуществуют, item_delete отклоняет и трубу, и связь", () => {
+test("88: регрессия — трубы и связи сосуществуют; item_delete: труба каскадом (этап 360), связь — отказ", () => {
   const { m, sw, lamp } = scenario();
   const cable = addCable(m, { switchItemId: sw.id, lampItemId: lamp.id });
   const spot = addItemByName(m, "waterspot_cold", { againstWall: { wallId: topWall(m), offsetMm: 2500 } });
   const pipe = addPipe(m, { kind: "water", path: [{ x: 500, y: 500 }, { itemId: spot.id }] });
-  assert.throws(() => deleteItem(m, spot.id), (e: unknown) => e instanceof McpError && String((e as McpError).message).includes("pipe_delete"));
+  // труба из 2 вершин удаляется вместе с предметом (каскад этапа 360)
+  const res = deleteItem(m, spot.id);
+  assert.deepEqual(res.deleted_pipes, [pipe.id]);
+  assert.equal((m as unknown as { pipes?: Record<string, unknown> }).pipes?.[pipe.id], undefined);
+  // связь «выключатель → светильник» по-прежнему держит предмет — сначала cable_delete
   assert.throws(() => deleteItem(m, lamp.id), (e: unknown) => e instanceof McpError && String((e as McpError).message).includes("cable_delete"));
   deleteCable(m, cable.id);
   deleteItem(m, lamp.id);
-  assert.ok(pipe);
   clearEntityCollections(m);
   assert.equal(m.cables, undefined);
   assert.equal(m.pipes, undefined);
