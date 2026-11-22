@@ -179,6 +179,9 @@ try {
       const ids = (await import("./probe-guard.ts")).probeWriteEnv();
       const backupPath = `.orca-reports/backup-${ids.objectId}-382.json`;
       await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
+      // №42 (ревью 387): редактор мог открыть чужой план — после project_open в
+      // finally сверяем открытый в редакторе план с серверным до любой записи
+      await assertEditorPlanMatch(editorOf(), ids.planId);
       const cur = await loadModel(ctx.session(), ids.objectId, ids.planId);
       // в RAW серверной модели стена — поле id (site_id — форма model_get),
       // ось — p1/p2 в см (from/to — форма model_get в мм)
