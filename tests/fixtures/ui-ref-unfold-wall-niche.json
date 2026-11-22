@@ -1,0 +1,25 @@
+{
+  "_source": "синтетический эталон по сериализации WallNiche бандла (этап 389, 268-app.js: serialize {id, type, pc, width, height, plan, plan_, prs, depth, on_size}, depth default 20); координаты/размеры — условные, ПДн нет",
+  "wall_niches": {
+    "id3": {
+      "id": "id3",
+      "type": "wall_niche",
+      "pc": {
+        "x": 200,
+        "y": 260
+      },
+      "width": 80,
+      "height": 120,
+      "plan": "projections",
+      "plan_": "projections",
+      "prs": {
+        "room": "id2",
+        "edge_index": 1,
+        "pc_xd": 200,
+        "pc_yd": 140
+      },
+      "depth": 20,
+      "on_size": 1
+    }
+  }
+}

@@ -1737,6 +1737,50 @@
    }
   },
   {
+   "name": "finish_wall_anchor_set",
+   "description": "Точка начала укладки отделки стены (лист «Развёртки», режим 2, инструмент «Точка начала укладки»): ребро стены с отделкой (finish_wall_set), позиция точки — along_mm от начала развёртки ребра и height_mm от пола. Точка ставится в ОДНУ часть стороны: по умолчанию часть, содержащую точку (height_from_floor..+height из finish_get); при неоднозначности укажите layer. Угол раскладки сбрасывается в 0 (у реек wall_woodbatten — 90), custom_angle стирается — только у этой части, как в редакторе (anchor_decor). НЕ PRO (в отличие от точки укладки пола anchor_floor). После изменения вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room": {
+      "type": "string",
+      "minLength": 1,
+      "description": "комната (метка R<n> или id сайта)"
+     },
+     "wall": {
+      "type": "string",
+      "minLength": 1,
+      "description": "стена ребра с отделкой (метка W<n> или id сайта из model_get)"
+     },
+     "along_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "точка от начала развёртки ребра, мм"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "точка от низа развёртки (от пола), мм"
+     },
+     "layer": {
+      "description": "слой части отделки (layer из finish_get); по умолчанию — часть, содержащая точку",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+     }
+    },
+    "required": [
+     "room",
+     "wall",
+     "along_mm",
+     "height_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "finish_wall_remove",
    "description": "Снять отделку стены в комнате (инструмент wall_cover_remove). Без wall_id — со всех сторон комнаты.",
    "inputSchema": {
@@ -3799,6 +3843,58 @@
    }
   },
   {
+   "name": "prs_set",
+   "description": "Настройки развёрток комнаты (лист «Развёртки», режим «Стены»): нумерация («Назначить первой») и скрытие. hidden — скрыть все развёртки комнаты / показать; first_wall — «назначить первой» развёртку ребра стены (null — авто, как в редакторе); hide_walls/ show_walls — скрыть/показать развёртку ребра стены. Состояние — model_get rooms[].prs. После изменения вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room": {
+      "type": "string",
+      "minLength": 1,
+      "description": "комната (метка R<n> из model_get или id сайта)"
+     },
+     "hidden": {
+      "description": "скрыть все развёртки комнаты (true) / показать (false)",
+      "type": "boolean"
+     },
+     "first_wall": {
+      "description": "стена ребра «первой» развёртки (метка W<n> или id сайта из model_get); null — авто",
+      "anyOf": [
+       {
+        "type": "string",
+        "minLength": 1
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "hide_walls": {
+      "description": "стены рёбер, чьи развёртки скрыть (метка W<n> или id сайта)",
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1
+      }
+     },
+     "show_walls": {
+      "description": "стены рёбер, чьи развёртки показать (метка W<n> или id сайта)",
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+       "type": "string",
+       "minLength": 1
+      }
+     }
+    },
+    "required": [
+     "room"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "redo",
    "description": "Повторить отменённые мутации рабочей копии.",
    "inputSchema": {
@@ -5695,6 +5791,130 @@
    }
   },
   {
+   "name": "wall_molding_add",
+   "description": "Добавить настенный молдинг на развёртку (лист «Развёртки»): стена ребра развёртки, позиция центра от начала развёртки (along_mm) и от низа (bottom_mm), размеры. При высоте ≤ 100 мм редактор делает тонкий горизонтальный молдинг (wall_molding_slim, полоса во всю ширину толщиной width_line_mm — именно width_line задаёт высоту), при ширине ≤ 100 мм — вертикальный (wall_molding_slim_h, полоса во всю высоту толщиной width_line). Не PRO (разметка бесплатного тарифа). После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room": {
+      "type": "string",
+      "minLength": 1,
+      "description": "комната (метка R<n> или id сайта)"
+     },
+     "wall": {
+      "type": "string",
+      "minLength": 1,
+      "description": "стена ребра развёртки (метка W<n> или id сайта из model_get)"
+     },
+     "along_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "центр молдинга от начала развёртки (от начала линии ребра), мм"
+     },
+     "bottom_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "центр молдинга от низа развёртки (от пола), мм"
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "ширина молдинга, мм"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "высота молдинга, мм"
+     },
+     "width_line_mm": {
+      "description": "толщина линии тонкого молдинга, мм (по умолчанию 40)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "room",
+     "wall",
+     "along_mm",
+     "bottom_mm",
+     "width_mm",
+     "height_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wall_molding_delete",
+   "description": "Удалить молдинг развёртки (molding_id из model_get wall_moldings).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "molding_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка WM<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "molding_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wall_molding_update",
+   "description": "Изменить молдинг развёртки (molding_id из model_get wall_moldings): позиция и размеры пересчитываются как новая постановка (валидация — как у wall_molding_add).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "molding_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка WM<n> из model_get или id сайта"
+     },
+     "along_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "bottom_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "width_line_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     }
+    },
+    "required": [
+     "molding_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "wall_move",
    "description": "Параллельно перенести стену на offset_mm перпендикулярно (вправо от направления p1→p2 — положительное). Соседние стены удлиняются/укорачиваются сами. Проёмы едут вместе со стеной.",
    "inputSchema": {
@@ -5713,6 +5933,130 @@
     "required": [
      "wall_id",
      "offset_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wall_niche_add",
+   "description": "Добавить нишу на развёртку (лист «Развёртки»): стена ребра развёртки, позиция и размеры. Ниша не может пересекать другую нишу той же развёртки и не ставится на стеклянные/реечные стены и балконы (как в редакторе). depth_mm — от 50 до min(800, толщина стены) мм (по умолчанию min(200, толщина стены)), как в редакторе (correctValue(t,5,min(80,getWallDepth())) с предупреждением wall_depth_niche). Не PRO (разметка бесплатного тарифа). После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room": {
+      "type": "string",
+      "minLength": 1,
+      "description": "комната (метка R<n> или id сайта)"
+     },
+     "wall": {
+      "type": "string",
+      "minLength": 1,
+      "description": "стена ребра развёртки (метка W<n> или id сайта из model_get)"
+     },
+     "along_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "центр ниши от начала развёртки, мм"
+     },
+     "bottom_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "центр ниши от низа развёртки (от пола), мм"
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "ширина ниши, мм (минимум 100)"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "высота ниши, мм (минимум 100)"
+     },
+     "depth_mm": {
+      "description": "глубина ниши, мм: от 50 до min(800, толщина стены); по умолчанию min(200, толщина стены)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "room",
+     "wall",
+     "along_mm",
+     "bottom_mm",
+     "width_mm",
+     "height_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wall_niche_delete",
+   "description": "Удалить нишу развёртки (niche_id из model_get wall_niches).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "niche_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка WN<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "niche_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "wall_niche_update",
+   "description": "Изменить нишу развёртки (niche_id из model_get wall_niches): позиция, размеры, глубина.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "niche_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка WN<n> из model_get или id сайта"
+     },
+     "along_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "bottom_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "depth_mm": {
+      "description": "глубина ниши, мм: от 50 до min(800, толщина стены)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     }
+    },
+    "required": [
+     "niche_id"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"
    }
@@ -6964,7 +7308,12 @@
       }
      ],
      "floor": null,
-     "ceiling": null
+     "ceiling": null,
+     "prs": {
+      "hidden": false,
+      "first_edge": null,
+      "disabled_edges": []
+     }
     }
    ],
    "items": [],
@@ -6995,6 +7344,8 @@
    "thick_lines": [],
    "free_figures": [],
    "pictures": [],
+   "wall_moldings": [],
+   "wall_niches": [],
    "total_height_mm": 2700
   },
   "model_get_full": {
@@ -7279,7 +7630,12 @@
      }
     ],
     "floor": null,
-    "ceiling": null
+    "ceiling": null,
+    "prs": {
+     "hidden": false,
+     "first_edge": null,
+     "disabled_edges": []
+    }
    }
   ],
   "items_list": [],

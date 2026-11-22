@@ -185,6 +185,29 @@ const picture = z.looseObject({
   plan: idStr.optional(),
 });
 
+/** Молдинг/ниша развёртки (WallMolding/WallNiche, этап 389): числа и ссылки,
+ *  пользовательского текста нет — строковые поля только фиксированные
+ *  (type из набора, plan="projections"); prs — ссылки на комнату/ребро. */
+const prsFigure = z.looseObject({
+  id: idStr,
+  type: z.enum(["wall_molding", "wall_molding_slim", "wall_molding_slim_h", "wall_niche"]),
+  pc: point.optional(),
+  width: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  height: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  depth: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  width_line: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  plan: z.literal("projections").optional(),
+  plan_: z.literal("projections").optional(),
+  on_size: z.number().finite().optional(),
+  prs: z.looseObject({
+    room: idStr,
+    edge_index: z.number().finite().min(0).max(1000).optional(),
+    pc_xd: z.number().finite().optional(),
+    pc_yd: z.number().finite().optional(),
+    mode: z.number().finite().optional(),
+  }),
+});
+
 /** Графовая сущность (трубы/кабели/свет/границы/проёмы пола/тёплые полы). */
 const graphEntity = z.looseObject({
   id: idStr,
@@ -366,6 +389,8 @@ const NON_GRAPH_COLLECTIONS = new Set([
   "walls", "items", "pillars", "rigels", "rulers", "comments", "shields",
   // этап 375: пользовательские листы, фигуры и изображения — не графы
   "custom_plans", "free_figures", "pictures",
+  // этап 389: молдинги/ниши развёрток — не графы
+  "wall_moldings", "wall_niches",
 ]);
 
 const GRAPH_COLLECTIONS = MODEL_ENTITY_COLLECTIONS.filter((c) => !NON_GRAPH_COLLECTIONS.has(c));
@@ -384,6 +409,9 @@ function collectionsSchema(): Record<string, z.ZodType> {
     custom_plans: collection(customPlan, MAX_IMPORT_ENTITIES).optional(),
     free_figures: collection(freeFigure, MAX_IMPORT_ENTITIES).optional(),
     pictures: collection(picture, MAX_IMPORT_ENTITIES).optional(),
+    // этап 389: молдинги/ниши развёрток
+    wall_moldings: collection(prsFigure, MAX_IMPORT_ENTITIES).optional(),
+    wall_niches: collection(prsFigure, MAX_IMPORT_ENTITIES).optional(),
   };
   for (const key of GRAPH_COLLECTIONS) out[key] = collection(graphEntity, MAX_IMPORT_ENTITIES).optional();
   return out;

@@ -2,6 +2,69 @@
 
 ## Unreleased
 
+### Исправлено (этап 391 — по ревью 390, развёртки)
+
+- **Затронутость молдингов/ниш развёрток при wall-операциях** (major 1): `applyWalls`
+  сверяет `wall_moldings`/`wall_niches` «до → после» нормализации по id — потеря
+  (Room.delete редактора) и перенос на другое ребро (сигнал 43) — видимые
+  предупреждения с id; висячий `prs.room` (комната исчезла) удаляется каскадом,
+  как `Room.delete` бандла.
+- **Точка укладки отделки стены** (major 2): `finish_wall_anchor_set` ставит точку
+  только в ОДНУ часть стороны (по умолчанию — содержащую точку по
+  `height_from_floor..height`, при неоднозначности — вход `layer`); `pc_yd`
+  считается от полигона самой части (бандл: `new Polygon(WALL_DECORS[a.id].polygon)`),
+  angle/custom_angle других частей не трогаются.
+- **Форма slim-молдинга** (major 3): по draw бандла `wall_molding_slim` хранит
+  `height=width_line` (тонкая горизонтальная полоса), `wall_molding_slim_h` —
+  `width=width_line` (вертикальная); редактор больше не переписывает значения при
+  первом показе развёрток. Ориентация в описаниях исправлена (major 3/minor 12).
+- **Пределы глубины ниши** (major 4): depth_mm — от 50 до min(800, толщина/длина
+  стены по `get_wall_depth` (сторона e/s — длина)) мм, умолчание
+  min(200, толщина) — как draw/меню бандла (`correctValue(t,5,min(80,getWallDepth()))`,
+  предупреждение wall_depth_niche); выход за предел — INVALID_ARGUMENT.
+- **Ответы инструментов в мм** (major 5): `wall_molding_add/update`,
+  `wall_niche_add/update` возвращают форму `model_get` (`along_mm`, `from_floor_mm`,
+  метка R<n>), `finish_wall_anchor_set` — `edge/along_mm/height_mm/part/layer/angle`
+  без см/prs-структур редактора, `prs_set` — snake_case (`first_edge`,
+  `disabled_edges`).
+- minor: скрытие всех развёрток по одной ставит `prs_hidden=1` (условие обработчика
+  visibility, minor 6); вход `wall` принимает метки `W<n>` (minor 7); эталон
+  молдинга приведён к форме draw (minor 13); тест канона sig №41 проверяет каждое
+  пользовательское поле потолка отдельно (minor 11); предупреждение о возможном
+  сбросе настроек развёрток при любом изменении стен (minor 14, живой прогон 391-1:
+  prs_hidden теряется при wall_move без смены нарезки); склейка `*/const graphEntity`
+  разнесена (minor 14).
+
+### Добавлено (этап 389 — развёртки)
+
+- **Настройки развёрток комнаты** (`prs_set`): hidden — «Скрыть развёртки» (`prs_hidden=1` +
+  все oid в `prs_disabled`, как обработчик #cm-room2), first_wall — «Назначить первой»
+  (`prs_first`, null — авто), hide_walls/show_walls — скрытие/показ развёртки ребра стены
+  (знак развёртки). Состояние — `model_get` `rooms[].prs` (`hidden`, `first_edge`,
+  `disabled_edges`). Настройки привязаны к развёртке ребра комнаты (edge_index), oid
+  развёрток редактор перегенерирует при каждой перерисовке и при wall-операциях —
+  семантическая сверка save идёт по edge-индексам, при изменении нарезки рёбер — skip.
+- **Молдинги и ниши развёрток**: `wall_molding_add/update/delete` (метки WM<n>, типы
+  wall_molding/wall_molding_slim/wall_molding_slim_h — как в draw бандле при высоте/ширине
+  ≤ 10 см, толщина линии width_line 40 мм) и `wall_niche_add/update/delete` (метки WN<n>,
+  depth 200 мм, минимум 100×100 мм, без пересечений ниш одной развёртки, нельзя на
+  стеклянных/реечных стенах и балконах). Позиция — семантическая: along_mm от начала
+  развёртки ребра, bottom_mm от пола; pc пишется в детерминированной рамке развёрток
+  (Projections.getPolygons), prs.pc_xd/pc_yd — пользовательские поля. Не PRO.
+- **Точка укладки плитки на стене** (`finish_wall_anchor_set`, инструмент anchor_decor
+  листа «Развёртки», режим 2): along_mm/height_mm на развёртке ребра с отделкой,
+  angle=0 (wall_woodbatten → 90), custom_angle снимается — как обработчик бандла.
+  НЕ PRO (в отличие от точки укладки пола anchor_floor).
+- `model_get`: аддитивные коллекции `wall_moldings`, `wall_niches` (метки WM<n>/WN<n>)
+  и `rooms[].prs`. Коллекции зарегистрированы в общем реестре (clear/import/счётчики),
+  схема импорта с лимитами; сверка после save — `wall_molding_mismatches`,
+  `wall_niche_mismatches`, `prs_mismatches`, `wall_anchor_mismatches`.
+- follow-up ревью 387 (PR #58): №41 — канон sig живых проб исключает производные поля
+  потолка polygon2/polygons_layout_points/area_childs/index_parent/index_childs
+  (доказательство по сериализатору бандла; пользовательские поля различаются — тест);
+  №42 — assertEditorPlanMatch после project_open в finally проб 382/384/386;
+  №43 — тест, что openEditor создаёт контекст только через newContextOptions().
+
 ### Добавлено (этап 375 — нижняя панель и листы)
 
 - **Пользовательские листы** (`sheet_add`/`sheet_update`/`sheet_delete`): модель `custom_plans`

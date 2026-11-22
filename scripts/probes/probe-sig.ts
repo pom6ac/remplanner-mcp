@@ -180,7 +180,19 @@ export function canon(m: unknown): unknown {
           rec["ceilings"] = (rec["ceilings"] as Array<Record<string, unknown>>)
             .map((ce) => {
               const o: Record<string, unknown> = { ...ce };
-              for (const d of ["polygon", "edges", "polygon_new", "edges_new", "polygons_layout", "pc", "id", "id_room", "is_class", "area_niches", "settings"]) delete o[d];
+              // №41 (ревью 387): бандл сериализует при exist:true ещё polygon2/
+              // polygons_layout_points/area_childs/index_parent/index_childs —
+              // все пересчитываются при пересчёте комнат: this.polygon2=e после
+              // get_inner_polygon+fixPolygon (бандл: "this.polygon2=e,this.edges2=
+              // LIB.polygonEdges(this.polygon2)"), this.area_childs={} затем
+              // gelCalcArea(…,this.area_childs), polygons_layout_points — точки
+              // раскладки (LayingPattern, this.polygons_layout_points=e.polygons_
+              // layout_points||[]), index_parent/index_childs — индексы зон
+              // потолка за закладными/делителями (пересчитываются вместе с
+              // polygons_layout). layout_points при смене материала/раскладки
+              // редактор перестраивает, а preserve-поле переносит только как
+              // стартовые данные.
+              for (const d of ["polygon", "edges", "polygon_new", "edges_new", "polygon2", "edges2", "polygons_layout", "polygons_layout_points", "area_childs", "index_parent", "index_childs", "pc", "id", "id_room", "is_class", "area_niches", "settings"]) delete o[d];
               return roundDeep(o) as Record<string, unknown>;
             })
             .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));

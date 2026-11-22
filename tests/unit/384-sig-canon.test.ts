@@ -275,3 +275,77 @@ test("386 nit40: вложенные поля eds2 различаются — rep
   assert.notEqual(sig(withEds2Nested(5)), sig(withEds2Nested(10)), "вложенная точка eds2 (p2.y) изменена — различается");
   assert.equal(sig(withEds2Nested(5)), sig(withEds2Nested(5)), "те же вложенные точки eds2 — sig равен");
 });
+
+// ---------- minor 387 №41: производные поля потолка polygon2/index_*/area_childs/polygons_layout_points ----------
+
+// Бандл сериализует при exist:true (serialize, «e.polygon2=this.polygon2,…e.
+// index_parent=…,e.index_childs=…,e.area_childs=…,e.polygons_layout=…,e.
+// polygons_layout_points=…») — все пересчитываются при пересчёте комнат:
+// this.area_childs={} затем gelCalcArea(…,this.area_childs); this.polygon2=e
+// после get_inner_polygon+fixPolygon; polygons_layout_points — точки раскладки
+// (class Ceiling читает e.polygons_layout_points||[], раскладка перестраивается);
+// index_parent/index_childs — индексы зон потолка за закладными/делителями
+// (пересчитываются вместе с polygons_layout). Канон их удаляет — но только их.
+const CEIL_DERIVED_FIELDS = ["polygon2", "index_parent", "index_childs", "area_childs", "polygons_layout_points"] as const;
+
+test("387 №41: производные поля потолка (polygon2/index_*/area_childs/polygons_layout_points) не дают ложного расхождения", () => {
+  const withDerived = (v: Record<string, unknown>): AnyRec => {
+    const m = baseModel();
+    const r = (m.rooms2 as AnyRec)["rA"] as AnyRec;
+    (r.ceilings as AnyRec[])[0] = { ...(r.ceilings as AnyRec[])[0]!, ...v };
+    return m;
+  };
+  for (const f of CEIL_DERIVED_FIELDS) {
+    assert.equal(
+      sig(withDerived({ [f]: v1Of(f) })),
+      sig(withDerived({ [f]: v2Of(f) })),
+      `потолок ${f} (производное, бандл пересчитывает) — sig равен (ложного РАСХОЖДЕНИЕ нет)`,
+    );
+  }
+});
+
+function v1Of(f: string): unknown {
+  if (f === "polygon2") return [{ x: 1, y: 2 }, { x: 3, y: 4 }];
+  if (f === "area_childs") return { z1: 5.5 };
+  if (f === "index_parent") return 0;
+  if (f === "index_childs") return [1, 2];
+  return [{ x: 9, y: 9 }];
+}
+function v2Of(f: string): unknown {
+  if (f === "polygon2") return [{ x: 5, y: 6 }, { x: 7, y: 8 }];
+  if (f === "area_childs") return { z1: 7.25 };
+  if (f === "index_parent") return 1;
+  if (f === "index_childs") return [3];
+  return [];
+}
+
+test("387 №41: пользовательские поля потолка по-прежнему различаются (канон сузил исключения)", () => {
+  // complex-набор пользовательских полей (268: serialize exist:true переносит
+  // level2/material2/complex/radius/offset/anchor/type_laying/angle). 391 minor 11
+  // (ревью 390): каждое поле проверяется ОТДЕЛЬНО — мутация канона, выбрасывающая
+  // одно из набора, краснит тест, а не прячется за общим изменением восьми полей.
+  const withUser = (field: string, value: unknown): AnyRec => {
+    const m = baseModel();
+    const r = (m.rooms2 as AnyRec)["rA"] as AnyRec;
+    (r.ceilings as AnyRec[])[0] = {
+      ...(r.ceilings as AnyRec[])[0]!,
+      [field]: value,
+    };
+    return m;
+  };
+  const USER_FIELDS: Array<[string, unknown, unknown]> = [
+    ["complex", true, false],
+    ["material2", "stretch_ceiling", "gypsum_ceiling"],
+    ["level2", 7.5, 8.5],
+    ["radius", 10, 11],
+    ["offset", 40, 41],
+    ["anchor", { p: { x: 10, y: 20 } }, { p: { x: 11, y: 20 } }],
+    ["type_laying", "diagonal", "straight"],
+    ["angle", 0, 45],
+  ];
+  for (const [field, v1, v2] of USER_FIELDS) {
+    assert.notEqual(sig(withUser(field, v1)), sig(withUser(field, v2)), `пользовательское поле потолка ${field} различается — канон не прячет данные`);
+    assert.equal(sig(withUser(field, v1)), sig(withUser(field, v1)), `${field}: то же значение — sig равен`);
+  }
+  // index_parent/area_childs/… (производные) не дают расхождения — покрыто тестом выше
+});

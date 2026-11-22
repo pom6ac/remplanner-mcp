@@ -327,6 +327,13 @@ function fixtureEntities(name: string, root: Record<string, unknown>): [string, 
   if (shieldDict !== null && typeof shieldDict === "object" && !Array.isArray(shieldDict)) {
     for (const s of Object.values(shieldDict as Record<string, unknown>)) push("shields", s);
   }
+  // молдинги/ниши развёрток: эталоны ui-ref-unfold-* несут словари (этап 389)
+  for (const [coll, key] of [["wall_moldings", "wall_moldings"], ["wall_niches", "wall_niches"]] as const) {
+    const dict = root[key];
+    if (dict !== null && typeof dict === "object" && !Array.isArray(dict)) {
+      for (const f of Object.values(dict as Record<string, unknown>)) push(coll, f);
+    }
+  }
   // свободные стены: эталоны ui-ref-free-wall-* несут словарь walls
   const walls = root["walls"];
   if (walls !== null && typeof walls === "object" && !Array.isArray(walls)) {

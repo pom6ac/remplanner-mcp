@@ -42,6 +42,8 @@ export const MODEL_ENTITY_COLLECTIONS = [
   "thick_lines",
   "free_figures",
   "pictures",
+  "wall_moldings",
+  "wall_niches",
 ] as const;
 
 export type ModelEntityCollection = (typeof MODEL_ENTITY_COLLECTIONS)[number];
@@ -83,6 +85,8 @@ export const PUBLIC_COLLECTION_KEYS = {
   thick_lines: "thick_lines",
   free_figures: "free_figures",
   pictures: "pictures",
+  wall_moldings: "wall_moldings",
+  wall_niches: "wall_niches",
 } as const satisfies Record<ModelEntityCollection, string>;
 
 export type PublicCollectionKey = (typeof PUBLIC_COLLECTION_KEYS)[ModelEntityCollection];

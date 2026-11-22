@@ -10,6 +10,7 @@ import { ceilingRigelList } from "./ceiling-rigels.ts";
 import { ceilingFinishZones } from "./finish.ts";
 import { unescapeCommentText } from "./dims.ts";
 import { zoneNumbersByEditorRule } from "./room-fields.ts";
+import { prsStateOf } from "./projections.ts";
 
 // Компактное представление модели для агента (< 5 КБ): метки W/R/O/I, мм.
 
@@ -92,6 +93,10 @@ export type CompactRoom = {
   floor?: string | null;
   /** Покрытие потолка комнаты (лист «Потолки», этап 94). */
   ceiling?: string | null;
+  /** Настройки развёрток комнаты (этап 389): hidden — «скрыть развёртки»,
+   *  first_edge — ребро «первой» развёртки (null — авто), disabled_edges —
+   *  скрытые развёртки (индексы рёбер). */
+  prs?: { hidden: boolean; first_edge: number | null; disabled_edges: number[] };
 };
 
 export type CompactRoomEdge = {
@@ -438,6 +443,10 @@ export type CompactModel = {
   thick_lines: CompactDrawLine[];
   free_figures: CompactFigure[];
   pictures: CompactPicture[];
+  /** Молдинги развёрток (wall_moldings, лист «Развёртки», этап 389). */
+  wall_moldings: CompactPrsFigure[];
+  /** Ниши развёрток (wall_niches). */
+  wall_niches: CompactPrsFigure[];
   total_height_mm: number;
 };
 
@@ -491,6 +500,27 @@ export type CompactPicture = {
   width_mm: number;
   height_mm: number;
   text?: string;
+};
+
+/**
+ * Молдинг/ниша развёртки (wall_moldings/wall_niches, этап 389). Позиция —
+ * семантическая: along_mm — от начала развёртки (prs.pc_xd), from_floor_mm —
+ * от низа развёртки (prs.pc_yd и total_height); pc — кэш рамки развёрток,
+ * в публичный API не идёт. room — метка R<n>, edge_index — индекс ребра
+ * развёртки (развёртки комнаты в model_get edges_prs).
+ */
+export type CompactPrsFigure = {
+  id: string;
+  site_id: string;
+  kind: "wall_molding" | "wall_niche";
+  room: string | null;
+  edge_index: number;
+  along_mm: number;
+  from_floor_mm: number;
+  width_mm: number;
+  height_mm: number;
+  depth_mm?: number;
+  width_line_mm?: number;
 };
 
 export function wallLengthMm(wall: Wall): number {
@@ -650,6 +680,7 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       ...(compactEdges.length > 0 ? { edges: compactEdges } : {}),
       floor: floorRec && floorRec["exist"] === true && typeof floorRec["cover"] === "string" ? floorRec["cover"] as string : null,
       ceiling: ceilingZone ? ceilingZone.material : null,
+      ...(room2 ? { prs: (({ hidden, firstEdge, disabledEdges }) => ({ hidden, first_edge: firstEdge, disabled_edges: disabledEdges }))(prsStateOf(room2 as Parameters<typeof prsStateOf>[0])) } : {}),
     };
     });
   })();
@@ -1076,6 +1107,36 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       ...(p.text ? { text: unescapeCommentText(p.text) } : {}),
     }));
 
+  // Развёртки: молдинги/ниши (этап 389). Позиция наружу — семантическая
+  // (along — от начала развёртки по prs.pc_xd, from_floor — от низа по
+  // prs.pc_yd и total_height): pc — кэш рамки развёрток, агент его не видит.
+  const compactPrsFigures = (src: Record<string, import("./projections.ts").PrsFigureEntity> | undefined, label: string, kind: string): CompactPrsFigure[] => {
+    const roomLabelById = new Map<string, string>();
+    roomList.forEach((r, i) => {
+      if (r.roomId) roomLabelById.set(r.roomId, `R${i + 1}`);
+    });
+    return Object.values(src ?? {}).map((f, i) => {
+      const prs = (f.prs ?? {}) as Record<string, unknown>;
+      const xd = typeof prs["pc_xd"] === "number" ? prs["pc_xd"] : 0;
+      const yd = typeof prs["pc_yd"] === "number" ? prs["pc_yd"] : 0;
+      const H = totalHeight;
+      const roomSite = typeof prs["room"] === "string" ? prs["room"] : null;
+      return {
+        id: `${label}${i + 1}`,
+        site_id: f.id,
+        kind: kind as CompactPrsFigure["kind"],
+        room: roomSite ? (roomLabelById.get(roomSite) ?? roomSite) : null,
+        edge_index: typeof prs["edge_index"] === "number" ? prs["edge_index"] : -1,
+        along_mm: round0(cmToMm(xd)),
+        from_floor_mm: round0(cmToMm(H - yd)),
+        width_mm: round0(cmToMm(f.width ?? 0)),
+        height_mm: round0(cmToMm(f.height ?? 0)),
+        ...(f.depth !== undefined ? { depth_mm: round0(cmToMm(f.depth)) } : {}),
+        ...(f.width_line !== undefined ? { width_line_mm: round0(cmToMm(f.width_line)) } : {}),
+      };
+    });
+  };
+
   return {
     walls,
     rooms: compactRooms,
@@ -1107,6 +1168,8 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     thick_lines: compactDrawLines(model.thick_lines, "TL", true),
     free_figures: compactFigures(model.free_figures, "DE"),
     pictures: compactPictures(model.pictures, "PIC"),
+    wall_moldings: compactPrsFigures(model.wall_moldings, "WM", "wall_molding"),
+    wall_niches: compactPrsFigures(model.wall_niches, "WN", "wall_niche"),
     total_height_mm: round0(cmToMm(totalHeight)),
   };
 }

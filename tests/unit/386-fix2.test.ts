@@ -25,3 +25,16 @@ test("386 nit39: content {} — пустой список (не попадани
     "непустой объект в content — по-прежнему попадание (fail-closed)",
   );
 });
+
+// №43 (ревью 387): тест №38 проверяет чистую функцию newContextOptions, но не то,
+// что openEditor её вызывает — мутация «вернуть в openEditor литерал опций без
+// serviceWorkers» тест переживает. Статический тест на вызов: openEditor обязан
+// передавать в browser.newContext РОВНО newContextOptions(), других вызовов
+// newContext в адаптере нет.
+test("387 №43: openEditor создаёт контекст только через newContextOptions()", async () => {
+  const src = await import("node:fs").then((fs) => fs.promises.readFile(new URL("../../src/editor/adapter.ts", import.meta.url), "utf8"));
+  const openBody = src.slice(src.indexOf("export async function openEditor("), src.indexOf("export async function openEditorInContext("));
+  assert.ok(openBody.includes("browser.newContext(newContextOptions())"), "openEditor вызывает browser.newContext(newContextOptions()) — литерал опций недопустим (мутация без serviceWorkers краснит)");
+  const calls = [...src.matchAll(/newContext\(/g)].map((m) => m.index ?? -1);
+  assert.equal(calls.length, 1, `вызовов newContext в adapter.ts ровно один (найдено ${calls.length})`);
+});

@@ -184,6 +184,9 @@ const FULL_COLLECTIONS: Pick<Model, ModelEntityCollection> = {
   thick_lines: { tl1: { ...drawLine("tl1", "thick_line"), on_width: 1 } },
   free_figures: { de1: { id: "de1", type: "rect", pc: POINT, width: 50, height: 50, angle: 0, rotated: 0, radius: 0, depth: 0, color: "#148515", plan: "plan", prs: {}, width_stroke: 1, type_stroke: "solid", level_layer: 7 } },
   pictures: { pic1: { id: "pic1", url: "u1.png", pc: POINT, width: 100, height: 100, width_original: 300, height_original: 300, plan: "plan", prs: {}, level_layer: 7, type: "user" } },
+  // этап 389: молдинг и ниша развёрток
+  wall_moldings: { wm1: { id: "wm1", type: "wall_molding", pc: { x: 10, y: 100 }, width: 60, height: 3, plan: "projections", plan_: "projections", prs: { room: "room1", edge_index: 0, pc_xd: 10, pc_yd: 100 }, width_line: 4, on_size: 1 } },
+  wall_niches: { wn1: { id: "wn1", type: "wall_niche", pc: { x: 30, y: 120 }, width: 60, height: 80, plan: "projections", plan_: "projections", prs: { room: "room1", edge_index: 0, pc_xd: 30, pc_yd: 120 }, depth: 20, on_size: 1 } },
 };
 
 /** Полная модель импорта: эталон + корневые поля Model. */
