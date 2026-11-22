@@ -7,6 +7,13 @@
 // Кейсы шума — доказанный производный шум прогона 1 из 382-1.log (ревью 383,
 // раздел «Канон sig»): новые id комнат/eds2/items.id_room, шум координат ≤1e-3 см,
 // число exist:false заглушек, edges_ceiling/demolines_ceiling_moldings, oid.
+// Фикс-2 по ревью 385 (386): major 35 — потолок exist:true: вся запись минус
+// производные (бандл при пересчёте комнат ПЕРЕНОСИТ angle/type_laying/anchor/
+// complex/material2/niches/… — this.room.ceilings[e].anchor=s.ceilings[t].anchor,
+// restoreCeilingNiches; конструктор class Ceiling их читает), зоны — color
+// (zones[e].color=t.zones[i].color), ригели — height/depth (class Rigel);
+// minor 37 — вложенное поле props.name в части плинтуса (replacer в частях
+// больше не прячется); nit 40 — eds2 без replacer-массива.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sig } from "../../scripts/probes/probe-sig.ts";
@@ -76,7 +83,7 @@ const withFinish = (mut: (room: AnyRec) => void): [AnyRec, AnyRec] => {
   return [a, b];
 };
 const molding = (len: number, color = "white"): AnyRec => ({
-  exist: true, parts: { p1: { id: "p1", id_room: "rA", type: "plinth_a", length: len, color } },
+  exist: true, parts: { p1: { id: "p1", id_room: "rA", type: "plinth_a", length: len, color, props: { name: "плинтус-1" } } },
 });
 
 test("384 major28: производный шум прогона 1 (382-1.log) — sig равен", () => {
@@ -162,4 +169,109 @@ test("384 nit34: content не массив / не строковые элеме�
   assert.equal(findUnsafeEditorStrings(ok).length, 0, "массив безопасных строк — не попадание");
   const absent = { walls: {}, custom_plans: { sh1: { id: "sh1", name: "Лист" } } } as unknown as Model;
   assert.equal(findUnsafeEditorStrings(absent).length, 0, "content отсутствует/null — не попадание");
+});
+
+// ---------- major 385 №35: потолки/зоны/ригели — переносимые бандлом поля ----------
+
+// Поля потолка, которые бандл при пересчёте комнат ПЕРЕНОСИТ из старой записи
+// в новую (this.room.ceilings[e].X=s.ceilings[t].X: level2, material2, type,
+// profile, complex, radius, offset, anchor, type_laying, angle, custom_angle,
+// interval, width, height, height_rail, on_interval) и читает конструктор
+// class Ceiling; niches — restoreCeilingNiches. Раньше белый список
+// {exist,material,level,profile} их выбрасывал.
+const CEIL_FIELDS: [string, unknown, unknown][] = [
+  ["angle", 0, 90],
+  ["type_laying", "straight", "diagonal"],
+  ["anchor", "a1", "a2"],
+  ["complex", false, true],
+  ["material2", null, "stretch_ceiling"],
+  ["niches", [], [{ polygon: [{ x: 1, y: 1 }], edges: [1] }]],
+  ["custom_angle", 0, 15],
+  ["height_rail", null, 12],
+  ["radius", null, 30],
+  ["offset", 40, 60],
+  ["level2", null, 7.5],
+  ["type", "closed", "open"],
+  ["width", 20, 40],
+  ["height", 10, 20],
+];
+
+const withCeilingField = (field: string, v: unknown): AnyRec => {
+  const m = baseModel();
+  const r = (m.rooms2 as AnyRec)["rA"] as AnyRec;
+  (r.ceilings as AnyRec[])[0] = { ...(r.ceilings as AnyRec[])[0]!, [field]: v };
+  return m;
+};
+
+test("386 major35: потолок exist:true — каждое переносимое бандлом поле различается", () => {
+  for (const [field, v0, v1] of CEIL_FIELDS) {
+    assert.notEqual(sig(withCeilingField(field, v0)), sig(withCeilingField(field, v1)), `потолок ${field}: ${JSON.stringify(v0)} → ${JSON.stringify(v1)} — различается`);
+    assert.equal(sig(withCeilingField(field, v0)), sig(withCeilingField(field, v0)), `потолок ${field}: то же значение — sig равен`);
+  }
+});
+
+test("386 major35: потолок со всеми переносимыми полями — одинаковые записи не различаются", () => {
+  const full = (m: AnyRec): AnyRec => {
+    const r = (m.rooms2 as AnyRec)["rA"] as AnyRec;
+    (r.ceilings as AnyRec[])[0] = {
+      ...(r.ceilings as AnyRec[])[0]!,
+      angle: 45, type_laying: "diagonal", anchor: "a1", complex: true, material2: "stretch_ceiling",
+      niches: [{ polygon: [{ x: 1, y: 1 }] }], custom_angle: 15, height_rail: 12, radius: 30,
+      offset: 40, level2: 7.5, type: "closed", width: 40, height: 20,
+      interval: 300, on_interval: true,
+    };
+    return m;
+  };
+  assert.equal(sig(full(baseModel())), sig(full(baseModel())), "полная запись потолка с равными полями — sig равен");
+});
+
+test("386 major35: зона color различается (бандл zones[e].color=t.zones[i].color)", () => {
+  const withColor = (color: unknown): AnyRec => {
+    const m = baseModel();
+    const r = (m.rooms2 as AnyRec)["rA"] as AnyRec;
+    (r.zones as AnyRec[])[0] = { ...(r.zones as AnyRec[])[0]!, color };
+    return m;
+  };
+  assert.notEqual(sig(withColor("red")), sig(withColor("blue")), "зона color red → blue — различается");
+  assert.equal(sig(withColor("red")), sig(withColor("red")), "зона с тем же color — sig равен");
+  assert.notEqual(sig(withColor("red")), sig(baseModel()), "зона с color vs без color — различается");
+});
+
+test("386 major35: ригель height/depth различаются (бандл class Rigel: this.height=e.height, this.depth=e.depth)", () => {
+  const withRigel = (height: number, depth: number): AnyRec => {
+    const m = baseModel();
+    const r = (m.rooms2 as AnyRec)["rA"] as AnyRec;
+    r.rigels = { rg1: { id: "rg1", p1: { x: 0, y: 0 }, p2: { x: 100, y: 0 }, width: 20, ceiling_type: "m1", height, depth, polygon: [{ x: 0, y: 0 }, { x: 100, y: 0 }] } };
+    return m;
+  };
+  assert.notEqual(sig(withRigel(20, 5)), sig(withRigel(40, 5)), "ригель height 20→40 — различается");
+  assert.notEqual(sig(withRigel(20, 5)), sig(withRigel(20, 10)), "ригель depth 5→10 — различается");
+  assert.equal(sig(withRigel(20, 5)), sig(withRigel(20, 5)), "ригель с теми же height/depth — sig равен");
+});
+
+// ---------- minor 385 №37: replacer в частях плинтуса ----------
+
+test("386 minor37: вложенное поле части плинтуса (props.name) различается — replacer в частях больше не прячет", () => {
+  const withProps = (name: string): AnyRec => {
+    const m = baseModel();
+    const r = (m.rooms2 as AnyRec)["rA"] as AnyRec;
+    r.floorMoldings = [molding(300)];
+    (((r.floorMoldings as AnyRec[])[0]!["parts"] as AnyRec)["p1"] as AnyRec)["props"] = { name };
+    return m;
+  };
+  assert.notEqual(sig(withProps("плинтус-1")), sig(withProps("плинтус-2")), "props.name части плинтуса изменено — различается");
+  assert.equal(sig(withProps("плинтус-1")), sig(withProps("плинтус-1")), "то же props.name — sig равен");
+});
+
+// ---------- nit 385 №40: eds2 без replacer-массива ----------
+
+test("386 nit40: вложенные поля eds2 различаются — replacer-массив убран", () => {
+  const withEds2Nested = (w: number): AnyRec => {
+    const m = baseModel();
+    const wall = (m.walls as AnyRec)["w1"] as AnyRec;
+    ((wall.eds2 as AnyRec).left as AnyRec[])[0] = { id: "e1", pc: "pc1", type: "plaster", exist: true, p1: { x: 0, y: 0 }, p2: { x: 100, y: w } };
+    return m;
+  };
+  assert.notEqual(sig(withEds2Nested(5)), sig(withEds2Nested(10)), "вложенная точка eds2 (p2.y) изменена — различается");
+  assert.equal(sig(withEds2Nested(5)), sig(withEds2Nested(5)), "те же вложенные точки eds2 — sig равен");
 });

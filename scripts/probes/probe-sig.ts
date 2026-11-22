@@ -20,6 +20,10 @@
 // канонизируются через oid → ed{edge_index}, а не вместе с безусловным
 // обнулением oid в edges_prs — иначе при перегенерации oid ключи станут
 // висячими, и sig это скрыл бы.
+// Этап 386 (фикс-2 по ревью 385 №35): потолки — вся запись минус производные
+// (бандл переносит angle/type_laying/anchor/complex/material2/niches/… при
+// пересчёте комнат), зоны — color, ригели — height/depth; №40: eds2 без
+// replacer-массива.
 /**
  * Каноническая форма GET-модели для сверок (384: экспортирована для
  * поканонического диффа в пробах сверки восстановления, sig = JSON(canon)).
@@ -58,7 +62,9 @@ export function canon(m: unknown): unknown {
         if (Array.isArray(eds2[side])) {
           const canon = (eds2[side] as Array<Record<string, unknown>>)
             .map((e) => ({ ...e, id: null, pc: null }))
-            .map((e) => JSON.stringify(e, Object.keys(e).sort()))
+            // без replacer-массива (386 №40): он фильтрует ключи на всех уровнях
+            // вложенности и срезал вложенные p1/p2/c/pc; ключи сортирует roundDeep
+            .map((e) => JSON.stringify(roundDeep(e)))
             .sort();
           eds2[side] = canon;
         }
@@ -155,20 +161,28 @@ export function canon(m: unknown): unknown {
             const key = p1 && p2
               ? `${Math.round(p1.x * 10) / 10},${Math.round(p1.y * 10) / 10};${Math.round(p2.x * 10) / 10},${Math.round(p2.y * 10) / 10}|${r["width"]}|${r["ceiling_type"]}`
               : String(r["id"] ?? "?");
-            canon[key] = { width: r["width"], ceiling_type: r["ceiling_type"], polygon: (r["polygon"] as Array<{ x: number; y: number }> | undefined)?.map((p) => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 })) };
+            // height/depth — пользовательские (бандл class Rigel: this.height=e.height,
+            // this.depth=e.depth), не выбрасываем (386 №35)
+            canon[key] = { width: r["width"], height: r["height"], depth: r["depth"], ceiling_type: r["ceiling_type"], polygon: (r["polygon"] as Array<{ x: number; y: number }> | undefined)?.map((p) => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 })) };
           }
           rec["rigels"] = canon;
         }
         if (Array.isArray(rec["ceilings"])) {
           // производные (перестраиваются редактором при каждом save: полигоны/рёбра
-          // зон, precision, edges_ceiling) — в каноническую форму: exist + отделка
+          // зон, precision, edges_ceiling) — в каноническую форму. №35 (ревью 385):
+          // берём ВСЮ запись и удаляем только производные — бандл при пересчёте
+          // комнат ПЕРЕНОСИТ пользовательские поля (this.room.ceilings[e].anchor=
+          // s.ceilings[t].anchor, …type_laying, …angle, …custom_angle, …height_rail,
+          // …radius, …offset, …interval, …on_interval, …complex/material2/level2/
+          // type, …width/height), ниши — restoreCeilingNiches; конструктор class
+          // Ceiling читает их из записи. Белый список {exist,material,level,profile}
+          // их выбрасывал
           rec["ceilings"] = (rec["ceilings"] as Array<Record<string, unknown>>)
-            .map((ce) => ({
-              exist: ce["exist"],
-              material: ce["material"] ?? null,
-              level: ce["level"] ?? null,
-              profile: ce["profile"] ?? null,
-            }))
+            .map((ce) => {
+              const o: Record<string, unknown> = { ...ce };
+              for (const d of ["polygon", "edges", "polygon_new", "edges_new", "polygons_layout", "pc", "id", "id_room", "is_class", "area_niches", "settings"]) delete o[d];
+              return roundDeep(o) as Record<string, unknown>;
+            })
             .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
         }
         // edges_ceiling / demolines_ceiling_moldings — производные демолайны
@@ -191,10 +205,12 @@ export function canon(m: unknown): unknown {
             rec[mk] = parts.sort();
           }
         }
-        // зоны (plan c): пользовательское — имя/микро; полигоны/рёбра — производные
+        // зоны (plan c): пользовательское — имя/цвет/микро/площадь (№35, ревью 385:
+        // бандл zones[e].color=t.zones[i].color — color переносится, не вычисляется);
+        // полигоны/рёбра — производные
         if (Array.isArray(rec["zones"])) {
           rec["zones"] = (rec["zones"] as Array<Record<string, unknown>>)
-            .map((z) => ({ name: z["name"] ?? null, micro: Boolean(z["is_micro_zone"]), area: typeof z["area"] === "number" ? Math.round(z["area"] * 10) / 10 : null }))
+            .map((z) => ({ name: z["name"] ?? null, color: z["color"] ?? null, micro: Boolean(z["is_micro_zone"]), area: typeof z["area"] === "number" ? Math.round(z["area"] * 10) / 10 : null }))
             .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
         }
       }

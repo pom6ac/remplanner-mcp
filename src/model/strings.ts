@@ -152,12 +152,18 @@ export function findUnsafeEditorStrings(model: Model): UnsafeStringHit[] {
     // ревью 383 №34: content бандл подставляет в кавычечный jQuery-селектор
     // '.custom_plan_content input[value="'+i.content[e]+'"]' (обработчик
     // .custom .edit) — тот же класс стока, что after_plan; проверяем ПО ТИПУ
-    // (массив) и посимвольно тем же правилом, что after_plan
+    // (массив) и посимвольно тем же правилом, что after_plan. Ревью 385 №39:
+    // пустой объект {} принимаем как пустой список (бандл создаёт content как
+    // массив и читает через .length/in_array; иначе серверная форма {}
+    // ложно отвергала бы модель), непустой объект — по-прежнему попадание
     if (s.content !== undefined && s.content !== null) {
-      if (!Array.isArray(s.content)) {
-        out.push({ collection: "custom_plans", id: recId, field: "content", value: jsonPreview(s.content) });
+      const content: unknown = typeof s.content === "object" && !Array.isArray(s.content) && Object.keys(s.content as object).length === 0
+        ? []
+        : s.content;
+      if (!Array.isArray(content)) {
+        out.push({ collection: "custom_plans", id: recId, field: "content", value: jsonPreview(content) });
       } else {
-        for (const el of s.content as unknown[]) {
+        for (const el of content as unknown[]) {
           if (typeof el !== "string" || !isSafeSheetAfterPlanForOpen(el)) {
             out.push({ collection: "custom_plans", id: recId, field: "content", value: typeof el === "string" ? el : jsonPreview(el) });
           }

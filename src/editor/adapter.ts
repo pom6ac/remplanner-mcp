@@ -153,6 +153,20 @@ function cookieArgs(session: SessionState): { name: string; value: string; domai
 }
 
 /**
+ * Опции Browser.newContext (ревью 385 №38: вынесено для офлайн-теста).
+ * serviceWorkers: "block" — page.route на контексте не видит запросы service
+ * worker, поэтому они блокируются целиком (в бандле navigator.serviceWorker
+ * нет, но защита не должна зависеть от бандла).
+ */
+export function newContextOptions() {
+  return {
+    viewport: { width: 1600, height: 1000 },
+    locale: "ru-RU",
+    serviceWorkers: "block" as const,
+  };
+}
+
+/**
  * Открывает редактор /planner/ для проекта (проект должен быть «текущим» по cookies:
  * object_id / object_plan_id / authkey / visitor_id из анонимной или аккаунтной сессии).
  * opts.anonymous — анонимный поток: cookies аккаунта запрещены; несовпадение id для
@@ -167,14 +181,7 @@ export async function openEditor(
 ): Promise<EditorHandle> {
   assertProjectSession(session, opts);
   const browser = await getSharedBrowser();
-  const context: BrowserContext = await browser.newContext({
-    viewport: { width: 1600, height: 1000 },
-    locale: "ru-RU",
-    // ревью 383 №33: перехват ответа модели стоит на контексте, а page.route
-    // не видит запросы service worker — блокируем их целиком (в бандле
-    // navigator.serviceWorker нет, но защита не должна зависеть от бандла)
-    serviceWorkers: "block",
-  });
+  const context: BrowserContext = await browser.newContext(newContextOptions());
   try {
     if (session.cookies.length > 0) {
       await context.addCookies(cookieArgs(session)).catch(() => {});

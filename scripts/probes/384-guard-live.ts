@@ -24,6 +24,7 @@ import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { sig } from "./probe-sig.ts";
+import { signedWallShiftMm, restoreDecision } from "./probe-wall-restore.ts";
 import { assertEditorPlanMatch } from "./probe-guard.ts";
 
 mkdirSync(".orca-reports/tmp", { recursive: true });
@@ -63,13 +64,6 @@ const wallsOf = (mg: Record<string, unknown>): CompactWall[] =>
 /** Расстояние между осями (первая точка исходной и текущей стены), мм. */
 const shiftMm = (w0: CompactWall, w1: CompactWall): number =>
   Math.hypot(w1.from[0] - w0.from[0], w1.from[1] - w0.from[1]);
-
-/** Сдвиг стены RAW серверной модели (p1 в см) от исходной оси (from в мм), мм. */
-const rawShiftMm = (w0: CompactWall, raw: Record<string, unknown>): number => {
-  const p1 = raw["p1"] as { x?: unknown; y?: unknown } | undefined;
-  if (!p1 || typeof p1.x !== "number" || typeof p1.y !== "number") return NaN;
-  return Math.hypot(p1.x - w0.from[0] / 10, p1.y - w0.from[1] / 10) * 10;
-};
 
 // область видимости для finally (384, ревью 383 №29 — restore по журналу в finally)
 let wall0: CompactWall | null = null;
@@ -175,38 +169,60 @@ try {
     }
   } catch (fe) { console.error("FAIL-restore check:", String((fe as Error).message).slice(0, 300)); }
 } finally {
-  // 384 (ревью 383 №29): restore по журналу в finally — если после save стена
-  // осталась сдвинутой (>2 мм), возвращаем wall_move назад + save verified
+  // 384 (ревью 383 №29): restore по журналу в finally. 386 (ревью 385 №36):
+  // смещение ЗНАКОВОЕ (проекция на левую нормаль оси — та же формула, что в
+  // moveWall; беззнаковый hypot при сбое save уводил стену в обратную
+  // сторону); рабочая копия пересинхронизируется с сервером project_open ДО
+  // wall_move (при сбое save копия могла не дойти до сервера); отказ при
+  // сдвиге > 25 мм; после restore save модель сверяется sig с бэкапом
   try {
     if (wall0 !== null) {
       const ids = (await import("./probe-guard.ts")).probeWriteEnv();
+      const backupPath = `.orca-reports/backup-${ids.objectId}-384.json`;
+      await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
       const cur = await loadModel(ctx.session(), ids.objectId, ids.planId);
       // в RAW серверной модели стена — поле id (site_id — форма model_get),
       // ось — p1/p2 в см (from/to — форма model_get в мм)
       const w = wallsOf(cur.model).find((x) => (x.site_id ?? x.id) === wall0!.site_id);
-      const off = w ? rawShiftMm(wall0, w) : NaN;
-      if (Number.isFinite(off) && off > 2) {
-        console.error(`finally-restore: стена ${wall0.site_id} смещена на ${off.toFixed(1)} мм — wall_move(-${off.toFixed(1)}) + save`);
-        await call("wall_move", { wall_id: wall0.site_id, offset_mm: -off });
+      const off = w ? signedWallShiftMm(wall0, w) : NaN;
+      const d = restoreDecision(off);
+      if (d.action === "move") {
+        console.error(`finally-restore: стена ${wall0.site_id} смещена на ${off.toFixed(1)} мм (знаковое) — wall_move(${d.offsetMm.toFixed(1)}) + save`);
+        await call("wall_move", { wall_id: wall0.site_id, offset_mm: d.offsetMm });
         const r = await gsave("finally-restore (возврат стены)");
         if (r["verified"] !== true) throw new Error("save finally-restore не verified");
-        console.error("finally-restore: стена возвращена, save verified");
-      } else if (Number.isFinite(off)) {
-        console.log(`finally-restore: стена на месте (сдвиг ${off.toFixed(2)} мм ≤ 2) — restore не нужен`);
+        // 386 №36: после restore save — сверка sig с бэкапом (до первого прогона)
+        const afterRestore = await loadModel(ctx.session(), ids.objectId, ids.planId);
+        if (existsSync(backupPath)) {
+          const ref = JSON.parse(readFileSync(backupPath, "utf8")) as LoadedModel;
+          const same = sig(afterRestore.model) === sig(ref.model);
+          if (!same) {
+            console.error("finally-restore: sig РАСХОЖДЕНИЕ с бэкапом после восстановления — восстановите по журналу/бэкапу");
+            exitCode = 1;
+          } else {
+            console.error("finally-restore: стена возвращена, save verified, sig совпадает с бэкапом");
+          }
+        }
+      } else if (d.action === "none") {
+        console.log(`finally-restore: стена на месте (знаковый сдвиг ${off.toFixed(2)} мм ≤ 2) — restore не нужен`);
       } else {
-        // стена не найдена в RAW модели — состояние неизвестно, сверка sig с бэкапом (fail-closed)
-        const backupPath = `.orca-reports/backup-${ids.objectId}-384.json`;
+        // сдвиг > 25 мм или состояние неизвестно — wall_move не применяем (fail-closed)
+        if (Number.isFinite(off)) {
+          console.error(`finally-restore: знаковый сдвиг ${off.toFixed(1)} мм > 25 — wall_move НЕ применяется`);
+        } else {
+          console.error("finally-restore: стена не найдена/ось нечитаема в RAW модели — состояние неизвестно");
+        }
         if (existsSync(backupPath)) {
           const ref = JSON.parse(readFileSync(backupPath, "utf8")) as LoadedModel;
           const same = sig(cur.model) === sig(ref.model);
           if (!same) {
-            console.error("finally-restore: стена не найдена в RAW модели и sig РАСХОЖДЕНИЕ с бэкапом — восстановите по журналу/бэкапу");
+            console.error("finally-restore: sig РАСХОЖДЕНИЕ с бэкапом — восстановите по журналу/бэкапу");
             exitCode = 1;
           } else {
-            console.log("finally-restore: стена не найдена в RAW модели, но sig совпадает с бэкапом — модель не изменена");
+            console.log("finally-restore: sig совпадает с бэкапом — модель не изменена");
           }
         } else {
-          console.error("finally-restore: стена не найдена в RAW модели, бэкапа нет — состояние неизвестно, проверьте журнал");
+          console.error("finally-restore: бэкапа нет — состояние неизвестно, проверьте журнал");
           exitCode = 1;
         }
       }
