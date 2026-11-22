@@ -64,6 +64,13 @@ const wallsOf = (mg: Record<string, unknown>): CompactWall[] =>
 const shiftMm = (w0: CompactWall, w1: CompactWall): number =>
   Math.hypot(w1.from[0] - w0.from[0], w1.from[1] - w0.from[1]);
 
+/** Сдвиг стены RAW серверной модели (p1 в см) от исходной оси (from в мм), мм. */
+const rawShiftMm = (w0: CompactWall, raw: Record<string, unknown>): number => {
+  const p1 = raw["p1"] as { x?: unknown; y?: unknown } | undefined;
+  if (!p1 || typeof p1.x !== "number" || typeof p1.y !== "number") return NaN;
+  return Math.hypot(p1.x - w0.from[0] / 10, p1.y - w0.from[1] / 10) * 10;
+};
+
 // область видимости для finally (384, ревью 383 №29 — restore по журналу в finally)
 let wall0: CompactWall | null = null;
 let roGuard: Awaited<ReturnType<typeof import("./probe-guard.ts")["readonlyGuard"]>> | null = null;
@@ -174,9 +181,10 @@ try {
     if (wall0 !== null) {
       const ids = (await import("./probe-guard.ts")).probeWriteEnv();
       const cur = await loadModel(ctx.session(), ids.objectId, ids.planId);
-      // в RAW серверной модели стена — поле id (site_id — форма model_get)
+      // в RAW серверной модели стена — поле id (site_id — форма model_get),
+      // ось — p1/p2 в см (from/to — форма model_get в мм)
       const w = wallsOf(cur.model).find((x) => (x.site_id ?? x.id) === wall0!.site_id);
-      const off = w ? shiftMm(wall0, w) : NaN;
+      const off = w ? rawShiftMm(wall0, w) : NaN;
       if (Number.isFinite(off) && off > 2) {
         console.error(`finally-restore: стена ${wall0.site_id} смещена на ${off.toFixed(1)} мм — wall_move(-${off.toFixed(1)}) + save`);
         await call("wall_move", { wall_id: wall0.site_id, offset_mm: -off });
