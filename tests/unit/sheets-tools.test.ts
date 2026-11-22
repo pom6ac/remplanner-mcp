@@ -194,13 +194,17 @@ test("375: picture — вписывание в 200×200 по бандлу, ва�
   assert.equal(u.height, 25);
   assert.equal(u.font_size, 10, "подпись — font_size 10");
   assert.throws(() => addPicture(m, { url: "javascript:alert(1)", center: PT, widthOriginalPx: 10, heightOriginalPx: 10 }), /url/);
-  assert.throws(() => addPicture(m, { url: "dir/u1.png", center: PT, widthOriginalPx: 10, heightOriginalPx: 10 }), /url/, "путь в url отсечён (traversal)");
+  assert.throws(() => addPicture(m, { url: "a/b/c/d/u1.png", center: PT, widthOriginalPx: 10, heightOriginalPx: 10 }), /url/, "глубокий путь отсечён");
+  // живой формат url хранилища: шардовые подкаталоги (проба 375-2)
+  const p3 = addPicture(m, { url: "c8/a3/1fdc3784fe6b_111379.png", center: PT, widthOriginalPx: 10, heightOriginalPx: 10 });
+  assert.equal(p3.url, "c8/a3/1fdc3784fe6b_111379.png");
+  assert.throws(() => addPicture(m, { url: "c8/../1fdc.png", center: PT, widthOriginalPx: 10, heightOriginalPx: 10 }), /url/, "traversal отсечён");
   assert.throws(() => addPicture(m, { url: "../../etc/passwd.png", center: PT, widthOriginalPx: 10, heightOriginalPx: 10 }), /url/);
   assert.throws(() => addPicture(m, { url: "u1.svg", center: PT, widthOriginalPx: 10, heightOriginalPx: 10 }), /url/);
   assert.throws(() => addPicture(m, { url: "u1.png", center: PT }), /width_original|width_mm/);
   assert.throws(() => updatePicture(m, "нет", {}), (e: unknown) => (e as McpError).code === "NOT_FOUND");
   deletePicture(m, p.id);
-  assert.equal(Object.keys(m.pictures as Record<string, unknown>).length, 1);
+  assert.equal(Object.keys(m.pictures as Record<string, unknown>).length, 2, "удалена одна из трёх");
 });
 
 // ---------- эталоны в обе стороны (фикстуры через схему импорта) ----------
