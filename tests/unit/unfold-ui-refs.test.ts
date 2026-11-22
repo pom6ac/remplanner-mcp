@@ -561,7 +561,7 @@ test("391 major 1: wall_move — фигура переживает (id комн�
     return true;
   });
   assert.ok(warnings.some((w) => /на другую развёртку|сигнал 43/.test(w)), `предупреждение о переносе: ${JSON.stringify(warnings)}`);
-  assert.ok(warnings.some((w) => /настройки развёрток комнаты .* сброшены/.test(w)), `предупреждение о сбросе prs (minor 14): ${JSON.stringify(warnings)}`);
+  assert.ok(warnings.some((w) => /настройки развёрток/.test(w)), `предупреждение о сбросе prs (minor 14): ${JSON.stringify(warnings)}`);
   // фигура пережила: комната сменила id, ссылка обновлена редактором
   const molds = Object.values(ws.model.wall_moldings ?? {}) as AnyRec[];
   assert.equal(molds.length, 1);

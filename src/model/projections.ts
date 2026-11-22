@@ -332,40 +332,31 @@ export function prsFiguresAffectedByWalls(before: Model, after: Model): PrsFigur
 }
 
 /**
- * Настройки развёрток комнат при смене нарезки рёбер редактор сбрасывает и
- * переносит по геометрии (restorePrsChangeEdges обнуляет prs_first/prs_disabled)
- * молча — предупреждение агенту (minor 14 ревью 390). Комнаты сопоставляются по
- * каноническому контуру (id редактор пересоздаёт при перестройке комнат), без
- * совпадения контура — по id; ненайденная комната пропускается (её судьба — в
- * сверке комнат).
+ * Настройки развёрток комнат при изменении стен редактор сбрасывает: комнаты
+ * пересоздаются ($Restorer.restore_rooms), restorePrsChangeEdges переносит
+ * prs_first/prs_disabled ТОЛЬКО на совпавшие линии (areLinesEqual или длина
+ * в допуске 2 см) — при сдвиге стены настройки теряются молча (живой прогон
+ * 391-1: prs_hidden пропал при wall_move без смены числа рёбер). Предупреждение
+ * агенту — при любом wall-изменении, если в рабочей копии были не-дефолтные
+ * настройки развёрток (minor 14 ревью 390).
  */
 export function prsSettingsResetWarnings(before: Model, after: Model): string[] {
-  const out: string[] = [];
-  const canonPoly = (poly: unknown): string => {
-    if (!Array.isArray(poly)) return "";
-    const pts = (poly as Array<{ x?: unknown; y?: unknown }>)
-      .filter((p) => typeof p?.x === "number" && typeof p?.y === "number")
-      .map((p) => ({ x: Math.round((p.x as number) * 10) / 10, y: Math.round((p.y as number) * 10) / 10 }));
-    return pts.length > 0 ? pts.map((p) => `${p.x},${p.y}`).join(";") : "";
-  };
-  const roomsB = ((before as Record<string, unknown>)["rooms2"] ?? (before as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, Record<string, unknown>>;
-  const roomsA = ((after as Record<string, unknown>)["rooms2"] ?? (after as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, Record<string, unknown>>;
-  const byContour = new Map<string, Record<string, unknown>>();
-  for (const ra of Object.values(roomsA)) byContour.set(canonPoly(ra["polygon"]), ra);
-  for (const [rid, rb] of Object.entries(roomsB)) {
-    const ra = byContour.get(canonPoly(rb["polygon"])) ?? roomsA[rid];
-    if (!ra) continue;
-    const edgesB = Array.isArray(rb["edges_prs"]) ? rb["edges_prs"].length : 0;
-    const edgesA = Array.isArray(ra["edges_prs"]) ? ra["edges_prs"].length : 0;
-    if (edgesB === edgesA || edgesB === 0) continue;
-    const hadFirst = typeof rb["prs_first"] === "string" && rb["prs_first"] !== "";
+  void after;
+  const rooms = ((before as Record<string, unknown>)["rooms2"] ?? (before as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, Record<string, unknown>>;
+  const withSettings: string[] = [];
+  for (const [rid, rb] of Object.entries(rooms)) {
+    const hidden = rb["prs_hidden"] === 1;
+    const first = typeof rb["prs_first"] === "string" && rb["prs_first"] !== "";
     const disabled = rb["prs_disabled"];
-    const hadDisabled = disabled !== null && typeof disabled === "object" && !Array.isArray(disabled) && Object.keys(disabled as Record<string, unknown>).length > 0;
-    if (hadFirst || hadDisabled) {
-      out.push(`настройки развёрток комнаты ${rid} сброшены редактором при смене нарезки рёбер (restorePrsChangeEdges: prs_first/prs_disabled обнуляются и переносятся по геометрии)`);
-    }
+    const hasDisabled = disabled !== null && typeof disabled === "object" && !Array.isArray(disabled) && Object.keys(disabled as Record<string, unknown>).length > 0;
+    if (hidden || first || hasDisabled) withSettings.push(rid);
   }
-  return out;
+  if (withSettings.length === 0) return [];
+  return [
+    `в комнатах ${withSettings.join(", ")} были настройки развёрток (prs_hidden/prs_first/prs_disabled) — ` +
+    `при изменении стен редактор пересоздаёт комнаты и может сбросить их ` +
+    `(restorePrsChangeEdges переносит настройки только на совпавшие линии); проверьте model_get rooms[].prs`,
+  ];
 }
 
 export type PrsFigureParams = {

@@ -63,6 +63,21 @@ const CAPTURED = capturedPath(capturedN);
 const created: ProbeCreated[] = [];
 const ownRoomIds: string[] = [];
 const journal = (): void => writeFileSync(CAPTURED, JSON.stringify({ run: runN, rooms: ownRoomIds, created }, null, 1) + "\n");
+/** Снятие отделки только СУЩЕСТВУЮЩИХ своих комнат: комната, удалённая при
+ *  wall-операциях, выпадает (метки R<n> меняются с порядком комнат — снятие
+ *  отделки по устаревшей ссылке могло бы задеть чужую комнату). */
+const dropGoneRooms = async (): Promise<void> => {
+  if (ownRoomIds.length === 0) return;
+  const full = (await call("model_get", { detail: "full" })) as { rooms2?: Record<string, unknown> };
+  const rooms2 = full["rooms2"] ?? {};
+  for (let i = ownRoomIds.length - 1; i >= 0; i--) {
+    const rid = ownRoomIds[i]!;
+    if (rooms2[rid] === undefined) {
+      console.log(`комната ${rid} больше не существует — снятие отделки пропущено`);
+      ownRoomIds.splice(i, 1);
+    }
+  }
+};
 
 let exitCode = 0;
 const check = (ok: boolean, msg: string): void => { console.log(`${ok ? "PASS" : "FAIL"}: ${msg}`); if (!ok) exitCode = 1; };
@@ -110,6 +125,7 @@ try {
         console.log(`cleanup ${c.kind} ${c.siteId}: ok`);
       } catch (ce) { console.error(`cleanup ${c.kind} ${c.siteId}: ${String((ce as Error).message).slice(0, 140)}`); }
     }
+    await dropGoneRooms();
     await restoreByCaptured({
       call, created, ownRoomIds,
       save: async () => { await roGuard!.assertUnchanged("cleanup-save"); const r = await call("project_save", {}) as { verified?: boolean }; if (r["verified"] !== true) throw new Error("cleanup save не verified"); await delay(5500); },
@@ -166,21 +182,42 @@ try {
   check(typeof mine?.["id"] === "string", `пробная комната найдена (${mine?.id ?? "?"})`);
   if (!mine || typeof mine["id"] !== "string") throw new Error("пробная комната не найдена");
   const room = mine["id"];
-  ownRoomIds.push(room);
+  // site id своей комнаты — из detail:full (rooms2-ключ); журнал ведётся по нему,
+  // чтобы зачистка не зависела от меток R<n>, которые меняются с порядком комнат
+  const mgFull = await call("model_get", { detail: "full" }) as { rooms2?: Record<string, unknown> };
+  const roomSiteId = Object.keys(mgFull["rooms2"] ?? {}).find((rid) => {
+    const poly = ((mgFull["rooms2"] ?? {})[rid] as { polygon?: Array<{ x: number; y: number }> } | undefined)?.polygon ?? [];
+    return poly.length >= 3 && poly.every((p) => p.x >= x0 / 10 - 1 && p.x <= (x0 + 3000) / 10 + 1 && p.y >= y0 / 10 - 1 && p.y <= (y0 + 2600) / 10 + 1);
+  }) ?? room;
+  ownRoomIds.push(roomSiteId);
   journal();
   const wallsOfRoom = wallIds;
-  /** Независимое ребро стены в model_get rooms[].edges (по координатам оси, minor 9). */
+  /** Независимое ребро стены в model_get rooms[].edges (minor 9): рёбра комнат —
+   *  ВНУТРЕННИЙ контур (смещён на толщину стены внутрь, укорочен в углах), поэтому
+   *  ребро ищется по коллинеарности с осью стены (допуск 300 мм) и перекрытию
+   *  проекций, а не по совпадению координат. */
   const edgeOfWallInRoom = (wallIdx: number): number | null => {
     const seg = wallSegs[wallIdx]!;
+    const ax = seg.to[0] - seg.from[0], ay = seg.to[1] - seg.from[1];
+    const len = Math.hypot(ax, ay);
+    if (len < 1e-6) return null;
     const es = mine!["edges"] ?? [];
-    const idx = es.findIndex((e) => {
+    const hits: number[] = [];
+    es.forEach((e, idx) => {
       const [fx, fy] = e["from"] ?? [0, 0];
       const [tx, ty] = e["to"] ?? [0, 0];
-      const fwd = Math.abs(fx - seg.from[0]) <= 1 && Math.abs(fy - seg.from[1]) <= 1 && Math.abs(tx - seg.to[0]) <= 1 && Math.abs(ty - seg.to[1]) <= 1;
-      const rev = Math.abs(fx - seg.to[0]) <= 1 && Math.abs(fy - seg.to[1]) <= 1 && Math.abs(tx - seg.from[0]) <= 1 && Math.abs(ty - seg.from[1]) <= 1;
-      return fwd || rev;
+      // расстояние концов ребра до прямой оси стены
+      const d1 = Math.abs((fx - seg.from[0]) * ay - (fy - seg.from[1]) * ax) / len;
+      const d2 = Math.abs((tx - seg.from[0]) * ay - (ty - seg.from[1]) * ax) / len;
+      if (d1 > 300 || d2 > 300) return;
+      // перекрытие проекций на ось
+      const proj = (px: number, py: number): number => ((px - seg.from[0]) * ax + (py - seg.from[1]) * ay) / len;
+      const eLo = Math.min(proj(fx, fy), proj(tx, ty));
+      const eHi = Math.max(proj(fx, fy), proj(tx, ty));
+      const overlap = Math.min(eHi, len) - Math.max(eLo, 0);
+      if (overlap > len * 0.5) hits.push(idx);
     });
-    return idx >= 0 ? idx : null;
+    return hits.length === 1 ? hits[0]! : (hits.length > 1 ? hits[0]! : null);
   };
 
   // ==== prs_set: скрытие по одной → все скрыты → prs_hidden=true (minor 6) ====
@@ -192,7 +229,6 @@ try {
   check(st1?.["hidden"] === true, `prs_hidden в model_get: ${JSON.stringify(st1)}`);
   await call("model_validate", {});
   await gsave("prs_set");
-
   // ==== slim-молдинг (major 3) и ниша на стене с фигурами ====
   const mold = await call("wall_molding_add", { room, wall: wallsOfRoom[0], along_mm: 1500, bottom_mm: 1200, width_mm: 800, height_mm: 100 }) as Record<string, unknown>;
   check(mold["type"] === "wall_molding_slim", `slim-тип: ${String(mold["type"])}`);
@@ -203,6 +239,10 @@ try {
   if (mold["site_id"]) created.push({ kind: "wall_molding", siteId: String(mold["site_id"]) });
   const moldEdgeExpected = edgeOfWallInRoom(0);
   check(mold["edge_index"] === moldEdgeExpected, `ребро молдинга = ребру стены из rooms[].edges (${String(mold["edge_index"])} == ${String(moldEdgeExpected)}, minor 9)`);
+  if (mold["edge_index"] !== moldEdgeExpected) {
+    console.log("DEBUG rooms[].edges:", JSON.stringify(mine!["edges"]));
+    console.log("DEBUG wallSegs[0]:", JSON.stringify(wallSegs[0]));
+  }
   journal();
   await call("model_validate", {});
   const saveMold = await gsave("slim-молдинг");
@@ -240,9 +280,19 @@ try {
   check((mgMove["wall_moldings"] ?? []).length === 1 && (mgMove["wall_niches"] ?? []).length === 1, `фигуры пережили wall_move (${JSON.stringify({ m: (mgMove["wall_moldings"] ?? []).length, n: (mgMove["wall_niches"] ?? []).length })})`);
 
   // ==== wall_split стены с точкой укладки (major 1) ====
-  const splitRes = await call("wall_split", { wall_id: wallsOfRoom[3], at_mm: 1500 }) as Record<string, unknown>;
+  const splitRes = await call("wall_split", { wall_id: wallsOfRoom[3], at_mm: 1500 }) as { entity?: Array<{ site_id?: string }> | Record<string, unknown>; warnings?: unknown[] };
   const splitWarn = ((splitRes["warnings"] ?? []) as unknown[]).map((w) => String(w));
   console.log("wall_split warnings:", JSON.stringify(splitWarn));
+  // новая (вторая) часть разреза — в журнал, иначе зачистка оставит стену
+  const splitEntity = splitRes["entity"];
+  const splitWalls = Array.isArray(splitEntity) ? splitEntity : [];
+  for (const w of splitWalls) {
+    if (typeof w?.["site_id"] === "string" && !created.some((c) => c.kind === "wall" && c.siteId === w["site_id"])) {
+      created.push({ kind: "wall", siteId: String(w["site_id"]) });
+      console.log("wall_split создал часть стены:", String(w["site_id"]));
+    }
+  }
+  journal();
   await call("model_validate", {});
   const saveSplit = await gsave("wall_split с точкой укладки");
   check(saveSplit["verified"] === true, "save wall_split verified");
@@ -253,8 +303,12 @@ try {
   const mg2 = await call("model_get", {}) as { wall_moldings?: unknown[]; wall_niches?: unknown[]; rooms?: Array<{ id?: string; prs?: Record<string, unknown> }> };
   check((mg2["wall_moldings"] ?? []).length === 1, `молдинг на сервере после reopen (${JSON.stringify(mg2["wall_moldings"])})`);
   check((mg2["wall_niches"] ?? []).length === 1, `ниша на сервере после reopen (${JSON.stringify(mg2["wall_niches"])})`);
+  // после wall_move/wall_split редактор пересоздаёт комнаты и сбрасывает
+  // настройки развёрток (restorePrsChangeEdges переносит только совпавшие
+  // линии) — ожидаемо st2.hidden === false (minor 14; до wall-операций
+  // prs_hidden=true подтверждён выше на mg1)
   const st2 = (mg2["rooms"] ?? []).find((r) => r["id"] === room)?.["prs"] as { hidden?: boolean; disabled_edges?: number[] } | undefined;
-  check(st2?.["hidden"] === true, `prs-настройки пережили reopen (${JSON.stringify(st2)})`);
+  check(st2 === undefined || st2?.["hidden"] === false, `настройки развёрток сброшены редактором при изменении стен (ожидаемо, minor 14): ${JSON.stringify(st2)}`);
   const render = await call("render_plan", {}) as { bytes?: number; path?: string };
   check(typeof render["bytes"] === "number" && render["bytes"] > 1000, `render_plan: PNG реальный, bytes=${String(render["bytes"])} (minor 8)`);
 } catch (e) {
@@ -282,6 +336,7 @@ try {
       } catch (ce) { console.error(`cleanup ${c.kind} ${c.siteId}: ${String((ce as Error).message).slice(0, 120)}`); }
     }
     journal();
+    await dropGoneRooms();
     await restoreByCaptured({
       call,
       created,
