@@ -418,13 +418,15 @@ try {
       for (const pid of dnX.created_pipes!) created.push({ kind: "pipe", siteId: pid });
       const box = kind === "conditioner_drainage" ? "pipes_conditioner" : "pipes_warm_floor";
       const key = kind === "conditioner_drainage" ? "drainage_pipe_id" : "pipe_warm_floor_id";
-      const rawAfter = (await loadModel(ctx.session(), OBJECT_ID, PLAN_ID)).model;
-      const rawX = rawAfter["items"] as Record<string, Record<string, unknown>>;
-      const rawPieces = rawAfter[box] as Record<string, { id?: string; vertexes?: Array<{ id: string }>; type?: string }>;
+      // рабочая копия (ещё не сохранена) — через model_get: компакт отдаёт
+      // connected (id предметов-вершин) по каждой коллекции
+      const mgX = (await call("model_get", {})) as Record<string, unknown>;
+      const rawX = (mgX["items"] ?? []) as Array<{ site_id?: string } & Record<string, unknown>>;
+      const rawPieces = (mgX[box] ?? []) as Array<{ site_id?: string; connected?: string[] }>;
       for (const [label, sid] of [["левый", s1], ["правый", s2]] as const) {
-        const held = rawX[sid]?.[box] as Record<string, unknown> | undefined;
-        const ref = held?.[key];
-        const pieceId = Object.values(rawPieces).find((p) => p.vertexes?.some((v) => v.id === sid))?.id;
+        const held = (rawX.find((it) => it.site_id === sid)?.[box] ?? {}) as Record<string, unknown>;
+        const ref = held[key];
+        const pieceId = rawPieces.find((p) => p.connected?.includes(sid))?.site_id;
         console.log(`4c ${kind} ${label} ${box}.${key}:`, JSON.stringify(ref), "кусок:", pieceId);
         if (!pieceId) throw new Error(`4c ${kind}: ${label} не в вершинах ни одного куска`);
         const ok = Array.isArray(ref) ? ref.includes(pieceId) : ref === pieceId;
