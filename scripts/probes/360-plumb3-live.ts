@@ -109,7 +109,7 @@ async function restoreProbe(tag: string): Promise<void> {
 }
 
 /** Пробная комната w×h (см), правее всей геометрии. */
-async function makeTrialRoom(w: number, h: number): Promise<string> {
+async function makeTrialRoom(w: number, h: number): Promise<{ x: number; y: number }> {
   const beforeModel = await loadModel(ctx.session(), OBJECT_ID!, PLAN_ID!);
   const rawWalls = (beforeModel.model["walls"] ?? {}) as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>;
   const maxX = Math.max(0, ...Object.values(rawWalls).flatMap((wl) => [wl.p1.x, wl.p2.x]));
@@ -129,19 +129,9 @@ async function makeTrialRoom(w: number, h: number): Promise<string> {
   }
   await saveTagged("trial-room");
   await openAndGuard();
-  // ревью 364 №9: своя комната — разностью id комнат до/после (новая не одна — СТОП),
-  // не позиционно (rooms[last])
-  const roomsNow = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string }>;
-  const roomsBefore = new Set(Object.keys((beforeModel.model["rooms2"] as Record<string, unknown>) ?? {}));
-  const fresh = roomsNow.filter((r) => !roomsBefore.has(r.id));
-  if (fresh.length !== 1) throw new Error(`захват пробной комнаты: новых комнат ${fresh.length} (ожидалась 1)`);
-  return fresh[0]!.id;
-}
-
-/** Список комнат компактной модели (id). */
-async function roomIds(): Promise<Set<string>> {
-  const rooms = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string }>;
-  return new Set(rooms.map((r) => r.id));
+  // центр комнаты — из КООРДИНАТ СВОИХ стен пробы (без выбора по геометрии
+  // чужих объектов; удаление — по захваченным site_id)
+  return { x: Math.round((ox + w / 2) * 10), y: Math.round((oy + h / 2) * 10) };
 }
 
 /** site_id предмета из ответа item_add; нет — разность множеств site_id items
@@ -207,7 +197,7 @@ try {
     await roGuard.assertUnchanged("перед сценой");
 
     // ---- сцена: пробная комната (нужна сценам 1, 2, 4a–4c) ----
-    const trialRoomId = await makeTrialRoom(500, 400);
+    const trialCenter = await makeTrialRoom(500, 400);
 
     // ---- 1. группы выводов воды ----
     const myWallSites = created.filter((c) => c.kind === "wall").map((c) => c.siteId!);
@@ -245,12 +235,9 @@ try {
     if (badPair.ok || !String(badPair.err).includes("INVALID_ARGUMENT")) throw new Error(`недопустимая пара не отклонена: ${badPair.err}`);
 
     // ---- 2. узел waterspot_node + трубы ----
-    // центр пробной комнаты — по рёбрам СВОЕЙ комнаты (захвачена по id, ревью 364 №9)
-    const roomsAll = ((await call("model_get", {}))["rooms"] ?? []) as Array<{ id: string; edges?: Array<{ from: [number, number] }> }>;
-    const trial = roomsAll.find((r) => r.id === trialRoomId);
-    if (!trial?.edges?.length) throw new Error("пробная комната не найдена в model_get");
-    const roomCx = Math.round(trial.edges.reduce((s, e) => s + e.from[0], 0) / trial.edges.length);
-    const roomCy = Math.round(trial.edges.reduce((s, e) => s + e.from[1], 0) / trial.edges.length);
+    // центр пробной комнаты — из координат своих стен (makeTrialRoom)
+    const roomCx = trialCenter.x;
+    const roomCy = trialCenter.y;
     const idsBeforeNode = await itemSiteIds();
     const nodeAdd = await call("item_add", { name: "waterspot_node", position: { center: { x: roomCx, y: roomCy } } });
     const nodeSite = await captureAddedItem(nodeAdd, idsBeforeNode);
