@@ -71,6 +71,7 @@ try {
   if (isCleanup) {
     // зачистка ТОЛЬКО по журналу site_id (не по геометрии)
     await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
+    await call("render_plan", {});
     await assertEditorPlanMatch(editorOf(), ids.planId);
     const cap = JSON.parse(readFileSync(CAPTURED, "utf8")) as { rooms: string[]; created: ProbeCreated[] };
     created.push(...cap["created"]);
