@@ -14,7 +14,7 @@ import { elecCablesReferencingItem, refreshElecCablesForItem } from "./electric2
 import { deleteShieldsForItem } from "./shield.ts";
 import { detachRulerItemTargets, itemComments, deleteComment, refreshRulersForItem, refreshItemComments } from "./dims.ts";
 import {
-  CABLE_LAMP_ITEMS, cablesReferencingItem, refreshCablesForItem, refreshSocketGroupSubs,
+  applySocketGroupLayer, CABLE_LAMP_ITEMS, cablesReferencingItem, refreshCablesForItem, refreshSocketGroupSubs,
   STANDALONE_SOCKETS, SWITCH_ITEMS, type SocketGroupSub,
 } from "./electric.ts";
 
@@ -556,6 +556,10 @@ export type UpdateItemParams = {
    *  публичного API) — перенос against_wall из tools-plan, чтобы правило
    *  привязки по виду (4.55 у radiator_collector) не искажалось округлением. */
   centerCm?: Point;
+  /** Электрика ч.3: слой вертикального блока («друг над другом») пристенной
+   *  электрики — 2/3 поставить, 1 снять (в модели null). Правило pc —
+   *  applySocketGroupLayer (electric.ts, get_offset_layer2 бандла). */
+  layer?: number;
 };
 
 /** item_update: перемещение, поворот, размеры. */
@@ -595,9 +599,16 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
     props.over_floor = { value: r2(mmToCm(params.elevationMm)), display };
   }
   if (params.comment !== undefined) props.comment = { id: params.comment };
+  // электрика ч.3: слой вертикального блока — pc пересчитывается правилом
+  // get_offset_layer2 бандла (26/52 см от оси, 22/44 у slope_side); под-розетки,
+  // вершины связей/кабелей и размеры пересчитываются ниже как при переносе
+  let layerMoved = false;
+  if (params.layer !== undefined) {
+    layerMoved = applySocketGroupLayer(model, props, params.layer);
+  }
   // этап 88: транзитивный пересчёт затронутых привязок электрики — под-розетки
   // группы (перенос/поворот) и вершины связей, ссылающиеся на предмет
-  if (Array.isArray(props.socket_group) && (moved || params.angleDeg !== undefined)) {
+  if (Array.isArray(props.socket_group) && (moved || layerMoved || params.angleDeg !== undefined)) {
     // ревью 198 №1/№2, 203 №8/№10: перенос against_wall (явный режим resnapToWall
     // от tools-plan) — под-элементы пересчитываются с сохранением взаимного
     // расположения (шаг): вдоль-составляющая смещения переносится, нормальная
@@ -606,7 +617,7 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
     // переключает только явный флаг (ревью 203 №10).
     refreshSocketGroupSubs(model, props, oldPc, oldAngle, params.resnapToWall === true);
   }
-  if (moved || params.angleDeg !== undefined) {
+  if (moved || layerMoved || params.angleDeg !== undefined) {
     refreshCablesForItem(model, params.itemId);
     // часть 2: вершины кабелей-проводки следуют за предметом (multi — pc,
     // electrospot — точка на 7 см от грани стены)
@@ -614,7 +625,7 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   }
   // этап 113: транзитивный пересчёт затронутых привязок размеров (формула
   // Ruler.update редактора) и комментариев, привязанных к предмету
-  if (moved || params.angleDeg !== undefined) {
+  if (moved || layerMoved || params.angleDeg !== undefined) {
     refreshRulersForItem(model, params.itemId);
     refreshItemComments(model, params.itemId);
   }

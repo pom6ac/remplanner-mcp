@@ -919,6 +919,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "При against_wall угол задаёт стена (у пристенной электрики socket_group — «ось + 180», как в item_add), " +
         "переданный angle_deg игнорируется — то же правило, что в item_add. " +
         "У коллекторных узлов (radiator_collector, ext/int_manifold_box) точка привязки по виду — как в item_add. " +
+        "layer — вертикальный блок пристенной электрики («друг над другом»: розетки/выключатели на одной стене " +
+        "друг над другом, как при перетаскивании в редакторе): 2 или 3 — поставить слой (центр уходит от оси стены " +
+        "на 26/52 см, у скосов 22/44), 1 — вернуть к стене; под-розетки и подключения следуют за центром. " +
         "При переносе/повороте привязанные размеры (dim_add attach) и комментарии предмета следуют за ним.",
       {
         item_id: z.string().min(1).describe("метка I<n> из model_get или id сайта"),
@@ -928,6 +931,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         depth_mm: mmInt.optional(),
         height_mm: mmInt.optional(),
         elevation_mm: mmInt.optional(),
+        layer: z.number().int().min(1).max(3).optional()
+          .describe("слой вертикального блока пристенной электрики: 2/3 — над стеной, 1 — у стены"),
       },
       async (a) => {
         const ws = wsOf();
@@ -938,7 +943,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             return updateItem(m, { itemId: target.id, center: pos["center"] as MmPoint,
               angleDeg: a["angle_deg"] as number | undefined,
               widthMm: a["width_mm"] as number | undefined, depthMm: a["depth_mm"] as number | undefined,
-              heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined });
+              heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined,
+              layer: a["layer"] as number | undefined });
           }
           if (pos && "against_wall" in pos) {
             // перенос к стене: та же формула модельного слоя, что у item_add
@@ -972,6 +978,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
               againstWallProbe: at.probePointCm,
               widthMm: a["width_mm"] as number | undefined, depthMm: a["depth_mm"] as number | undefined,
               heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined,
+              layer: a["layer"] as number | undefined,
             });
           }
           return updateItem(m, {
@@ -979,6 +986,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
             angleDeg: a["angle_deg"] as number | undefined,
             widthMm: a["width_mm"] as number | undefined, depthMm: a["depth_mm"] as number | undefined,
             heightMm: a["height_mm"] as number | undefined, elevationMm: a["elevation_mm"] as number | undefined,
+            layer: a["layer"] as number | undefined,
           });
         });
         return ok(compactEntity(ws.model, (c) => c.items.find((i) => i.name === item.name) ?? null));
