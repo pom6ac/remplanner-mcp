@@ -115,6 +115,9 @@ export type CompactItem = {
   over_floor_mm?: number;
   /** Под-розетки группы socket_group (ревью 90 R5): id, тип, координаты в мм. */
   socket_group?: CompactSocketSub[];
+  /** Электрика ч.3: слой вертикального блока («друг над другом»), 2/3 — только
+   *  когда задан (аддитивное поле; CHANGELOG/README этапа 370). */
+  layer?: number;
 };
 
 /** Под-розетка группы socket_group в компактном виде (ревью 90 R5). */
@@ -620,6 +623,8 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
             })),
           }
         : {}),
+      // электрика ч.3: слой вертикального блока — только когда задан (2/3)
+      ...(typeof item.layer === "number" && (item.layer === 2 || item.layer === 3) ? { layer: item.layer } : {}),
     };
   });
 

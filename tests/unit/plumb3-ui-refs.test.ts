@@ -433,7 +433,8 @@ test("367: распад трубы — куски наследуют color_custo
   }
 });
 
-test("365: removePipeVertex — multi-предмет в двух вершинах одной трубы: снимается из обеих", () => {  const model = baseModel();
+test("365: removePipeVertex — multi-предмет в двух вершинах одной трубы: снимается из обеих", () => {
+  const model = baseModel();
   const col = rawSpot(model, "C", "waterspot_collector", 200, "pipes") as RawItem;
   (model as unknown as Record<string, Record<string, Pipe>>).pipes ??= {};
   // труба C(вершина 0) – n1 – x – n2 – C(вершина 4): multi-предмет в двух вершинах

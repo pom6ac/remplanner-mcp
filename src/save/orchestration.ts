@@ -777,12 +777,15 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     // ожидание против сервера (строго: текст, точки, привязки, отступ, цвет)
     const dimsAfter = dimsMismatches(norm.model as Model, after.model as Record<string, unknown>);
     // этап 122: сущности климата после save — нормализованное ожидание против сервера
+    // (walls — тоже: ревью 371 №5, держатель ventHole в walls.holes.props входит
+    // в проекцию pipeLinkHolders для сверы подключений вентиляции)
     const climateExpected = {
       warm_floors: structuredClone((norm.model as Record<string, unknown>)["warm_floors"] ?? {}),
       pipes_warm_floor: structuredClone((norm.model as Record<string, unknown>)["pipes_warm_floor"] ?? {}),
       pipes_conditioner: structuredClone((norm.model as Record<string, unknown>)["pipes_conditioner"] ?? {}),
       pipes_heat: structuredClone((norm.model as Record<string, unknown>)["pipes_heat"] ?? {}),
       pipes_ventilation: structuredClone((norm.model as Record<string, unknown>)["pipes_ventilation"] ?? {}),
+      walls: structuredClone((norm.model as Record<string, unknown>)["walls"] ?? {}),
     };
     const climateAfter = climateGraphMismatches(
       climateExpected as unknown as Model,

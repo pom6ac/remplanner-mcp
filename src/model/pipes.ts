@@ -442,11 +442,14 @@ export type PipeRefHolder = {
  * ceiling_water) держит model.items — бокс props.<box>; вершина-контур тёплого
  * пола (type "warm_floor") держится в model.warm_floors — бокс props контура
  * (ссылка скалярная, unset_tree_id менеджера тёплого пола переопределён).
- * Вершин других коллекций (стены, контуры IR и т.п.) трубы не ссылают. Новая
+ * Вершина-отверстие вентиляции (ventHole на стене, бандл: get_item менеджера
+ * ищет WALLS[*].holes[e], getTypeItem даёт "waterspot", is_multi — false) держится
+ * в model.walls[*].holes[id].props — бокс props отверстия (ревью 368 F2); в модели
+ * редактора props появляется при подключении ({id, name:"ventHole"}). Новая
  * коллекция-держатель добавляется строкой реестра — linkItems/unlinkItems
  * (здесь) и relinkPipe/unlinkVertexRef (waterspots.ts) идут через один доступ
  * pipeVertexHolder, без веток по типам. Неизвестный тип вершины — предмет
- * из model.items.
+ * из model.items, затем отверстие стены.
  */
 export const PIPE_VERTEX_HOLDERS: Record<string, (model: Model, id: string) => PipeRefHolder | null> = {
   warm_floor: (model, id) => {
@@ -476,9 +479,30 @@ const itemsRefHolder = (model: Model, id: string): PipeRefHolder | null => {
   };
 };
 
-/** Держатель обратной ссылки вершины трубы (реестр PIPE_VERTEX_HOLDERS + предметы). */
+/** Держатель-отверстие стены (ventHole, ревью 368 F2): бокс props отверстия —
+ *  как в бандле (is_empty(props) → {id, name:"ventHole"}), ссылка скалярная. */
+const holesRefHolder = (model: Model, id: string): PipeRefHolder | null => {
+  for (const wall of Object.values(model.walls ?? {})) {
+    const hole = (wall as unknown as { holes?: Record<string, { id: string; type?: string; props?: Record<string, unknown> }> }).holes?.[id];
+    if (hole && (hole.type === "ventHole" || hole.props?.name === "ventHole")) {
+      return {
+        multi: false,
+        name: "ventHole",
+        refOf: (box) => hole.props?.[box],
+        refEnsure: (box) => {
+          const props = (hole.props ??= { id: hole.id, name: "ventHole" }) as Record<string, unknown>;
+          return (props[box] ??= {}) as Record<string, unknown>;
+        },
+      };
+    }
+  }
+  return null;
+};
+
+/** Держатель обратной ссылки вершины трубы (реестр PIPE_VERTEX_HOLDERS + предметы
+ *  + отверстия стен ventHole). */
 export function pipeVertexHolder(model: Model, vertexType: string, id: string): PipeRefHolder | null {
-  return (PIPE_VERTEX_HOLDERS[vertexType] ?? itemsRefHolder)(model, id);
+  return (PIPE_VERTEX_HOLDERS[vertexType] ?? itemsRefHolder)(model, id) ?? holesRefHolder(model, id);
 }
 
 /** Холдер обратных ссылок вершины-предмета: предмет или водяной контур (props). */
@@ -740,9 +764,10 @@ export function pipesReferencingItem(model: Model, itemId: string): Pipe[] {
 }
 
 /**
- * Держатели обратных ссылок труб для сверки: предметы (props.<box>) плюс водяные
+ * Держатели обратных ссылок труб для сверки: предметы (props.<box>), водяные
  * контуры тёплого пола (вершина-контур магистрали: name = type контура, боксы —
- * из props контура). Проекция для pipeConnectionMismatches.
+ * из props контура) и отверстия стен ventHole (вершина вентиляции, бокс —
+ * props отверстия, ревью 368 F2). Проекция для pipeConnectionMismatches.
  */
 export function pipeLinkHolders(model: Model): Record<string, Record<string, unknown>> {
   const out: Record<string, Record<string, unknown>> = {};
@@ -751,6 +776,15 @@ export function pipeLinkHolders(model: Model): Record<string, Record<string, unk
   }
   for (const wf of Object.values(model.warm_floors ?? {})) {
     out[wf.id] = { ...(wf.props ?? {}), name: wf.type };
+  }
+  for (const wall of Object.values(model.walls ?? {})) {
+    const holes = (wall as unknown as { holes?: Record<string, { id: string; type?: string; props?: Record<string, unknown> }> }).holes;
+    if (!holes) continue;
+    for (const hole of Object.values(holes)) {
+      if (hole.type === "ventHole" || hole.props?.name === "ventHole") {
+        out[hole.id] = { ...(hole.props ?? {}), name: "ventHole" };
+      }
+    }
   }
   return out;
 }

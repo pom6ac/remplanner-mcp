@@ -96,7 +96,9 @@ export type ItemProps = {
   plan: Record<string, number>;
   id_room?: string | null;
   id_wall?: string | null;
-  layer?: string | null;
+  /** Вертикальный блок пристенной электрики («друг над другом»): 2/3 — слои
+   *  над стеной (get_offset_layer2 бандла), null/отсутствие — слой у стены. */
+  layer?: number | string | null;
   comment?: string | { id: string } | null;
   [key: string]: unknown;
 };

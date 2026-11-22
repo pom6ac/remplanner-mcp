@@ -58,6 +58,7 @@ const tryCall = async (name: string, args: Record<string, unknown> = {}): Promis
 let created: ProbeCreated[] = [];
 let opened = false;
 let roGuard: ReadonlyGuard | null = null;
+let beforeSig: string | null = null; // ревью 368 F4: sig бэкапа доступен ветке catch
 const CAPTURED_PATH = `.orca-reports/tmp/360-captured-${OBJECT_ID}.json`;
 const journal = (): void => logCaptured(CAPTURED_PATH, created, []);
 
@@ -171,7 +172,8 @@ try {
   const backupPath = `.orca-reports/backup-${OBJECT_ID}-367.json`;
   if (process.argv[2] === "run") {
     writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
-    console.log("backup written:", backupPath, "sig:", sig(before.model as Record<string, unknown>).slice(0, 40));
+    beforeSig = sig(before.model as Record<string, unknown>);
+    console.log("backup written:", backupPath, "sig:", beforeSig.slice(0, 40));
   } else if (!existsSync(backupPath)) {
     throw new Error("cleanup: бэкап 367 не найден — прогон не снимал бэкап, зачистка вслепую запрещена");
   }
@@ -596,6 +598,17 @@ try {
 } catch (e) {
   console.error("FAIL:", String((e as Error).message ?? e).slice(0, 600));
   try { await restoreProbe("fail"); } catch { /* */ }
+  // ревью 368 F4: в catch после restore — сверка sig с бэкапом прогона и
+  // checkFinal контрольного проекта (повтор 366 №5, вторая часть)
+  try {
+    if (beforeSig !== null) {
+      const afterFail = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
+      const sigOk = sig(afterFail.model as Record<string, unknown>) === beforeSig;
+      console.error("FAIL-restore: сверка sig с бэкапом прогона:", sigOk ? "OK" : "РАСХОЖДЕНИЕ");
+    }
+    const changed = await roGuard?.checkFinal("fail-финал");
+    console.error("FAIL-restore: контрольный проект:", changed ? "ИЗМЕНИЛСЯ" : "не изменился");
+  } catch (fe) { console.error("FAIL-restore check:", String((fe as Error).message).slice(0, 300)); }
   await closeBrowser().catch(() => {});
   process.exit(1);
 }

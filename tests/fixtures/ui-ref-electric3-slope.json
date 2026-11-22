@@ -1,0 +1,63 @@
+{
+ "_source": "СИНТЕТИЧЕСКИЙ эталон (не живой UI): форма скоса (откоса окна/двери) на розетке слоя 2 по бандлу app.3.0 (268-app.js) — dragmoveWall пишет props.slope_side СТРОКОЙ СТОРОНЫ («1»/«2»: slope_side = _[c].side, сброс — void 0), get_offset_layer2 проверяет истинность: 2==layer ? slope_side ? 22 : 26 : …; у слоя 3 — 44. Сравнение === true в порте никогда не срабатывало на форму бандла (ревью 371 №2). id предмета/под-розетки/id_wall/id_room обезличены («0», «id1»), координаты синтетические. Пользовательские поля: name «socket_group», slope_side «1», layer 2, over_floor {value, display, vd}.",
+ "menu_title": "Стандартная розетка",
+ "tool_id": "plannertool_socket",
+ "catalog_defaults_cm": {
+  "id": 20,
+  "group": "sockets",
+  "width": 14,
+  "height": 14,
+  "self_height": 0,
+  "plan": {
+   "sockets": 9
+  },
+  "anchor": "wall",
+  "over_floor": {
+   "value": 30,
+   "display": false
+  },
+  "title": "Стандартная розетка"
+ },
+ "model_object": {
+  "id": "0",
+  "name": "socket_group",
+  "pc": {
+   "x": 97,
+   "y": 29
+  },
+  "width": 14,
+  "height": 14,
+  "angle": 180,
+  "id_wall": "0",
+  "id_room": "0",
+  "plan": {
+   "sockets": 9
+  },
+  "legend": "",
+  "slope_side": "1",
+  "layer": 2,
+  "over_floor": {
+   "value": 30,
+   "display": true,
+   "vd": 30
+  },
+  "socket_group": [
+   {
+    "id": "id1",
+    "name": "socket",
+    "real_center": {
+     "x": 97,
+     "y": 29
+    },
+    "center": {
+     "x": 97,
+     "y": 29
+    },
+    "center_prs": {
+     "x": 97,
+     "y": 29
+    }
+   }
+  ]
+ }
+}

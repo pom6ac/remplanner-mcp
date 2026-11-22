@@ -7,6 +7,10 @@ export type ItemSig = {
   name?: string; pc?: { x: number; y: number }; width?: number; height?: number; angle?: number;
   /** Ревью 364 №4: высоты выводов воды сверяются после save (value/value_2). */
   over_floor?: { value?: unknown; value_2?: unknown; display?: unknown } | null;
+  /** Электрика ч.3: слой вертикального блока пристенной электрики (2/3; null —
+   *  слой у стены). Ожидание (нормализатор) с числом 2/3, которого нет на
+   *  сервере, — потеря; серверное значение сверяется по равенству. */
+  layer?: number | string | null;
 };
 
 /**
@@ -40,6 +44,12 @@ export function itemVerificationMismatches(expected: Record<string, ItemSig>, go
     if (!near(g.width, it.width, 0.1)) out.push(`${id}: ширина изменилась (на сервере ${g.width}; ожидалось ${it.width})`);
     if (!near(g.height, it.height, 0.1)) out.push(`${id}: глубина изменилась (на сервере ${g.height}; ожидалось ${it.height})`);
     if (angleDiff(g.angle ?? 0, it.angle ?? 0) > 0.1) out.push(`${id}: угол изменился (на сервере ${g.angle ?? 0}; ожидалось ${it.angle ?? 0})`);
+    // электрика ч.3: слой вертикального блока — строго, если ожидание несёт слой 2/3
+    // (наличие поля отдельно от значения: потеря слоя 2/3 после save — расхождение)
+    if (typeof it.layer === "number" && it.layer >= 2) {
+      if (g.layer === undefined || g.layer === null) out.push(`${id}: слой вертикального блока потерялся после сохранения (ожидался ${it.layer})`);
+      else if (Number(g.layer) !== it.layer) out.push(`${id}: слой вертикального блока изменился (на сервере ${g.layer}; ожидался ${it.layer})`);
+    }
     if (WS_ALL_SPOTS.has(it.name ?? "")) {
       const ofE = it.over_floor ?? undefined;
       const ofG = g.over_floor ?? undefined;

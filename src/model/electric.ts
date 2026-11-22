@@ -568,3 +568,87 @@ export function refreshCablesForItem(model: Model, itemId: string): void {
     if (changed) cable.length = gasLineLengthM(cable);
   }
 }
+
+/**
+ * Вертикальные блоки («друг над другом», электрика ч.3, бандл app.3.0): у
+ * пристенной электрики (розетки, выключатели, socket_thermo) слой хранится в
+ * props.layer предмета. Редактор ставит слой перетаскиванием предмета на чужую
+ * базовую линию (dragmoveWall: layer = чужой.layer ? чужой.layer + 1 : 2) и
+ * пересчитывает pc: расстояние от оси стены = getHeight()/2 − model().offset +
+ * get_offset_layer2(), где get_offset_layer2 = 26/52 см (22/44 у slope_side).
+ * Связка (pairing_line, has_layer_up) — производная, в модели не хранится.
+ * MCP: слой задаётся явно (1 — снять), pc пересчитывается тем же правилом с
+ * сохранением собственного отступа пластины предмета (height/2 − offset), угол
+ * и over_floor не трогаются. Перенос against_wall (resnap) ставит предмет на
+ * базу слоя 1 и держит смещение слоя поверх неё, как dragmoveWall редактора
+ * (major 371 №1); явный layer в том же вызове ставится относительно новой
+ * позиции. Слои 4+ не поддерживаются (get_offset_layer2 обрабатывает только 2 и 3).
+ */
+export const SOCKET_LAYER_OFFSET_CM: Record<number, { flat: number; slope: number }> = {
+  2: { flat: 26, slope: 22 },
+  3: { flat: 52, slope: 44 },
+};
+
+/** Слой предмета: число 2/3 или отсутствие слоя (1, в модели null). */
+export function socketLayerOf(item: ItemProps): number {
+  const l = item.layer;
+  return typeof l === "number" ? l : 1;
+}
+
+/**
+ * item_update layer: поменять слой вертикального блока у пристенной
+ * электрики (socket_group). Возвращает true, если pc изменился.
+ */
+export function applySocketGroupLayer(
+  model: Model, item: ItemProps, layer: number,
+  opts: { prevOffsetCm?: number } = {},
+): boolean {
+  if (!Array.isArray(item.socket_group)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "слой вертикального блока («друг над другом») поддерживается только у пристенной электрики — групп розеток и выключателей (socket_group)",
+      { details: { kind: "not_socket_group", item: item.name } },
+    );
+  }
+  if (!item.id_wall || !model.walls[item.id_wall]) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "предмет не привязан к стене — слой вертикального блока задаётся только у электрики на стене",
+      { details: { kind: "no_wall", item: item.id } },
+    );
+  }
+  if (layer !== 1 && layer !== 2 && layer !== 3) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `слой ${layer} не поддерживается — в редакторе вертикальный блок имеет слои 1 (у стены), 2 и 3 (друг над другом)`,
+      { details: { kind: "bad_layer", layer } },
+    );
+  }
+  const wall = model.walls[item.id_wall] as Wall;
+  const dir = sub(wall.p2, wall.p1);
+  const u = scale(dir, 1 / (Math.hypot(dir.x, dir.y) || 1));
+  const wallMid = { x: (wall.p1.x + wall.p2.x) / 2, y: (wall.p1.y + wall.p2.y) / 2 };
+  const along = (item.pc.x - wallMid.x) * u.x + (item.pc.y - wallMid.y) * u.y;
+  // проекция pc на ось стены (LIB.projection без ограничений отрезком —
+  // редактор держит projection и за концами стены)
+  const proj = add(wallMid, scale(u, along));
+  const inward = wallInwardNormal(model, wall, item);
+  const currentDist = (item.pc.x - proj.x) * inward.x + (item.pc.y - proj.y) * inward.y;
+  const prev = socketLayerOf(item);
+  const next = layer === 1 ? 1 : layer;
+  // ревью 371 №2: бандл проверяет истинность slope_side, а редактор пишет туда
+  // строку стороны ("1"/"2" из _.side, сброс — void 0) — сравнение === true
+  // никогда не срабатывало и скос получал смещение плоского слоя (26/52 вместо 22/44)
+  const slope = Boolean((item as { slope_side?: unknown }).slope_side);
+  // major 371 №1: после переноса against_wall (resnap) новая позиция — база слоя 1
+  // (редактор при перетаскивании вдоль стены держит смещение слоя поверх базы:
+  // dragmoveWall pc = ... + get_offset_layer2()), поэтому prevOffset = 0
+  const prevOffset = opts.prevOffsetCm ?? SOCKET_LAYER_OFFSET_CM[prev]?.[slope ? "slope" : "flat"] ?? 0;
+  const nextOffset = SOCKET_LAYER_OFFSET_CM[next]?.[slope ? "slope" : "flat"] ?? 0;
+  const newDist = currentDist - prevOffset + nextOffset;
+  const newPc = add(proj, scale(inward, newDist));
+  const changed = Math.abs(newPc.x - item.pc.x) > 1e-9 || Math.abs(newPc.y - item.pc.y) > 1e-9 || socketLayerOf(item) !== next;
+  item.pc = { x: r2(newPc.x), y: r2(newPc.y) };
+  item.layer = next === 1 ? null : next;
+  return changed;
+}
