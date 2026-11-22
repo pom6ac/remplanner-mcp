@@ -133,17 +133,19 @@ try {
     [{ x: x0, y: y0 + 2600 }, { x: x0, y: y0 }],
   ];
   for (const [s, e] of segs) {
-    const r = await call("wall_add", { start: s, end: e }) as { entity?: { id?: string } | null };
-    const id = r["entity"] && (r["entity"] as { id?: string }).id;
-    check(typeof id === "string" && id.length > 0, `wall_add создал стену (${id ?? "?"})`);
-    if (typeof id === "string") { wallIds.push(id); created.push({ kind: "wall", siteId: id }); }
+    const r = await call("wall_add", { start: s, end: e }) as { entity?: { id?: string; site_id?: string } | null };
+    const site = r["entity"]?.["site_id"];
+    check(typeof site === "string" && site.length > 0, `wall_add создал стену (${site ?? "?"})`);
+    if (typeof site === "string") { wallIds.push(site); created.push({ kind: "wall", siteId: site }); }
   }
   journal();
   const saveWalls = await gsave("стены пробной комнаты");
   check(saveWalls["verified"] === true, "save стен verified");
-  const roomsList = await call("rooms_list", {}) as { rooms?: Array<{ id?: string; perimeter_mm?: number }> };
-  // своя комната — по периметру 2×(3000+2600)=11200
-  const mine = (roomsList["rooms"] ?? []).find((r) => r["perimeter_mm"] === 11200);
+  const mgRooms = await call("model_get", {}) as { rooms?: Array<{ id?: string; edges?: Array<{ pid?: string }> }> };
+  const mine = (mgRooms["rooms"] ?? []).find((r) => {
+    const pids = (r["edges"] ?? []).map((e) => e["pid"]).filter(Boolean).map(String);
+    return pids.length > 0 && pids.length === wallIds.length && pids.every((p) => wallIds.includes(p));
+  });
   check(typeof mine?.["id"] === "string", `пробная комната найдена (${mine?.id ?? "?"})`);
   if (!mine || typeof mine["id"] !== "string") throw new Error("пробная комната не найдена");
   const room = mine["id"];
