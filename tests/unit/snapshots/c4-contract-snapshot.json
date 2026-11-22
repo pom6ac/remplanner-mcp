@@ -7302,7 +7302,12 @@
       }
      ],
      "floor": null,
-     "ceiling": null
+     "ceiling": null,
+     "prs": {
+      "hidden": false,
+      "first_edge": null,
+      "disabled_edges": []
+     }
     }
    ],
    "items": [],
@@ -7619,7 +7624,12 @@
      }
     ],
     "floor": null,
-    "ceiling": null
+    "ceiling": null,
+    "prs": {
+     "hidden": false,
+     "first_edge": null,
+     "disabled_edges": []
+    }
    }
   ],
   "items_list": [],

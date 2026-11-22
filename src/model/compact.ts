@@ -10,6 +10,7 @@ import { ceilingRigelList } from "./ceiling-rigels.ts";
 import { ceilingFinishZones } from "./finish.ts";
 import { unescapeCommentText } from "./dims.ts";
 import { zoneNumbersByEditorRule } from "./room-fields.ts";
+import { prsStateOf } from "./projections.ts";
 
 // Компактное представление модели для агента (< 5 КБ): метки W/R/O/I, мм.
 
@@ -92,6 +93,10 @@ export type CompactRoom = {
   floor?: string | null;
   /** Покрытие потолка комнаты (лист «Потолки», этап 94). */
   ceiling?: string | null;
+  /** Настройки развёрток комнаты (этап 389): hidden — «скрыть развёртки»,
+   *  first_edge — ребро «первой» развёртки (null — авто), disabled_edges —
+   *  скрытые развёртки (индексы рёбер). */
+  prs?: { hidden: boolean; first_edge: number | null; disabled_edges: number[] };
 };
 
 export type CompactRoomEdge = {
@@ -675,6 +680,7 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       ...(compactEdges.length > 0 ? { edges: compactEdges } : {}),
       floor: floorRec && floorRec["exist"] === true && typeof floorRec["cover"] === "string" ? floorRec["cover"] as string : null,
       ceiling: ceilingZone ? ceilingZone.material : null,
+      ...(room2 ? { prs: (({ hidden, firstEdge, disabledEdges }) => ({ hidden, first_edge: firstEdge, disabled_edges: disabledEdges }))(prsStateOf(room2 as Parameters<typeof prsStateOf>[0])) } : {}),
     };
     });
   })();
