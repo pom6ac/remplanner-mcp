@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Исправлено (этап 391 — по ревью 390, развёртки)
+
+- **Затронутость молдингов/ниш развёрток при wall-операциях** (major 1): `applyWalls`
+  сверяет `wall_moldings`/`wall_niches` «до → после» нормализации по id — потеря
+  (Room.delete редактора) и перенос на другое ребро (сигнал 43) — видимые
+  предупреждения с id; висячий `prs.room` (комната исчезла) удаляется каскадом,
+  как `Room.delete` бандла.
+- **Точка укладки отделки стены** (major 2): `finish_wall_anchor_set` ставит точку
+  только в ОДНУ часть стороны (по умолчанию — содержащую точку по
+  `height_from_floor..height`, при неоднозначности — вход `layer`); `pc_yd`
+  считается от полигона самой части (бандл: `new Polygon(WALL_DECORS[a.id].polygon)`),
+  angle/custom_angle других частей не трогаются.
+- **Форма slim-молдинга** (major 3): по draw бандла `wall_molding_slim` хранит
+  `height=width_line` (тонкая горизонтальная полоса), `wall_molding_slim_h` —
+  `width=width_line` (вертикальная); редактор больше не переписывает значения при
+  первом показе развёрток. Ориентация в описаниях исправлена (major 3/minor 12).
+- **Пределы глубины ниши** (major 4): depth_mm — от 50 до min(800, толщина/длина
+  стены по `get_wall_depth` (сторона e/s — длина)) мм, умолчание
+  min(200, толщина) — как draw/меню бандла (`correctValue(t,5,min(80,getWallDepth()))`,
+  предупреждение wall_depth_niche); выход за предел — INVALID_ARGUMENT.
+- **Ответы инструментов в мм** (major 5): `wall_molding_add/update`,
+  `wall_niche_add/update` возвращают форму `model_get` (`along_mm`, `from_floor_mm`,
+  метка R<n>), `finish_wall_anchor_set` — `edge/along_mm/height_mm/part/layer/angle`
+  без см/prs-структур редактора, `prs_set` — snake_case (`first_edge`,
+  `disabled_edges`).
+- minor: скрытие всех развёрток по одной ставит `prs_hidden=1` (условие обработчика
+  visibility, minor 6); вход `wall` принимает метки `W<n>` (minor 7); эталон
+  молдинга приведён к форме draw (minor 13); тест канона sig №41 проверяет каждое
+  пользовательское поле потолка отдельно (minor 11); предупреждение о возможном
+  сбросе настроек развёрток при любом изменении стен (minor 14, живой прогон 391-1:
+  prs_hidden теряется при wall_move без смены нарезки); склейка `*/const graphEntity`
+  разнесена (minor 14).
+
 ### Добавлено (этап 389 — развёртки)
 
 - **Настройки развёрток комнаты** (`prs_set`): hidden — «Скрыть развёртки» (`prs_hidden=1` +
