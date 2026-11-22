@@ -1,0 +1,168 @@
+// 382: живая проверка ИБ-фикса ревью 380 в dev-объекте (ID — ТОЛЬКО из env
+// командной строки, в файлы и коммиты не писать). По заданию 382, п. 4:
+// только БЕЗОПАСНЫЕ данные — открытие, render_plan, wall-мутация (wall_move
+// туда и обратно), save verified, reopen — регрессий от перехвата ответа
+// модели (page.route, major 380 №21) и детектора по типу (№22) нет.
+// ОПАСНЫЕ строки на сайт НЕ отправляются ни в каком виде (их отказ закреплён
+// офлайн-тестами tests/unit/382-editor-guard.test.ts).
+// Гарды: probe-guard (пара объект/план, READONLY-гард по корневому эталону
+// БЕЗ REF_INIT — эталон уже существует), checkEditorPlanMatch fail-closed
+// перед каждым project_open, assertUnchanged перед каждой записью, бэкап
+// backup-<OBJECT_ID>-382.json непосредственно перед ПЕРВЫМ прогоном (не
+// перезаписывается), sig модели в конце и в catch, restore не нужен
+// (новых объектов нет — стена возвращается wall_move назад, сверка sig с
+// бэкапом обязательна), ≤30 запросов/мин (лимитер MCP), save не чаще раза
+// в 5 с. Лог КАЖДОГО прогона — .orca-reports/tmp/382-<n>.log.
+//   REMPLANNER_PROBE_OBJECT_ID=… REMPLANNER_PROBE_PLAN_ID=… \
+//   REMPLANNER_PROBE_READONLY_ID=… REMPLANNER_PROBE_READONLY_PLAN_ID=… \
+//   node scripts/probes/382-guard-live.ts run
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { closeBrowser } from "../../src/browser.ts";
+import { buildServer } from "../../src/server.ts";
+import { ServerContext } from "../../src/server/context.ts";
+import { loadModel, type LoadedModel } from "../../src/api.ts";
+import { sig } from "./probe-sig.ts";
+import { assertEditorPlanMatch } from "./probe-guard.ts";
+
+mkdirSync(".orca-reports/tmp", { recursive: true });
+setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
+
+const ctx = new ServerContext();
+const server = buildServer(ctx);
+const client = new Client({ name: "382-guard-live", version: "0.0.0" });
+const [a, b] = InMemoryTransport.createLinkedPair();
+await Promise.all([server.connect(b), client.connect(a)]);
+type TextContent = { content: { type: string; text?: string }[] };
+const text = (r: unknown): string => ((r as TextContent).content ?? []).map((c) => (c.type === "text" ? c.text : "")).join("");
+const call = async (name: string, args: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
+  if (process.env["RP_TRACE"]) console.log("CALL", name, JSON.stringify(args).slice(0, 200));
+  const res = await client.callTool({ name, arguments: args }, undefined, { timeout: 600_000 });
+  if ((res as { isError?: boolean }).isError) {
+    writeFileSync(".orca-reports/tmp/382-last-error.json", text(res));
+    throw new Error(`${name}: ${text(res).slice(0, 900)}`);
+  }
+  return JSON.parse(text(res)) as Record<string, unknown>;
+};
+const delay = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+let exitCode = 0;
+const fails: string[] = [];
+const check = (ok: boolean, msg: string): void => {
+  console.log(`${ok ? "PASS" : "FAIL"}: ${msg}`);
+  if (!ok) { fails.push(msg); exitCode = 1; }
+};
+const editorOf = (): Parameters<typeof assertEditorPlanMatch>[0] | null =>
+  (ctx as unknown as { workspaceOrNull: { editorOrNull: () => Parameters<typeof assertEditorPlanMatch>[0] | null } | null }).workspaceOrNull?.editorOrNull?.() ?? null;
+
+type CompactWall = { site_id: string; from: [number, number]; to: [number, number]; len_mm: number; openings: unknown[] };
+const wallsOf = (mg: Record<string, unknown>): CompactWall[] =>
+  (Array.isArray(mg["walls"]) ? mg["walls"] : Object.values((mg["walls"] ?? {}) as Record<string, CompactWall>)) as CompactWall[];
+
+/** Расстояние между осями (первая точка исходной и текущей стены), мм. */
+const shiftMm = (w0: CompactWall, w1: CompactWall): number =>
+  Math.hypot(w1.from[0] - w0.from[0], w1.from[1] - w0.from[1]);
+
+try {
+  const { probeWriteEnv, assertTargetPair, readonlyGuard, readonlyRefPath } = await import("./probe-guard.ts");
+  const ids = probeWriteEnv();
+  await assertTargetPair(ctx.session(), ids.objectId, ids.planId);
+  const roGuard = await readonlyGuard(ctx.session(), ids.readonlyId, ids.readonlyPlanId, readonlyRefPath(ids.readonlyId, ids.readonlyPlanId));
+  const gsave = async (tag: string): Promise<Record<string, unknown>> => {
+    await roGuard.assertUnchanged(tag);
+    const r = await call("project_save", {}) as { verified?: boolean; warnings?: unknown[]; details?: unknown };
+    console.log(`save ${tag}:`, JSON.stringify({ verified: r["verified"], warnings: (r["warnings"] ?? []).length }));
+    if (!r["verified"]) throw new Error(`save ${tag} не verified: ${JSON.stringify(r["details"] ?? r).slice(0, 500)}`);
+    await delay(5500);
+    return r;
+  };
+  // бэкап НЕ перезаписывается между прогонами: базис до ПЕРВОГО прогона 382;
+  // копия на прогон — в tmp со штампом времени
+  const backupPath = `.orca-reports/backup-${ids.objectId}-382.json`;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const stampPath = `.orca-reports/tmp/382-backup-${stamp}.json`;
+  const before: LoadedModel = await loadModel(ctx.session(), ids.objectId, ids.planId);
+  if (existsSync(backupPath)) {
+    console.log("backup exists — НЕ перезаписывается:", backupPath);
+  } else {
+    writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
+    console.log("backup written (первый прогон):", backupPath, "sig:", sig(before.model).slice(0, 40));
+  }
+  writeFileSync(stampPath, JSON.stringify(before, null, 1) + "\n");
+  await roGuard.assertUnchanged("before");
+
+  // ==== открытие (путь major 380 №21: страницу грузит серверная модель) ====
+  await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
+  await call("render_plan", {});
+  const ed = editorOf();
+  console.log("editor:", ed ? "создан" : "НЕТ");
+  await assertEditorPlanMatch(ed, ids.planId);
+  console.log("гард «план в редакторе == серверу» (fail-closed): OK");
+  check(ed !== null, "открытие + render_plan: редактор создан, перехват ответа модели пропустил безопасную модель");
+
+  // ==== wall-мутация туда: +20 мм, save verified ====
+  const mg0 = await call("model_get", {}) as Record<string, unknown>;
+  // стена без проёмов — возврат смещением назад точно восстановит ось
+  const candidates = wallsOf(mg0).filter((w) => Array.isArray(w.openings) && w.openings.length === 0);
+  const wall0 = candidates[0];
+  check(wall0 !== undefined, `выбрана стена без проёмов для мутации (всего стен: ${wallsOf(mg0).length}, без проёмов: ${candidates.length})`);
+  if (wall0 === undefined) throw new Error("нет стены без проёмов — сцена прервана");
+  console.log("wall:", wall0.site_id, "from", wall0.from, "to", wall0.to, "len", wall0.len_mm);
+
+  await call("wall_move", { wall_id: wall0.site_id, offset_mm: 20 });
+  const mg1 = await call("model_get", {}) as Record<string, unknown>;
+  const wall1 = wallsOf(mg1).find((w) => w.site_id === wall0.site_id);
+  check(wall1 !== undefined && shiftMm(wall0, wall1!) > 15, `wall_move +20: ось сдвинулась (${wall1 ? shiftMm(wall0, wall1).toFixed(1) : "?"} мм)`);
+  const save1 = await gsave("wall_move +20");
+  check(save1["verified"] === true, "save verified (wall_move +20)");
+  const mg2 = await call("model_get", {}) as Record<string, unknown>;
+  const wall2 = wallsOf(mg2).find((w) => w.site_id === wall0.site_id);
+  check(wall2 !== undefined && shiftMm(wall0, wall2!) > 15, "после save и GET стена осталась сдвинутой");
+
+  // ==== reopen при запущенном редакторе (повторный project_open) ====
+  await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
+  await assertEditorPlanMatch(editorOf(), ids.planId);
+  await call("render_plan", {});
+  const mg3 = await call("model_get", {}) as Record<string, unknown>;
+  const wall3 = wallsOf(mg3).find((w) => w.site_id === wall0.site_id);
+  check(wall3 !== undefined && shiftMm(wall0, wall3!) > 15, "reopen: сдвиг сохранился, редактор открылся с проверенной серверной моделью");
+
+  // ==== wall-мутация обратно: −20 мм, save verified ====
+  await call("wall_move", { wall_id: wall0.site_id, offset_mm: -20 });
+  const save2 = await gsave("wall_move −20 (возврат)");
+  check(save2["verified"] === true, "save verified (возврат стены)");
+  const mg4 = await call("model_get", {}) as Record<string, unknown>;
+  const wall4 = wallsOf(mg4).find((w) => w.site_id === wall0.site_id);
+  const back = wall4 !== undefined ? shiftMm(wall0, wall4!) : NaN;
+  check(back < 2, `стена возвращена на место (сдвиг ${back.toFixed(2)} мм ≤ 2)`);
+
+  // ==== sig: модель dev-объекта == бэкап до первого прогона ====
+  const after: LoadedModel = await loadModel(ctx.session(), ids.objectId, ids.planId);
+  const ref = JSON.parse(readFileSync(backupPath, "utf8")) as LoadedModel;
+  const same = sig(after.model) === sig(ref.model);
+  check(same, "sig после мутации и возврата == backup (до ПЕРВОГО прогона)");
+  if (!same) console.error("sig РАСХОЖДЕНИЕ — восстановите по журналу/бэкапу");
+  await roGuard.checkFinal("end");
+} catch (e) {
+  console.error("FAIL:", String((e as Error).message ?? e).slice(0, 600));
+  try {
+    const { probeWriteEnv } = await import("./probe-guard.ts");
+    const ids = probeWriteEnv();
+    const afterFail = await loadModel(ctx.session(), ids.objectId, ids.planId);
+    const backupPath = `.orca-reports/backup-${ids.objectId}-382.json`;
+    if (existsSync(backupPath)) {
+      const ref = JSON.parse(readFileSync(backupPath, "utf8")) as LoadedModel;
+      console.error("FAIL-restore: сверка sig с бэкапом (до первого прогона):", sig(afterFail.model) === sig(ref.model) ? "OK" : "РАСХОЖДЕНИЕ");
+    } else {
+      console.error("FAIL-restore: бэкапа ещё нет (падение до первой записи) — сверка невозможна, записей не было");
+    }
+  } catch (fe) { console.error("FAIL-restore check:", String((fe as Error).message).slice(0, 300)); }
+  await client.close().catch(() => {});
+  try { await closeBrowser(); } catch { /* */ }
+  process.exit(1);
+}
+await client.close();
+try { await closeBrowser(); } catch { /* */ }
+if (fails.length > 0) console.log("FAILS:", fails.join(" | "));
+process.exit(exitCode);
