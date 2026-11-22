@@ -16,7 +16,7 @@
 //   REMPLANNER_PROBE_OBJECT_ID=… REMPLANNER_PROBE_PLAN_ID=… \
 //   REMPLANNER_PROBE_READONLY_ID=… REMPLANNER_PROBE_READONLY_PLAN_ID=… \
 //   node scripts/probes/375-sheets-live.ts run
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { closeBrowser } from "../../src/browser.ts";
@@ -25,7 +25,7 @@ import { ServerContext } from "../../src/server/context.ts";
 import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { sig } from "./probe-sig.ts";
 import { assertEditorPlanMatch } from "./probe-guard.ts";
-import { restoreByCaptured, logCaptured, type ProbeCreated } from "./probe-restore.ts";
+import { restoreByCaptured, deleteCreatedByCaptured, logCaptured, type ProbeCreated } from "./probe-restore.ts";
 
 mkdirSync(".orca-reports/tmp", { recursive: true });
 setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
@@ -78,33 +78,10 @@ function pngBytes(w: number, h: number): Buffer {
   return Buffer.concat([sig2, len, Buffer.from("IHDR"), ihdr]);
 }
 
-/** Зачистка созданных объектов пробы ТОЛЬКО по журналу захваченных ID. */
+/** Зачистка созданных объектов пробы — ТОЛЬКО общий probe-restore по журналу
+ *  (major 376 №4: локальный дубль deleteCreatedObjects удалён). */
 async function deleteCreatedObjects(call: CallFn, created: ProbeCreated[], log: (line: string) => void): Promise<void> {
-  const take = (kind: string): string[] => {
-    const ids = created.filter((c) => c.kind === kind && c.siteId).map((c) => c.siteId!);
-    for (const id of ids) created.splice(created.findIndex((c) => c.kind === kind && c.siteId === id), 1);
-    return ids;
-  };
-  for (const id of take("picture").reverse()) {
-    const r = await tryCall("image_delete", { image_id: id });
-    log(`image_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
-  }
-  for (const id of take("figure").reverse()) {
-    const r = await tryCall("figure_delete", { figure_id: id });
-    log(`figure_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
-  }
-  for (const id of take("thick_line").reverse()) {
-    const r = await tryCall("thick_line_delete", { line_id: id });
-    log(`thick_line_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
-  }
-  for (const id of take("freeline").reverse()) {
-    const r = await tryCall("freeline_delete", { line_id: id });
-    log(`freeline_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
-  }
-  for (const id of take("sheet").reverse()) {
-    const r = await tryCall("sheet_delete", { sheet_id: id });
-    log(`sheet_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
-  }
+  await deleteCreatedByCaptured(call as unknown as import("./probe-restore.ts").ProbeCall, created, log);
 }
 
 try {
@@ -124,7 +101,14 @@ try {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const stampPath = `.orca-reports/tmp/375-backup-${stamp}.json`;
   const before: LoadedModel = await loadModel(ctx.session(), ids.objectId, ids.planId);
-  writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
+  // minor 376 №11: бэкап НЕ перезаписывается между прогонами — пишется только
+  // при отсутствии (базис до ПЕРВОГО прогона), итог сверяется с ним
+  if (existsSync(backupPath)) {
+    console.log("backup exists — НЕ перезаписывается (minor 376 №11):", backupPath);
+  } else {
+    writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
+    console.log("backup written (первый прогон):", backupPath, "sig:", sig(before.model).slice(0, 40));
+  }
   writeFileSync(stampPath, JSON.stringify(before, null, 1) + "\n");
   console.log("backup written:", backupPath, "and", stampPath, "sig:", sig(before.model).slice(0, 40));
   await roGuard.assertUnchanged("before");
