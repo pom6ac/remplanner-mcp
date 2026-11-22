@@ -74,7 +74,7 @@ import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInt
 import { addSheet, updateSheet, deleteSheet, sheetPlanKey, sheetByName, SHEET_AFTER_PLANS, SHEET_CONTENT_KEYS, SHEET_DEFAULT_AFTER_PLAN } from "../model/sheets.ts";
 import { addFreeline, addThickLine, addFigure, updateLine, updateFigure, deleteLine, deleteFigure, resolveLine, resolveFigure, validateDrawPlan, FREE_FIGURE_TYPES, THICK_LINE_WIDTH_MM_MIN, THICK_LINE_WIDTH_MM_MAX } from "../model/draw.ts";
 import { addPicture, updatePicture, resolvePicture, deletePicture, parseImageSize, pictureTextWarnings, type PictureEntity } from "../model/pictures.ts";
-import { addPrsFigure, updatePrsFigure, deletePrsFigure, setPrsSettings, setWallDecorAnchor, prsFigureLabel } from "../model/projections.ts";
+import { addPrsFigure, updatePrsFigure, deletePrsFigure, setPrsSettings, setWallDecorAnchor, prsFigureLabel, prsFigurePublic } from "../model/projections.ts";
 import { socketCatalogType } from "../model/electric.ts";
 import { uploadPicture } from "../api.ts";
 import { PICTURE_MAX_BYTES } from "../limits.ts";
@@ -3553,9 +3553,9 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       {
         room: z.string().min(1).describe("комната (метка R<n> из model_get или id сайта)"),
         hidden: z.boolean().optional().describe("скрыть все развёртки комнаты (true) / показать (false)"),
-        first_wall: z.union([z.string().min(1), z.null()]).optional().describe("стена ребра «первой» развёртки (id сайта из model_get); null — авто"),
-        hide_walls: z.array(z.string().min(1)).max(50).optional().describe("стены рёбер, чьи развёртки скрыть"),
-        show_walls: z.array(z.string().min(1)).max(50).optional().describe("стены рёбер, чьи развёртки показать"),
+        first_wall: z.union([z.string().min(1), z.null()]).optional().describe("стена ребра «первой» развёртки (метка W<n> или id сайта из model_get); null — авто"),
+        hide_walls: z.array(z.string().min(1)).max(50).optional().describe("стены рёбер, чьи развёртки скрыть (метка W<n> или id сайта)"),
+        show_walls: z.array(z.string().min(1)).max(50).optional().describe("стены рёбер, чьи развёртки показать (метка W<n> или id сайта)"),
       },
       async (a) => {
         const ws = wsOf();
@@ -3572,12 +3572,14 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     wall_molding_add: tool(
       "Добавить настенный молдинг на развёртку (лист «Развёртки»): стена ребра развёртки, " +
         "позиция центра от начала развёртки (along_mm) и от низа (bottom_mm), размеры. При " +
-        "высоте ≤ 100 мм редактор делает тонкий вертикальный молдинг (wall_molding_slim, " +
-        "толщина width_line_mm), при ширине ≤ 100 мм — горизонтальный (wall_molding_slim_h). " +
-        "Не PRO (разметка бесплатного тарифа). После добавления вызывайте model_validate и project_save.",
+        "высоте ≤ 100 мм редактор делает тонкий горизонтальный молдинг (wall_molding_slim, " +
+        "полоса во всю ширину толщиной width_line_mm — именно width_line задаёт высоту), " +
+        "при ширине ≤ 100 мм — вертикальный (wall_molding_slim_h, полоса во всю высоту " +
+        "толщиной width_line). Не PRO (разметка бесплатного тарифа). После добавления " +
+        "вызывайте model_validate и project_save.",
       {
         room: z.string().min(1).describe("комната (метка R<n> или id сайта)"),
-        wall: z.string().min(1).describe("стена ребра развёртки (id сайта из model_get)"),
+        wall: z.string().min(1).describe("стена ребра развёртки (метка W<n> или id сайта из model_get)"),
         along_mm: mmInt.describe("центр молдинга от начала развёртки (от начала линии ребра), мм"),
         bottom_mm: mmInt.describe("центр молдинга от низа развёртки (от пола), мм"),
         width_mm: mmInt.describe("ширина молдинга, мм"),
@@ -3595,7 +3597,8 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           heightMm: a["height_mm"] as number,
           widthLineMm: a["width_line_mm"] as number | undefined,
         }));
-        return ok({ molding_id: prsFigureLabel(ws.model, "wall_molding", rec.id), site_id: rec.id, type: rec.type, prs: rec.prs, hint: SCENARIO_HINT });
+        // major 5 ревью 390: ответ — в мм и формате model_get, формат редактора не протекает
+        return ok({ ...prsFigurePublic(ws.model, "wall_molding", rec, prsFigureLabel(ws.model, "wall_molding", rec.id)), hint: SCENARIO_HINT });
       },
     ),
 
@@ -3619,7 +3622,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           heightMm: a["height_mm"] as number | undefined,
           widthLineMm: a["width_line_mm"] as number | undefined,
         }));
-        return ok({ molding_id: prsFigureLabel(ws.model, "wall_molding", rec.id), site_id: rec.id, type: rec.type, prs: rec.prs, hint: SCENARIO_HINT });
+        return ok({ ...prsFigurePublic(ws.model, "wall_molding", rec, prsFigureLabel(ws.model, "wall_molding", rec.id)), hint: SCENARIO_HINT });
       },
     ),
 
@@ -3636,16 +3639,18 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     wall_niche_add: tool(
       "Добавить нишу на развёртку (лист «Развёртки»): стена ребра развёртки, позиция и размеры. " +
         "Ниша не может пересекать другую нишу той же развёртки и не ставится на стеклянные/реечные " +
-        "стены и балконы (как в редакторе). Не PRO (разметка бесплатного тарифа). После добавления " +
-        "вызывайте model_validate и project_save.",
+        "стены и балконы (как в редакторе). depth_mm — от 50 до min(800, толщина стены) мм " +
+        "(по умолчанию min(200, толщина стены)), как в редакторе (correctValue(t,5,min(80," +
+        "getWallDepth())) с предупреждением wall_depth_niche). Не PRO (разметка бесплатного тарифа). " +
+        "После добавления вызывайте model_validate и project_save.",
       {
         room: z.string().min(1).describe("комната (метка R<n> или id сайта)"),
-        wall: z.string().min(1).describe("стена ребра развёртки (id сайта из model_get)"),
+        wall: z.string().min(1).describe("стена ребра развёртки (метка W<n> или id сайта из model_get)"),
         along_mm: mmInt.describe("центр ниши от начала развёртки, мм"),
         bottom_mm: mmInt.describe("центр ниши от низа развёртки (от пола), мм"),
         width_mm: mmInt.describe("ширина ниши, мм (минимум 100)"),
         height_mm: mmInt.describe("высота ниши, мм (минимум 100)"),
-        depth_mm: mmInt.optional().describe("глубина ниши, мм (по умолчанию 200)"),
+        depth_mm: mmInt.optional().describe("глубина ниши, мм: от 50 до min(800, толщина стены); по умолчанию min(200, толщина стены)"),
       },
       async (a) => {
         const ws = wsOf();
@@ -3658,7 +3663,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           heightMm: a["height_mm"] as number,
           depthMm: a["depth_mm"] as number | undefined,
         }));
-        return ok({ niche_id: prsFigureLabel(ws.model, "wall_niche", rec.id), site_id: rec.id, type: rec.type, prs: rec.prs, hint: SCENARIO_HINT });
+        return ok({ ...prsFigurePublic(ws.model, "wall_niche", rec, prsFigureLabel(ws.model, "wall_niche", rec.id)), hint: SCENARIO_HINT });
       },
     ),
 
@@ -3670,7 +3675,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         bottom_mm: mmInt.optional(),
         width_mm: mmInt.optional(),
         height_mm: mmInt.optional(),
-        depth_mm: mmInt.optional(),
+        depth_mm: mmInt.optional().describe("глубина ниши, мм: от 50 до min(800, толщина стены)"),
       },
       async (a) => {
         const ws = wsOf();
@@ -3681,7 +3686,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           heightMm: a["height_mm"] as number | undefined,
           depthMm: a["depth_mm"] as number | undefined,
         }));
-        return ok({ niche_id: prsFigureLabel(ws.model, "wall_niche", rec.id), site_id: rec.id, type: rec.type, prs: rec.prs, hint: SCENARIO_HINT });
+        return ok({ ...prsFigurePublic(ws.model, "wall_niche", rec, prsFigureLabel(ws.model, "wall_niche", rec.id)), hint: SCENARIO_HINT });
       },
     ),
 
@@ -3698,14 +3703,18 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     finish_wall_anchor_set: tool(
       "Точка начала укладки отделки стены (лист «Развёртки», режим 2, инструмент " +
         "«Точка начала укладки»): ребро стены с отделкой (finish_wall_set), позиция точки — " +
-        "along_mm от начала развёртки ребра и height_mm от пола. Угол раскладки сбрасывается " +
-        "в 0 (у реек wall_woodbatten — 90), как в редакторе. НЕ PRO (в отличие от точки укладки " +
-        "пола anchor_floor). После изменения вызывайте model_validate и project_save.",
+        "along_mm от начала развёртки ребра и height_mm от пола. Точка ставится в ОДНУ часть " +
+        "стороны: по умолчанию часть, содержащую точку (height_from_floor..+height из " +
+        "finish_get); при неоднозначности укажите layer. Угол раскладки сбрасывается в 0 " +
+        "(у реек wall_woodbatten — 90), custom_angle стирается — только у этой части, как в " +
+        "редакторе (anchor_decor). НЕ PRO (в отличие от точки укладки пола anchor_floor). " +
+        "После изменения вызывайте model_validate и project_save.",
       {
         room: z.string().min(1).describe("комната (метка R<n> или id сайта)"),
-        wall: z.string().min(1).describe("стена ребра с отделкой (id сайта из model_get)"),
+        wall: z.string().min(1).describe("стена ребра с отделкой (метка W<n> или id сайта из model_get)"),
         along_mm: mmInt.describe("точка от начала развёртки ребра, мм"),
         height_mm: mmInt.describe("точка от низа развёртки (от пола), мм"),
+        layer: z.number().finite().int().min(1).optional().describe("слой части отделки (layer из finish_get); по умолчанию — часть, содержащая точку"),
       },
       async (a) => {
         const ws = wsOf();
@@ -3714,8 +3723,18 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           wall: a["wall"] as string,
           alongMm: a["along_mm"] as number,
           heightMm: a["height_mm"] as number,
+          layer: a["layer"] as number | undefined,
         }));
-        return ok({ ...res, hint: SCENARIO_HINT });
+        // major 5 ревью 390: ответ — в мм (формат редактора: см, p/pc-структуры — не протекает)
+        return ok({
+          edge: res.edge,
+          along_mm: a["along_mm"],
+          height_mm: a["height_mm"],
+          part: res.part ?? null,
+          layer: res.layer,
+          angle: res.angle,
+          hint: SCENARIO_HINT,
+        });
       },
     ),
 

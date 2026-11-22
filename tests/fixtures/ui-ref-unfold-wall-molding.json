@@ -1,15 +1,15 @@
 {
-  "_source": "синтетический эталон по сериализации WallMolding бандла (этап 389, 268-app.js: serialize {id, type, pc, width, height, plan, plan_, prs, width_line, on_size}); координаты/размеры — условные, ПДн нет",
+  "_source": "синтетический эталон по сериализации WallMolding бандла (этап 389, 268-app.js: serialize {id, type, pc, width, height, plan, plan_, prs, width_line, on_size}; этап 391 — форма slim по draw бандла: height<=10 → type=wall_molding_slim, height=width_line); координаты/размеры — условные, ПДн нет",
   "wall_moldings": {
     "id1": {
       "id": "id1",
-      "type": "wall_molding",
+      "type": "wall_molding_slim",
       "pc": {
         "x": 120.5,
         "y": 300
       },
       "width": 60,
-      "height": 3,
+      "height": 4,
       "plan": "projections",
       "plan_": "projections",
       "prs": {

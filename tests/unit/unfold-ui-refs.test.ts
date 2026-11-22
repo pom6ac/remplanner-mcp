@@ -65,7 +65,10 @@ test("389: эталон молдинга развёртки проходит и�
   const dict = MOLDING["wall_moldings"] as AnyRec;
   const m = parseModelImport({ ...baseModel(), wall_moldings: dict }) as Model;
   const rec = resolvePrsFigure(m, "wall_molding", "id1");
-  assert.equal(rec.type, "wall_molding");
+  // форма slim — по draw бандла (height<=10 → type=wall_molding_slim, height=width_line);
+  // эталон исправлен по ревью 390 №13 (type:"wall_molding" при height:3 противоречил draw)
+  assert.equal(rec.type, "wall_molding_slim");
+  assert.equal(rec.height, rec.width_line);
   assert.equal(rec.width_line, 4);
   assert.equal(rec.on_size, 1);
   assert.equal((rec.prs as AnyRec)["room"], "id2");
@@ -102,7 +105,8 @@ test("389: wall_molding_add — pc в рамке развёрток, prs.pc_xd/p
   assert.deepEqual(rec.pc, { x: 120, y: 180 });
   assert.deepEqual(rec.prs, { room: "roomA", edge_index: 0, pc_xd: 100, pc_yd: 150 });
   assert.equal(rec.width, 60);
-  assert.equal(rec.height, 3);
+  // height ≤ 10 см → slim: height = width_line (draw бандла, major 3 ревью 390)
+  assert.equal(rec.height, rec.width_line);
   assert.equal(rec.width_line, PRS_MOLDING_WIDTH_LINE_CM);
   assert.equal(rec.plan, "projections");
   assert.equal(rec.on_size, 1);
@@ -122,6 +126,24 @@ test("389: slim-типы молдинга — как в draw бандла", () =
   assert.equal(normal.type, "wall_molding");
 });
 
+test("391 major 3: форма slim по draw бандла — slim: height=width_line, slim_h: width=width_line", () => {
+  const m = baseModel();
+  // height_mm=100 → редактор (draw) переписал бы height в width_line (4 см)
+  const slim = addPrsFigure(m, "wall_molding", { room: "R1", wall: "w1", alongMm: 500, bottomMm: 500, widthMm: 400, heightMm: 100 });
+  assert.equal(slim.type, "wall_molding_slim");
+  assert.equal(slim.height, slim.width_line, "height == width_line (draw бандла)");
+  assert.equal(slim.width, 40, "width — пользовательская");
+  // slim_h: ширина = толщине линии
+  const slimH = addPrsFigure(m, "wall_molding", { room: "R1", wall: "w1", alongMm: 500, bottomMm: 500, widthMm: 100, heightMm: 300, widthLineMm: 60 });
+  assert.equal(slimH.type, "wall_molding_slim_h");
+  assert.equal(slimH.width, slimH.width_line, "width == width_line (draw бандла)");
+  assert.equal(slimH.height, 30, "height — пользовательская");
+  // update пересчитывает форму тоже
+  const upd = updatePrsFigure(m, "wall_molding", "WM1", { widthMm: 500, heightMm: 100 });
+  assert.equal(upd.type, "wall_molding_slim");
+  assert.equal(upd.height, upd.width_line);
+});
+
 test("389: ниша — depth default 20, минимум 10×10 см, пересечение и стеклянная стена", () => {
   const m = baseModel();
   const rec = addPrsFigure(m, "wall_niche", { room: "R1", wall: "w3", alongMm: 2000, bottomMm: 1000, widthMm: 800, heightMm: 1200 });
@@ -139,6 +161,40 @@ test("389: ниша — depth default 20, минимум 10×10 см, перес
   assert.throws(() =>
     addPrsFigure(m, "wall_niche", { room: "R1", wall: "w3", alongMm: 2000, bottomMm: 1000, widthMm: 50, heightMm: 1200 }),
   );
+});
+
+test("391 major 4: глубина ниши ≤ min(толщина стены, 80 см) — как в редакторе (draw/menu)", () => {
+  const m = baseModel();
+  // тонкая стена w1 — толщина 10 см
+  ((m.walls as AnyRec)["w1"] as AnyRec)["depth"] = 10;
+  // default = min(200, толщина стены 100 мм) = 100 мм (draw: depth=min(20,getWallDepth(),80))
+  const n1 = addPrsFigure(m, "wall_niche", { room: "R1", wall: "w1", alongMm: 1000, bottomMm: 1200, widthMm: 400, heightMm: 400 });
+  assert.equal(n1.depth, 10, `default на стене 10 см: min(20,10,80)=${String(n1.depth)}`);
+  // вход больше предела — INVALID_ARGUMENT (меню: correctValue(t,5,min(80,getWallDepth())))
+  assert.throws(() =>
+    addPrsFigure(m, "wall_niche", { room: "R1", wall: "w1", alongMm: 2500, bottomMm: 1200, widthMm: 400, heightMm: 400, depthMm: 1000 }),
+  );
+  // на стене 20 см глубина ограничена толщиной (меню: min(80, getWallDepth()=20))
+  const n2 = addPrsFigure(m, "wall_niche", { room: "R1", wall: "w3", alongMm: 2000, bottomMm: 1000, widthMm: 800, heightMm: 1200, depthMm: 200 });
+  assert.equal(n2.depth, 20);
+  assert.throws(() =>
+    addPrsFigure(m, "wall_niche", { room: "R1", wall: "w3", alongMm: 2000, bottomMm: 1000, widthMm: 800, heightMm: 1200, depthMm: 210 }),
+  );
+  // меньше 50 мм — отказ (correctValue(t,5,…))
+  assert.throws(() =>
+    addPrsFigure(m, "wall_niche", { room: "R1", wall: "w3", alongMm: 2000, bottomMm: 2600, widthMm: 800, heightMm: 20, depthMm: 40 }),
+  );
+  // update: тот же предел
+  assert.throws(() => updatePrsFigure(m, "wall_niche", "WN1", { depthMm: 1000 }));
+  // сторона e/s ребра — глубина ограничена длиной стены (get_wall_depth: side e/s → длина),
+  // default min(20, длина 400, 80)=20; вход до 800 мм принимается
+  const m2 = baseModel();
+  const room = (m2.rooms2 as AnyRec)["roomA"] as AnyRec;
+  ((room["edges"] as AnyRec[])[0] as AnyRec)["side"] = "s";
+  const n3 = addPrsFigure(m2, "wall_niche", { room: "R1", wall: "w1", alongMm: 1000, bottomMm: 1200, widthMm: 400, heightMm: 400 });
+  assert.equal(n3.depth, PRS_NICHE_DEPTH_CM, "сторона e/s: default min(20, длина 400, 80) = 20");
+  const n4 = addPrsFigure(m2, "wall_niche", { room: "R1", wall: "w1", alongMm: 2500, bottomMm: 1200, widthMm: 400, heightMm: 400, depthMm: 800 });
+  assert.equal(n4.depth, 80, "сторона e/s: до 800 мм принимается (длина стены 400 см > 80)");
 });
 
 test("389: фигура целиком в развёртке — выход за границы отклоняется", () => {
@@ -188,7 +244,7 @@ test("389: prs_set — скрыть/показать все, одну; назн�
   const m = baseModel();
   let st = setPrsSettings(m, "R1", { hidden: true });
   assert.equal(st.hidden, true);
-  assert.deepEqual(st.disabledEdges, [0, 1, 2, 3]);
+  assert.deepEqual(st.disabled_edges, [0, 1, 2, 3]);
   const room = (m.rooms2 as AnyRec)["roomA"] as AnyRec;
   assert.equal(room["prs_hidden"], 1);
   assert.deepEqual(Object.keys(room["prs_disabled"] as AnyRec).sort(), ["oid1", "oid2", "oid3", "oid4"]);
@@ -198,7 +254,7 @@ test("389: prs_set — скрыть/показать все, одну; назн�
   // скрыть одну развёртку (w2) — prs_hidden сбрасывается в 0 (обработчик visibility)
   st = setPrsSettings(m, "R1", { hideWalls: ["w2"] });
   assert.equal(room["prs_hidden"], 0);
-  assert.deepEqual(st.disabledEdges, [1]);
+  assert.deepEqual(st.disabled_edges, [1]);
   assert.deepEqual(prsDisabledEdges(room as never), new Set([1]));
   // скрытая развёртка не назначается первой
   assert.throws(() => setPrsSettings(m, "R1", { firstWall: "w2" }));
@@ -211,6 +267,30 @@ test("389: prs_set — скрыть/показать все, одну; назн�
   assert.equal(prsFirstEdge(room as never), null);
   // не граничащая стена — отказ
   assert.throws(() => setPrsSettings(m, "R1", { hideWalls: ["wX"] }));
+});
+
+test("391 minor 6: скрытие всех развёрток по одной ставит prs_hidden=1 (visibility бандла)", () => {
+  const m = baseModel();
+  const room = (m.rooms2 as AnyRec)["roomA"] as AnyRec;
+  const st = setPrsSettings(m, "R1", { hideWalls: ["w1", "w2", "w3", "w4"] });
+  assert.equal(room["prs_hidden"], 1, "все не-короткие скрыты по одной → prs_hidden=1");
+  assert.equal(st.hidden, true);
+  // показать одну — prs_hidden обратно 0
+  setPrsSettings(m, "R1", { showWalls: ["w1"] });
+  assert.equal(room["prs_hidden"], 0);
+});
+
+test("391 minor 7: метка W<n> принимается во входе wall (общий резолвер стен)", () => {
+  const m = baseModel();
+  const rec = addPrsFigure(m, "wall_molding", { room: "R1", wall: "W1", alongMm: 1500, bottomMm: 1200, widthMm: 800, heightMm: 300 });
+  assert.equal((rec.prs as AnyRec)["room"], "roomA");
+  assert.equal((rec.prs as AnyRec)["edge_index"], 0);
+  // prs_set и anchor тоже принимают W<n>
+  const st = setPrsSettings(m, "R1", { firstWall: "W2" });
+  assert.equal(st.first_edge, 1);
+  const m2 = withDecor(baseModel());
+  const res = setWallDecorAnchor(m2, { room: "R1", wall: "W1", alongMm: 1000, heightMm: 500 });
+  assert.equal(res.edge, 0);
 });
 
 test("389: prsStateOf читает состояние (модель редактора после save)", () => {
@@ -365,6 +445,145 @@ test("389: Workspace — normalize уронил нишу → NORMALIZATION_DROPP
   await assert.rejects(() => ws.save(), (e: { code?: string }) => e.code === "NORMALIZATION_DROPPED");
 });
 
+// ---------- 391 major 1: затронутость молдингов/ниш при wall-операциях ----------
+
+/**
+ * Мок normalize для wall-операций (поведение редактора по бандлу):
+ *  - dropFigures: комната исчезла (контур разомкнут wall_delete) → Room.delete
+ *    удаляет WALL_MOLDINGS/WALL_NICHES комнаты;
+ *  - keepDangling: фигуры остаются с висячим prs.room (restorePrsChangeEdges
+ *    не переносит непоместившуюся фигуру);
+ *  - recut: wall_split-подобная смена нарезки — комната сохранена, число рёбер
+ *    выросло, prs_first/prs_disabled сброшены (restorePrsChangeEdges), фигура
+ *    получила edge_index вне диапазона → сигнал 43 (перенос на последнюю линию).
+ */
+function wsWallDeps(
+  server: { saveId: string; model: Model },
+  mode: "drop-figures" | "keep-dangling" | "recut",
+) {
+  let lastNormalized: Record<string, unknown> | null = null;
+  const editor = {
+    objectId: "123", planId: "1",
+    async normalize(model: unknown) {
+      const out = structuredClone(model) as AnyRec;
+      const walls = out["walls"] as AnyRec;
+      const rooms = (out["rooms2"] ?? {}) as AnyRec;
+      if (!walls["w1"]) {
+        // контур разомкнут — комната исчезает
+        if (rooms["roomA"]) {
+          delete rooms["roomA"];
+          if (mode === "drop-figures") {
+            for (const c of ["wall_moldings", "wall_niches"]) {
+              const coll = (out[c] ?? {}) as AnyRec;
+              for (const [k, v] of Object.entries(coll)) if (((v as AnyRec)["prs"] as AnyRec)?.["room"] === "roomA") delete coll[k];
+            }
+          }
+        }
+      }
+      const w1rec = walls["w1"] as AnyRec | undefined;
+      if (mode === "recut" && w1rec && (((w1rec["p1"] ?? {}) as AnyRec)["y"] as number | undefined ?? 0) > 1) {
+        // стена w1 подвинута: редактор пересчитал комнаты — id сменился,
+        // нарезка выросла, настройки prs сброшены, фигура уехала на последнюю линию
+        if (rooms["roomA"]) {
+          rooms["roomB"] = rooms["roomA"];
+          delete rooms["roomA"];
+          const roomB = rooms["roomB"] as AnyRec;
+          roomB["edges_prs"] = [
+            ...(roomB["edges_prs"] as AnyRec[]),
+            { edge_index: 4, p1: { x: 0, y: 0 }, p2: { x: 10, y: 0 }, oid: "oid5", pillars: [] },
+          ];
+          roomB["prs_first"] = 0;
+          roomB["prs_disabled"] = {};
+          for (const c of ["wall_moldings", "wall_niches"]) {
+            for (const v of Object.values((out[c] ?? {}) as AnyRec)) {
+              const prs = (v as AnyRec)["prs"] as AnyRec;
+              if (prs?.["room"] === "roomA") prs["room"] = "roomB";
+              // restorePrsChangeEdges перенёс фигуру на совпавшую по геометрии
+              // линию с новой нумерацией (последняя) — edge_index сменился
+              if (prs && typeof prs["edge_index"] === "number") prs["edge_index"] = 4;
+            }
+          }
+        }
+      }
+      lastNormalized = out;
+      return { model: out, rooms: [], walls: [], before: { walls: 4, holes: 0, items: 0 }, after: { walls: 4, holes: 0, items: 0 } };
+    },
+    async save() {
+      server.saveId = `s${Math.random()}`;
+      server.model = structuredClone(lastNormalized ?? server.model) as unknown as Model;
+      return { ok: true, saveId: server.saveId, conflict: false };
+    },
+    async renderPng() { return Buffer.from(""); },
+    async compatInfo() { throw new Error("not used"); },
+    async close() {},
+  };
+  return {
+    session: { cookies: [] },
+    async loadModel() { return { object_id: "123", plan_id: "1", save_id: server.saveId, units: "cm", model: structuredClone(server.model) as unknown as AnyRec }; },
+    async openEditor() { return editor; },
+  } as unknown as import("../../src/workspace.ts").WorkspaceDeps;
+}
+
+test("391 major 1: wall_delete с молдингом — предупреждение о потере (Room.delete редактора)", async () => {
+  const server = { saveId: "s1", model: wsFixture() };
+  const ws = new Workspace(wsWallDeps(server, "drop-figures") as never);
+  await ws.open("123", "1");
+  ws.apply("wall_molding_add", (m) => addPrsFigure(m, "wall_molding", { room: "R1", wall: "w2", alongMm: 1500, bottomMm: 1200, widthMm: 800, heightMm: 300 }));
+  const { warnings } = await ws.applyWalls("wall_delete", (m) => { delete m.walls["w1"]; return true; });
+  assert.ok(warnings.some((w) => /молдинг развёртки/.test(w)), `предупреждение о фигуре: ${JSON.stringify(warnings)}`);
+  assert.equal(Object.keys(ws.model.wall_moldings ?? {}).length, 0, "молдинг удалён редактором");
+  const res = await ws.save();
+  assert.equal(res.verified, true, `save verified, warnings: ${JSON.stringify(res.warnings)}`);
+});
+
+test("391 major 1: wall_delete с висячим prs.room — каскад как Room.delete, verified=true", async () => {
+  const server = { saveId: "s1", model: wsFixture() };
+  const ws = new Workspace(wsWallDeps(server, "keep-dangling") as never);
+  await ws.open("123", "1");
+  ws.apply("wall_niche_add", (m) => addPrsFigure(m, "wall_niche", { room: "R1", wall: "w2", alongMm: 1500, bottomMm: 1200, widthMm: 800, heightMm: 300 }));
+  const { warnings } = await ws.applyWalls("wall_delete", (m) => { delete m.walls["w1"]; return true; });
+  assert.ok(warnings.some((w) => /ниша развёртки.*удал|висяч/.test(w) || /висячая ссылка/.test(w)), `предупреждение о каскаде: ${JSON.stringify(warnings)}`);
+  assert.equal(Object.keys(ws.model.wall_niches ?? {}).length, 0, "висячая запись удалена каскадом");
+  const res = await ws.save();
+  assert.equal(res.verified, true, `save verified (без каскада — NORMALIZATION_DROPPED «лишняя запись»), warnings: ${JSON.stringify(res.warnings)}`);
+});
+
+test("391 major 1: wall_move — фигура переживает (id комнаты сменился), потери нет; перенос ребра — предупреждение (сигнал 43)", async () => {
+  const server = { saveId: "s1", model: wsFixture() };
+  const ws = new Workspace(wsWallDeps(server, "recut") as never);
+  await ws.open("123", "1");
+  ws.apply("prs_set", (m) => setPrsSettings(m, "R1", { hideWalls: ["w2"], firstWall: "w3" }));
+  ws.apply("wall_molding_add", (m) => addPrsFigure(m, "wall_molding", { room: "R1", wall: "w2", alongMm: 1500, bottomMm: 1200, widthMm: 800, heightMm: 300 }));
+  const { warnings } = await ws.applyWalls("wall_move", (m) => {
+    const w1 = m.walls["w1"]!;
+    w1.p1 = { x: w1.p1.x, y: w1.p1.y + 20 };
+    w1.p2 = { x: w1.p2.x, y: w1.p2.y + 20 };
+    return true;
+  });
+  assert.ok(warnings.some((w) => /на другую развёртку|сигнал 43/.test(w)), `предупреждение о переносе: ${JSON.stringify(warnings)}`);
+  assert.ok(warnings.some((w) => /настройки развёрток комнаты .* сброшены/.test(w)), `предупреждение о сбросе prs (minor 14): ${JSON.stringify(warnings)}`);
+  // фигура пережила: комната сменила id, ссылка обновлена редактором
+  const molds = Object.values(ws.model.wall_moldings ?? {}) as AnyRec[];
+  assert.equal(molds.length, 1);
+  assert.equal((molds[0]!["prs"] as AnyRec)["room"], "roomB", "ссылка на комнату обновлена редактором");
+  const res = await ws.save();
+  assert.equal(res.verified, true, `save verified, warnings: ${JSON.stringify(res.warnings)}`);
+});
+
+test("391 major 1: фигура на незатронутой стене — предупреждений о развёртках нет", async () => {
+  const server = { saveId: "s1", model: wsFixture() };
+  const ws = new Workspace(wsWallDeps(server, "drop-figures") as never);
+  await ws.open("123", "1");
+  ws.apply("wall_molding_add", (m) => addPrsFigure(m, "wall_molding", { room: "R1", wall: "w2", alongMm: 1500, bottomMm: 1200, widthMm: 800, heightMm: 300 }));
+  const { warnings } = await ws.applyWalls("wall_move", (m) => {
+    const w1 = m.walls["w1"]!;
+    w1.p1 = { x: w1.p1.x, y: w1.p1.y + 20 };
+    w1.p2 = { x: w1.p2.x, y: w1.p2.y + 20 };
+    return true;
+  });
+  assert.ok(!warnings.some((w) => /молдинг развёртки/.test(w)), `без ложных предупреждений: ${JSON.stringify(warnings)}`);
+});
+
 // ---------- точка укладки плитки на стене (anchor_decor) ----------
 
 import { setWallDecorAnchor } from "../../src/model/projections.ts";
@@ -386,12 +605,49 @@ test("389: точка укладки отделки стены — anchor/angle/
   const res = setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 500 });
   assert.equal(res.edge, 0);
   const part = ((((m.rooms2 as AnyRec)["roomA"] as AnyRec)["decors"] as AnyRec[])[0]!["parts"] as AnyRec)["p1"] as AnyRec;
-  assert.deepEqual(part["anchor"], { p: { x: 120, y: 250 }, pc_xd: 100, pc_yd: 220 });
+  // pc_yd — от yMin полигона ЧАСТИ (бандл: new Polygon(WALL_DECORS[a.id].polygon));
+  // часть 0..250 см: yMin = 30+270−250 = 50 → pc_yd = (300−50) − 50 = 200
+  assert.deepEqual(part["anchor"], { p: { x: 120, y: 250 }, pc_xd: 100, pc_yd: 200 });
   assert.equal(part["angle"], 0);
   assert.equal("custom_angle" in part, false);
   // вне развёртки — отказ; без отделки — отказ
   assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 99999, heightMm: 500 }));
   assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w3", alongMm: 500, heightMm: 500 }));
+});
+
+test("391 major 2: точка ставится только в часть, содержащую точку; pc_yd от части; остальные части не тронуты", () => {
+  const m = baseModel();
+  const room = (m.rooms2 as AnyRec)["roomA"] as AnyRec;
+  room["decors"] = [
+    { exist: true, parts: {
+      p1: { id: "p1", type: "wall_tile", layer: 1, height_from_floor: 0, height: 120, angle: 0 },
+      p2: { id: "p2", type: "wall_tile", layer: 1, height_from_floor: 120, height: 0, angle: 45, custom_angle: 45 },
+    } },
+    { exist: false }, { exist: false }, { exist: false },
+  ];
+  // точка 50 см от пола — в части p1 (0..120); редактор: pc_yd = (300−50) − (300−120) = 70
+  const res = setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 500 });
+  const parts = ((room["decors"] as AnyRec[])[0]!["parts"]) as Record<string, AnyRec>;
+  const p1 = parts["p1"]! as AnyRec;
+  const p2 = parts["p2"]! as AnyRec;
+  assert.equal((p1["anchor"] as AnyRec)["pc_yd"], 70, "pc_yd от полигона части p1");
+  assert.equal(res.part, "p1");
+  assert.equal(res.angle, 0);
+  // p2 не тронута: angle 45 и custom_angle сохранены, якоря нет
+  assert.equal(p2["angle"], 45, "angle другой части не сброшен");
+  assert.equal(p2["custom_angle"], 45, "custom_angle другой части не стёрт");
+  assert.equal("anchor" in p2, false, "якорь не ставится в другую часть");
+  // точка в части p2 (выше 120) — по layer
+  const res2 = setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 1500, layer: 1 });
+  assert.equal(res2.part, "p2");
+  const p2b = (((((m.rooms2 as AnyRec)["roomA"] as AnyRec)["decors"] as AnyRec[])[0]!["parts"] as AnyRec)["p2"]) as AnyRec;
+  // p2: 120..270 (height 0 → до верха): pc_yd = (300−150) − (300−270) = 120
+  assert.equal((p2b["anchor"] as AnyRec)["pc_yd"], 120);
+  assert.equal("custom_angle" in p2b, false, "custom_angle стёрт у целевой части");
+  // без layer и точка на границе двух частей (120 см) — отказ с перечнем слоёв
+  assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 1200 }), /layer/);
+  // неизвестный layer — отказ
+  assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 500, layer: 7 }), /layer/);
 });
 
 test("389: сверка точки укладки — изменение и потеря ловятся, без изменений — пусто", () => {

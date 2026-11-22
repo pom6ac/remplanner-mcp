@@ -591,14 +591,18 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
   const figuresNorm = figureUserMismatches((host.model().free_figures ?? {}) as Record<string, never>, (norm.model as Record<string, unknown>)["free_figures"] as Record<string, never> | undefined ?? {});
   const picturesNorm = pictureUserMismatches((host.model().pictures ?? {}) as Record<string, never>, (norm.model as Record<string, unknown>)["pictures"] as Record<string, never> | undefined ?? {});
   // этап 389: развёртки до save — локальная копия против normalize
+  const prsRoomsOf = (m: Model): Record<string, Record<string, unknown>> | undefined =>
+    ((m as Record<string, unknown>)["rooms2"] ?? (m as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined;
+  const prsCollOf = (m: Model, key: string): Record<string, never> =>
+    (((m as Record<string, unknown>)[key] ?? {}) as Record<string, never>);
   const moldingsNorm = prsFigureUserMismatches(
-    { rooms: (host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, coll: (host.model().wall_moldings ?? {}) as Record<string, never> as Record<string, never> as never as Record<string, never> & { } } as { rooms?: Record<string, Record<string, unknown>>; coll?: Record<string, never> },
-    { rooms: ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined, coll: ((norm.model as Record<string, unknown>)["wall_moldings"] ?? {}) as Record<string, never> },
+    { rooms: prsRoomsOf(host.model()), coll: prsCollOf(host.model(), "wall_moldings") },
+    { rooms: prsRoomsOf(norm.model as Model), coll: prsCollOf(norm.model as Model, "wall_moldings") },
     "молдинг развёртки",
   );
   const nichesNorm = prsFigureUserMismatches(
-    { rooms: (host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, coll: (host.model().wall_niches ?? {}) as Record<string, never> },
-    { rooms: ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined, coll: ((norm.model as Record<string, unknown>)["wall_niches"] ?? {}) as Record<string, never> },
+    { rooms: prsRoomsOf(host.model()), coll: prsCollOf(host.model(), "wall_niches") },
+    { rooms: prsRoomsOf(norm.model as Model), coll: prsCollOf(norm.model as Model, "wall_niches") },
     "ниша развёртки",
   );
   const prsNorm = prsSettingsMismatches((host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined);
@@ -1009,7 +1013,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
           picture_mismatches: picturesAfter,
           wall_molding_mismatches: moldingsAfter,
           wall_niche_mismatches: nichesAfter,
-          prs_mismatches: prsAfter,
+        prs_mismatches: prsAfter,
         wall_anchor_mismatches: anchorAfter,
           ...Object.fromEntries(elecAfter.flatMap((e) => [
             [`${e.coll}_mismatches`, e.graph],

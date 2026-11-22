@@ -23,6 +23,7 @@ import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmat
 import { dist } from "./model/geometry.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { finishCompare, finishLossHint, matchRoomsByContour, roomHeirs } from "./model/finish.ts";
+import { prsFiguresAffectedByWalls, prsSettingsResetWarnings } from "./model/projections.ts";
 import { zoneDelimiterCompare, roomsWithChangedZoneCDividers, resurrectedZoneCDividers } from "./model/zone.ts";
 import { ceilingRigelCompare } from "./model/ceiling-rigels.ts";
 import { warmWallsCompare } from "./verify/warmwall.ts";
@@ -768,6 +769,23 @@ export class Workspace {
       warnings.push(...zoneResurrected.warnings);
       warnings.push(...warmNorm.warnings);
       warnings.push(...ceilingRigelNorm.warnings);
+      // этап 391 (major 1 ревью 390): молдинги/ниши развёрток при операциях со
+      // стенами. Редактор при перестройке комнат удаляет фигуры исчезнувшей
+      // комнаты (Room.delete), переносит фигуры по геометрии рёбер
+      // (restorePrsChangeEdges; не поместившуюся фигуру не переносит), при
+      // edge_index вне диапазона — на последнюю линию (сигнал 43). MCP сверяет
+      // фигуры «до → после» по id: потеря/перенос — видимое предупреждение,
+      // висячий prs.room (комнаты нет после операции) — каскад как в Room.delete.
+      const prsAffected = prsFiguresAffectedByWalls(this.modelInternal!, norm.model as Model);
+      for (const d of prsAffected.dangling) {
+        const coll = ((norm.model as Record<string, unknown>)[d.kind === "wall_molding" ? "wall_moldings" : "wall_niches"] ?? {}) as Record<string, unknown>;
+        delete coll[d.id];
+        warnings.push(`${d.kind === "wall_molding" ? "молдинг развёртки" : "ниша развёртки"} ${d.id} удалён(а): комната ${d.room} больше не существует после операции (висячая ссылка prs.room — каскад как Room.delete бандла)`);
+      }
+      warnings.push(...prsAffected.warnings);
+      // minor 14 ревью 390: сброс настроек развёрток (prs_first/prs_disabled)
+      // при смене нарезки рёбер редактором — без предупреждения терялся молча
+      warnings.push(...prsSettingsResetWarnings(this.modelInternal!, norm.model as Model));
       // ревью 335 M1: первый отказ, в который упирается агент (wall_delete при комнате
       // с отделкой, которая исчезает или сливается), называет конкретную причину и
       // порядок снятия отделки — из фактических расхождений, а не общим списком категорий

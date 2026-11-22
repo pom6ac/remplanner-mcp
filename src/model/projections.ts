@@ -25,12 +25,19 @@ import { resolveRoom, type RoomRec } from "./finish.ts";
  * Молдинги/ниши развёрток — коллекции wall_moldings/wall_niches
  * (WallMolding/WallNiche extends WallFigure, serialize — см. PrsFigureEntity).
  * Создание (drag по развёртке): тип wall_molding; при высоте ≤ 10 см редактор
- * ставит type="wall_molding_slim" (линия толщиной width_line), при ширине
- * ≤ 10 см — "wall_molding_slim_h" (draw, бандл @1374528); запись с width<10
- * или height<10 (slim — только по одному измерению) удаляется (end_draw,
- * минимум 10 см). Ниша: пересечение с другой нишей той же развёртки запрещено
- * (checkIntersectionNiches/dragend), на стеклянных/реечных стенах и балконах
- * рисовать нельзя (start_draw: a_glass/c_glass/c_bar/balcony). Габариты
+ * ставит type="wall_molding_slim" — тонкая ГОРИЗОНТАЛЬНАЯ полоса (draw бандла
+ * @1374528: "wall_molding_slim"===this.type?this.height=this.width_line:…),
+ * при ширине ≤ 10 см — "wall_molding_slim_h" — тонкая ВЕРТИКАЛЬНАЯ полоса
+ * (width=width_line); запись с width<10 или height<10 (slim — только по одному
+ * измерению) удаляется (end_draw, минимум 10 см). Ниша: пересечение с другой
+ * нишей той же развёртки запрещено (checkIntersectionNiches/dragend), на
+ * стеклянных/реечных стенах и балконах рисовать нельзя (start_draw:
+ * a_glass/c_glass/c_bar/balcony). Глубина ниши: конструктор 20, draw
+ * обрезает — depth=min(depth, getWallDepth(), 80) (get_wall_depth: сторона
+ * e/s ребра → длина стены, иначе толщина стены;pillar → min(height,width)),
+ * меню — correctValue(t,5,min(80,getWallDepth())) с предупреждением
+ * wall_depth_niche; при смене нарезки рёбер depth снова обрезается
+ * (restorePrsChangeEdges: N<_.depth&&(_.depth=N)). Габариты
  * развёртки: длина линии ребра, высота params.total_height (Projections.
  * getPolygon); фигура целиком внутри развёртки (клик-создание: углы полигона
  * GetPolygonBySize должны лежать в развёртке, бандл @1060442).
@@ -137,6 +144,21 @@ function edgeByWall(prsEdges: PrsEdge[], wallId: string): PrsEdge {
   return found[0]!;
 }
 
+/**
+ * Резолв ссылки на стену: id сайта или метка W<n> из model_get (порядок
+ * Object.values(model.walls), как в model_get) — minor 7 ревью 390. Неизвестная
+ * ссылка возвращается как есть — edgeByWall даст понятную ошибку.
+ */
+function wallRefToId(model: Model, ref: string): string {
+  if ((model.walls ?? {})[ref]) return ref;
+  const m = /^W(\d+)$/.exec(ref);
+  if (m) {
+    const w = Object.values(model.walls ?? {})[Number(m[1]) - 1];
+    if (w) return w.id;
+  }
+  return ref;
+}
+
 export type PrsSettings = {
   /** Скрыть все развёртки комнаты (prs_hidden=1 + prs_disabled=все oid) / показать (0, {}). */
   hidden?: boolean;
@@ -151,8 +173,10 @@ export type PrsSettings = {
 export type PrsSettingsResult = {
   room: string;
   hidden: boolean;
-  firstEdge: number | null;
-  disabledEdges: number[];
+  /** «Первая» развёртка — edge_index; null — авто (prs_first=0/пусто). */
+  first_edge: number | null;
+  /** Скрытые развёртки — набором edge_index. */
+  disabled_edges: number[];
 };
 
 /** Настройки развёрток комнаты (prs_hidden/prs_disabled/prs_first) — как в редакторе. */
@@ -163,6 +187,17 @@ export function setPrsSettings(model: Model, roomRef: string, params: PrsSetting
     throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет рёбер — развёрток нет`);
   }
   const disabled = prsDisabledEdges(room);
+  // isShortLine бандла: длина ≤ 10 см (defs.projection_line.length_min) и на
+  // линии нет items/sockets/waterspots/decors_finish — в модели развёртки эти
+  // счётчики не хранятся, короткость — по длине ребра (мажорный случай).
+  const nonShort = prsEdges.filter((e) => Math.hypot(e.p2.x - e.p1.x, e.p2.y - e.p1.y) > 10).length;
+  const hiddenAllIfAllHidden = (): void => {
+    // #menu_projection_sign [container="visibility"]: скрытие по одной —
+    // prs_hidden=1, когда не-коротких линий столько же, сколько ключей prs_disabled
+    const map = room["prs_disabled"];
+    const keys = map !== null && typeof map === "object" && !Array.isArray(map) ? Object.keys(map as Record<string, unknown>).length : 0;
+    if (keys > 0 && nonShort === keys) room["prs_hidden"] = 1;
+  };
   if (params.hidden !== undefined) {
     // #cm-room2 [container="prs_visibility"]: скрыть — prs_hidden=1 и ВСЕ oid
     // в prs_disabled; показать — prs_hidden=0 и prs_disabled={}
@@ -183,7 +218,7 @@ export function setPrsSettings(model: Model, roomRef: string, params: PrsSetting
       // авто-режим: updateLines берёт первую линию (prs_first=0)
       room["prs_first"] = 0;
     } else {
-      const e = edgeByWall(prsEdges, params.firstWall);
+      const e = edgeByWall(prsEdges, wallRefToId(model, params.firstWall));
       // знак уже «первой»/скрытой не назначается первой (обработчик set_first)
       if (disabled.has(e.edgeIndex)) {
         throw new McpError("INVALID_ARGUMENT", `развёртка стены ${params.firstWall} скрыта — сначала покажите её (show_walls)`);
@@ -195,12 +230,13 @@ export function setPrsSettings(model: Model, roomRef: string, params: PrsSetting
     const list = params[walls];
     if (!list) continue;
     for (const wallId of list) {
-      const e = edgeByWall(prsEdges, wallId);
+      const e = edgeByWall(prsEdges, wallRefToId(model, wallId));
       const map = (room["prs_disabled"] ??= {}) as Record<string, unknown>;
       if (hide) {
         map[e.oid] = "";
         room["prs_hidden"] = 0;
         disabled.add(e.edgeIndex);
+        hiddenAllIfAllHidden();
       } else {
         if (map && typeof map === "object" && !Array.isArray(map)) delete map[e.oid];
         room["prs_hidden"] = 0;
@@ -210,7 +246,7 @@ export function setPrsSettings(model: Model, roomRef: string, params: PrsSetting
   }
   const first = prsFirstEdge(room);
   const hiddenNow = num(room["prs_hidden"]) === 1;
-  return { room: id, hidden: hiddenNow, firstEdge: first, disabledEdges: [...disabled].sort((a, b) => a - b) };
+  return { room: id, hidden: hiddenNow, first_edge: first, disabled_edges: [...disabled].sort((a, b) => a - b) };
 }
 
 /** Состояние развёрток комнаты для compact (prs_*). */
@@ -235,6 +271,102 @@ export const PRS_NICHE_DEPTH_CM = 20;
 const NICHE_STOP_MATERIALS = new Set(["a_glass", "c_glass", "c_bar"]);
 
 export type PrsFigureKind = "wall_molding" | "wall_niche";
+
+const PRS_FIGURE_KINDS: readonly PrsFigureKind[] = ["wall_molding", "wall_niche"];
+
+/**
+ * Затронутость молдингов/ниш развёрток при операциях со стенами (этап 391,
+ * major 1 ревью 390) — сверка фигур «до → после normalize» по id (id редактор
+ * сохраняет: $Restorer восстанавливает WALL_MOLDINGS[D.id]).
+ *  - потеря (id нет после) — редактор удалил фигуру (Room.delete удаляет
+ *    фигуры комнаты: "for(A in WALL_MOLDINGS)…A.prs.room===this.id&&A.delete()")
+ *    или потерял при перестройке — видимое предупреждение с id;
+ *  - перенос на другое ребро — edge_index изменился: редактор переносит
+ *    фигуры по геометрии (restorePrsChangeEdges), а при edge_index вне
+ *    диапазона — на последнюю линию (signal 43) — предупреждение с id;
+ *  - висячая ссылка (prs.room не разрешается в комнаты после операции) —
+ *    каскадное удаление как в Room.delete (caller удаляет по списку).
+ */
+export type PrsFiguresAffected = {
+  warnings: string[];
+  /** Фигуры с висячим prs.room — удалить из нормализованной копии (каскад Room.delete). */
+  dangling: Array<{ kind: PrsFigureKind; id: string; room: string }>;
+};
+
+export function prsFiguresAffectedByWalls(before: Model, after: Model): PrsFiguresAffected {
+  const warnings: string[] = [];
+  const dangling: PrsFiguresAffected["dangling"] = [];
+  const roomsAfter = (after["rooms2"] ?? after["rooms1"] ?? {}) as Record<string, unknown>;
+  const labelOf = (kind: PrsFigureKind): string => (kind === "wall_molding" ? "молдинг развёртки" : "ниша развёртки");
+  const collAfter = (kind: PrsFigureKind): Record<string, unknown> =>
+    ((after as Record<string, unknown>)[kind === "wall_molding" ? "wall_moldings" : "wall_niches"] ?? {}) as Record<string, unknown>;
+  for (const kind of PRS_FIGURE_KINDS) {
+    const beforeColl = ((before as Record<string, unknown>)[kind === "wall_molding" ? "wall_moldings" : "wall_niches"] ?? {}) as Record<string, Record<string, unknown>>;
+    const afterColl = collAfter(kind);
+    for (const [id, rec] of Object.entries(beforeColl)) {
+      const next = afterColl[id] as Record<string, unknown> | undefined;
+      if (!next) {
+        warnings.push(`${labelOf(kind)} ${id} удалён(а) редактором при изменении стен (перестройка комнаты — Room.delete бандла)`);
+        continue;
+      }
+      const prs = (next["prs"] ?? {}) as Record<string, unknown>;
+      const roomId = typeof prs["room"] === "string" ? prs["room"] : "";
+      if (roomId !== "" && roomsAfter[roomId] === undefined) {
+        dangling.push({ kind, id, room: roomId });
+        continue;
+      }
+      const prevPrs = (rec["prs"] ?? {}) as Record<string, unknown>;
+      const prevEdge = typeof prevPrs["edge_index"] === "number" ? prevPrs["edge_index"] : null;
+      const nextEdge = typeof prs["edge_index"] === "number" ? prs["edge_index"] : null;
+      if (prevEdge !== null && nextEdge !== null && prevEdge !== nextEdge) {
+        warnings.push(`${labelOf(kind)} ${id} перенесён(а) редактором на другую развёртку (ребро ${String(prevEdge)} → ${String(nextEdge)}; сигнал 43 бандла «Изменение индекса элемента на развертках»)`);
+      }
+    }
+    for (const id of Object.keys(afterColl)) {
+      if (beforeColl[id] === undefined) {
+        warnings.push(`${labelOf(kind)} ${id} появился(ась) после нормализации, хотя не был(а) добавлен(а) — проверьте model_get`);
+      }
+    }
+  }
+  return { warnings, dangling };
+}
+
+/**
+ * Настройки развёрток комнат при смене нарезки рёбер редактор сбрасывает и
+ * переносит по геометрии (restorePrsChangeEdges обнуляет prs_first/prs_disabled)
+ * молча — предупреждение агенту (minor 14 ревью 390). Комнаты сопоставляются по
+ * каноническому контуру (id редактор пересоздаёт при перестройке комнат), без
+ * совпадения контура — по id; ненайденная комната пропускается (её судьба — в
+ * сверке комнат).
+ */
+export function prsSettingsResetWarnings(before: Model, after: Model): string[] {
+  const out: string[] = [];
+  const canonPoly = (poly: unknown): string => {
+    if (!Array.isArray(poly)) return "";
+    const pts = (poly as Array<{ x?: unknown; y?: unknown }>)
+      .filter((p) => typeof p?.x === "number" && typeof p?.y === "number")
+      .map((p) => ({ x: Math.round((p.x as number) * 10) / 10, y: Math.round((p.y as number) * 10) / 10 }));
+    return pts.length > 0 ? pts.map((p) => `${p.x},${p.y}`).join(";") : "";
+  };
+  const roomsB = ((before as Record<string, unknown>)["rooms2"] ?? (before as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, Record<string, unknown>>;
+  const roomsA = ((after as Record<string, unknown>)["rooms2"] ?? (after as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, Record<string, unknown>>;
+  const byContour = new Map<string, Record<string, unknown>>();
+  for (const ra of Object.values(roomsA)) byContour.set(canonPoly(ra["polygon"]), ra);
+  for (const [rid, rb] of Object.entries(roomsB)) {
+    const ra = byContour.get(canonPoly(rb["polygon"])) ?? roomsA[rid];
+    if (!ra) continue;
+    const edgesB = Array.isArray(rb["edges_prs"]) ? rb["edges_prs"].length : 0;
+    const edgesA = Array.isArray(ra["edges_prs"]) ? ra["edges_prs"].length : 0;
+    if (edgesB === edgesA || edgesB === 0) continue;
+    const hadFirst = typeof rb["prs_first"] === "string" && rb["prs_first"] !== "";
+    const disabled = rb["prs_disabled"];
+    const hadDisabled = disabled !== null && typeof disabled === "object" && !Array.isArray(disabled) && Object.keys(disabled as Record<string, unknown>).length > 0;
+    if (hadFirst || hadDisabled) {
+      out.push(`настройки развёрток комнаты ${rid} сброшены редактором при смене нарезки рёбер (restorePrsChangeEdges: prs_first/prs_disabled обнуляются и переносятся по геометрии)`);
+    }
+  }
+  return out;
+}
 
 export type PrsFigureParams = {
   room: string;
@@ -276,10 +408,33 @@ function prsFrame(room: RoomRec, target: PrsEdge): { x0: number; lengthCm: numbe
   throw new McpError("NOT_FOUND", `развёртка ребра ${target.edgeIndex} не найдена`);
 }
 
-function buildPrsFigure(model: Model, kind: PrsFigureKind, params: PrsFigureParams, id?: string): PrsFigureResult {
-  if (kind === "wall_niche" && params.depthMm !== undefined && (!Number.isFinite(params.depthMm) || params.depthMm <= 0 || params.depthMm > 1000)) {
-    throw new McpError("INVALID_ARGUMENT", "depth_mm — число от 0 до 1000");
+/**
+ * get_wall_depth бандла (wall_figure_helper): для ребра со стороной e/s
+ * (развертка смотрит на торец стены) — длина стены (округлённо, см); иначе —
+ * толщина стены. Рёбра с колонной (pillar) консервативно дают undefined.
+ */
+function wallDepthOfEdge(model: Model, room: RoomRec, target: PrsEdge): number | undefined {
+  const edges = Array.isArray(room.edges) ? (room.edges as Array<Record<string, unknown>>) : [];
+  const e = edges[target.edgeIndex];
+  if (!e) return undefined;
+  const sideBy = (pid: string): string | undefined => {
+    const pids = e["pids"] as Record<string, string> | undefined;
+    if (pids && typeof pids[pid] === "string") return pids[pid];
+    return typeof e["side"] === "string" ? (e["side"] as string) : undefined;
+  };
+  const pid = typeof e["pid"] === "string" ? (e["pid"] as string) : target.wallId ?? "";
+  const side = pid ? sideBy(pid) : undefined;
+  const wall = (model.walls ?? {})[target.wallId ?? ""];
+  if (!wall) return undefined;
+  if (side === "e" || side === "s") {
+    const p1 = wall.p1, p2 = wall.p2;
+    if (!p1 || !p2) return undefined;
+    return Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y));
   }
+  return typeof wall.depth === "number" && Number.isFinite(wall.depth) ? wall.depth : undefined;
+}
+
+function buildPrsFigure(model: Model, kind: PrsFigureKind, params: PrsFigureParams, id?: string): PrsFigureResult {
   if (params.widthLineMm !== undefined && (!Number.isFinite(params.widthLineMm) || params.widthLineMm <= 0 || params.widthLineMm > 1000)) {
     throw new McpError("INVALID_ARGUMENT", "width_line_mm — число от 0 до 1000");
   }
@@ -293,37 +448,64 @@ function buildPrsFigure(model: Model, kind: PrsFigureKind, params: PrsFigurePara
   if (prsEdges.length === 0) {
     throw new McpError("INVALID_ARGUMENT", `у комнаты ${params.room} нет рёбер — развёрток нет`);
   }
-  const target = edgeByWall(prsEdges, params.wall);
+  const target = edgeByWall(prsEdges, wallRefToId(model, params.wall));
   const frame = prsFrame(room, target);
   const widthCm = r2(params.widthMm / 10);
   const heightCm = r2(params.heightMm / 10);
   const alongCm = r2(params.alongMm / 10);
   const bottomCm = r2(params.bottomMm / 10);
   const H = num(model.total_height) ?? 270;
+  // глубина ниши (major 4 ревью 390): конструктор 20 см, draw обрезает —
+  // depth=min(depth, getWallDepth(), 80); меню — correctValue(t,5,min(80,getWallDepth()))
+  // с предупреждением wall_depth_niche. Диапазон входа — [50, min(800, getWallDepth()*10)] мм.
+  let depthCm: number | undefined;
+  if (kind === "wall_niche") {
+    const wallDepthCm = wallDepthOfEdge(model, room, target);
+    const maxDepthCm = wallDepthCm !== undefined ? Math.min(80, wallDepthCm) : 80;
+    if (params.depthMm !== undefined && (!Number.isFinite(params.depthMm) || params.depthMm < 50 || params.depthMm > maxDepthCm * 10)) {
+      const hint = wallDepthCm !== undefined
+        ? `толщина/длина стены по развёртке — ${wallDepthCm} см`
+        : "стену ребра не удалось определить — глубина ограничена 800 мм";
+      throw new McpError("INVALID_ARGUMENT", `depth_mm — число от 50 до ${Math.round(maxDepthCm * 10)} мм (${hint}; редактор: меню ниши correctValue(t,5,min(80,getWallDepth())) с предупреждением wall_depth_niche, draw обрезает depth=min(depth,getWallDepth(),80))`);
+    }
+    depthCm = params.depthMm !== undefined ? r2(params.depthMm / 10) : (wallDepthCm !== undefined ? Math.min(PRS_NICHE_DEPTH_CM, wallDepthCm) : PRS_NICHE_DEPTH_CM);
+  }
   // end_draw: запись < 10 см по значимому измерению удаляется (min 10)
   if (kind === "wall_niche") {
     if (widthCm < PRS_FIGURE_MIN_CM || heightCm < PRS_FIGURE_MIN_CM) {
       throw new McpError("INVALID_ARGUMENT", `ниша: width_mm и height_mm — не меньше ${PRS_FIGURE_MIN_CM * 10} мм (запись меньше редактор удаляет, end_draw)`);
     }
   } else if (heightCm <= PRS_FIGURE_MIN_CM) {
-    // slim: вертикальная линия толщиной width_line, ширина ≥ 10
+    // slim: тонкая ГОРИЗОНТАЛЬНАЯ полоса — толщина (height) = width_line (draw бандла),
+    // ширина ≥ 10
     if (widthCm < PRS_FIGURE_MIN_CM) {
       throw new McpError("INVALID_ARGUMENT", `молдинг: width_mm — не меньше ${PRS_FIGURE_MIN_CM * 10} мм (запись меньше редактор удаляет, end_draw)`);
     }
   } else if (widthCm <= PRS_FIGURE_MIN_CM) {
-    // slim_h: горизонтальная линия толщиной width_line, высота ≥ 10
+    // slim_h: тонкая ВЕРТИКАЛЬНАЯ полоса — толщина (width) = width_line (draw бандла),
+    // высота ≥ 10
     if (heightCm < PRS_FIGURE_MIN_CM) {
       throw new McpError("INVALID_ARGUMENT", `молдинг: height_mm — не меньше ${PRS_FIGURE_MIN_CM * 10} мм (запись меньше редактор удаляет, end_draw)`);
     }
   } else if (widthCm < PRS_FIGURE_MIN_CM || heightCm < PRS_FIGURE_MIN_CM) {
     throw new McpError("INVALID_ARGUMENT", `молдинг: width_mm и height_mm — не меньше ${PRS_FIGURE_MIN_CM * 10} мм`);
   }
+  // тип slim — как в draw бандла (@1374528)
+  let type: string = kind;
+  if (kind === "wall_molding") {
+    if (heightCm <= PRS_FIGURE_MIN_CM) type = "wall_molding_slim";
+    else if (widthCm <= PRS_FIGURE_MIN_CM) type = "wall_molding_slim_h";
+  }
+  const widthLineCm = kind === "wall_molding" ? (params.widthLineMm !== undefined ? r2(params.widthLineMm / 10) : PRS_MOLDING_WIDTH_LINE_CM) : undefined;
+  // форма slim — по формуле draw бандла: height=width_line (slim), width=width_line (slim_h)
+  const effWidthCm = type === "wall_molding_slim_h" ? (widthLineCm ?? widthCm) : widthCm;
+  const effHeightCm = type === "wall_molding_slim" ? (widthLineCm ?? heightCm) : heightCm;
   // фигура целиком в развёртке (клик-создание бандла: все углы в развёртке) —
   // консервативно: центр с половинами внутри [0..L] × [0..H]
-  if (alongCm - widthCm / 2 < -0.01 || alongCm + widthCm / 2 > frame.lengthCm + 0.01) {
+  if (alongCm - effWidthCm / 2 < -0.01 || alongCm + effWidthCm / 2 > frame.lengthCm + 0.01) {
     throw new McpError("INVALID_ARGUMENT", `фигура выходит за развёртку стены ${params.wall} по длине (развёртка ${frame.lengthCm.toFixed(1)} см)`);
   }
-  if (bottomCm - heightCm / 2 < -0.01 || bottomCm + heightCm / 2 > H + 0.01) {
+  if (bottomCm - effHeightCm / 2 < -0.01 || bottomCm + effHeightCm / 2 > H + 0.01) {
     throw new McpError("INVALID_ARGUMENT", `фигура выходит за развёртку по высоте (высота развёртки ${H} см)`);
   }
   // ниша: не на стеклянной/реечной стене и не на балконе (start_draw)
@@ -342,27 +524,21 @@ function buildPrsFigure(model: Model, kind: PrsFigureKind, params: PrsFigurePara
       }
     }
   }
-  // тип slim — как в draw бандла (@1374528)
-  let type: string = kind;
-  if (kind === "wall_molding") {
-    if (heightCm <= PRS_FIGURE_MIN_CM) type = "wall_molding_slim";
-    else if (widthCm <= PRS_FIGURE_MIN_CM) type = "wall_molding_slim_h";
-  }
   const pc: Point = { x: r2(frame.x0 + alongCm), y: r2(PRS_TOP_CM + H - bottomCm) };
   const prs: Record<string, unknown> = { room: roomId, edge_index: target.edgeIndex, pc_xd: r2(pc.x - frame.x0), pc_yd: r2(pc.y - PRS_TOP_CM) };
   const rec: PrsFigureEntity = {
     id: id ?? newId(),
     type,
     pc,
-    width: widthCm,
-    height: heightCm,
+    width: effWidthCm,
+    height: effHeightCm,
     plan: PROJECTION_PLAN,
     plan_: PROJECTION_PLAN,
     prs,
     on_size: 1,
   };
-  if (kind === "wall_molding") rec.width_line = params.widthLineMm !== undefined ? r2(params.widthLineMm / 10) : PRS_MOLDING_WIDTH_LINE_CM;
-  if (kind === "wall_niche") rec.depth = params.depthMm !== undefined ? r2(params.depthMm / 10) : PRS_NICHE_DEPTH_CM;
+  if (kind === "wall_molding") rec.width_line = widthLineCm;
+  if (kind === "wall_niche") rec.depth = depthCm;
   collectionOf(model, kind)[rec.id] = rec;
   return { ...rec, kind };
 }
@@ -428,6 +604,36 @@ export function resolvePrsFigure(model: Model, kind: PrsFigureKind, ref: string)
 }
 
 /**
+ * Публичный ответ инструментов wall_molding_* / wall_niche_* — в мм и форме
+ * model_get (major 5 ревью 390): формат редактора (pc/pc_xd/pc_yd в см,
+ * prs-структуры) не протекает. Форма — как compactPrsFigures в model_get:
+ * along_mm от начала развёртки (prs.pc_xd), from_floor_mm от низа (prs.pc_yd
+ * и total_height), метка комнаты R<n> — по порядку комнат model_get.
+ */
+export function prsFigurePublic(model: Model, kind: PrsFigureKind, rec: PrsFigureEntity, label: string): Record<string, unknown> {
+  const prs = (rec.prs ?? {}) as Record<string, unknown>;
+  const xd = num(prs["pc_xd"]) ?? 0;
+  const yd = num(prs["pc_yd"]) ?? 0;
+  const H = num(model.total_height) ?? 270;
+  const roomId = typeof prs["room"] === "string" ? prs["room"] : null;
+  const rooms = Object.keys(((model as Record<string, unknown>)["rooms2"] ?? (model as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, unknown>);
+  const ri = roomId !== null ? rooms.indexOf(roomId) : -1;
+  return {
+    [kind === "wall_molding" ? "molding_id" : "niche_id"]: label,
+    site_id: rec.id,
+    type: rec.type ?? null,
+    room: ri >= 0 ? `R${ri + 1}` : roomId,
+    edge_index: num(prs["edge_index"]) ?? -1,
+    along_mm: Math.round(xd * 10),
+    from_floor_mm: Math.round((H - yd) * 10),
+    width_mm: Math.round((num(rec.width) ?? 0) * 10),
+    height_mm: Math.round((num(rec.height) ?? 0) * 10),
+    ...(rec.depth !== undefined ? { depth_mm: Math.round(rec.depth * 10) } : {}),
+    ...(rec.width_line !== undefined ? { width_line_mm: Math.round(rec.width_line * 10) } : {}),
+  };
+}
+
+/**
  * Семантическая форма молдинга/ниши для сверки save: без pc (кэш рамки
  * развёрток — редактор пересчитывает), без id/plan (id перегенерируется).
  * Мультимножество — редактор может переупорядочить коллекцию.
@@ -467,28 +673,93 @@ export function prsSettingsEqual(before: RoomRec, after: RoomRec): boolean {
 
 export type WallAnchorParams = {
   room: string;
-  /** Стена ребра с отделкой (id сайта из model_get). */
+  /** Стена ребра с отделкой (id сайта из model_get или метка W<n>). */
   wall: string;
   /** Точка от начала развёртки ребра, мм. */
   alongMm: number;
   /** Точка от низа развёртки (от пола), мм. */
   heightMm: number;
+  /** Какая часть стороны (layer из finish_get); по умолчанию — часть, содержащая точку. */
+  layer?: number;
 };
 
+/** Полигон части отделки на развёртке — рамка x0..x0+L, y от (30+H−top) до (30+H−hff). */
+function decorPartFrame(
+  room: RoomRec,
+  target: PrsEdge,
+  part: Record<string, unknown>,
+  totalHeightCm: number,
+): { xMin: number; yMin: number; topCm: number; bottomCm: number } {
+  const frame = prsFrame(room, target);
+  const hffCm = num(part["height_from_floor"]) ?? 0;
+  const hCm = num(part["height"]) ?? 0;
+  const topCm = hCm === 0 ? totalHeightCm : hffCm + hCm;
+  const H = totalHeightCm;
+  return { xMin: frame.x0, yMin: Math.round((PRS_TOP_CM + H - topCm) * 100) / 100, topCm, bottomCm: hffCm };
+}
 
-export function setWallDecorAnchor(model: Model, params: WallAnchorParams): { edge: number; anchor: Record<string, unknown>; angle: number } {
+/**
+ * Часть стороны, в которую редактор ставит точку: обработчик anchor_decor
+ * адресует ОДНУ линию декора ($DecorLining.get_decor_line(decor_id)) — часть,
+ * на которой пользователь кликнул. Выбор: части, содержащие точку
+ * (height_from_floor ≤ h ≤ top; height=0 — часть до верха развёртки), при
+ * неоднозначности — явный layer. 0 или >1 кандидатов — отказ с перечнем слоёв
+ * (conservative: не угадываем).
+ */
+function pickDecorPart(
+  parts: Record<string, Record<string, unknown>>,
+  params: { heightMm: number; layer?: number },
+  totalHeightCm: number,
+): Record<string, Record<string, unknown>> {
+  const hCm = params.heightMm / 10;
+  const entries = Object.entries(parts);
+  const layers = [...new Set(entries.map(([, p]) => num(p["layer"]) ?? 1))].sort((a, b) => a - b);
+  // 1) части, содержащие точку (height_from_floor ≤ h ≤ top; height=0 — часть до верха)
+  let containing = entries.filter(([, p]) => {
+    const hff = num(p["height_from_floor"]) ?? 0;
+    const h = num(p["height"]) ?? 0;
+    const top = h === 0 ? totalHeightCm : hff + h;
+    return hCm >= hff - 0.01 && hCm <= top + 0.01;
+  });
+  // 2) явный layer сужает выбор (несколько частей могут делить один слой)
+  if (params.layer !== undefined) containing = containing.filter(([, p]) => (num(p["layer"]) ?? 1) === params.layer!);
+  if (containing.length === 1) return { [containing[0]![0]]: containing[0]![1] };
+  if (containing.length === 0) {
+    if (params.layer !== undefined && entries.some(([, p]) => (num(p["layer"]) ?? 1) === params.layer)) {
+      throw new McpError("INVALID_ARGUMENT", `на ребре нет части отделки со слоем ${params.layer}, содержащей точку (высота ${Math.round(params.heightMm)} мм от пола); слои ребра: ${layers.join(", ")}`);
+    }
+    throw new McpError("INVALID_ARGUMENT", `точка (высота ${Math.round(params.heightMm)} мм от пола) не попадает ни в одну часть отделки ребра — укажите layer (слои: ${layers.join(", ") || "нет"})`);
+  }
+  throw new McpError("INVALID_ARGUMENT", `точка (высота ${Math.round(params.heightMm)} мм от пола) попадает в несколько частей отделки ребра — укажите layer (слои: ${layers.join(", ")})`);
+}
+
+export type WallAnchorResult = {
+  edge: number;
+  /** Точка в рамке развёрток (кэш, в модель пишется anchor) — для диагностики. */
+  anchor: Record<string, unknown>;
+  angle: number;
+  /** id части стороны, в которую поставлена точка. */
+  part?: string;
+  /** Слой части (layer из finish_get). */
+  layer: number;
+};
+
+export function setWallDecorAnchor(model: Model, params: WallAnchorParams): WallAnchorResult {
   for (const [key, v] of [["along_mm", params.alongMm], ["height_mm", params.heightMm]] as const) {
     if (!Number.isFinite(v) || v < 0 || v > 100000) {
       throw new McpError("INVALID_ARGUMENT", `${key} — число от 0 до 100000 мм`);
     }
   }
+  if (params.layer !== undefined && (!Number.isFinite(params.layer) || params.layer < 1 || !Number.isInteger(params.layer))) {
+    throw new McpError("INVALID_ARGUMENT", "layer — целое число ≥ 1 (слой части отделки из finish_get)");
+  }
   const { id: roomId, room } = resolveRoom(model, params.room);
+  void roomId;
   const prsEdges = prsEdgesOf(room);
   if (prsEdges.length === 0) {
     throw new McpError("INVALID_ARGUMENT", `у комнаты ${params.room} нет рёбер — развёрток нет`);
   }
-  void roomId;
-  const target = edgeByWall(prsEdges, params.wall);
+  const target = edgeByWall(prsEdges, wallRefToId(model, params.wall));
   const frame = prsFrame(room, target);
   const alongCm = r2(params.alongMm / 10);
   const heightCm = r2(params.heightMm / 10);
@@ -501,13 +772,16 @@ export function setWallDecorAnchor(model: Model, params: WallAnchorParams): { ed
   if (!rec || rec["exist"] !== true || !rec["parts"] || Object.keys(rec["parts"]).length === 0) {
     throw new McpError("INVALID_ARGUMENT", `у ребра стены ${params.wall} комнаты ${params.room} нет отделки — точка укладки не ставится (сначала finish_wall_set)`);
   }
+  // точка ставится в ОДНУ часть стороны (anchor_decor: a=$DecorLining.get_decor_line(decor_id))
+  const picked = pickDecorPart(rec["parts"]!, params, H);
+  const [partKey, part] = Object.entries(picked)[0]!;
   const pc = { x: Math.round((frame.x0 + alongCm) * 100) / 100, y: Math.round((30 + H - heightCm) * 100) / 100 };
-  const anchor: Record<string, unknown> = { p: pc, pc_xd: alongCm, pc_yd: Math.round((pc.y - 30) * 100) / 100 };
-  for (const part of Object.values(rec["parts"] ?? {})) {
-    part["anchor"] = structuredClone(anchor);
-    part["angle"] = part["type"] === "wall_woodbatten" ? 90 : 0;
-    delete part["custom_angle"];
-  }
-  return { edge: target.edgeIndex, anchor, angle: 0 };
-}
+  const partFrame = decorPartFrame(room, target, part, H);
+  // pc_* — от прямоугольника САМОЙ части (бандл: new Polygon(WALL_DECORS[a.id].polygon))
+  const anchor: Record<string, unknown> = { p: pc, pc_xd: Math.round((pc.x - partFrame.xMin) * 100) / 100, pc_yd: Math.round((pc.y - partFrame.yMin) * 100) / 100 };
+  part["anchor"] = structuredClone(anchor);
+  part["angle"] = part["type"] === "wall_woodbatten" ? 90 : 0;
+  delete part["custom_angle"];
+  return { edge: target.edgeIndex, anchor, angle: num(part["angle"]) ?? 0, part: part["id"] !== undefined ? String(part["id"]) : undefined, layer: num(part["layer"]) ?? 1 };
 
+}

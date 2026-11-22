@@ -321,19 +321,31 @@ function v2Of(f: string): unknown {
 
 test("387 №41: пользовательские поля потолка по-прежнему различаются (канон сузил исключения)", () => {
   // complex-набор пользовательских полей (268: serialize exist:true переносит
-  // level2/material2/complex/radius/offset/anchor/type_laying/angle) и ниши
-  const withUser = (mark: number): AnyRec => {
+  // level2/material2/complex/radius/offset/anchor/type_laying/angle). 391 minor 11
+  // (ревью 390): каждое поле проверяется ОТДЕЛЬНО — мутация канона, выбрасывающая
+  // одно из набора, краснит тест, а не прячется за общим изменением восьми полей.
+  const withUser = (field: string, value: unknown): AnyRec => {
     const m = baseModel();
     const r = (m.rooms2 as AnyRec)["rA"] as AnyRec;
     (r.ceilings as AnyRec[])[0] = {
       ...(r.ceilings as AnyRec[])[0]!,
-      complex: true, material2: "stretch_ceiling", level2: 7.5, radius: 10 + mark,
-      offset: 40 + mark, anchor: { p: { x: 10 + mark, y: 20 } }, type_laying: mark ? "diagonal" : "straight",
-      angle: mark * 45, index_parent: mark, // index_parent и пользовательские поля в одной записи
-      polygon2: [{ x: mark, y: mark }], area_childs: { z: mark }, polygons_layout_points: [{ x: mark, y: 1 }],
+      [field]: value,
     };
     return m;
   };
-  assert.notEqual(sig(withUser(0)), sig(withUser(1)), "пользовательский набор потолка различается — канон не прячет данные");
-  assert.equal(sig(withUser(0)), sig(withUser(0)), "тот же пользовательский набор — sig равен");
+  const USER_FIELDS: Array<[string, unknown, unknown]> = [
+    ["complex", true, false],
+    ["material2", "stretch_ceiling", "gypsum_ceiling"],
+    ["level2", 7.5, 8.5],
+    ["radius", 10, 11],
+    ["offset", 40, 41],
+    ["anchor", { p: { x: 10, y: 20 } }, { p: { x: 11, y: 20 } }],
+    ["type_laying", "diagonal", "straight"],
+    ["angle", 0, 45],
+  ];
+  for (const [field, v1, v2] of USER_FIELDS) {
+    assert.notEqual(sig(withUser(field, v1)), sig(withUser(field, v2)), `пользовательское поле потолка ${field} различается — канон не прячет данные`);
+    assert.equal(sig(withUser(field, v1)), sig(withUser(field, v1)), `${field}: то же значение — sig равен`);
+  }
+  // index_parent/area_childs/… (производные) не дают расхождения — покрыто тестом выше
 });

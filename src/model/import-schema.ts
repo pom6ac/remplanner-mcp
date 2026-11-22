@@ -208,7 +208,8 @@ const prsFigure = z.looseObject({
   }),
 });
 
-/** Графовая сущность (трубы/кабели/свет/границы/проёмы пола/тёплые полы). */const graphEntity = z.looseObject({
+/** Графовая сущность (трубы/кабели/свет/границы/проёмы пола/тёплые полы). */
+const graphEntity = z.looseObject({
   id: idStr,
   type: shortStr.optional(),
   plan: idStr.optional(),
