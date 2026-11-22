@@ -364,3 +364,46 @@ test("389: Workspace — normalize уронил нишу → NORMALIZATION_DROPP
   ws.apply("wall_niche_add", (m) => addPrsFigure(m, "wall_niche", { room: "R1", wall: "w3", alongMm: 2000, bottomMm: 1200, widthMm: 800, heightMm: 1200 }));
   await assert.rejects(() => ws.save(), (e: { code?: string }) => e.code === "NORMALIZATION_DROPPED");
 });
+
+// ---------- точка укладки плитки на стене (anchor_decor) ----------
+
+import { setWallDecorAnchor } from "../../src/model/projections.ts";
+import { wallDecorAnchorMismatches } from "../../src/verify/projections.ts";
+
+function withDecor(m: Model, type = "wall_tile"): Model {
+  const room = (m.rooms2 as AnyRec)["roomA"] as AnyRec;
+  room["decors"] = [
+    { exist: true, parts: { p1: { id: "p1", type, layer: 1, line: { p1: { x: 0, y: 0 }, p2: { x: 400, y: 0 } }, line_wall: { p1: { x: 0, y: 0 }, p2: { x: 400, y: 0 } }, distance: 400, height: 250, height_from_floor: 0 } } },
+    { exist: false },
+    { exist: false },
+    { exist: false },
+  ];
+  return m;
+}
+
+test("389: точка укладки отделки стены — anchor/angle/custom_angle как в обработчике anchor_decor", () => {
+  const m = withDecor(baseModel());
+  const res = setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 500 });
+  assert.equal(res.edge, 0);
+  const part = ((((m.rooms2 as AnyRec)["roomA"] as AnyRec)["decors"] as AnyRec[])[0]!["parts"] as AnyRec)["p1"] as AnyRec;
+  assert.deepEqual(part["anchor"], { p: { x: 120, y: 250 }, pc_xd: 100, pc_yd: 220 });
+  assert.equal(part["angle"], 0);
+  assert.equal("custom_angle" in part, false);
+  // вне развёртки — отказ; без отделки — отказ
+  assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 99999, heightMm: 500 }));
+  assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w3", alongMm: 500, heightMm: 500 }));
+});
+
+test("389: сверка точки укладки — изменение и потеря ловятся, без изменений — пусто", () => {
+  const m = withDecor(baseModel());
+  setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 500 });
+  const rooms = (m.rooms2 as AnyRec) as Record<string, AnyRec>;
+  assert.deepEqual(wallDecorAnchorMismatches(rooms, structuredClone(rooms) as Record<string, AnyRec>), []);
+  const broken = structuredClone(rooms) as Record<string, AnyRec>;
+  const part = (((broken["roomA"]!["decors"] as AnyRec[])[0]!["parts"] as AnyRec)["p1"] as AnyRec);
+  (part["anchor"] as AnyRec)["pc_xd"] = 555;
+  assert.equal(wallDecorAnchorMismatches(rooms, broken).length, 1);
+  const lost = structuredClone(rooms) as Record<string, AnyRec>;
+  delete (((lost["roomA"]!["decors"] as AnyRec[])[0]!["parts"] as AnyRec)["p1"] as AnyRec)["anchor"];
+  assert.equal(wallDecorAnchorMismatches(rooms, lost).length, 1);
+});

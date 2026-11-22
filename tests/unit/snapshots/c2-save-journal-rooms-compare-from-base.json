@@ -100,6 +100,7 @@
       "socket_group_mismatches",
       "stripes_light_mismatches",
       "thick_lines_mismatches",
+      "wall_anchor_mismatches",
       "wall_molding_mismatches",
       "wall_niche_mismatches",
       "wall_property_mismatches",

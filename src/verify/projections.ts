@@ -1,3 +1,4 @@
+import { McpError } from "../errors.ts";
 import type { PrsFigureEntity } from "../model/projections.ts";
 import type { VerificationMismatches } from "./types.ts";
 
@@ -136,4 +137,60 @@ function firstEdgeOf(room: Record<string, unknown>): number | null {
   const edgesPrs = Array.isArray(room["edges_prs"]) ? (room["edges_prs"] as Array<Record<string, unknown>>) : [];
   const e = edgesPrs.find((x) => x["oid"] === first);
   return e && typeof e["edge_index"] === "number" ? e["edge_index"] : null;
+}
+
+// ---------- точка укладки плитки на стене (anchor_decor) ----------
+
+/**
+ * Точка начала укладки отделки стены (инструмент anchor_decor листа «Развёртки»,
+ * 2-й режим развёрток; НЕ PRO — в разметке анонимного проекта ключ без is_pro,
+ * в отличие от anchor_floor). Обработчик бандла (@3393728): a=$DecorLining.
+ * get_decor_line(decor_id); a.anchor={p:точка}; a.angle=0 (wall_woodbatten → 90);
+ * a.custom_angle=undefined; a.anchor.pc_xd=p.x−xMin полигона развёртки декора,
+ * a.anchor.pc_yd=p.y−yMin; пересчёт раскладки (buildLayouts). MCP принимает
+ * позицию точки семантически: along_mm — от начала развёртки ребра, height_mm —
+ * от низа развёртки (пола); anchor.p пишется в рамке развёрток (кэш, как у
+ * молдингов), pc_xd/pc_yd — семантические поля.
+ */
+
+
+/** Сверка точки укладки при save: наличие и семантика (pc_xd/pc_yd) по частям decors. */
+export function wallDecorAnchorMismatches(
+  before: Record<string, Record<string, unknown>> | undefined,
+  after: Record<string, Record<string, unknown>> | undefined,
+): string[] {
+  const out: string[] = [];
+  const b = before ?? {};
+  const a = after ?? {};
+  const anchorsOf = (room: Record<string, unknown>): string[] => {
+    const decors = Array.isArray(room["decors"]) ? (room["decors"] as Array<Record<string, unknown>>) : [];
+    const list: string[] = [];
+    for (const d of decors) {
+      if (!d || d["exist"] !== true) continue;
+      const parts = (d["parts"] ?? {}) as Record<string, Record<string, unknown>>;
+      for (const part of Object.values(parts)) {
+        const anchor = part["anchor"] as Record<string, unknown> | undefined;
+        if (!anchor) continue;
+        const p = (anchor["p"] ?? {}) as { x?: unknown; y?: unknown };
+        list.push(JSON.stringify({
+          type: part["type"] ?? null,
+          edge: typeof anchor["pc_xd"] === "number" ? Math.round((anchor["pc_xd"] as number) * 10) / 10 : null,
+          yd: typeof anchor["pc_yd"] === "number" ? Math.round((anchor["pc_yd"] as number) * 10) / 10 : null,
+          px: typeof p["x"] === "number" ? Math.round((p.x as number) * 10) / 10 : null,
+          py: typeof p["y"] === "number" ? Math.round((p.y as number) * 10) / 10 : null,
+          angle: part["angle"] ?? null,
+        }));
+      }
+    }
+    return list.sort();
+  };
+  for (const rid of Object.keys(b)) {
+    if (!a[rid]) continue;
+    const ab = anchorsOf(b[rid]!);
+    const aa = anchorsOf(a[rid]!);
+    if (ab.length !== aa.length || ab.some((v, i) => v !== aa[i])) {
+      out.push(`${rid}: точка укладки отделки стены изменилась после сохранения (ожидалось ${ab.join(" | ") || "нет"}; на сервере ${aa.join(" | ") || "нет"})`);
+    }
+  }
+  return out;
 }

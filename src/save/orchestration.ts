@@ -62,7 +62,7 @@ import {
   type RigelSig,
   type SubsItemSig,
 } from "../verify/index.ts";
-import { prsFigureUserMismatches, prsSettingsMismatches } from "../verify/projections.ts";
+import { prsFigureUserMismatches, prsSettingsMismatches, wallDecorAnchorMismatches } from "../verify/projections.ts";
 import type { EditorLike, OpenProject, WorkspaceDeps } from "../workspace.ts";
 
 export type SaveOutcome = {
@@ -602,6 +602,8 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     "ниша развёртки",
   );
   const prsNorm = prsSettingsMismatches((host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined);
+  // точка укладки отделки стены (anchor_decor) до save — локальная копия против normalize
+  const anchorNorm = wallDecorAnchorMismatches((host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined);
   if (roomsBefore > 0 && normRooms === 0) {
     warnings.push(`редактор убрал комнаты при нормализации (${roomsBefore} → 0) — имя и отделка комнат могут быть потеряны; проверьте rooms_list после сохранения`);
   }
@@ -619,7 +621,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     zoneResurrected.problems.length > 0 ||
     warmNorm.problems.length > 0 ||
     ceilingRigelNorm.problems.length > 0 ||
-    sheetsNorm.length > 0 || freelinesNorm.length > 0 || thickLinesNorm.length > 0 || figuresNorm.length > 0 || picturesNorm.length > 0 || moldingsNorm.length > 0 || nichesNorm.length > 0 || prsNorm.length > 0 ||
+    sheetsNorm.length > 0 || freelinesNorm.length > 0 || thickLinesNorm.length > 0 || figuresNorm.length > 0 || picturesNorm.length > 0 || moldingsNorm.length > 0 || nichesNorm.length > 0 || prsNorm.length > 0 || anchorNorm.length > 0 ||
     elecNorm.some((e) => e.lost.length > 0 || e.graph.length > 0 || e.conn.length > 0)
   ) {
     throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
@@ -670,6 +672,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         wall_molding_mismatches: moldingsNorm,
         wall_niche_mismatches: nichesNorm,
         prs_mismatches: prsNorm,
+        wall_anchor_mismatches: anchorNorm,
         ...Object.fromEntries(elecNorm.flatMap((e) => [
           [`lost_${e.coll}`, e.lost],
           [`${e.coll}_mismatches`, e.graph],
@@ -922,6 +925,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       "ниша развёртки",
     );
     const prsAfter = prsSettingsMismatches(expectedPrsRooms, ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {});
+    const anchorAfter = wallDecorAnchorMismatches(expectedPrsRooms, ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {});
     const roomsLost = normRooms > 0 && roomsAfter === 0;
     // этап 126: комнаты после save — строго (по каноническому контуру и
     // пользовательским полям): частичная потеря N→M>0 и потеря имени/зон — не verified
@@ -943,7 +947,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         ),
       },
     ).problems;
-    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && ceilingRigelAfter.length === 0 && sheetsAfter.length === 0 && freelinesAfter.length === 0 && thickLinesAfter.length === 0 && figuresAfter.length === 0 && picturesAfter.length === 0 && moldingsAfter.length === 0 && nichesAfter.length === 0 && prsAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
+    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && ceilingRigelAfter.length === 0 && sheetsAfter.length === 0 && freelinesAfter.length === 0 && thickLinesAfter.length === 0 && figuresAfter.length === 0 && picturesAfter.length === 0 && moldingsAfter.length === 0 && nichesAfter.length === 0 && prsAfter.length === 0 && anchorAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
       verified = true;
       finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
       host.onVerified(toModel(structuredClone(after.model)));
@@ -1006,6 +1010,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
           wall_molding_mismatches: moldingsAfter,
           wall_niche_mismatches: nichesAfter,
           prs_mismatches: prsAfter,
+        wall_anchor_mismatches: anchorAfter,
           ...Object.fromEntries(elecAfter.flatMap((e) => [
             [`${e.coll}_mismatches`, e.graph],
             [`${e.coll}_connection_mismatches`, e.conn],

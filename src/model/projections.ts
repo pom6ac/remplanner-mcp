@@ -464,3 +464,50 @@ export function prsSettingsEqual(before: RoomRec, after: RoomRec): boolean {
     stB.disabledEdges.every((v, i) => v === stA.disabledEdges[i])
   );
 }
+
+export type WallAnchorParams = {
+  room: string;
+  /** Стена ребра с отделкой (id сайта из model_get). */
+  wall: string;
+  /** Точка от начала развёртки ребра, мм. */
+  alongMm: number;
+  /** Точка от низа развёртки (от пола), мм. */
+  heightMm: number;
+};
+
+
+export function setWallDecorAnchor(model: Model, params: WallAnchorParams): { edge: number; anchor: Record<string, unknown>; angle: number } {
+  for (const [key, v] of [["along_mm", params.alongMm], ["height_mm", params.heightMm]] as const) {
+    if (!Number.isFinite(v) || v < 0 || v > 100000) {
+      throw new McpError("INVALID_ARGUMENT", `${key} — число от 0 до 100000 мм`);
+    }
+  }
+  const { id: roomId, room } = resolveRoom(model, params.room);
+  const prsEdges = prsEdgesOf(room);
+  if (prsEdges.length === 0) {
+    throw new McpError("INVALID_ARGUMENT", `у комнаты ${params.room} нет рёбер — развёрток нет`);
+  }
+  void roomId;
+  const target = edgeByWall(prsEdges, params.wall);
+  const frame = prsFrame(room, target);
+  const alongCm = r2(params.alongMm / 10);
+  const heightCm = r2(params.heightMm / 10);
+  const H = typeof model["total_height"] === "number" ? (model["total_height"] as number) : 270;
+  if (alongCm < -0.01 || alongCm > frame.lengthCm + 0.01 || heightCm < -0.01 || heightCm > H + 0.01) {
+    throw new McpError("INVALID_ARGUMENT", `точка вне развёртки стены ${params.wall} (развёртка ${frame.lengthCm.toFixed(1)}×${H} см)`);
+  }
+  const decors = Array.isArray(room.decors) ? (room.decors as Array<Record<string, unknown>>) : [];
+  const rec = decors[target.edgeIndex] as { exist?: unknown; parts?: Record<string, Record<string, unknown>> } | undefined;
+  if (!rec || rec["exist"] !== true || !rec["parts"] || Object.keys(rec["parts"]).length === 0) {
+    throw new McpError("INVALID_ARGUMENT", `у ребра стены ${params.wall} комнаты ${params.room} нет отделки — точка укладки не ставится (сначала finish_wall_set)`);
+  }
+  const pc = { x: Math.round((frame.x0 + alongCm) * 100) / 100, y: Math.round((30 + H - heightCm) * 100) / 100 };
+  const anchor: Record<string, unknown> = { p: pc, pc_xd: alongCm, pc_yd: Math.round((pc.y - 30) * 100) / 100 };
+  for (const part of Object.values(rec["parts"] ?? {})) {
+    part["anchor"] = structuredClone(anchor);
+    part["angle"] = part["type"] === "wall_woodbatten" ? 90 : 0;
+    delete part["custom_angle"];
+  }
+  return { edge: target.edgeIndex, anchor, angle: 0 };
+}
+

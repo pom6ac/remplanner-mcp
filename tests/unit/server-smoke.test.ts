@@ -41,6 +41,7 @@ const EXPECTED_TOOLS = [
   "image_upload", "image_add", "image_update", "image_delete",
   "prs_set", "wall_molding_add", "wall_molding_update", "wall_molding_delete",
   "wall_niche_add", "wall_niche_update", "wall_niche_delete",
+  "finish_wall_anchor_set",
   "pipe_add", "pipe_update", "pipe_delete", "pipe_node_delete",
   "waterspot_merge", "waterspot_unset",
   "led_strip_add", "led_strip_update", "led_strip_delete",

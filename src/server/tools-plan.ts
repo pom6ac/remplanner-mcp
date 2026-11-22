@@ -74,7 +74,7 @@ import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInt
 import { addSheet, updateSheet, deleteSheet, sheetPlanKey, sheetByName, SHEET_AFTER_PLANS, SHEET_CONTENT_KEYS, SHEET_DEFAULT_AFTER_PLAN } from "../model/sheets.ts";
 import { addFreeline, addThickLine, addFigure, updateLine, updateFigure, deleteLine, deleteFigure, resolveLine, resolveFigure, validateDrawPlan, FREE_FIGURE_TYPES, THICK_LINE_WIDTH_MM_MIN, THICK_LINE_WIDTH_MM_MAX } from "../model/draw.ts";
 import { addPicture, updatePicture, resolvePicture, deletePicture, parseImageSize, pictureTextWarnings, type PictureEntity } from "../model/pictures.ts";
-import { addPrsFigure, updatePrsFigure, deletePrsFigure, setPrsSettings, prsFigureLabel } from "../model/projections.ts";
+import { addPrsFigure, updatePrsFigure, deletePrsFigure, setPrsSettings, setWallDecorAnchor, prsFigureLabel } from "../model/projections.ts";
 import { socketCatalogType } from "../model/electric.ts";
 import { uploadPicture } from "../api.ts";
 import { PICTURE_MAX_BYTES } from "../limits.ts";
@@ -3692,6 +3692,30 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         const ws = wsOf();
         const id = ws.apply("wall_niche_delete", (m) => deletePrsFigure(m, "wall_niche", a["niche_id"] as string));
         return ok({ deleted: id, hint: SCENARIO_HINT });
+      },
+    ),
+
+    finish_wall_anchor_set: tool(
+      "Точка начала укладки отделки стены (лист «Развёртки», режим 2, инструмент " +
+        "«Точка начала укладки»): ребро стены с отделкой (finish_wall_set), позиция точки — " +
+        "along_mm от начала развёртки ребра и height_mm от пола. Угол раскладки сбрасывается " +
+        "в 0 (у реек wall_woodbatten — 90), как в редакторе. НЕ PRO (в отличие от точки укладки " +
+        "пола anchor_floor). После изменения вызывайте model_validate и project_save.",
+      {
+        room: z.string().min(1).describe("комната (метка R<n> или id сайта)"),
+        wall: z.string().min(1).describe("стена ребра с отделкой (id сайта из model_get)"),
+        along_mm: mmInt.describe("точка от начала развёртки ребра, мм"),
+        height_mm: mmInt.describe("точка от низа развёртки (от пола), мм"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("finish_wall_anchor_set", (m) => setWallDecorAnchor(m, {
+          room: a["room"] as string,
+          wall: a["wall"] as string,
+          alongMm: a["along_mm"] as number,
+          heightMm: a["height_mm"] as number,
+        }));
+        return ok({ ...res, hint: SCENARIO_HINT });
       },
     ),
 

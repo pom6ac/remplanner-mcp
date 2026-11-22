@@ -1737,6 +1737,44 @@
    }
   },
   {
+   "name": "finish_wall_anchor_set",
+   "description": "Точка начала укладки отделки стены (лист «Развёртки», режим 2, инструмент «Точка начала укладки»): ребро стены с отделкой (finish_wall_set), позиция точки — along_mm от начала развёртки ребра и height_mm от пола. Угол раскладки сбрасывается в 0 (у реек wall_woodbatten — 90), как в редакторе. НЕ PRO (в отличие от точки укладки пола anchor_floor). После изменения вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "room": {
+      "type": "string",
+      "minLength": 1,
+      "description": "комната (метка R<n> или id сайта)"
+     },
+     "wall": {
+      "type": "string",
+      "minLength": 1,
+      "description": "стена ребра с отделкой (id сайта из model_get)"
+     },
+     "along_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "точка от начала развёртки ребра, мм"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "точка от низа развёртки (от пола), мм"
+     }
+    },
+    "required": [
+     "room",
+     "wall",
+     "along_mm",
+     "height_mm"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "finish_wall_remove",
    "description": "Снять отделку стены в комнате (инструмент wall_cover_remove). Без wall_id — со всех сторон комнаты.",
    "inputSchema": {
