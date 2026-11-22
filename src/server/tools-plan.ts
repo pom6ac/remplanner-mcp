@@ -70,7 +70,12 @@ import { swing, resolveOpeningWall, openingAddArgs, openingUpdateParams } from "
 import { position, positionMove, resolveItem, normalizePosition, againstWallCenter, itemsInRoom, catalogFoundView, catalogEntryView } from "../dto/items.ts";
 import { resolvePillar, resolveRigel, ceilingType, ceilingTypeNoDesc, resolveGasLine, resolvePipe, resolveWarmFloor, resolveWarmWall, resolveLightLine, resolveFloorHole, resolveCeilingHole, resolveCableLamp } from "../dto/structures.ts";
 import { resolveBorder, borderResponse } from "../dto/borders.ts";
-import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInternal, sheetPublic, commentTextWarnings } from "../dto/dims.ts";
+import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInternal, sheetPublic, commentTextWarnings, drawPlanInternal, drawPlanPublic } from "../dto/dims.ts";
+import { addSheet, updateSheet, deleteSheet, sheetPlanKey, sheetByName, SHEET_AFTER_PLANS, SHEET_CONTENT_KEYS, SHEET_DEFAULT_AFTER_PLAN } from "../model/sheets.ts";
+import { addFreeline, addThickLine, addFigure, updateLine, updateFigure, deleteLine, deleteFigure, resolveLine, resolveFigure, validateDrawPlan, FREE_FIGURE_TYPES } from "../model/draw.ts";
+import { addPicture, updatePicture, resolvePicture, deletePicture, parseImageSize, type PictureEntity } from "../model/pictures.ts";
+import { uploadPicture } from "../api.ts";
+import { PICTURE_MAX_BYTES } from "../limits.ts";
 import { rawEditorPayload } from "../dto/model-payload.ts";
 import { PRO_TOOL_GROUPS, assertProToolAllowed, assertProPartialAllowed, type ProToolGroup } from "./pro.ts";
 
@@ -185,6 +190,39 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
    * Выбор материала и плана по kind — чистая часть в src/dto/walls.ts
    * (ревью 129 C7a/C4); здесь — только PRO-гейт тарифа по флагу resolved.pro.
    */
+
+
+  // ---------- нижняя панель и листы (этап 375): помощники ----------
+
+  /** Лист по публичной ссылке: site_id, метка S<n> или имя. */
+  const resolveSheetRef = (m: Model, ref: string): string => {
+    const map = (m.custom_plans ?? {}) as Record<string, { id: string; name: string }>;
+    if (map[ref]) return map[ref]!.id;
+    if (ref.startsWith("S") && /^\d+$/.test(ref.slice(1))) {
+      const at = Object.values(map)[Number(ref.slice(1)) - 1];
+      if (at) return at.id;
+    }
+    const byName = sheetByName(m, ref);
+    if (byName) return byName.id;
+    throw new McpError("NOT_FOUND", `лист ${ref} не найден`);
+  };
+
+  /** Ответ изображения в публичном формате (мм). */
+  const pictureView = (pic: PictureEntity, planPublic: (v: string) => string) => ok({
+    id: pic.id,
+    url: pic.url,
+    plan: planPublic(String(pic.plan ?? "a")),
+    center_mm: [Math.round(Number(pic.pc?.x ?? 0) * 10), Math.round(Number(pic.pc?.y ?? 0) * 10)],
+    width_mm: Math.round(Number(pic.width) * 10 * 100) / 100,
+    height_mm: Math.round(Number(pic.height) * 10 * 100) / 100,
+    ...(pic.text ? { text: pic.text } : {}),
+    hint: SCENARIO_HINT,
+  });
+
+  /** id изображения после удаления (по метке или уже несуществующей ссылке — без ошибки). */
+  const resolvePictureSilent = (m: Model, ref: string): string | undefined => {
+    try { return resolvePicture(m, ref).id; } catch { return undefined; }
+  };
 
   const compactEntity = (model: Model, predicate: (c: ReturnType<typeof compactModel>) => unknown) => {
     // комнаты — из кеша workspace (нормализованная модель), если в model.rooms2 их ещё нет
@@ -3062,6 +3100,403 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
           attach1: r.p1_target && r.p1_target.target_name !== "ruler" ? r.p1_target.target_id : null,
           attach2: r.p2_target && r.p2_target.target_name !== "ruler" ? r.p2_target.target_id : null,
         })));
+      },
+    ),
+
+
+    // ---------- нижняя панель и листы (этап 375) ----------
+
+    sheet_add: tool(
+      "Добавить пользовательский лист (нижняя панель → «Добавить лист», CustomPlan): " +
+        "name — имя (1..60 символов), after_plan — после какого встроенного листа стоит вкладка " +
+        "(«first» — в начало; умолчание редактора create_walls), content — что видно на листе " +
+        "(plan — стены/комнаты, furniture_santeh — мебель и сантехника, light — освещение, " +
+        "electro_points — электроточки; умолчание [plan]). Лист адресуется в plan других " +
+        "инструментов как custom_<id> (ответ) или по имени. После добавления вызывайте " +
+        "model_validate и project_save.",
+      {
+        name: z.string().min(1).max(60).describe("имя листа, 1..60 символов"),
+        after_plan: z.string().max(30).optional()
+          .describe(`после какого встроенного листа: first или ${SHEET_AFTER_PLANS.join(", ")} (по умолчанию ${SHEET_DEFAULT_AFTER_PLAN})`),
+        content: z.array(z.string().max(30)).max(4).optional()
+          .describe(`что видно на листе: ${SHEET_CONTENT_KEYS.join(", ")} (по умолчанию ["plan"])`),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const sheet = ws.apply("sheet_add", (m) => addSheet(m, {
+          name: a["name"] as string,
+          afterPlan: a["after_plan"] as string | undefined,
+          content: a["content"] as string[] | undefined,
+        }));
+        return ok({
+          id: sheet.id,
+          plan: sheetPlanKey(sheet.id),
+          name: sheet.name,
+          after_plan: sheet.after_plan,
+          content: sheet.content,
+          hint: SCENARIO_HINT,
+        });
+      },
+    ),
+
+    sheet_update: tool(
+      "Изменить пользовательский лист (sheet_id из sheet_add/model_get): имя, after_plan " +
+        "(позицию вкладки) и content (что видно).",
+      {
+        sheet_id: z.string().min(1).describe("id листа (site_id из model_get custom_plans) или метка S<n>"),
+        name: z.string().min(1).max(60).optional(),
+        after_plan: z.string().max(30).optional(),
+        content: z.array(z.string().max(30)).max(4).optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const sheet = ws.apply("sheet_update", (m) => {
+          const id = resolveSheetRef(m, a["sheet_id"] as string);
+          return updateSheet(m, id, {
+            name: a["name"] as string | undefined,
+            afterPlan: a["after_plan"] as string | undefined,
+            content: a["content"] as string[] | undefined,
+          });
+        });
+        return ok({
+          id: sheet.id,
+          plan: sheetPlanKey(sheet.id),
+          name: sheet.name,
+          after_plan: sheet.after_plan,
+          content: sheet.content,
+          hint: SCENARIO_HINT,
+        });
+      },
+    ),
+
+    sheet_delete: tool(
+      "Удалить пользовательский лист вместе с его объектами — как CustomPlan.delete редактора: " +
+        "комментарии, фигуры, изображения, свободные/толстые линии и размеры листа удаляются " +
+        "каскадно (deleted — счётчики по коллекциям).",
+      {
+        sheet_id: z.string().min(1).describe("id листа (site_id из model_get custom_plans) или метка S<n>"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("sheet_delete", (m) => deleteSheet(m, resolveSheetRef(m, a["sheet_id"] as string)));
+        return ok({ ...res, hint: SCENARIO_HINT });
+      },
+    ),
+
+    freeline_add: tool(
+      "Нарисовать свободную линию («Нарисовать элемент» нижней панели — **PRO в UI**): ломаная " +
+        "из 2..200 точек (мм), план (plan — исходный, furniture или custom_<id> пользовательского " +
+        "листа), цвет (палитра UI), стиль контура (solid/dash/dot), толщина контура 0.5..10, " +
+        "заливка. Свободная геометрия: привязок к стенам нет, стены и проёмы её не трогают. " +
+        "После добавления вызывайте model_validate и project_save.",
+      {
+        points: z.array(mmPoint).min(2).max(200).describe("вершины ломаной в мм, 2..200 точек по порядку"),
+        plan: z.string().max(70).optional().describe("лист: plan (по умолчанию), furniture или custom_<id> пользовательского листа"),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe("цвет (палитра UI, по умолчанию зелёный #148515)"),
+        width_stroke: z.number().finite().min(0.5).max(10).optional().describe("толщина контура 0.5..10 (по умолчанию 1)"),
+        type_stroke: z.enum(["solid", "dash", "dot"]).optional().describe("стиль контура (по умолчанию solid)"),
+        fill: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe("заливка (палитра UI)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        await proGate("freeline_add");
+        const rec = ws.apply("freeline_add", (m) => addFreeline(m, {
+          points: (a["points"] as MmPoint[]).map((p) => ({ x: mmToCm(p.x), y: mmToCm(p.y) })),
+          plan: drawPlanInternal(validateDrawPlan(m, (a["plan"] as string | undefined) ?? "plan")),
+          color: a["color"] as string | undefined,
+          widthStroke: a["width_stroke"] as number | undefined,
+          typeStroke: a["type_stroke"] as string | undefined,
+          fill: a["fill"] as string | undefined,
+        }));
+        return ok({ id: rec.id, plan: drawPlanPublic(rec.plan), points_mm: (a["points"] as MmPoint[]), length_mm: Math.round((rec.length ?? 0) * 1000), hint: SCENARIO_HINT });
+      },
+    ),
+
+    freeline_update: tool(
+      "Изменить свободную линию (line_id из model_get freelines): цвет (null — убрать " +
+        "персональный), стиль и толщину контура, заливку, лист.",
+      {
+        line_id: z.string().min(1).describe("метка FL<n> из model_get или id сайта"),
+        plan: z.string().max(70).optional(),
+        color: z.union([z.string().regex(/^#[0-9a-fA-F]{6}$/), z.null()]).optional(),
+        width_stroke: z.number().finite().min(0.5).max(10).optional(),
+        type_stroke: z.enum(["solid", "dash", "dot"]).optional(),
+        fill: z.union([z.string().regex(/^#[0-9a-fA-F]{6}$/), z.null()]).optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        await proGate("freeline_update");
+        const rec = ws.apply("freeline_update", (m) => updateLine(m, "freelines", a["line_id"] as string, {
+          plan: a["plan"] !== undefined ? drawPlanInternal(validateDrawPlan(m, a["plan"] as string)) : undefined,
+          color: a["color"] as string | null | undefined,
+          widthStroke: a["width_stroke"] as number | undefined,
+          typeStroke: a["type_stroke"] as string | undefined,
+          fill: a["fill"] as string | null | undefined,
+        }));
+        return ok({ id: rec.id, plan: drawPlanPublic(rec.plan), hint: SCENARIO_HINT });
+      },
+    ),
+
+    freeline_delete: tool(
+      "Удалить свободную линию (line_id из model_get freelines).",
+      { line_id: z.string().min(1).describe("метка FL<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("freeline_delete", (m) => (deleteLine(m, "freelines", a["line_id"] as string), true));
+        return ok({ deleted: a["line_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    thick_line_add: tool(
+      "Нарисовать толстую линию («Нарисовать элемент» — **PRO в UI**): ломаная из 2..200 точек (мм) " +
+        "с толщиной width_mm (по умолчанию редактора 200 мм), лист, цвет, стиль контура.",
+      {
+        points: z.array(mmPoint).min(2).max(200).describe("вершины ломаной в мм, 2..200 точек по порядку"),
+        width_mm: mmInt.optional().describe("толщина линии, мм (по умолчанию 200 — defs.thick_line.width)"),
+        plan: z.string().max(70).optional().describe("лист: plan (по умолчанию), furniture или custom_<id>"),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+        width_stroke: z.number().finite().min(0.5).max(10).optional().describe("толщина контура 0.5..10 (по умолчанию 1)"),
+        type_stroke: z.enum(["solid", "dash", "dot"]).optional(),
+        fill: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        await proGate("thick_line_add");
+        const rec = ws.apply("thick_line_add", (m) => addThickLine(m, {
+          points: (a["points"] as MmPoint[]).map((p) => ({ x: mmToCm(p.x), y: mmToCm(p.y) })),
+          plan: drawPlanInternal(validateDrawPlan(m, (a["plan"] as string | undefined) ?? "plan")),
+          color: a["color"] as string | undefined,
+          widthStroke: a["width_stroke"] as number | undefined,
+          typeStroke: a["type_stroke"] as string | undefined,
+          widthMm: a["width_mm"] as number | undefined,
+          fill: a["fill"] as string | undefined,
+        }));
+        return ok({ id: rec.id, plan: drawPlanPublic(rec.plan), points_mm: (a["points"] as MmPoint[]), length_mm: Math.round((rec.length ?? 0) * 1000), hint: SCENARIO_HINT });
+      },
+    ),
+
+    thick_line_update: tool(
+      "Изменить толстую линию (line_id из model_get thick_lines): толщину (width_mm), цвет " +
+        "(null — убрать персональный), стиль контура, заливку, лист.",
+      {
+        line_id: z.string().min(1).describe("метка TL<n> из model_get или id сайта"),
+        width_mm: mmInt.optional(),
+        plan: z.string().max(70).optional(),
+        color: z.union([z.string().regex(/^#[0-9a-fA-F]{6}$/), z.null()]).optional(),
+        width_stroke: z.number().finite().min(0.5).max(10).optional(),
+        type_stroke: z.enum(["solid", "dash", "dot"]).optional(),
+        fill: z.union([z.string().regex(/^#[0-9a-fA-F]{6}$/), z.null()]).optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        await proGate("thick_line_update");
+        const rec = ws.apply("thick_line_update", (m) => updateLine(m, "thick_lines", a["line_id"] as string, {
+          plan: a["plan"] !== undefined ? drawPlanInternal(validateDrawPlan(m, a["plan"] as string)) : undefined,
+          color: a["color"] as string | null | undefined,
+          widthStroke: a["width_stroke"] as number | undefined,
+          typeStroke: a["type_stroke"] as string | undefined,
+          fill: a["fill"] as string | null | undefined,
+          widthMm: a["width_mm"] as number | undefined,
+        }));
+        return ok({ id: rec.id, plan: drawPlanPublic(rec.plan), hint: SCENARIO_HINT });
+      },
+    ),
+
+    thick_line_delete: tool(
+      "Удалить толстую линию (line_id из model_get thick_lines).",
+      { line_id: z.string().min(1).describe("метка TL<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("thick_line_delete", (m) => (deleteLine(m, "thick_lines", a["line_id"] as string), true));
+        return ok({ deleted: a["line_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    figure_add: tool(
+      "Нарисовать фигуру («Нарисовать элемент» → фигуры — **PRO в UI**): тип (rect, rect_2, " +
+        "rect_round, rect_round_2, round, round_2, hexagon, octagon, triangle, triangle_2, " +
+        "semicircle, anticircle, quartercircle, roof), центр, размеры (по умолчанию 500×500 мм), " +
+        "угол, цвет, заливка, лист.",
+      {
+        type: z.string().min(1).max(30).describe(`тип фигуры: ${FREE_FIGURE_TYPES.join(", ")}`),
+        center: mmPoint.describe("центр фигуры, мм"),
+        width_mm: mmInt.optional().describe("ширина, мм (по умолчанию 500)"),
+        height_mm: mmInt.optional().describe("высота, мм (по умолчанию 500)"),
+        angle_deg: z.number().finite().min(-360).max(360).optional().describe("угол в градусах (по умолчанию 0)"),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+        fill: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().describe("заливка (палитра UI)"),
+        plan: z.string().max(70).optional().describe("лист: plan (по умолчанию), furniture или custom_<id>"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        await proGate("figure_add");
+        const rec = ws.apply("figure_add", (m) => addFigure(m, {
+          type: a["type"] as string,
+          center: { x: mmToCm((a["center"] as MmPoint).x), y: mmToCm((a["center"] as MmPoint).y) },
+          widthMm: a["width_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+          angleDeg: a["angle_deg"] as number | undefined,
+          color: a["color"] as string | undefined,
+          fill: a["fill"] as string | undefined,
+          plan: drawPlanInternal(validateDrawPlan(m, (a["plan"] as string | undefined) ?? "plan")),
+        }));
+        return ok({
+          id: rec.id,
+          type: rec.type,
+          plan: drawPlanPublic(String(rec.plan)),
+          center_mm: a["center"],
+          width_mm: Math.round((Number(rec.width) * 10) * 100) / 100,
+          height_mm: Math.round((Number(rec.height) * 10) * 100) / 100,
+          angle_deg: rec.angle ?? 0,
+          hint: SCENARIO_HINT,
+        });
+      },
+    ),
+
+    figure_update: tool(
+      "Изменить фигуру (figure_id из model_get free_figures): центр, размеры, угол, цвет, " +
+        "заливку (null — снять), лист.",
+      {
+        figure_id: z.string().min(1).describe("метка DE<n> из model_get или id сайта"),
+        center: mmPoint.optional(),
+        width_mm: mmInt.optional(),
+        height_mm: mmInt.optional(),
+        angle_deg: z.number().finite().min(-360).max(360).optional(),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+        fill: z.union([z.string().regex(/^#[0-9a-fA-F]{6}$/), z.null()]).optional(),
+        plan: z.string().max(70).optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        await proGate("figure_update");
+        const rec = ws.apply("figure_update", (m) => updateFigure(m, a["figure_id"] as string, {
+          center: a["center"] !== undefined ? { x: mmToCm((a["center"] as MmPoint).x), y: mmToCm((a["center"] as MmPoint).y) } : undefined,
+          widthMm: a["width_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+          angleDeg: a["angle_deg"] as number | undefined,
+          color: a["color"] as string | undefined,
+          fill: a["fill"] as string | null | undefined,
+          plan: a["plan"] !== undefined ? drawPlanInternal(validateDrawPlan(m, a["plan"] as string)) : undefined,
+        }));
+        return ok({ id: rec.id, hint: SCENARIO_HINT });
+      },
+    ),
+
+    figure_delete: tool(
+      "Удалить фигуру (figure_id из model_get free_figures).",
+      { figure_id: z.string().min(1).describe("метка DE<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        ws.apply("figure_delete", (m) => (deleteFigure(m, a["figure_id"] as string), true));
+        return ok({ deleted: a["figure_id"], hint: SCENARIO_HINT });
+      },
+    ),
+
+    image_upload: tool(
+      "Загрузить изображение на хранилище сайта (тот же POST /setup/api/load_picture/, что у " +
+        "кнопки «Изображение»). data_base64 — содержимое файла в base64 (MCP не читает локальные " +
+        "файлы по пути); принимаются только растровые jpeg/png — MIME определяется по сигнатуре " +
+        "файла, лимит 5 242 880 байт (как в редакторе). Возвращает url для image_add и размеры " +
+        "исходника в пикселях.",
+      {
+        data_base64: z.string().min(8).max(Math.ceil(PICTURE_MAX_BYTES / 3) * 4)
+          .describe("содержимое изображения (jpeg/png) в base64"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const raw = Buffer.from(a["data_base64"] as string, "base64");
+        if (raw.length === 0) throw new McpError("INVALID_ARGUMENT", "data_base64 — непустой base64 файла");
+        if (raw.length > PICTURE_MAX_BYTES) {
+          throw new McpError("INVALID_ARGUMENT", `изображение больше лимита редактора (${raw.length} > ${PICTURE_MAX_BYTES} байт)`, {
+            details: { kind: "picture_too_large", bytes: raw.length, limit: PICTURE_MAX_BYTES },
+          });
+        }
+        const size = parseImageSize(new Uint8Array(raw));
+        if (!size) {
+          throw new McpError("INVALID_ARGUMENT", "не распознан растровый формат jpeg/png (MIME по сигнатуре файла; svg и прочие форматы не принимаются)");
+        }
+        const type = size.mime === "image/png" ? "png" : "jpeg";
+        const form = new FormData();
+        form.append("file", new Blob([new Uint8Array(raw)], { type: size.mime }), `image.${type}`);
+        form.append("type", type);
+        const up = await uploadPicture(ws.deps.session, form);
+        return ok({
+          url: up.url,
+          mime: size.mime,
+          width_original_px: size.width,
+          height_original_px: size.height,
+          bytes: raw.length,
+          hint: SCENARIO_HINT,
+        });
+      },
+    ),
+
+    image_add: tool(
+      "Поставить изображение на план (кнопка «Изображение» нижней панели): url — от image_upload " +
+        "(или имя файла с хранилища сайта), center — центр, размеры: width_mm/height_mm явно или " +
+        "автоматически из размеров исходника (редактор вписывает в 200×200 см с сохранением " +
+        "пропорций). text — подпись под изображением.",
+      {
+        url: z.string().min(1).max(200).describe("url из image_upload или имя файла с хранилища сайта"),
+        center: mmPoint.describe("центр изображения, мм"),
+        width_mm: mmInt.optional().describe("ширина на плане, мм (иначе — из размеров исходника)"),
+        height_mm: mmInt.optional().describe("высота на плане, мм (иначе — из размеров исходника)"),
+        width_original_px: z.number().finite().int().min(1).max(100000).optional().describe("ширина исходника в пикселях (если не заданы width_mm/height_mm)"),
+        height_original_px: z.number().finite().int().min(1).max(100000).optional().describe("высота исходника в пикселях"),
+        text: z.string().max(200).optional().describe("подпись под изображением"),
+        plan: z.string().max(70).optional().describe("лист: plan (по умолчанию), furniture или custom_<id>"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const pic = ws.apply("image_add", (m) => addPicture(m, {
+          url: a["url"] as string,
+          center: { x: mmToCm((a["center"] as MmPoint).x), y: mmToCm((a["center"] as MmPoint).y) },
+          widthMm: a["width_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+          widthOriginalPx: a["width_original_px"] as number | undefined,
+          heightOriginalPx: a["height_original_px"] as number | undefined,
+          text: a["text"] as string | undefined,
+          plan: drawPlanInternal(validateDrawPlan(m, (a["plan"] as string | undefined) ?? "plan")),
+        }));
+        return pictureView(pic, drawPlanPublic);
+      },
+    ),
+
+    image_update: tool(
+      "Изменить изображение (image_id из model_get pictures): центр, размеры, подпись " +
+        "(null — снять), лист.",
+      {
+        image_id: z.string().min(1).describe("метка PIC<n> из model_get или id сайта"),
+        center: mmPoint.optional(),
+        width_mm: mmInt.optional(),
+        height_mm: mmInt.optional(),
+        text: z.union([z.string().max(200), z.null()]).optional(),
+        plan: z.string().max(70).optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const pic = ws.apply("image_update", (m) => {
+          const id = resolvePicture(m, a["image_id"] as string).id;
+          return updatePicture(m, id, {
+            center: a["center"] !== undefined ? { x: mmToCm((a["center"] as MmPoint).x), y: mmToCm((a["center"] as MmPoint).y) } : undefined,
+            widthMm: a["width_mm"] as number | undefined,
+            heightMm: a["height_mm"] as number | undefined,
+            text: a["text"] as string | null | undefined,
+            plan: a["plan"] !== undefined ? drawPlanInternal(validateDrawPlan(m, a["plan"] as string)) : undefined,
+          });
+        });
+        return pictureView(pic, drawPlanPublic);
+      },
+    ),
+
+    image_delete: tool(
+      "Удалить изображение с плана (image_id из model_get pictures). Файл на хранилище сайта " +
+        "не удаляется (редактор его тоже не удаляет).",
+      { image_id: z.string().min(1).describe("метка PIC<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        const id = ws.apply("image_delete", (m) => (deletePicture(m, a["image_id"] as string), resolvePictureSilent(m, a["image_id"] as string)));
+        return ok({ deleted: id ?? a["image_id"], hint: SCENARIO_HINT });
       },
     ),
 

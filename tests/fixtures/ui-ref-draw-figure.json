@@ -1,0 +1,23 @@
+{
+ "model_object": {
+  "id": "id1",
+  "type": "rect",
+  "pc": {
+   "x": 100,
+   "y": 100
+  },
+  "width": 50,
+  "height": 50,
+  "angle": 0,
+  "rotated": 0,
+  "radius": 0,
+  "depth": 0,
+  "color": "#148515",
+  "plan": "plan",
+  "prs": {},
+  "width_stroke": 1,
+  "type_stroke": "solid",
+  "level_layer": 7
+ },
+ "_source": "СИНТЕТИЧЕСКИЙСИНТЕТИЧЕСКИЙ эталон (не живой UI): формат «Нарисовать элемент»/листов по бандлу app.3.0 (268-app.js), этап 375; id обезличены («0», «id1»), координаты условные. FreeFigure serialize: {id, type, pc, width, height, angle, rotated, radius, depth, color, plan, plan_, prs, width_stroke, type_stroke, on_size, on_area, area, fill, …}. Типы (preparePlanGeometry): rect, rect_2, rect_round, rect_round_2, round, round_2, hexagon, octagon, triangle, triangle_2, semicircle, anticircle, quartercircle, roof."
+}

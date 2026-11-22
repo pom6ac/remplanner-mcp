@@ -1,0 +1,21 @@
+{
+ "model_object": {
+  "id": "id1",
+  "url": "u1.png",
+  "pc": {
+   "x": 100,
+   "y": 100
+  },
+  "width": 100,
+  "height": 100,
+  "width_original": 300,
+  "height_original": 300,
+  "text": "",
+  "font_size": 10,
+  "plan": "plan",
+  "prs": {},
+  "level_layer": 7,
+  "type": "user"
+ },
+ "_source": "СИНТЕТИЧЕСКИЙСИНТЕТИЧЕСКИЙ эталон (не живой UI): формат «Нарисовать элемент»/листов по бандлу app.3.0 (268-app.js), этап 375; id обезличены («0», «id1»), координаты условные. Picture serialize: {id, url, pc, pointer_pc, width, height, width_original, height_original, text, font_size, plan, plan_, prs, on_border, on_pointer, on_scaling_size, show_everywhere, id_shield, level_layer, id_group, type, is_from_user_lib}. url — имя файла на хранилище (POST /setup/api/load_picture/)."
+}

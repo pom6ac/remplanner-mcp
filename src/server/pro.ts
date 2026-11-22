@@ -80,6 +80,11 @@ export const PRO_TOOL_GROUPS: readonly ProToolGroup[] = [
   { tools: ["finish_ceiling_molding_set"], editorKeys: ["molding"], label: "потолочный плинтус" },
   { tools: ["comment_add", "comment_update"], editorKeys: ["comment (кнопка «Текстовый комментарий»; coverage §3/§4)"], label: "текстовые комментарии" },
   { tools: ["finish_floor_molding_set"], editorKeys: ["floor_molding_plastic", "floor_molding_polyurethane", "floor_molding_mdf", "floor_molding_wood", "floor_molding_tile", "floor_molding_with_light", "floor_molding_hidden"], label: "плинтусы" },
+  // «Нарисовать элемент» (этап 375): кнопка #freelines_opener нижней панели —
+  // класс is_pro (проба 375-sheets-ui, не plannertool_* — в эталон
+  // 328-pro-anon.json ключи нижней панели не входят); сводные линии
+  // (freelines/thick_lines/free_figures) — всё подменю этой кнопки
+  { tools: ["freeline_add", "freeline_update", "thick_line_add", "thick_line_update", "figure_add", "figure_update"], editorKeys: ["freelines_opener (кнопка «Нарисовать элемент», класс is_pro; проба 375-sheets-ui)"], label: "«Нарисовать элемент» (свободные линии, толстые линии, фигуры)" },
   { tools: [...SHIELD_TOOLS], editorKeys: ["shield"], seniorOnly: true, label: "конструктор электрощитка" },
 ] as const;
 

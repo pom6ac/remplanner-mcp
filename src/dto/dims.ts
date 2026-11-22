@@ -30,6 +30,20 @@ export function sheetPublic(v: string | undefined): string {
   return v === "furniture" ? "furniture" : "plan";
 }
 
+/**
+ * Лист для сущностей нижней панели (этап 375): публичное значение «plan»
+ * (исходный план), «furniture» (мебель) или пользовательский лист
+ * custom_<site_id>; в модели — то же значение плана (у объектов на исходном
+ * плане plan: "a"). Обратное преобразование: «a» → «plan».
+ */
+export function drawPlanInternal(v: string): string {
+  return v === "plan" ? "a" : v;
+}
+
+export function drawPlanPublic(v: string): string {
+  return v === "a" ? "plan" : v;
+}
+
 /** Канонизация текста комментария (этап 116, ревью 115 R1): ввод с " и `
  *  канонизируется к виду редактора после restore; отличие от ввода — warning. */
 export function commentTextWarnings(input: string | undefined, stored: string): string[] {

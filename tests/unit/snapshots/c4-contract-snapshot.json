@@ -1136,6 +1136,174 @@
    }
   },
   {
+   "name": "figure_add",
+   "description": "Нарисовать фигуру («Нарисовать элемент» → фигуры — **PRO в UI**): тип (rect, rect_2, rect_round, rect_round_2, round, round_2, hexagon, octagon, triangle, triangle_2, semicircle, anticircle, quartercircle, roof), центр, размеры (по умолчанию 500×500 мм), угол, цвет, заливка, лист.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "type": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 30,
+      "description": "тип фигуры: rect, rect_2, rect_round, rect_round_2, round, round_2, hexagon, octagon, triangle, triangle_2, semicircle, anticircle, quartercircle, roof"
+     },
+     "center": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "центр фигуры, мм"
+     },
+     "width_mm": {
+      "description": "ширина, мм (по умолчанию 500)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "height_mm": {
+      "description": "высота, мм (по умолчанию 500)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "angle_deg": {
+      "description": "угол в градусах (по умолчанию 0)",
+      "type": "number",
+      "minimum": -360,
+      "maximum": 360
+     },
+     "color": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+     },
+     "fill": {
+      "description": "заливка (палитра UI)",
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+     },
+     "plan": {
+      "description": "лист: plan (по умолчанию), furniture или custom_<id>",
+      "type": "string",
+      "maxLength": 70
+     }
+    },
+    "required": [
+     "type",
+     "center"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "figure_delete",
+   "description": "Удалить фигуру (figure_id из model_get free_figures).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "figure_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка DE<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "figure_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "figure_update",
+   "description": "Изменить фигуру (figure_id из model_get free_figures): центр, размеры, угол, цвет, заливку (null — снять), лист.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "figure_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка DE<n> из model_get или id сайта"
+     },
+     "center": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "точка плана в мм, X вправо, Y вниз"
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "angle_deg": {
+      "type": "number",
+      "minimum": -360,
+      "maximum": 360
+     },
+     "color": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+     },
+     "fill": {
+      "anyOf": [
+       {
+        "type": "string",
+        "pattern": "^#[0-9a-fA-F]{6}$"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "plan": {
+      "type": "string",
+      "maxLength": 70
+     }
+    },
+    "required": [
+     "figure_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "finish_ceiling_complex_set",
    "description": "Поставить двухуровневый потолок в зоне комнаты (лист «Потолки», инструмент «Двухуровневый потолок»): внутренний контур с отступом 400 мм от стен, радиус скругления 100 мм (умолчания редактора). Проверки редактора: площадь зоны потолка ≥ 4 м², внутренний контур без самопересечений (GEOMETRY_CONFLICT/INVALID_ARGUMENT); в террасе не ставится. at_mm — точка внутри зоны потолка (клик в редакторе); обязательна, если зон больше одной; при вложенных зонах выбирается зона наименьшей площади (как в редакторе). Повторный вызов по уже двухуровневой зоне — нет-op (как в редакторе). Снять: в редакторе ластик complex НЕ снимает (живая проба 328-complex, шаг 3) — finish_ceiling_remove при complex тоже отказывает; смена материала (finish_ceiling_set с ДРУГИМ покрытием) убирает двухуровневый потолок — с warning complex_removed в ответе (как в редакторе). После правки вызывайте model_validate и project_save.",
    "inputSchema": {
@@ -1781,6 +1949,152 @@
    }
   },
   {
+   "name": "freeline_add",
+   "description": "Нарисовать свободную линию («Нарисовать элемент» нижней панели — **PRO в UI**): ломаная из 2..200 точек (мм), план (plan — исходный, furniture или custom_<id> пользовательского листа), цвет (палитра UI), стиль контура (solid/dash/dot), толщина контура 0.5..10, заливка. Свободная геометрия: привязок к стенам нет, стены и проёмы её не трогают. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "points": {
+      "minItems": 2,
+      "maxItems": 200,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), X вправо"
+        },
+        "y": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), Y вниз"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "description": "точка плана в мм, X вправо, Y вниз"
+      },
+      "description": "вершины ломаной в мм, 2..200 точек по порядку"
+     },
+     "plan": {
+      "description": "лист: plan (по умолчанию), furniture или custom_<id> пользовательского листа",
+      "type": "string",
+      "maxLength": 70
+     },
+     "color": {
+      "description": "цвет (палитра UI, по умолчанию зелёный #148515)",
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+     },
+     "width_stroke": {
+      "description": "толщина контура 0.5..10 (по умолчанию 1)",
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 10
+     },
+     "type_stroke": {
+      "description": "стиль контура (по умолчанию solid)",
+      "type": "string",
+      "enum": [
+       "solid",
+       "dash",
+       "dot"
+      ]
+     },
+     "fill": {
+      "description": "заливка (палитра UI)",
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+     }
+    },
+    "required": [
+     "points"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "freeline_delete",
+   "description": "Удалить свободную линию (line_id из model_get freelines).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "line_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка FL<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "line_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "freeline_update",
+   "description": "Изменить свободную линию (line_id из model_get freelines): цвет (null — убрать персональный), стиль и толщину контура, заливку, лист.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "line_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка FL<n> из model_get или id сайта"
+     },
+     "plan": {
+      "type": "string",
+      "maxLength": 70
+     },
+     "color": {
+      "anyOf": [
+       {
+        "type": "string",
+        "pattern": "^#[0-9a-fA-F]{6}$"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "width_stroke": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 10
+     },
+     "type_stroke": {
+      "type": "string",
+      "enum": [
+       "solid",
+       "dash",
+       "dot"
+      ]
+     },
+     "fill": {
+      "anyOf": [
+       {
+        "type": "string",
+        "pattern": "^#[0-9a-fA-F]{6}$"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "line_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "gas_line_add",
    "description": "Поставить газовую линию (пункт меню «Коммуникации» → «Газовый трубопровод»): труба-отрезок от точки start до точки end (мм, коллекция gas_lines в model_get — отдельная сущность, не item_add). Длина в модели — в метрах, пересчитывается автоматически. Лимитов нет (кроме конечных координат). После добавления вызывайте model_validate и project_save.",
    "inputSchema": {
@@ -1914,6 +2228,186 @@
     },
     "required": [
      "gas_line_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "image_add",
+   "description": "Поставить изображение на план (кнопка «Изображение» нижней панели): url — от image_upload (или имя файла с хранилища сайта), center — центр, размеры: width_mm/height_mm явно или автоматически из размеров исходника (редактор вписывает в 200×200 см с сохранением пропорций). text — подпись под изображением.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "url из image_upload или имя файла с хранилища сайта"
+     },
+     "center": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "центр изображения, мм"
+     },
+     "width_mm": {
+      "description": "ширина на плане, мм (иначе — из размеров исходника)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "height_mm": {
+      "description": "высота на плане, мм (иначе — из размеров исходника)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "width_original_px": {
+      "description": "ширина исходника в пикселях (если не заданы width_mm/height_mm)",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+     },
+     "height_original_px": {
+      "description": "высота исходника в пикселях",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+     },
+     "text": {
+      "description": "подпись под изображением",
+      "type": "string",
+      "maxLength": 200
+     },
+     "plan": {
+      "description": "лист: plan (по умолчанию), furniture или custom_<id>",
+      "type": "string",
+      "maxLength": 70
+     }
+    },
+    "required": [
+     "url",
+     "center"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "image_delete",
+   "description": "Удалить изображение с плана (image_id из model_get pictures). Файл на хранилище сайта не удаляется (редактор его тоже не удаляет).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "image_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка PIC<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "image_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "image_update",
+   "description": "Изменить изображение (image_id из model_get pictures): центр, размеры, подпись (null — снять), лист.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "image_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка PIC<n> из model_get или id сайта"
+     },
+     "center": {
+      "type": "object",
+      "properties": {
+       "x": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), X вправо"
+       },
+       "y": {
+        "type": "integer",
+        "minimum": -1000000,
+        "maximum": 1000000,
+        "description": "мм, целое (может быть отрицательным), Y вниз"
+       }
+      },
+      "required": [
+       "x",
+       "y"
+      ],
+      "description": "точка плана в мм, X вправо, Y вниз"
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "height_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "text": {
+      "anyOf": [
+       {
+        "type": "string",
+        "maxLength": 200
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "plan": {
+      "type": "string",
+      "maxLength": 70
+     }
+    },
+    "required": [
+     "image_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "image_upload",
+   "description": "Загрузить изображение на хранилище сайта (тот же POST /setup/api/load_picture/, что у кнопки «Изображение»). data_base64 — содержимое файла в base64 (MCP не читает локальные файлы по пути); принимаются только растровые jpeg/png — MIME определяется по сигнатуре файла, лимит 5 242 880 байт (как в редакторе). Возвращает url для image_add и размеры исходника в пикселях.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "data_base64": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 6990508,
+      "description": "содержимое изображения (jpeg/png) в base64"
+     }
+    },
+    "required": [
+     "data_base64"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"
    }
@@ -3785,6 +4279,92 @@
    }
   },
   {
+   "name": "sheet_add",
+   "description": "Добавить пользовательский лист (нижняя панель → «Добавить лист», CustomPlan): name — имя (1..60 символов), after_plan — после какого встроенного листа стоит вкладка («first» — в начало; умолчание редактора create_walls), content — что видно на листе (plan — стены/комнаты, furniture_santeh — мебель и сантехника, light — освещение, electro_points — электроточки; умолчание [plan]). Лист адресуется в plan других инструментов как custom_<id> (ответ) или по имени. После добавления вызывайте model_validate и project_save.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60,
+      "description": "имя листа, 1..60 символов"
+     },
+     "after_plan": {
+      "description": "после какого встроенного листа: first или init, break_walls, create_walls, rooms, radiators, furniture, santeh, waterplan, sockets, light_connections, light, cables, shield, warm_floor, conditioners, ventilation, security, floor, walls, ceiling, hydroisolation, isolation, shtukaturka, projections, styazhka (по умолчанию create_walls)",
+      "type": "string",
+      "maxLength": 30
+     },
+     "content": {
+      "description": "что видно на листе: plan, furniture_santeh, light, electro_points (по умолчанию [\"plan\"])",
+      "maxItems": 4,
+      "type": "array",
+      "items": {
+       "type": "string",
+       "maxLength": 30
+      }
+     }
+    },
+    "required": [
+     "name"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "sheet_delete",
+   "description": "Удалить пользовательский лист вместе с его объектами — как CustomPlan.delete редактора: комментарии, фигуры, изображения, свободные/толстые линии и размеры листа удаляются каскадно (deleted — счётчики по коллекциям).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "sheet_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id листа (site_id из model_get custom_plans) или метка S<n>"
+     }
+    },
+    "required": [
+     "sheet_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "sheet_update",
+   "description": "Изменить пользовательский лист (sheet_id из sheet_add/model_get): имя, after_plan (позицию вкладки) и content (что видно).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "sheet_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "id листа (site_id из model_get custom_plans) или метка S<n>"
+     },
+     "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60
+     },
+     "after_plan": {
+      "type": "string",
+      "maxLength": 30
+     },
+     "content": {
+      "maxItems": 4,
+      "type": "array",
+      "items": {
+       "type": "string",
+       "maxLength": 30
+      }
+     }
+    },
+    "required": [
+     "sheet_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
    "name": "shield_bus_add",
    "description": "Добавить шину (нулевую шину-бар, инструмент shield_busbar в редакторе) над или под щитком (PRO). position — T (над) | B (под); align — привязка по горизонтали: L (левый край, distance 0), C (центр, по умолчанию), R (правый край). Гнёзд по умолчанию 6 (ShieldDimensions.bus.default_sockets), sockets — 4..25. connection шины пуст, тип запомнится первым проводом (shield_wire_add на {bus, port}); к шине с connection можно ставить только провод того же типа — как в редакторе. После добавления вызывайте model_validate и project_save.",
    "inputSchema": {
@@ -4838,6 +5418,161 @@
     },
     "required": [
      "territory_border_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "thick_line_add",
+   "description": "Нарисовать толстую линию («Нарисовать элемент» — **PRO в UI**): ломаная из 2..200 точек (мм) с толщиной width_mm (по умолчанию редактора 200 мм), лист, цвет, стиль контура.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "points": {
+      "minItems": 2,
+      "maxItems": 200,
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "x": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), X вправо"
+        },
+        "y": {
+         "type": "integer",
+         "minimum": -1000000,
+         "maximum": 1000000,
+         "description": "мм, целое (может быть отрицательным), Y вниз"
+        }
+       },
+       "required": [
+        "x",
+        "y"
+       ],
+       "description": "точка плана в мм, X вправо, Y вниз"
+      },
+      "description": "вершины ломаной в мм, 2..200 точек по порядку"
+     },
+     "width_mm": {
+      "description": "толщина линии, мм (по умолчанию 200 — defs.thick_line.width)",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000
+     },
+     "plan": {
+      "description": "лист: plan (по умолчанию), furniture или custom_<id>",
+      "type": "string",
+      "maxLength": 70
+     },
+     "color": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+     },
+     "width_stroke": {
+      "description": "толщина контура 0.5..10 (по умолчанию 1)",
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 10
+     },
+     "type_stroke": {
+      "type": "string",
+      "enum": [
+       "solid",
+       "dash",
+       "dot"
+      ]
+     },
+     "fill": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+     }
+    },
+    "required": [
+     "points"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "thick_line_delete",
+   "description": "Удалить толстую линию (line_id из model_get thick_lines).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "line_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка TL<n> из model_get или id сайта"
+     }
+    },
+    "required": [
+     "line_id"
+    ],
+    "$schema": "http://json-schema.org/draft-07/schema#"
+   }
+  },
+  {
+   "name": "thick_line_update",
+   "description": "Изменить толстую линию (line_id из model_get thick_lines): толщину (width_mm), цвет (null — убрать персональный), стиль контура, заливку, лист.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "line_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "метка TL<n> из model_get или id сайта"
+     },
+     "width_mm": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000,
+      "description": "мм, целое, ≥ 0"
+     },
+     "plan": {
+      "type": "string",
+      "maxLength": 70
+     },
+     "color": {
+      "anyOf": [
+       {
+        "type": "string",
+        "pattern": "^#[0-9a-fA-F]{6}$"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     },
+     "width_stroke": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 10
+     },
+     "type_stroke": {
+      "type": "string",
+      "enum": [
+       "solid",
+       "dash",
+       "dot"
+      ]
+     },
+     "fill": {
+      "anyOf": [
+       {
+        "type": "string",
+        "pattern": "^#[0-9a-fA-F]{6}$"
+       },
+       {
+        "type": "null"
+       }
+      ]
+     }
+    },
+    "required": [
+     "line_id"
     ],
     "$schema": "http://json-schema.org/draft-07/schema#"
    }
@@ -6255,6 +6990,11 @@
    "pipes_conditioner": [],
    "pipes_heat": [],
    "pipes_ventilation": [],
+   "custom_plans": [],
+   "freelines": [],
+   "thick_lines": [],
+   "free_figures": [],
+   "pictures": [],
    "total_height_mm": 2700
   },
   "model_get_full": {

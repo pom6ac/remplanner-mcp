@@ -430,7 +430,66 @@ export type CompactModel = {
   pipes_conditioner: CompactPipe[];
   pipes_heat: CompactPipe[];
   pipes_ventilation: CompactPipe[];
+  /** Пользовательские листы (этап 375, CustomPlan). */
+  custom_plans: CompactSheet[];
+  /** Свободные линии / толстые линии / фигуры / изображения (этап 375). */
+  freelines: CompactDrawLine[];
+  thick_lines: CompactDrawLine[];
+  free_figures: CompactFigure[];
+  pictures: CompactPicture[];
   total_height_mm: number;
+};
+
+/** Пользовательский лист (этап 375): лист адресуется именем или site_id. */
+export type CompactSheet = {
+  /** Метка S<n> (порядок в model.custom_plans). */
+  id: string;
+  site_id: string;
+  name: string;
+  /** После какого встроенного листа стоит вкладка («first» — в начало). */
+  after_plan: string;
+  /** Что видно на листе (plan / furniture_santeh / light / electro_points). */
+  content: string[];
+};
+
+/** Линия «Нарисовать элемент» (freelines/thick_lines, PRO). */
+export type CompactDrawLine = {
+  id: string;
+  site_id: string;
+  /** Лист: встроенный или custom_<id> пользовательского листа. */
+  plan: string;
+  /** Вершины ломаной, мм. */
+  points_mm: Array<[number, number]>;
+  length_mm: number;
+  color?: string;
+  /** Индивидуальная ширина толстой линии, мм. */
+  width_mm?: number;
+};
+
+/** Фигура «Нарисовать элемент» (free_figures, PRO). */
+export type CompactFigure = {
+  id: string;
+  site_id: string;
+  /** rect / rect_round / round / triangle / … (FreeFigure.type). */
+  type: string;
+  plan: string;
+  center_mm: [number, number];
+  width_mm: number;
+  height_mm: number;
+  angle_deg: number;
+  color?: string;
+};
+
+/** Изображение на плане (pictures). */
+export type CompactPicture = {
+  id: string;
+  site_id: string;
+  url: string;
+  plan: string;
+  center_mm: [number, number];
+  width_mm: number;
+  height_mm: number;
+  text?: string;
 };
 
 export function wallLengthMm(wall: Wall): number {
@@ -957,6 +1016,64 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
       };
     });
 
+  // нижняя панель / листы (этап 375)
+  const compactSheets = (src: Record<string, import("./sheets.ts").CustomPlanEntity> | undefined): CompactSheet[] =>
+    Object.values(src ?? {}).map((s, i) => ({
+      id: `S${i + 1}`,
+      site_id: s.id,
+      name: s.name,
+      after_plan: s.after_plan,
+      content: s.content ?? [],
+    }));
+  const compactDrawLines = (src: Record<string, import("./draw.ts").GraphDrawRec> | undefined, label: string, thick = false): CompactDrawLine[] =>
+    Object.values(src ?? {}).map((r, i) => {
+      // индивидуальная ширина толстой линии — в ячейках matrix {length, width}
+      let widthCm: number | undefined;
+      if (thick && r.on_width === 1) {
+        for (const row of r.matrix) {
+          for (const cell of row) {
+            if (cell && typeof cell === "object" && typeof (cell as { width?: unknown }).width === "number") {
+              widthCm = (cell as { width: number }).width;
+              break;
+            }
+          }
+          if (widthCm !== undefined) break;
+        }
+      }
+      return {
+        id: `${label}${i + 1}`,
+        site_id: r.id,
+        plan: r.plan,
+        points_mm: (r.vertexes ?? []).map((v) => [round0(cmToMm(v.point?.x ?? 0)), round0(cmToMm(v.point?.y ?? 0))] as [number, number]),
+        length_mm: Math.round((r.length ?? 0) * 1000),
+        ...(r.color_custom ? { color: r.color_custom } : {}),
+        ...(widthCm !== undefined ? { width_mm: round0(cmToMm(widthCm)) } : {}),
+      };
+    });
+  const compactFigures = (src: Record<string, import("./draw.ts").FreeFigureEntity> | undefined, label: string): CompactFigure[] =>
+    Object.values(src ?? {}).map((f, i) => ({
+      id: `${label}${i + 1}`,
+      site_id: f.id,
+      type: f.type ?? "rect",
+      plan: f.plan ?? "plan",
+      center_mm: [round0(cmToMm(f.pc?.x ?? 0)), round0(cmToMm(f.pc?.y ?? 0))] as [number, number],
+      width_mm: round0(cmToMm(f.width ?? 0)),
+      height_mm: round0(cmToMm(f.height ?? 0)),
+      angle_deg: f.angle ?? 0,
+      ...(typeof f.color === "string" ? { color: f.color } : {}),
+    }));
+  const compactPictures = (src: Record<string, import("./pictures.ts").PictureEntity> | undefined, label: string): CompactPicture[] =>
+    Object.values(src ?? {}).map((p, i) => ({
+      id: `${label}${i + 1}`,
+      site_id: p.id,
+      url: p.url,
+      plan: p.plan ?? "plan",
+      center_mm: [round0(cmToMm(p.pc?.x ?? 0)), round0(cmToMm(p.pc?.y ?? 0))] as [number, number],
+      width_mm: round0(cmToMm(p.width ?? 0)),
+      height_mm: round0(cmToMm(p.height ?? 0)),
+      ...(p.text ? { text: p.text } : {}),
+    }));
+
   return {
     walls,
     rooms: compactRooms,
@@ -983,6 +1100,11 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
     pipes_conditioner: compactClimatePipes(model.pipes_conditioner, "PC"),
     pipes_heat: compactClimatePipes(model.pipes_heat, "PH"),
     pipes_ventilation: compactClimatePipes(model.pipes_ventilation, "PV"),
+    custom_plans: compactSheets(model.custom_plans),
+    freelines: compactDrawLines(model.freelines, "FL"),
+    thick_lines: compactDrawLines(model.thick_lines, "TL", true),
+    free_figures: compactFigures(model.free_figures, "DE"),
+    pictures: compactPictures(model.pictures, "PIC"),
     total_height_mm: round0(cmToMm(totalHeight)),
   };
 }

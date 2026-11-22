@@ -1,0 +1,12 @@
+{
+ "model_object": {
+  "id": "0",
+  "name": "Мой лист",
+  "after_plan": "create_walls",
+  "content": [
+   "plan"
+  ],
+  "date": 1700000000
+ },
+ "_source": "СИНТЕТИЧЕСКИЙСИНТЕТИЧЕСКИЙ эталон (не живой UI): формат «Нарисовать элемент»/листов по бандлу app.3.0 (268-app.js), этап 375; id обезличены («0», «id1»), координаты условные. CustomPlan.serialize: {id, name, after_plan, content, date}; вкладка листа — план custom_<id>. Пользовательские поля: name, after_plan, content."
+}

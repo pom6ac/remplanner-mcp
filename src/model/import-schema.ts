@@ -140,6 +140,43 @@ const comment = z.looseObject({
   plan: idStr.optional(),
 });
 
+/** Пользовательский лист (этап 375, CustomPlan): {id, name, after_plan, content, date}. */
+const customPlan = z.looseObject({
+  id: idStr,
+  name: z.string().max(60),
+  after_plan: shortStr.optional(),
+  content: z.array(shortStr).max(16).optional(),
+  date: z.number().finite().optional(),
+});
+
+/** Фигура «Нарисовать элемент» (FreeFigure): геометрия pc/width/height/angle. */
+const freeFigure = z.looseObject({
+  id: idStr,
+  type: shortStr.optional(),
+  plan: idStr.optional(),
+  pc: point.optional(),
+  width: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  height: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  angle: z.number().finite().optional(),
+  radius: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  depth: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  color: z.string().max(32).optional(),
+});
+
+/** Изображение на плане (Picture): url на хранилище сайта + размеры. */
+const picture = z.looseObject({
+  id: idStr,
+  url: z.string().max(200).optional(),
+  pc: point.optional(),
+  width: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  height: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  width_original: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  height_original: z.number().finite().min(0).max(MODEL_SIZE_LIMIT_CM).optional(),
+  text: z.string().max(200).optional(),
+  font_size: z.number().finite().optional(),
+  plan: idStr.optional(),
+});
+
 /** Графовая сущность (трубы/кабели/свет/границы/проёмы пола/тёплые полы). */
 const graphEntity = z.looseObject({
   id: idStr,
@@ -317,7 +354,11 @@ const room2 = z.looseObject({
  * без схемы графа и лимитов). Не-графовые коллекции реестра имеют собственные
  * схемы в collectionsSchema() (walls/items/pillars/rigels/rulers/comments/shields).
  */
-const NON_GRAPH_COLLECTIONS = new Set(["walls", "items", "pillars", "rigels", "rulers", "comments", "shields"]);
+const NON_GRAPH_COLLECTIONS = new Set([
+  "walls", "items", "pillars", "rigels", "rulers", "comments", "shields",
+  // этап 375: пользовательские листы, фигуры и изображения — не графы
+  "custom_plans", "free_figures", "pictures",
+]);
 
 const GRAPH_COLLECTIONS = MODEL_ENTITY_COLLECTIONS.filter((c) => !NON_GRAPH_COLLECTIONS.has(c));
 
@@ -332,6 +373,9 @@ function collectionsSchema(): Record<string, z.ZodType> {
     rulers: collection(ruler, MAX_IMPORT_ENTITIES).optional(),
     comments: collection(comment, MAX_IMPORT_ENTITIES).optional(),
     shields: collection(shield, MAX_IMPORT_ENTITIES).optional(),
+    custom_plans: collection(customPlan, MAX_IMPORT_ENTITIES).optional(),
+    free_figures: collection(freeFigure, MAX_IMPORT_ENTITIES).optional(),
+    pictures: collection(picture, MAX_IMPORT_ENTITIES).optional(),
   };
   for (const key of GRAPH_COLLECTIONS) out[key] = collection(graphEntity, MAX_IMPORT_ENTITIES).optional();
   return out;

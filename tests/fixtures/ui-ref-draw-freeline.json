@@ -1,0 +1,49 @@
+{
+ "model_object": {
+  "id": "id1",
+  "type": "freeline",
+  "plan": "custom_0",
+  "length": 1.0,
+  "matrix": [
+   [
+    null,
+    {
+     "length": 1
+    }
+   ],
+   [
+    {
+     "length": 1
+    },
+    null
+   ]
+  ],
+  "vertexes": [
+   {
+    "id": "id2",
+    "point": {
+     "x": 100,
+     "y": 100
+    },
+    "type": "node"
+   },
+   {
+    "id": "id3",
+    "point": {
+     "x": 200,
+     "y": 100
+    },
+    "type": "node"
+   }
+  ],
+  "items": {
+   "id2": "node",
+   "id3": "node"
+  },
+  "color_custom": "#148515",
+  "width_stroke": 1,
+  "type_stroke": "solid",
+  "level_layer": 7
+ },
+ "_source": "СИНТЕТИЧЕСКИЙСИНТЕТИЧЕСКИЙ эталон (не живой UI): формат «Нарисовать элемент»/листов по бандлу app.3.0 (268-app.js), этап 375; id обезличены («0», «id1»), координаты условные. FreeLine (extends GraphLines) serialize: {id, matrix, vertexes, items, type, length, color_custom, plan, plan_, prs, width_stroke, type_stroke, on_size, on_area, fill, …}. Пользовательские поля: type, color_custom, width_stroke, type_stroke."
+}
