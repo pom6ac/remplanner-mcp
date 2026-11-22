@@ -15,6 +15,7 @@ import type { LoadedModel } from "../../src/api.ts";
 import type { Model, ItemProps, Pipe } from "../../src/model/types.ts";
 import { McpError } from "../../src/errors.ts";
 import { addPipe, PIPE_LINK_KEY_BY_TYPE } from "../../src/model/pipes.ts";
+import { addWarmFloor } from "../../src/model/climate.ts";
 import { addItem } from "../../src/model/items.ts";
 import { addWall } from "../../src/model/walls.ts";
 import { mergeWaterSpot, unsetWaterSpot, removePipeVertex } from "../../src/model/waterspots.ts";
@@ -241,4 +242,86 @@ test("360: mock save — перегородка делит комнату при
   const out = await ws.save();
   assert.equal(out.verified, true, "деление комнаты перегородкой не даёт ложной ошибки на трубах");
   assert.equal(Object.keys((server.model as { pipes?: Record<string, Pipe> }).pipes!).length, 1);
+});
+
+// ---------- ревью 366: полный путь через Workspace ----------
+
+/** multi-узел (коллектор) без каталога — вершинные ссылки трубы пишутся в props.<box>. */
+function rawCollector(model: Model, id: string, xCm: number, yCm: number): ItemProps {
+  const item = {
+    id, name: "radiator_collector", pc: { x: xCm, y: yCm }, width: 40, height: 30, angle: 0,
+    plan: { radiators: 26 },
+  } as unknown as ItemProps;
+  model.items[id] = item;
+  return item;
+}
+
+type WfProps = { pipes_warm_floor?: Record<string, unknown> };
+
+test("367: mock save — pipe_node_delete магистрали тёплого пола с вершиной-контуром: распад переносит ссылку контура, rebuild без висячей, save verified (ревью 366 №1)", async () => {
+  // (а) распад: средний узел 5-вершинной трубы [коллектор, n, n, n, контур]
+  const build = () => {
+    const model = emptyModel();
+    const col = rawCollector(model, "COL", 250, 150);
+    const wf = addWarmFloor(model, { kind: "water", corner1: { x: 1500, y: 1500 }, corner2: { x: 2500, y: 2500 } });
+    const pipe = addPipe(model, { kind: "warm_floor", path: [{ itemId: col.id }, { x: 2200, y: 1000 }, { x: 1900, y: 800 }, { x: 1600, y: 600 }, { itemId: wf.id }] });
+    return { model, col, wf, pipe };
+  };
+  {
+    const { model, col, wf, pipe } = build();
+    const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, () => {});
+    await ws.open("0", "1");
+    const res = ws.apply("pipe_node_delete", (m) => removePipeVertex(m, pipe.id, pipe.vertexes[2]!.id));
+    assert.deepEqual(res.deleted, [pipe.id], "исходная труба распалась");
+    assert.equal(res.created.length, 2, "два куска ≥2 вершин — две новые трубы");
+    const after = ws.model as Model;
+    // ревью 366 №1(а): ссылка контура ПЕРЕНЕСЕНА на его кусок (relinkPipe по реестру
+    // держателей), а не потеряна — иначе контур отваливается от магистрали
+    const pieceOfWf = Object.values((after as { pipes_warm_floor?: Record<string, Pipe> }).pipes_warm_floor!).find((p) => p.items[wf.id])!;
+    assert.ok(pieceOfWf, "кусок с контуром жив");
+    assert.deepEqual((after.warm_floors![wf.id]!.props as unknown as WfProps).pipes_warm_floor, { pipe_warm_floor_id: pieceOfWf.id }, "контур ссылается на свой кусок");
+    // multi-коллектор: ссылка-массив на свой кусок
+    const pieceOfCol = Object.values((after as { pipes_warm_floor?: Record<string, Pipe> }).pipes_warm_floor!).find((p) => p.items[col.id])!;
+    assert.deepEqual((after.items![col.id] as unknown as WfProps).pipes_warm_floor, { pipe_warm_floor_id: [pieceOfCol.id] });
+    const out = await ws.save();
+    assert.equal(out.verified, true, "save verified: расхождений климата/труб нет");
+  }
+  // (б) rebuild: узел перед контуром, контур остаётся одиночкой — ссылка снята
+  {
+    const { model, wf, pipe } = build();
+    const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, () => {});
+    await ws.open("0", "1");
+    const res = ws.apply("pipe_node_delete", (m) => removePipeVertex(m, pipe.id, pipe.vertexes[3]!.id));
+    assert.deepEqual(res, { deleted: [], created: [], removed: true }, "кусок [коллектор, n, n] жив — та же труба (rebuildGraph)");
+    const after = ws.model as Model;
+    const p = (after as { pipes_warm_floor?: Record<string, Pipe> }).pipes_warm_floor![pipe.id]!;
+    assert.ok(p, "труба жива");
+    assert.deepEqual(p.vertexes.map((v) => v.id).sort(), [pipe.vertexes[0]!.id, pipe.vertexes[1]!.id, pipe.vertexes[2]!.id].sort(), "контур ушёл из вершин");
+    // ревью 366 №1(б): контур-одиночка не хранит висячую ссылку на трубу,
+    // в вершинах которой его больше нет (иначе онлайн-путь откатит мутацию)
+    assert.deepEqual((after.warm_floors![wf.id]!.props as unknown as WfProps).pipes_warm_floor, {}, "висячей ссылки у контура нет");
+    const out = await ws.save();
+    assert.equal(out.verified, true, "save verified");
+  }
+});
+
+test("367: mock save — unset composite→composite через ws.apply: value_2 сохранён, save verified (ревью 364 №1)", async () => {
+  const model = emptyModel();
+  const s = spot(model, 100, 100, "waterspot_drainage_cold_hot");
+  (s.over_floor as { value: number; display: boolean; value_2?: number }).value_2 = 40;
+  const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+  const ws = saveMock(server, () => {});
+  await ws.open("0", "1");
+  const res = ws.apply("waterspot_unset", (m) => unsetWaterSpot(m, { itemId: s.id, part: "waterspot_hot", widthCm: 21, heightCm: 15 }));
+  assert.equal(res.result, "waterspot_drainage_cold", "сняли ГВС → осталась холодная канализация");
+  // ревью 364 №1: результат тоже composite — высоты не переопределяются
+  // (unset_item бандла: !in_array(i, composite_items), где i — результат)
+  const of = ((ws.model as Model).items[s.id] as ItemProps).over_floor as Record<string, unknown>;
+  assert.deepEqual(of, { value: 50, display: false, value_2: 40 }, "composite→composite: value и value_2 сохранены");
+  const out = await ws.save();
+  assert.equal(out.verified, true, "save verified без ложной потери value_2");
+  const saved = ((server.model["items"] as Record<string, { over_floor?: Record<string, unknown> }>)[s.id]!).over_floor;
+  assert.deepEqual(saved, { value: 50, display: false, value_2: 40 }, "value_2 дошёл до сервера");
 });

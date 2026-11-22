@@ -4,7 +4,7 @@ import { McpError } from "../errors.ts";
 import { assignCandidate } from "./assign.ts";
 import {
   gasLineLengthM, unlinkItems, PIPE_COLLECTIONS, pipeColl, type PipeCollKey,
-  pipeLinkKey, pipeLinkBoxOfColl, isMultiPipeItem,
+  pipeLinkKey, pipeLinkBoxOfColl, isMultiPipeItem, pipeVertexHolder,
 } from "./pipes.ts";
 
 /**
@@ -301,9 +301,9 @@ export function removePipeVertex(model: Model, pipeId: string, vertexId: string)
       assignCandidate(pipe, candidate);
       // ревью 364 №2: предмет снятой вершины больше не в вершинах трубы —
       // обратная ссылка снимается (иначе висячая ссылка ловится сверкой)
-      if (removedType !== "node") unlinkVertexRef(model, vertexId, coll, key, pipeId);
+      if (removedType !== "node") unlinkVertexRef(model, removedType, vertexId, coll, key, pipeId);
       for (const v of singles) {
-        if (v.type !== "node") unlinkVertexRef(model, v.id, coll, key, pipeId);
+        if (v.type !== "node") unlinkVertexRef(model, v.type, v.id, coll, key, pipeId);
       }
       // multi-предмет может остаться в других вершинах — цикл продолжается
       continue;
@@ -335,7 +335,7 @@ export function removePipeVertex(model: Model, pipeId: string, vertexId: string)
     }
     for (const comp of comps.filter((c) => c.length === 1)) {
       const v = pipe.vertexes[comp[0]!]!;
-      if (v.type !== "node") unlinkVertexRef(model, v.id, coll, pipeLinkKey(pipe.type), pipeId);
+      if (v.type !== "node") unlinkVertexRef(model, v.type, v.id, coll, pipeLinkKey(pipe.type), pipeId);
     }
     break;
   }
@@ -350,41 +350,46 @@ function findPipeAny(model: Model, pipeId: string): { coll: PipeCollKey; pipe: P
   return null;
 }
 
-/** Записать обратные ссылки вершины-предметов новой трубы (после split). */
+/** Записать обратные ссылки вершины-предметов новой трубы (после split).
+ *  Держатель вершины — через реестр PIPE_VERTEX_HOLDERS: не только предметы
+ *  (model.items), но и вершина-контур тёплого пола (type "warm_floor",
+ *  model.warm_floors, props контура) — ревью 366 №1. */
 function relinkPipe(model: Model, pipe: Pipe, coll: PipeCollKey): void {
   const key = pipeLinkKey(pipe.type);
   const box = pipeLinkBoxOfColl(coll);
   for (const v of pipe.vertexes) {
     if (v.type === "node") continue;
-    const item = model.items?.[v.id] as (Record<string, unknown> & { name?: string }) | undefined;
-    if (!item) continue;
-    const holder = (item[box] ??= {}) as Record<string, unknown>;
-    if (isMultiPipeItem(item.name ?? "")) {
-      const arr = Array.isArray(holder[key]) ? (holder[key] as string[]) : [];
+    const holder = pipeVertexHolder(model, v.type, v.id);
+    if (!holder) continue;
+    const ref = holder.refEnsure(box);
+    if (holder.multi) {
+      const arr = Array.isArray(ref[key]) ? (ref[key] as string[]) : [];
       if (!arr.includes(pipe.id)) arr.push(pipe.id);
-      holder[key] = arr;
+      ref[key] = arr;
     } else {
-      holder[key] = pipe.id;
+      ref[key] = pipe.id;
     }
   }
 }
 
 /** Снять обратную ссылку вершины-предмета (одиночки после split/rebuild):
- *  скаляр — delete; массив multi — id трубы убирается из массива (пустой — delete). */
-function unlinkVertexRef(model: Model, itemId: string, coll: PipeCollKey, key: string, pipeId: string): void {
+ *  скаляр — delete; массив multi — id трубы убирается из массива (пустой —
+ *  delete). Держатель — через реестр PIPE_VERTEX_HOLDERS (предмет или контур
+ *  тёплого пола) — ревью 366 №1: контур-одиночка не оставляет висячей ссылки. */
+function unlinkVertexRef(model: Model, vertexType: string, itemId: string, coll: PipeCollKey, key: string, pipeId: string): void {
   const box = pipeLinkBoxOfColl(coll);
-  const item = model.items?.[itemId] as (Record<string, unknown> & { name?: string }) | undefined;
-  if (!item) return;
-  const holder = item[box] as Record<string, unknown> | undefined;
+  const holder = pipeVertexHolder(model, vertexType, itemId);
   if (!holder) return;
-  const cur = holder[key];
+  const ref = holder.refOf(box) as Record<string, unknown> | undefined;
+  if (!ref) return;
+  const cur = ref[key];
   if (Array.isArray(cur)) {
     const arr = cur.filter((x) => x !== pipeId);
-    if (arr.length > 0) holder[key] = arr;
-    else delete holder[key];
+    if (arr.length > 0) ref[key] = arr;
+    else delete ref[key];
     return;
   }
-  if (cur === pipeId) delete holder[key];
+  if (cur === pipeId) delete ref[key];
 }
 
 /** Точка предмета в см модели (для тестов и сверок). */

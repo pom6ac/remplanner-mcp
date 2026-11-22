@@ -407,8 +407,33 @@ test("365: распад трубы каждого вида — обратные 
   }
 });
 
-test("365: removePipeVertex — multi-предмет в двух вершинах одной трубы: снимается из обеих", () => {
-  const model = baseModel();
+test("367: распад трубы — куски наследуют color_custom и spots исходной (addNew бандла, ревью 366 №3)", () => {
+  const CASES: { type: string; coll: string; item: string; box: string; extra: Record<string, unknown> }[] = [
+    { type: "water_pipe", coll: "pipes", item: "waterspot_cold", box: "pipes", extra: { color_custom: "#112233", width_stroke: 3, prs: { a: 1 } } },
+    { type: "ventpipe_out", coll: "pipes_ventilation", item: "fan", box: "pipes_ventilation", extra: { color_custom: "#445566", spots: { s1: 1 } } },
+  ];
+  for (const c of CASES) {
+    const model = baseModel();
+    (model as unknown as Record<string, Record<string, Pipe>>)[c.coll] ??= {};
+    const left = rawSpot(model, "L", c.item, 100, c.box);
+    const right = rawSpot(model, "S", c.item, 500, c.box);
+    rawSplitPipe(model, "P1", c.type, c.coll, ["L", "S"]);
+    const pipe = (model as unknown as Record<string, Record<string, Pipe>>)[c.coll]!["P1"]!;
+    Object.assign(pipe as unknown as Record<string, unknown>, structuredClone(c.extra));
+    removePipeVertex(model, "P1", "x");
+    const pieces = Object.values((model as unknown as Record<string, Record<string, Pipe>>)[c.coll]!);
+    assert.equal(pieces.length, 2, `${c.type}: два куска`);
+    for (const piece of pieces) {
+      for (const [k, v] of Object.entries(c.extra)) {
+        assert.deepEqual((piece as unknown as Record<string, unknown>)[k], v, `${c.type}: кусок ${piece.id} наследует ${k}`);
+      }
+    }
+    // у вершин-предметов ссылки переписаны (куски те же, что проверяет 365 №11)
+    assert.ok(pieces.every((p) => p.items[left.id] || p.items[right.id]));
+  }
+});
+
+test("365: removePipeVertex — multi-предмет в двух вершинах одной трубы: снимается из обеих", () => {  const model = baseModel();
   const col = rawSpot(model, "C", "waterspot_collector", 200, "pipes") as RawItem;
   (model as unknown as Record<string, Record<string, Pipe>>).pipes ??= {};
   // труба C(вершина 0) – n1 – x – n2 – C(вершина 4): multi-предмет в двух вершинах

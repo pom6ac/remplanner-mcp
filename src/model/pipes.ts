@@ -422,22 +422,72 @@ function itemVertex(model: Model, kind: PipeKind | ClimatePipeKind, itemId: stri
   };
 }
 
+/**
+ * Держатель обратной ссылки вершины трубы: «бокс» — объект, в котором лежит
+ * ключ вида трубы (props.<box> предмета или props.<box> контура), multi —
+ * ссылка-массив id труб (is_multi менеджеров), name — имя держателя.
+ */
+export type PipeRefHolder = {
+  multi: boolean;
+  name: string;
+  /** Текущее значение бокса (undefined — бокса ещё нет; запись не создаёт). */
+  refOf(box: string): unknown;
+  /** Бокс для записи (создаётся по пути держателя). */
+  refEnsure(box: string): Record<string, unknown>;
+};
+
+/**
+ * Реестр держателей обратных ссылок вершин труб по типу вершины (бандл app.3.0,
+ * пробы 250-connect*): вершины-предметы всех видов (waterspot/multi/collector/
+ * ceiling_water) держит model.items — бокс props.<box>; вершина-контур тёплого
+ * пола (type "warm_floor") держится в model.warm_floors — бокс props контура
+ * (ссылка скалярная, unset_tree_id менеджера тёплого пола переопределён).
+ * Вершин других коллекций (стены, контуры IR и т.п.) трубы не ссылают. Новая
+ * коллекция-держатель добавляется строкой реестра — linkItems/unlinkItems
+ * (здесь) и relinkPipe/unlinkVertexRef (waterspots.ts) идут через один доступ
+ * pipeVertexHolder, без веток по типам. Неизвестный тип вершины — предмет
+ * из model.items.
+ */
+export const PIPE_VERTEX_HOLDERS: Record<string, (model: Model, id: string) => PipeRefHolder | null> = {
+  warm_floor: (model, id) => {
+    const wf = model.warm_floors?.[id];
+    if (!wf) return null;
+    return {
+      multi: false,
+      name: wf.type,
+      refOf: (box) => (wf.props as Record<string, unknown> | undefined)?.[box],
+      refEnsure: (box) => {
+        const props = (wf.props ??= { id: wf.id, name: wf.type }) as unknown as Record<string, unknown>;
+        return (props[box] ??= {}) as Record<string, unknown>;
+      },
+    };
+  },
+};
+
+/** Держатель-предмет (тип вершины вне реестра): бокс на корне предмета. */
+const itemsRefHolder = (model: Model, id: string): PipeRefHolder | null => {
+  const item = model.items?.[id] as (ItemProps & Record<string, unknown>) | undefined;
+  if (!item) return null;
+  return {
+    multi: isMultiPipeItem(item.name),
+    name: item.name,
+    refOf: (box) => (item as Record<string, unknown>)[box],
+    refEnsure: (box) => ((item as Record<string, unknown>)[box] ??= {}) as Record<string, unknown>,
+  };
+};
+
+/** Держатель обратной ссылки вершины трубы (реестр PIPE_VERTEX_HOLDERS + предметы). */
+export function pipeVertexHolder(model: Model, vertexType: string, id: string): PipeRefHolder | null {
+  return (PIPE_VERTEX_HOLDERS[vertexType] ?? itemsRefHolder)(model, id);
+}
+
 /** Холдер обратных ссылок вершины-предмета: предмет или водяной контур (props). */
 type PipeLinkHolder = { box: Record<string, unknown>; multi: boolean };
 
 function linkHolderOf(model: Model, vertex: GasLineVertex, coll: string): PipeLinkHolder | null {
-  const box = pipeLinkBoxOfColl(coll);
-  if (vertex.type === "warm_floor") {
-    const wf = model.warm_floors?.[vertex.id];
-    if (!wf) return null;
-    const props = (wf.props ??= { id: wf.id, name: wf.type });
-    props[box] ??= {};
-    return { box: props[box] as Record<string, unknown>, multi: false };
-  }
-  const item = model.items[vertex.id] as (ItemProps & Record<string, unknown>) | undefined;
-  if (!item) return null;
-  item[box] ??= {};
-  return { box: item[box] as Record<string, unknown>, multi: isMultiPipeItem(item.name) };
+  const holder = pipeVertexHolder(model, vertex.type, vertex.id);
+  if (!holder) return null;
+  return { box: holder.refEnsure(pipeLinkBoxOfColl(coll)), multi: holder.multi };
 }
 
 /** Записать обратные ссылки вершины-предметов трубы (props.<box>[ключ]). */
@@ -463,21 +513,17 @@ export function unlinkItems(model: Model, pipe: Pipe, coll: string): void {
   const box = pipeLinkBoxOfColl(coll);
   for (const v of pipe.vertexes) {
     if (v.type === "node") continue;
-    if (v.type === "warm_floor") {
-      const wf = model.warm_floors?.[v.id];
-      const propsBox = wf?.props?.[box] as Record<string, unknown> | undefined;
-      if (propsBox && propsBox[key] === pipe.id) delete propsBox[key];
-      continue;
-    }
-    const item = model.items[v.id] as (ItemProps & Record<string, unknown>) | undefined;
-    if (!item) continue;
-    const cur = (item[box] as Record<string, unknown> | undefined)?.[key];
+    const holder = pipeVertexHolder(model, v.type, v.id);
+    if (!holder) continue;
+    const ref = holder.refOf(box) as Record<string, unknown> | undefined;
+    if (!ref) continue;
+    const cur = ref[key];
     if (Array.isArray(cur)) {
       const arr = cur.filter((x) => x !== pipe.id);
-      if (arr.length > 0) (item[box] as Record<string, unknown>)[key] = arr;
-      else delete (item[box] as Record<string, unknown>)[key];
+      if (arr.length > 0) ref[key] = arr;
+      else delete ref[key];
     } else if (cur === pipe.id) {
-      delete (item[box] as Record<string, unknown>)[key];
+      delete ref[key];
     }
   }
 }
