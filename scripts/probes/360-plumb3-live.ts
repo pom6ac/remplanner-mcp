@@ -446,6 +446,7 @@ try {
     // не оставляет висячей при rebuild. Порядок: rebuild первым (контур без
     // ссылки подключается вторым сценарием; у контура одно скалярное подключение).
     const wfChecks: { label: string; wf: string; expect: "piece" | "none" }[] = [];
+    let wfSite4d = "";
     {
       const ids4d = await itemSiteIds();
       const col4d = await tryCall("item_add", { name: "radiator_collector", position: { against_wall: { wall_id: wallId.id, offset_mm: 2200 } } });
@@ -477,7 +478,18 @@ try {
         if (dnB.deleted_pipes?.length || dnB.created_pipes?.length) {
           throw new Error(`4d rebuild: ожидались пустые deleted/created (кусок жив), факт ${JSON.stringify(dnB)}`);
         }
-        wfChecks.push({ label: "rebuild", wf: wfSite, expect: "none" });
+        // проверка rebuild — СРАЗУ (после распада ниже контур снова подключается
+        // своим куском, и на reopen состояние «без ссылки» уже не видно):
+        // у контура нет висячей ссылки и он не в вершинах ни одной трубы
+        const rawB = (await loadModel(ctx.session(), OBJECT_ID, PLAN_ID)).model as {
+          warm_floors?: Record<string, { props?: { pipes_warm_floor?: Record<string, unknown> } }>;
+          pipes_warm_floor?: Record<string, { vertexes?: Array<{ id: string }> }>;
+        };
+        const refB = ((rawB.warm_floors ?? {})[wfSite]?.props?.pipes_warm_floor ?? {}) as Record<string, unknown>;
+        const contourInPipe = Object.values(rawB.pipes_warm_floor ?? {}).some((p) => p.vertexes?.some((v) => v.id === wfSite));
+        console.log("4d rebuild после node_delete: props контура:", JSON.stringify(refB), "контур в вершинах труб:", contourInPipe);
+        if (refB["pipe_warm_floor_id"] !== undefined) throw new Error(`4d rebuild: висячая ссылка контура ${JSON.stringify(refB)} (ревью 366 №1б)`);
+        if (contourInPipe) throw new Error("4d rebuild: контур остался в вершинах трубы после снятия");
         // (а) распад: средний узел 5-вершинной трубы [коллектор, n, n, n, контур]
         const pA = await call("pipe_add", { kind: "warm_floor", path: [
           { item_id: colSite4d },
@@ -499,6 +511,7 @@ try {
         }
         for (const pid of dnA.created_pipes!) created.push({ kind: "pipe", siteId: pid });
         wfChecks.push({ label: "распад", wf: wfSite, expect: "piece" });
+        wfSite4d = wfSite;
       }
     }
 
