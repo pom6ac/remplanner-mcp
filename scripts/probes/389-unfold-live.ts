@@ -98,8 +98,21 @@ try {
       log: (l) => console.error("restore:", l),
     });
     const after = await loadModel(ctx.session(), ids.objectId, ids.planId);
-    const same = sig(after.model) === sig(JSON.parse(readFileSync(backupPath, "utf8")).model);
+    const { canon } = await import("./probe-sig.ts");
+    const ca = JSON.stringify(canon(after.model), null, 1);
+    const cb = JSON.stringify(canon(JSON.parse(readFileSync(backupPath, "utf8")).model), null, 1);
+    writeFileSync(".orca-reports/tmp/389-after-canon.json", ca);
+    writeFileSync(".orca-reports/tmp/389-backup-canon.json", cb);
+    const same = ca === cb;
     console.log("sig (cleanup) vs backup:", same ? "OK" : "РАСХОЖДЕНИЕ");
+    if (!same) {
+      // грубый поключевой дифф канона (для диагностики; в лог — только пути)
+      const ja = JSON.parse(ca) as Record<string, unknown>;
+      const jb = JSON.parse(cb) as Record<string, unknown>;
+      for (const k of Object.keys({ ...ja, ...jb })) {
+        if (JSON.stringify(ja[k]) !== JSON.stringify(jb[k])) console.error("diff key:", k);
+      }
+    }
     await closeBrowser().catch(() => {});
     console.log("EXIT:", same ? 0 : 1);
     process.exit(same ? 0 : 1);
