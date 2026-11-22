@@ -20,6 +20,8 @@ import { sig } from "./probe-sig.ts";
 import { assertEditorPlanMatch, probeWriteEnv, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 import { restoreByCaptured, logCaptured, type ProbeCreated } from "./probe-restore.ts";
 
+const phase = process.argv[2] ?? "run";
+const isCleanup = phase === "cleanup";
 mkdirSync(".orca-reports/tmp", { recursive: true });
 setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
 
@@ -50,7 +52,7 @@ let roGuard: Awaited<ReturnType<typeof readonlyGuard>> | null = null;
 try {
   const ids = probeWriteEnv();
   await assertTargetPair(ctx.session(), ids.objectId, ids.planId);
-  roGuard = await readonlyGuard(ctx.session(), ids.readonlyId, ids.readonlyPlanId, readonlyRefPath(ids.readonlyId, ids.readonlyPlanId));
+  const roGuard = await readonlyGuard(ctx.session(), ids.readonlyId, ids.readonlyPlanId, readonlyRefPath(ids.readonlyId, ids.readonlyPlanId));
   const gsave = async (tag: string): Promise<Record<string, unknown>> => {
     journal();
     await roGuard!.assertUnchanged(tag);
@@ -64,7 +66,43 @@ try {
   const before: LoadedModel = await loadModel(ctx.session(), ids.objectId, ids.planId);
   if (existsSync(backupPath)) console.log("backup exists — НЕ перезаписывается:", backupPath);
   else { writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n"); console.log("backup written:", backupPath); }
-  await roGuard.assertUnchanged("before");
+  await roGuard!.assertUnchanged("before");
+
+  if (isCleanup) {
+    // зачистка ТОЛЬКО по журналу site_id (не по геометрии)
+    await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
+    await assertEditorPlanMatch(editorOf(), ids.planId);
+    const cap = JSON.parse(readFileSync(CAPTURED, "utf8")) as { rooms: string[]; created: ProbeCreated[] };
+    created.push(...cap["created"]);
+    ownRoomIds.push(...cap["rooms"]);
+    for (const c of [...created].reverse()) {
+      try {
+        if (c.kind === "wall_molding" && c.siteId) await call("wall_molding_delete", { molding_id: c.siteId });
+        else if (c.kind === "wall_niche" && c.siteId) await call("wall_niche_delete", { niche_id: c.siteId });
+        else continue;
+        console.log(`cleanup ${c.kind} ${c.siteId}: ok`);
+      } catch (ce) { console.error(`cleanup ${c.kind} ${c.siteId}: ${String((ce as Error).message).slice(0, 140)}`); }
+    }
+    // своя комната по стенам из журнала (не по геометрии развёрток)
+    const mg = await call("model_get", {}) as { rooms?: Array<{ id?: string; edges?: Array<{ pid?: string }> }> };
+    for (const r of mg["rooms"] ?? []) {
+      const pids = (r["edges"] ?? []).map((e) => e["pid"]).filter(Boolean);
+      const own = cap["created"].filter((c) => c.kind === "wall").map((c) => c.siteId);
+      if (own.length > 0 && pids.length > 0 && pids.every((p) => own.includes(String(p)))) ownRoomIds.push(String(r["id"]));
+    }
+    journal();
+    await restoreByCaptured({
+      call, created, ownRoomIds,
+      save: async () => { await roGuard!.assertUnchanged("cleanup-save"); await call("project_save", {}); await delay(5500); },
+      log: (l) => console.error("restore:", l),
+    });
+    const after = await loadModel(ctx.session(), ids.objectId, ids.planId);
+    const same = sig(after.model) === sig(JSON.parse(readFileSync(backupPath, "utf8")).model);
+    console.log("sig (cleanup) vs backup:", same ? "OK" : "РАСХОЖДЕНИЕ");
+    await closeBrowser().catch(() => {});
+    console.log("EXIT:", same ? 0 : 1);
+    process.exit(same ? 0 : 1);
+  }
 
   await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
   await call("render_plan", {});
