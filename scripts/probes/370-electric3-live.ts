@@ -110,7 +110,9 @@ try {
     const edC = editorOf();
     await assertEditorPlanMatch(edC, ids.planId);
     // зачистка по журналу захваченных ID (кабели/трубы/контуры/предметы)…
+    // …плюс довылов из env (прогон упал до записи журнала — IDs последней сцены)
     const capturedPath = process.env["REMPLANNER_PROBE_CAPTURED"] ?? "";
+    const envList = (key: string): string[] => (process.env[key] ?? "").split(",").filter(Boolean);
     let created: ProbeCreated[] = [];
     if (capturedPath) {
       const j = JSON.parse(readFileSync(capturedPath, "utf8")) as { items?: string[]; pipes?: string[]; warm_floors?: string[]; cables?: string[]; walls?: string[] };
@@ -122,9 +124,12 @@ try {
         ...((j.cables ?? []).map((siteId) => ({ kind: "cable", siteId }))),
       ];
     } else {
-      const wallSiteIds = (process.env["REMPLANNER_PROBE_WALL_SITE_IDS"] ?? "").split(",").filter(Boolean);
-      created = wallSiteIds.map((siteId) => ({ kind: "wall", siteId }));
+      created = envList("REMPLANNER_PROBE_WALL_SITE_IDS").map((siteId) => ({ kind: "wall", siteId }));
     }
+    for (const siteId of envList("REMPLANNER_PROBE_EXTRA_CABLE_IDS")) created.push({ kind: "cable", siteId });
+    for (const siteId of envList("REMPLANNER_PROBE_EXTRA_WARM_FLOOR_IDS")) created.push({ kind: "warm_floor", siteId });
+    for (const siteId of envList("REMPLANNER_PROBE_EXTRA_ITEM_IDS")) created.push({ kind: "item", siteId });
+    console.log("cleanup: журнал:", capturedPath || "(нет)", "объектов в зачистке:", created.length);
     await deleteCreatedObjects(call as unknown as CallFn, created, (l) => console.log("cleanup:", l));
     // …и restore стен общим probe-restore (по тем же захваченным ID)
     if (created.some((c) => c.siteId)) {
