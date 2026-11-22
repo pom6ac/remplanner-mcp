@@ -52,7 +52,7 @@ let roGuard: Awaited<ReturnType<typeof readonlyGuard>> | null = null;
 try {
   const ids = probeWriteEnv();
   await assertTargetPair(ctx.session(), ids.objectId, ids.planId);
-  const roGuard = await readonlyGuard(ctx.session(), ids.readonlyId, ids.readonlyPlanId, readonlyRefPath(ids.readonlyId, ids.readonlyPlanId));
+  roGuard = await readonlyGuard(ctx.session(), ids.readonlyId, ids.readonlyPlanId, readonlyRefPath(ids.readonlyId, ids.readonlyPlanId));
   const gsave = async (tag: string): Promise<Record<string, unknown>> => {
     journal();
     await roGuard!.assertUnchanged(tag);
@@ -85,11 +85,14 @@ try {
       } catch (ce) { console.error(`cleanup ${c.kind} ${c.siteId}: ${String((ce as Error).message).slice(0, 140)}`); }
     }
     // своя комната по стенам из журнала (не по геометрии развёрток)
-    const mg = await call("model_get", {}) as { rooms?: Array<{ id?: string; edges?: Array<{ pid?: string }> }> };
+    const mg = await call("model_get", {}) as { rooms?: Array<{ id?: string; edges?: Array<{ from?: [number, number]; to?: [number, number] }> }> };
     for (const r of mg["rooms"] ?? []) {
-      const pids = (r["edges"] ?? []).map((e) => e["pid"]).filter(Boolean);
-      const own = cap["created"].filter((c) => c.kind === "wall").map((c) => c.siteId);
-      if (own.length > 0 && pids.length > 0 && pids.every((p) => own.includes(String(p)))) ownRoomIds.push(String(r["id"]));
+      const es = r["edges"] ?? [];
+      if (es.length >= 4 && es.every((e) => {
+        const [fx, fy] = e["from"] ?? [0, 0];
+        const [tx, ty] = e["to"] ?? [0, 0];
+        return fx >= 19999 && fx <= 23001 && fy >= 19999 && fy <= 22601 && tx >= 19999 && tx <= 23001 && ty >= 19999 && ty <= 22601;
+      })) ownRoomIds.push(String(r["id"]));
     }
     journal();
     await restoreByCaptured({
@@ -141,10 +144,16 @@ try {
   journal();
   const saveWalls = await gsave("стены пробной комнаты");
   check(saveWalls["verified"] === true, "save стен verified");
-  const mgRooms = await call("model_get", {}) as { rooms?: Array<{ id?: string; edges?: Array<{ pid?: string }> }> };
+  const mgRooms = await call("model_get", {}) as { rooms?: Array<{ id?: string; edges?: Array<{ from?: [number, number]; to?: [number, number] }> }> };
+  // своя комната — все её рёбра внутри габаритов пробных стен (свои данные пробы)
   const mine = (mgRooms["rooms"] ?? []).find((r) => {
-    const pids = (r["edges"] ?? []).map((e) => e["pid"]).filter(Boolean).map(String);
-    return pids.length > 0 && pids.length === wallIds.length && pids.every((p) => wallIds.includes(p));
+    const es = r["edges"] ?? [];
+    return es.length >= 4 && es.every((e) => {
+      const [fx, fy] = e["from"] ?? [0, 0];
+      const [tx, ty] = e["to"] ?? [0, 0];
+      return fx >= x0 - 1 && fx <= x0 + 3000 + 1 && fy >= y0 - 1 && fy <= y0 + 2600 + 1 &&
+             tx >= x0 - 1 && tx <= x0 + 3000 + 1 && ty >= y0 - 1 && ty <= y0 + 2600 + 1;
+    });
   });
   check(typeof mine?.["id"] === "string", `пробная комната найдена (${mine?.id ?? "?"})`);
   if (!mine || typeof mine["id"] !== "string") throw new Error("пробная комната не найдена");
