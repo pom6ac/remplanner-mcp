@@ -3404,6 +3404,11 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        // офлайн-гейт в точке входа в сеть (не только session/редактор): загрузка
+        // файла — сетевой путь, в офлайне запрещён так же, как loadModel
+        if (ws.offline) {
+          throw new McpError("AUTH_REQUIRED", "офлайн-режим: сетевые операции недоступны", { hint: "уберите REMPLANNER_OFFLINE_FIXTURE для работы с сайтом" });
+        }
         const raw = Buffer.from(a["data_base64"] as string, "base64");
         if (raw.length === 0) throw new McpError("INVALID_ARGUMENT", "data_base64 — непустой base64 файла");
         if (raw.length > PICTURE_MAX_BYTES) {
