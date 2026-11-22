@@ -97,7 +97,7 @@ try {
     journal();
     await restoreByCaptured({
       call, created, ownRoomIds,
-      save: async () => { await roGuard!.assertUnchanged("cleanup-save"); await call("project_save", {}); await delay(5500); },
+      save: async () => { await roGuard!.assertUnchanged("cleanup-save"); const r = await call("project_save", {}) as { verified?: boolean }; if (r["verified"] !== true) throw new Error("cleanup save не verified"); await delay(5500); },
       log: (l) => console.error("restore:", l),
     });
     const after = await loadModel(ctx.session(), ids.objectId, ids.planId);
