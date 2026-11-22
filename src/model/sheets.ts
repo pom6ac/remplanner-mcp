@@ -149,7 +149,8 @@ export function deleteSheet(model: Model, sheetId: string): DeleteSheetResult {
   return { deleted };
 }
 
-/** Лист по имени (для меток). */
+/** Лист по имени (для меток; сравнение без регистра и внешних пробелов). */
 export function sheetByName(model: Model, name: string): CustomPlanEntity | undefined {
-  return Object.values(sheetMap(model)).find((s) => s.name === name.trim());
+  const q = name.trim().toLowerCase();
+  return Object.values(sheetMap(model)).find((s) => s.name.toLowerCase() === q);
 }

@@ -30,7 +30,8 @@ export const PICTURE_FIT_CM = 200;
 /** Ограничение длины подписи изображения. */
 export const MAX_PICTURE_TEXT_CHARS = 200;
 
-const URL_RE = /^[A-Za-z0-9_./-]+\.(png|jpe?g)$/;
+/** Имя файла хранилища: плоское имя без путей (../ и / отсечены — traversal). */
+const URL_RE = /^[A-Za-z0-9_-]+\.(png|jpe?g)$/;
 
 export function validatePictureUrl(url: string): string {
   const u = url.replace(/^images\//, "");
