@@ -7,7 +7,8 @@
 //   4) item_delete вывода с трубой — каскад (deleted_pipes), как в редакторе;
 //   5) model_validate → project_save verified → reopen → сверка → render_plan waterplan;
 //   6) зачистка только по захваченным ID (pipe_delete/item_delete/wall_delete),
-//      save restore, сверка sig с бэкапом backup-<OBJECT>-360.json (ДО прогона).
+//      save restore, сверка sig с бэкапом backup-<OBJECT>-360b.json (ДО прогона,
+//      снимается GET-пробой 360-state-check непосредственно перед запуском).
 // Гарды полные (probe-guard): READONLY обязателен, коллизий env нет, GET-пара,
 // план в редакторе == серверу перед каждым reopen, roGuard перед каждой записью,
 // пауза ≥5.5 с между сохранениями, closeBrowser в finally.
@@ -96,7 +97,7 @@ async function restoreProbe(tag: string): Promise<void> {
   await cleanupItemsAndPipes(snapshot);
   created = created.filter((c) => c.kind === "wall");
   journal();
-  await deleteWallsBySiteIds({ call, created, ownRoomIds: [], log: (l) => console.log("restore:", l) });
+  await deleteWallsBySiteIds({ call, created, ownRoomIds: [], save: () => Promise.resolve({}), log: (l) => console.log("restore:", l) });
   try { await saveTagged(`${tag}-restore`); }
   catch (e) { console.log(`${tag} save:`, String((e as Error).message).slice(0, 250)); }
   created = [];
@@ -138,7 +139,7 @@ try {
   roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
   const before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  const backupPath = `.orca-reports/backup-${OBJECT_ID}-360.json`;
+  const backupPath = `.orca-reports/backup-${OBJECT_ID}-360b.json`;
   if (!existsSync(backupPath)) writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
   else if (process.argv[2] === "run") {
     // предусловие только для run; cleanup существует, чтобы привести модель к бэкапу
