@@ -25,6 +25,7 @@ const COMPAT_PRESENT = { WALLS: true, ROOMS2: true, restore: true, draw: true, c
 function guardPage(opts: { objectId: string; planId: string }) {
   let savedPlanCalled = false;
   const page = {
+    async route() {}, // перехват ответа модели (382): мок не делает сетевых запросов
     async goto() { return {}; },
     async waitForResponse() { return null; },
     async waitForFunction() { return true; },

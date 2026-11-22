@@ -3,7 +3,7 @@ import type { BrowserContext, Page } from "playwright-core";
 import { getSharedBrowser } from "../browser.ts";
 import { BASE_URL, BROWSER_TIMEOUT_MS } from "../config.ts";
 import { McpError } from "../errors.ts";
-import { parseSaveResponse, isReloadResponse } from "../api.ts";
+import { parseSaveResponse, isReloadResponse, parseLoadResponse, type RawLoadResponse } from "../api.ts";
 import { saveLimiter } from "../http.ts";
 import { PAGE } from "./inject.js";
 import { wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm } from "../model/walls.ts";
@@ -99,6 +99,39 @@ export type OpenEditorOptions = {
 };
 
 /**
+ * URL загрузки модели СТРАНИЦЕЙ редактора: GET /setup/api/planner/?… (сохранение —
+ * /planner/save/, в шаблон не попадает). Экспортирован для офлайн-тестов гарда.
+ */
+export const PLANNER_MODEL_URL_RE = /\/setup\/api\/planner\/\?/;
+
+/**
+ * Проверка СЫРОГО ответа сервера с моделью проекта — того, что страница редактора
+ * сама получает по GET /setup/api/planner/ и исполняет ($Project.restore →
+ * CustomPlans.restore → addIconToPage, innerHTML). Fail-closed (ревью 380 №21):
+ * опасные строки в модели, непроверяемый или нестандартный ответ запрещают
+ * передачу модели в Chromium. Экспортирована для офлайн-тестов.
+ */
+export function assertPlannerModelResponse(rawBody: string): void {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(rawBody);
+  } catch {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "ответ сервера с моделью проекта не разобран как JSON — передача модели в Chromium отменена (fail-closed, ревью 380 №21)",
+    );
+  }
+  if (typeof raw !== "object" || raw === null || typeof (raw as { data?: unknown }).data !== "string") {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      "в ответе сервера нет строки data с моделью проекта — передача модели в Chromium отменена (fail-closed, ревью 380 №21)",
+    );
+  }
+  const loaded = parseLoadResponse(raw as RawLoadResponse);
+  assertModelSafeForEditor(loaded.model as unknown as Model);
+}
+
+/**
  * Защита от записи в чужой проект (инцидент 2026-11-15): анонимный поток не может
  * идти с cookies аккаунта, аккаунтный проект — открываться под другим object_id.
  */
@@ -166,12 +199,52 @@ export async function openEditorInContext(
   assertProjectSession(session, opts);
   try {
     const page = await context.newPage();
+    // ревью 380 №21/№27: ДО goto перехватываем ответ GET /setup/api/planner/? —
+    // страницу грузит САМА страница и исполняет серверную модель ($Project.restore →
+    // addIconToPage, innerHTML). Ответ проверяется до отдачи браузеру: опасная или
+    // непроверяемая модель — route.abort() и отказ INVALID_ARGUMENT (fail-closed).
+    // Это единая точка для всех запусков/перезагрузок страницы и для окна гонки
+    // между свежим GET в runSave и GET самой страницы (№27). Каким бы путём ни
+    // пришёл вызов (render_plan, wall-мутации, каталог, undo/redo, import,
+    // повторный open, save), страницу не получает ничто, кроме проверенной модели.
+    let unsafeModelError: unknown = null;
+    let modelResponseDone: () => void = () => {};
+    const modelResponseSeen = new Promise<void>((resolve) => {
+      modelResponseDone = resolve;
+    });
+    await page.route(PLANNER_MODEL_URL_RE, async (route) => {
+      try {
+        if (route.request().method() !== "GET") {
+          await route.continue();
+          return;
+        }
+        const response = await route.fetch();
+        assertPlannerModelResponse(await response.text());
+        await route.fulfill({ response });
+      } catch (e) {
+        // fail-closed: любая ошибка проверки (опасные строки, нестандартный
+        // ответ, сбой сети) — abort и отказ INVALID_ARGUMENT, страница модель
+        // не получает; текст ошибки без тела ответа сервера
+        unsafeModelError = e instanceof McpError
+          ? e
+          : new McpError(
+              "INVALID_ARGUMENT",
+              `не удалось проверить ответ сервера с моделью проекта (${e instanceof Error ? e.message : String(e)}) — передача модели в Chromium отменена (fail-closed, ревью 380 №21)`,
+            );
+        await route.abort().catch(() => {});
+      } finally {
+        modelResponseDone();
+      }
+    });
     await page.goto(`${BASE_URL}/planner/`, { waitUntil: "domcontentloaded", timeout: timeoutMs });
-    // Дождаться загрузки модели проекта (GET /setup/api/planner/): без этого restore/draw
-    // гоняются с асинхронной инициализацией редактора (copy('server') пуст).
-    await page
-      .waitForResponse((r) => r.url().includes("/setup/api/planner/?"), { timeout: timeoutMs })
-      .catch(() => {});
+    // Дождаться проверенного ответа модели (route.fulfill) или таймаута — как раньше
+    // waitForResponse с catch: без ответа restore/draw гоняются с асинхронной
+    // инициализацией редактора (copy('server') пуст).
+    await Promise.race([
+      modelResponseSeen,
+      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
+    if (unsafeModelError !== null) throw unsafeModelError;
     await page
       .waitForFunction(PAGE.readyCheck, undefined, { timeout: timeoutMs, polling: 250 })
       .catch(async () => {

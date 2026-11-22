@@ -326,18 +326,10 @@ export class ServerContext {
       this.toolsBundle = bundle;
       return bundle;
     }
-    // из кэша: последний catalog-*.json
-    const cacheDir = CACHE_DIR;
-    if (existsSync(cacheDir)) {
-      const files = readdirSync(cacheDir).filter((f) => /^catalog-.+\.json$/.test(f)).sort();
-      const last = files[files.length - 1];
-      if (last) {
-        try {
-          this.toolsBundle = applyToolFixes(JSON.parse(readFileSync(`${cacheDir}/${last}`, "utf8")) as ToolsBundle);
-          return this.toolsBundle;
-        } catch { /* битый кэш — тянем из редактора */ }
-      }
-    }
+    // из кэша: последний catalog-*.json (ревью 380 №26: тот же путь использует
+    // toolsIfLoaded — без запуска редактора)
+    const fromDisk = this.toolsFromDiskCache();
+    if (fromDisk !== null) return fromDisk;
     const ws = this.workspaceOrNull;
     if (ws === null) {
       throw new McpError("INVALID_ARGUMENT", "каталог ещё не скачан и проект не открыт — откройте проект (project_open)");
@@ -350,17 +342,34 @@ export class ServerContext {
     return this.toolsBundle;
   }
 
+  /** Последний catalog-*.json из дискового кэша; null — кэша нет или он битый. */
+  private toolsFromDiskCache(): ToolsBundle | null {
+    const cacheDir = CACHE_DIR;
+    if (!existsSync(cacheDir)) return null;
+    const files = readdirSync(cacheDir).filter((f) => /^catalog-.+\.json$/.test(f)).sort();
+    const last = files[files.length - 1];
+    if (!last) return null;
+    try {
+      this.toolsBundle = applyToolFixes(JSON.parse(readFileSync(`${cacheDir}/${last}`, "utf8")) as ToolsBundle);
+      return this.toolsBundle;
+    } catch {
+      return null; // битый кэш — тянем из редактора
+    }
+  }
+
   /**
-   * Каталог БЕЗ запуска редактора (ревью 378 №19): уже загруженный кэш или
-   * офлайн-фикстура; null — каталог ещё не скачан. Для путей, где флаг каталога
-   * — необязательное уточнение (item_update без against_wall), запуск Chromium
-   * и сети внутри инструмента недопустим.
+   * Каталог БЕЗ запуска редактора (ревью 378 №19): уже загруженный кэш,
+   * офлайн-фикстура или дисковый кэш (№26 — раньше дисковый кэш здесь не
+   * читался и флаг падал в запуск редактора); null — каталог ещё не скачан.
+   * Для путей, где флаг каталога — необязательное уточнение (item_update без
+   * against_wall), запуск Chromium и сети внутри инструмента недопустим.
    */
   async toolsIfLoaded(): Promise<ToolsBundle | null> {
     if (this.mode === "offline") {
       try { return await this.tools(); } catch { return null; }
     }
-    return this.toolsBundle;
+    if (this.toolsBundle !== null) return this.toolsBundle;
+    return this.toolsFromDiskCache();
   }
 
   /** Позиция каталога по точному имени (для item_add). */

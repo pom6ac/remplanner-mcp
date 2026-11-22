@@ -196,10 +196,14 @@ test("379 minor16: имена листов из UI сайта не блокир�
   assert.equal(mock.normalizeCalls(), 1, "save прошёл — редактор работал");
 });
 
-test("379 minor16: открытие блокирует исполнимое — <, сущность &…;, кавычки/\\/] в after_plan, id/date строго", async () => {
-  // name: innerHTML текстовый узел
-  for (const bad of ["<img src=x onerror=alert(1)>", "a<b", "Кухня &amp; гостиная", "&#39;тест", "a&#x3C;b"]) {
+test("379 minor16: открытие блокирует исполнимое — <, кавычки/\\/] в after_plan, id/date строго; сущности в name — текст (380 №24)", async () => {
+  // name: innerHTML текстовый узел — тег создаёт только буквальный <;
+  // сущности (&amp;, &#60;) декодируются в текст и НЕ блокируют (380 №24)
+  for (const bad of ["<img src=x onerror=alert(1)>", "a<b"]) {
     assert.equal(isSafeSheetNameForOpen(bad), false, `name ${JSON.stringify(bad)} блокируется`);
+  }
+  for (const ok of ["Кухня &amp; гостиная", "&#39;тест", "a&#x3C;b", "Кухня & гостиная"]) {
+    assert.equal(isSafeSheetNameForOpen(ok), true, `name ${JSON.stringify(ok)} — сущность/одиночный & безопасны`);
   }
   assert.equal(isSafeSheetNameForOpen("Кухня & гостиная"), true, "одиночный & без сущности не блокирует");
   // after_plan: селекторы .plan_…, [data-plan='…'], option[value="…"]
@@ -211,7 +215,6 @@ test("379 minor16: открытие блокирует исполнимое — 
   // полный путь: каждый случай — отказ ensureEditor до запуска Chromium
   const cases: Record<string, unknown>[] = [
     { name: "<img src=x onerror=alert(1)>" },
-    { name: "Кухня &amp; гостиная" },
     { after_plan: 'cr"eate' },
     { after_plan: "cre]ate" },
     { id: 'x"><img src=x onerror=alert(1)>' },

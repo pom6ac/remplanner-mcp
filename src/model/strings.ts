@@ -25,8 +25,9 @@ import type { Model } from "./types.ts";
  *  - ОТКРЫТИЕ (чужие данные с сервера, findUnsafeEditorStrings): блокируется
  *    только РЕАЛЬНО ИСПОЛНИМОЕ в конкретном стоке (№16), чтобы имена листов,
  *    созданные в UI сайта (.val().trim() без фильтра), не блокировали
- *    сохранение/рендер: name — < и & в позиции сущности; after_plan — кавычки,
- *    \ и ]; id/date — строго (атрибутные позиции, №14).
+ *    сохранение/рендер: name — < (HTML-сущность в текстовом узле — не тег,
+ *    №24); after_plan — кавычки, \ и ]; id/date — строго (атрибутные позиции,
+ *    №14); не строковые значения полей и записи-не-объекты — fail-closed (№22).
  */
 
 /** Белый список НА ВХОДЕ: буквы любых алфавитов Unicode (\p{L} — кириллица и ё,
@@ -63,14 +64,12 @@ export function isSafeEditorString(v: string): boolean {
 
 // ---------- Открытый путь (чужие данные с сервера): исполнимость в стоке ----------
 
-/** Сущность HTML (&amp;, &#39;, &#x27; — разбор innerHTML текстового узла).
- *  Одиночный & перед пробелом/пунктуацией («Кухня & гостиная») не сущность. */
-const HTML_ENTITY_RE = /&(?:[a-zA-Z][a-zA-Z0-9]{1,31}|#[0-9]{1,10}|#x[0-9a-fA-F]{1,8});/;
-
-/** name — текстовый узел innerHTML (addIconToPage): исполнимы < (начало тега)
- *  и & в позиции сущности. Кавычки, апостроф, [ ] ~ — не исполнимы. */
+/** name — текстовый узел innerHTML (addIconToPage): тег создаёт только
+ *  буквальный `<`; HTML-сущность (&amp;, &#60;) декодируется в текст, а не в
+ *  тег, поэтому блокировка сущностей снята как ложное срабатывание
+ *  «&amp; как текст» (ревью 380 №24). Кавычки, апостроф, [ ] ~ — не исполнимы. */
 export function isSafeSheetNameForOpen(name: string): boolean {
-  return !name.includes("<") && !HTML_ENTITY_RE.test(name);
+  return !name.includes("<");
 }
 
 /** after_plan — селекторы бандла: `.plan_${after_plan}` (без кавычек),
@@ -97,12 +96,29 @@ export type UnsafeStringHit = { collection: string; id: string; field: string; v
 
 type SheetRec = { id?: unknown; name?: unknown; after_plan?: unknown; date?: unknown };
 
+/** Краткое представление не строкового значения для details (без данных модели). */
+function jsonPreview(v: unknown): string {
+  let s: string;
+  try {
+    s = JSON.stringify(v) ?? String(v);
+  } catch {
+    s = String(v);
+  }
+  return s.length > 120 ? `${s.slice(0, 117)}…` : s;
+}
+
 /**
  * Поиск уже сохранённых опасных строк в модели (путь открытия проекта и ЕДИНАЯ
  * точка проверки перед передачей модели в Chromium — assertModelSafeForEditor).
  * Проверяются те поля, которые бандл реально вставляет в HTML/селекторы:
  * custom_plans — ключ и ПОЛЕ id (строго), date (число), name (innerHTML),
  * after_plan (селекторы); pictures.text — < > & (консервативно, svg-текст).
+ * Ревью 380 №22: fail-closed ПО ТИПУ — бандл берёт поля записи без приведения
+ * (this.id=e.id||LIB.id(), this.name=e.name, this.after_plan=e.after_plan) и
+ * вставляет в шаблон/конкатенацию, поэтому не строковое значение (массив,
+ * объект с toString, число там, где ждётся строка) превращается в String(v)
+ * и проходит в сток; такие значения — попадание. Запись custom_plans[k],
+ * не являющаяся объектом, — тоже попадание (раньше молча пропускалась).
  * Вызывается в Workspace.open (warnings project_open) и в assertModelSafeForEditor.
  */
 export function findUnsafeEditorStrings(model: Model): UnsafeStringHit[] {
@@ -110,23 +126,35 @@ export function findUnsafeEditorStrings(model: Model): UnsafeStringHit[] {
   const sheets = (model.custom_plans ?? {}) as Record<string, SheetRec>;
   for (const [key, s] of Object.entries(sheets)) {
     if (!EDITOR_ID_RE.test(key)) out.push({ collection: "custom_plans", id: key, field: "id", value: key });
-    if (s === null || typeof s !== "object") continue;
-    if (s.id !== undefined && typeof s.id === "string" && !isSafeSheetIdForOpen(s.id)) {
-      out.push({ collection: "custom_plans", id: s.id, field: "id", value: s.id });
+    if (s === null || typeof s !== "object" || Array.isArray(s)) {
+      out.push({ collection: "custom_plans", id: key, field: "record", value: jsonPreview(s) });
+      continue;
     }
+    const recId = typeof s.id === "string" ? s.id : key;
+    const checkBundleField = (field: string, v: unknown, isBadString: (x: string) => boolean): void => {
+      if (v === undefined || v === null) return;
+      if (typeof v !== "string") {
+        out.push({ collection: "custom_plans", id: recId, field, value: jsonPreview(v) });
+        return;
+      }
+      if (isBadString(v)) out.push({ collection: "custom_plans", id: recId, field, value: v });
+    };
+    checkBundleField("id", s.id, (x) => !isSafeSheetIdForOpen(x));
+    checkBundleField("name", s.name, (x) => !isSafeSheetNameForOpen(x));
+    checkBundleField("after_plan", s.after_plan, (x) => !isSafeSheetAfterPlanForOpen(x));
     if (s.date !== undefined && !isSafeSheetDateForOpen(s.date)) {
       out.push({ collection: "custom_plans", id: key, field: "date", value: String(s.date) });
     }
-    if (s.name !== undefined && typeof s.name === "string" && !isSafeSheetNameForOpen(s.name)) {
-      out.push({ collection: "custom_plans", id: key, field: "name", value: s.name });
-    }
-    if (s.after_plan !== undefined && typeof s.after_plan === "string" && !isSafeSheetAfterPlanForOpen(s.after_plan)) {
-      out.push({ collection: "custom_plans", id: key, field: "after_plan", value: s.after_plan });
-    }
   }
-  const pictures = (model.pictures ?? {}) as Record<string, { text?: string }>;
+  const pictures = (model.pictures ?? {}) as Record<string, { text?: unknown }>;
   for (const [id, p] of Object.entries(pictures)) {
-    if (p?.text !== undefined && !isSafePictureText(p.text)) out.push({ collection: "pictures", id, field: "text", value: p.text });
+    if (p === null || typeof p !== "object") {
+      out.push({ collection: "pictures", id, field: "record", value: jsonPreview(p) });
+      continue;
+    }
+    if (p.text !== undefined && p.text !== null && (typeof p.text !== "string" || !isSafePictureText(p.text))) {
+      out.push({ collection: "pictures", id, field: "text", value: typeof p.text === "string" ? p.text : jsonPreview(p.text) });
+    }
   }
   return out;
 }
