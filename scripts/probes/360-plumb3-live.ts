@@ -10,9 +10,12 @@
 //      major 1), unset конца трубы из 3 вершин (без висячей ссылки, major 2),
 //      распад conditioner_drainage/warm_floor_pipe (ключи PIPE_LINK_KEY_BY_TYPE,
 //      major 3) — виды, недоступные в каталоге dev-аккаунта, пропускаются;
-//   7) зачистка только по захваченным ID (pipe_delete/item_delete/wall_delete),
-//      save restore, сверка sig с бэкапом backup-<OBJECT>-365.json (пишется
-//      непосредственно перед прогоном).
+//   7) сцена 367 (ревью 366 №1): магистраль тёплого пола с вершиной-контуром
+//      (warm_floor, model.warm_floors) → pipe_node_delete (rebuild и распад) →
+//      save verified → reopen → ссылка контура на месте, висячей нет;
+//   8) зачистка только по захваченным ID (pipe_delete/warm_floor_delete/
+//      item_delete/wall_delete), save restore, сверка sig с бэкапом
+//      backup-<OBJECT>-367.json (пишется непосредственно перед прогоном).
 // Гарды полные (probe-guard): READONLY обязателен, коллизий env нет, GET-пара,
 // план в редакторе == серверу перед каждым reopen, roGuard перед каждой записью,
 // пауза ≥5.5 с между сохранениями, closeBrowser в finally.
@@ -79,14 +82,20 @@ async function openAndGuard(): Promise<void> {
   console.log("гард «план в редакторе == серверу»: OK");
 }
 
-/** Зачистка своих предметов/труб: журнал ∪ текущий created (до стен). */
+/** Зачистка своих предметов/труб/контуров: журнал ∪ текущий created (до стен). */
 async function cleanupItemsAndPipes(createdList: ProbeCreated[]): Promise<void> {
-  const j = existsSync(CAPTURED_PATH) ? JSON.parse(readFileSync(CAPTURED_PATH, "utf8")) as { pipes?: string[]; items?: string[] } : {};
+  const j = existsSync(CAPTURED_PATH) ? JSON.parse(readFileSync(CAPTURED_PATH, "utf8")) as { pipes?: string[]; items?: string[]; warm_floors?: string[] } : {};
   const pipeIds = [...new Set([...(j.pipes ?? []), ...createdList.filter((c) => c.kind === "pipe").map((c) => c.siteId!)])];
+  const wfIds = [...new Set([...(j.warm_floors ?? []), ...createdList.filter((c) => c.kind === "warm_floor").map((c) => c.siteId!)])];
   const itemIds = [...new Set([...(j.items ?? []), ...createdList.filter((c) => c.kind === "item").map((c) => c.siteId!)])];
   for (const pid of pipeIds) {
     const r = await tryCall("pipe_delete", { pipe_id: pid });
     console.log("pipe_delete", pid, r.ok ? "OK" : r.err?.slice(0, 120));
+  }
+  // контуры тёплого пола — после труб (ссылки сняты pipe_delete), до предметов
+  for (const wid of wfIds) {
+    const r = await tryCall("warm_floor_delete", { warm_floor_id: wid });
+    console.log("warm_floor_delete", wid, r.ok ? "OK" : r.err?.slice(0, 120));
   }
   for (const iid of itemIds) {
     const r = await tryCall("item_delete", { item_id: iid });
@@ -157,14 +166,14 @@ try {
   roGuard = await readonlyGuard(ctx.session(), READONLY_ID, READONLY_PLAN_ID, readonlyRefPath(READONLY_ID, READONLY_PLAN_ID));
   await assertTargetPair(ctx.session(), OBJECT_ID, PLAN_ID);
   const before = await loadModel(ctx.session(), OBJECT_ID, PLAN_ID);
-  // бэкап 365 пишется непосредственно перед прогоном (задание 365); cleanup
+  // бэкап 367 пишется непосредственно перед прогоном (задание 367); cleanup
   // существует, чтобы привести модель к нему
-  const backupPath = `.orca-reports/backup-${OBJECT_ID}-365.json`;
+  const backupPath = `.orca-reports/backup-${OBJECT_ID}-367.json`;
   if (process.argv[2] === "run") {
     writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
     console.log("backup written:", backupPath, "sig:", sig(before.model as Record<string, unknown>).slice(0, 40));
   } else if (!existsSync(backupPath)) {
-    throw new Error("cleanup: бэкап 365 не найден — прогон не снимал бэкап, зачистка вслепую запрещена");
+    throw new Error("cleanup: бэкап 367 не найден — прогон не снимал бэкап, зачистка вслепую запрещена");
   }
   if (process.argv[2] === "cleanup") {
     if (!existsSync(CAPTURED_PATH)) throw new Error("cleanup: журнал захваченных ID не найден");
@@ -182,7 +191,7 @@ try {
       const ak = new Set(Object.keys(am[key] ?? {}));
       return [...new Set([...ak].filter((x) => !bk.has(x)))];
     };
-    const semantic = ["walls", "items", "pipes", "pipes_gas", "pipes_heat", "pipes_ventilation", "pipes_warm_floor", "pipes_conditioner"]
+    const semantic = ["walls", "items", "pipes", "pipes_gas", "pipes_heat", "pipes_ventilation", "pipes_warm_floor", "pipes_conditioner", "warm_floors"]
       .flatMap((k) => setDiff(k).map((id) => `${k}:${id}`));
     const namesLeft = Object.entries(am["items"] ?? {}).filter(([id]) => setDiff("items").includes(id)).map(([, v]) => (v as { name?: string }).name);
     console.log("cleanup: лишних стен/предметов/труб:", semantic.length ? JSON.stringify({ semantic, namesLeft }) : "нет");
@@ -395,8 +404,11 @@ try {
       const a2 = await tryCall("item_add", { name: toolName, position: { against_wall: { wall_id: wallId.id, offset_mm: 3200 } } });
       if (!a2.ok) { console.log(`4c ${typeName}: второй предмет не создан — сцена пропущена`); continue; }
       const s1 = await captureAddedItem(a1.res!, idsX);
+      // ревью 366 №4: каждый захваченный предмет — в журнал СРАЗУ (иначе при
+      // отказе a2/захвата s2 предмет a1 не попадёт в зачистку)
+      created.push({ kind: "item", siteId: s1 });
       const s2 = await captureAddedItem(a2.res!, idsX);
-      created.push({ kind: "item", siteId: s1 }, { kind: "item", siteId: s2 });
+      created.push({ kind: "item", siteId: s2 });
       const i1 = await wsItem(s1) as unknown as { x_mm?: number; y_mm?: number };
       const i2 = await wsItem(s2) as unknown as { x_mm?: number; y_mm?: number };
       if (i1?.x_mm === undefined || i2?.x_mm === undefined) throw new Error(`4c ${typeName}: нет координат`);
@@ -426,6 +438,68 @@ try {
         box: kind === "conditioner_drainage" ? "pipes_conditioner" : "pipes_warm_floor",
         key: kind === "conditioner_drainage" ? "drainage_pipe_id" : "pipe_warm_floor_id",
       });
+    }
+
+    // ---- 4d (367). магистраль тёплого пола с вершиной-контуром: rebuild и распад ----
+    // (ревью 366 №1): вершина-контур (warm_floor, model.warm_floors) — держатель
+    // ссылки в props контура; pipe_node_delete переносит ссылку при распаде и
+    // не оставляет висячей при rebuild. Порядок: rebuild первым (контур без
+    // ссылки подключается вторым сценарием; у контура одно скалярное подключение).
+    const wfChecks: { label: string; wf: string; expect: "piece" | "none" }[] = [];
+    {
+      const ids4d = await itemSiteIds();
+      const col4d = await tryCall("item_add", { name: "radiator_collector", position: { against_wall: { wall_id: wallId.id, offset_mm: 2200 } } });
+      const wfAdd = await tryCall("warm_floor_add", { kind: "water", corner1: { x: roomCx - 1500, y: roomCy - 1000 }, corner2: { x: roomCx + 1500, y: roomCy + 1000 } });
+      if (!col4d.ok || !wfAdd.ok) {
+        console.log(`4d: ${!col4d.ok ? "коллектор недоступен" : `warm_floor_add отказал: ${String(wfAdd.err).slice(0, 120)}`} — сцена пропущена`);
+      } else {
+        const colSite4d = await captureAddedItem(col4d.res!, ids4d);
+        created.push({ kind: "item", siteId: colSite4d });
+        const wfSite = (wfAdd.res as { entity?: { site_id?: string } }).entity?.site_id;
+        if (!wfSite) throw new Error("4d: warm_floor_add без site_id");
+        created.push({ kind: "warm_floor", siteId: wfSite });
+        journal();
+        const colRaw4d = await wsItem(colSite4d) as unknown as { x_mm?: number; y_mm?: number };
+        if (colRaw4d?.x_mm === undefined) throw new Error("4d: у коллектора нет координат");
+        // (б) rebuild: узел перед контуром уходит — контур-одиночка, ссылка снята
+        const pB = await call("pipe_add", { kind: "warm_floor", path: [
+          { item_id: colSite4d },
+          { x: colRaw4d.x_mm! - 600, y: colRaw4d.y_mm! + 300 },
+          { x: colRaw4d.x_mm! - 900, y: colRaw4d.y_mm! + 300 },
+          { item_id: wfSite },
+        ] });
+        const pBSite = (pB as { entity?: { site_id?: string } }).entity?.site_id;
+        if (!pBSite) throw new Error("4d: pipe_add (rebuild) без site_id");
+        created.push({ kind: "pipe", siteId: pBSite });
+        const delB = await call("pipe_node_delete", { pipe_id: pBSite, vertex: 2 });
+        const dnB = delB as { deleted_pipes?: string[]; created_pipes?: string[] };
+        console.log("4d rebuild pipe_node_delete:", JSON.stringify(dnB));
+        if (dnB.deleted_pipes?.length || dnB.created_pipes?.length) {
+          throw new Error(`4d rebuild: ожидались пустые deleted/created (кусок жив), факт ${JSON.stringify(dnB)}`);
+        }
+        wfChecks.push({ label: "rebuild", wf: wfSite, expect: "none" });
+        // (а) распад: средний узел 5-вершинной трубы [коллектор, n, n, n, контур]
+        const pA = await call("pipe_add", { kind: "warm_floor", path: [
+          { item_id: colSite4d },
+          { x: colRaw4d.x_mm! - 600, y: colRaw4d.y_mm! - 300 },
+          { x: colRaw4d.x_mm! - 900, y: colRaw4d.y_mm! - 300 },
+          { x: colRaw4d.x_mm! - 1200, y: colRaw4d.y_mm! - 300 },
+          { item_id: wfSite },
+        ] });
+        const pASite = (pA as { entity?: { site_id?: string } }).entity?.site_id;
+        if (!pASite) throw new Error("4d: pipe_add (распад) без site_id");
+        created.push({ kind: "pipe", siteId: pASite });
+        const peA = (pA as { entity?: { vertexes?: number } }).entity;
+        if (peA?.vertexes !== 5) throw new Error(`4d: у трубы ${String(peA?.vertexes)} вершин (ожидалось 5)`);
+        const delA = await call("pipe_node_delete", { pipe_id: pASite, vertex: 2 });
+        const dnA = delA as { deleted_pipes?: string[]; created_pipes?: string[] };
+        console.log("4d распад pipe_node_delete:", JSON.stringify(dnA));
+        if ((dnA.created_pipes?.length ?? 0) !== 2 || !dnA.deleted_pipes?.includes(pASite)) {
+          throw new Error(`4d распад: распад на 2 куска не получен: ${JSON.stringify(dnA)}`);
+        }
+        for (const pid of dnA.created_pipes!) created.push({ kind: "pipe", siteId: pid });
+        wfChecks.push({ label: "распад", wf: wfSite, expect: "piece" });
+      }
     }
 
     // ---- 5. validate → save → reopen → сверка → PNG ----
@@ -469,6 +543,22 @@ try {
         const ok = Array.isArray(ref) ? ref.includes(pieceId) : ref === pieceId;
         if (!ok) throw new Error(`4c ${cc.kind}: ${label} ссылка ${cc.key}=${JSON.stringify(ref)} не на свой кусок ${pieceId} (365 major 3)`);
         if (cc.key !== `${cc.kind}_id` && `${cc.kind}_id` in held) throw new Error(`4c ${cc.kind}: появился ошибочный ключ ${cc.kind}_id`);
+      }
+    }
+    // 367 (ревью 366 №1): у контура тёплого пола ссылка на своё место после reopen
+    for (const chk of wfChecks) {
+      const wfr = ((am as Record<string, Record<string, unknown>>).warm_floors ?? {})[chk.wf] as { props?: { pipes_warm_floor?: Record<string, unknown> } } | undefined;
+      const ref4d = (wfr?.props?.pipes_warm_floor ?? {}) as Record<string, unknown>;
+      const pwf = (am as Record<string, Record<string, { id?: string; vertexes?: Array<{ id: string }> }>>).pipes_warm_floor ?? {};
+      const piece = Object.values(pwf).find((p) => p.vertexes?.some((v) => v.id === chk.wf));
+      console.log(`4d ${chk.label} после reopen: props.pipes_warm_floor:`, JSON.stringify(ref4d), "кусок с контуром:", piece?.id ?? "нет");
+      if (chk.expect === "piece") {
+        if (!piece) throw new Error("4d распад: контур не в вершинах ни одного куска");
+        if (ref4d["pipe_warm_floor_id"] !== piece.id) {
+          throw new Error(`4d распад: ссылка контура ${JSON.stringify(ref4d)} не на свой кусок ${piece.id} (ревью 366 №1а)`);
+        }
+      } else if (ref4d["pipe_warm_floor_id"] !== undefined) {
+        throw new Error(`4d rebuild: висячая ссылка контура ${JSON.stringify(ref4d)} (ревью 366 №1б)`);
       }
     }
     const pngRes = await client.callTool({ name: "render_plan", arguments: { sheet: "waterplan" } }, undefined, { timeout: 600_000 });

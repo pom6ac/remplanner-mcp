@@ -57,6 +57,11 @@ try {
   const ids = probeWriteEnv();
   await assertTargetPair(ctx.session(), ids.objectId, ids.planId);
   const roGuard = await readonlyGuard(ctx.session(), ids.readonlyId, ids.readonlyPlanId, readonlyRefPath(ids.readonlyId, ids.readonlyPlanId));
+  // ревью 366 №6: гард контрольного проекта непосредственно перед КАЖДОЙ записью —
+  // gsave доступен и cleanup-фазе (restore-save/cleanup-save не после одного
+  // гарда в начале фазы, а каждый со своим assertUnchanged)
+  const gsave = (tag: string): Promise<Record<string, unknown>> =>
+    guardedSave(roGuard, async () => call("project_save", {}))(tag) as Promise<Record<string, unknown>>;
   const backupPath = `.orca-reports/backup-${ids.objectId}-359.json`;
   if (isCleanup) {
     // восстановление по захваченным ID предыдущего dev-прогона (env командной строки):
@@ -76,17 +81,18 @@ try {
     }
     console.log("cleanup: удаляю стены по захваченным site_id:", JSON.stringify(wallSiteIds));
     const created: ProbeCreated[] = wallSiteIds.map((siteId) => ({ kind: "wall", siteId }));
-    await restoreByCaptured({
-      call,
-      created,
-      ownRoomIds: [],
-      save: async () => {
-        const saveR = await call("project_save", {});
-        console.log("cleanup save verified:", saveR["verified"]);
-        return saveR;
-      },
-      log: (line) => console.log("restore:", line),
-    });
+    // ревью 366 №6: при пустом журнале restore-save не нужен — записи нет
+    if (created.length > 0) {
+      await restoreByCaptured({
+        call,
+        created,
+        ownRoomIds: [],
+        save: () => gsave("cleanup"),
+        log: (line) => console.log("restore:", line),
+      });
+    } else {
+      console.log("cleanup: журнал пуст — restore-save пропущен");
+    }
     // печать site_id каждой удалённой стены (ревью 361 №3): после restore в модели
     // не должно остаться ни одной стены из журнала
     const wallsAfterCleanup = ((await call("model_get", {}))["walls"] ?? []) as Array<{ site_id?: string }>;
@@ -119,10 +125,6 @@ try {
 
   const created: ProbeCreated[] = [];
   let restored = false;
-  // ревью 361 №2: каждая запись через guardedSave (гард контрольного проекта
-  // ПЕРЕД каждым project_save, а не только перед частью записей)
-  const gsave = (tag: string): Promise<Record<string, unknown>> =>
-    guardedSave(roGuard, async () => call("project_save", {}))(tag) as Promise<Record<string, unknown>>;
   // журнал захваченных ID с меткой прогона (ревью 361 №3): не перезаписывает
   // журнал предыдущего прогона
   const capturedPath = `.orca-reports/tmp/359-captured-${stamp}.json`;
@@ -236,17 +238,20 @@ try {
       restored = true;
       try {
         await roGuard.assertUnchanged("restore");
-        await restoreByCaptured({
-          call,
-          created,
-          ownRoomIds: [],
-          save: async () => {
-            const saveR = await call("project_save", {});
-            console.log("restore save:", saveR["verified"]);
-            return saveR;
-          },
-          log: (line) => console.log("restore:", line),
-        });
+        // ревью 366 №6: при пустом created restore-save не нужен (restoreByCaptured
+        // иначе всегда делает project_save); записи — через gsave (гард перед записью)
+        const nothingToRestore = !created.some((c) => c.siteId);
+        if (nothingToRestore) {
+          console.log("restore: захватов нет — restore-save пропущен");
+        } else {
+          await restoreByCaptured({
+            call,
+            created,
+            ownRoomIds: [],
+            save: () => gsave("restore"),
+            log: (line) => console.log("restore:", line),
+          });
+        }
       } catch (e) {
         console.log("restore error:", String((e as Error).message).slice(0, 250));
         exitCode = 1;
