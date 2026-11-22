@@ -74,6 +74,7 @@ import { dimOffsetSide, dimSheet, offsetSideInternal, offsetSidePublic, sheetInt
 import { addSheet, updateSheet, deleteSheet, sheetPlanKey, sheetByName, SHEET_AFTER_PLANS, SHEET_CONTENT_KEYS, SHEET_DEFAULT_AFTER_PLAN } from "../model/sheets.ts";
 import { addFreeline, addThickLine, addFigure, updateLine, updateFigure, deleteLine, deleteFigure, resolveLine, resolveFigure, validateDrawPlan, FREE_FIGURE_TYPES, THICK_LINE_WIDTH_MM_MIN, THICK_LINE_WIDTH_MM_MAX } from "../model/draw.ts";
 import { addPicture, updatePicture, resolvePicture, deletePicture, parseImageSize, pictureTextWarnings, type PictureEntity } from "../model/pictures.ts";
+import { addPrsFigure, updatePrsFigure, deletePrsFigure, setPrsSettings, prsFigureLabel } from "../model/projections.ts";
 import { socketCatalogType } from "../model/electric.ts";
 import { uploadPicture } from "../api.ts";
 import { PICTURE_MAX_BYTES } from "../limits.ts";
@@ -3534,6 +3535,162 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         // minor 376 №5: id удаляемого резолвится ДО удаления — после удаления
         // метка PIC<n> указывает на следующее изображение
         const id = ws.apply("image_delete", (m) => deletePicture(m, a["image_id"] as string));
+        return ok({ deleted: id, hint: SCENARIO_HINT });
+      },
+    ),
+
+    // ===== Развёртки (лист «Развёртки», режим «Стены», этап 389) =====
+    // Молдинги/ниши/настройки prs_* НЕ помечены is_pro в разметке анонимного
+    // проекта (эталон 328-pro-anon.json: wall_molding/wall_niche/wall_profile/
+    // anchor_decor отсутствуют в PRO_EDITOR_KEYS) — тарифного гейта нет.
+
+    prs_set: tool(
+      "Настройки развёрток комнаты (лист «Развёртки», режим «Стены»): нумерация («Назначить " +
+        "первой») и скрытие. hidden — скрыть все развёртки комнаты / показать; first_wall — " +
+        "«назначить первой» развёртку ребра стены (null — авто, как в редакторе); hide_walls/ " +
+        "show_walls — скрыть/показать развёртку ребра стены. Состояние — model_get rooms[].prs. " +
+        "После изменения вызывайте model_validate и project_save.",
+      {
+        room: z.string().min(1).describe("комната (метка R<n> из model_get или id сайта)"),
+        hidden: z.boolean().optional().describe("скрыть все развёртки комнаты (true) / показать (false)"),
+        first_wall: z.union([z.string().min(1), z.null()]).optional().describe("стена ребра «первой» развёртки (id сайта из model_get); null — авто"),
+        hide_walls: z.array(z.string().min(1)).max(50).optional().describe("стены рёбер, чьи развёртки скрыть"),
+        show_walls: z.array(z.string().min(1)).max(50).optional().describe("стены рёбер, чьи развёртки показать"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const res = ws.apply("prs_set", (m) => setPrsSettings(m, a["room"] as string, {
+          hidden: a["hidden"] as boolean | undefined,
+          firstWall: (a["first_wall"] ?? undefined) as string | null | undefined,
+          hideWalls: a["hide_walls"] as string[] | undefined,
+          showWalls: a["show_walls"] as string[] | undefined,
+        }));
+        return ok({ ...res, hint: SCENARIO_HINT });
+      },
+    ),
+
+    wall_molding_add: tool(
+      "Добавить настенный молдинг на развёртку (лист «Развёртки»): стена ребра развёртки, " +
+        "позиция центра от начала развёртки (along_mm) и от низа (bottom_mm), размеры. При " +
+        "высоте ≤ 100 мм редактор делает тонкий вертикальный молдинг (wall_molding_slim, " +
+        "толщина width_line_mm), при ширине ≤ 100 мм — горизонтальный (wall_molding_slim_h). " +
+        "Не PRO (разметка бесплатного тарифа). После добавления вызывайте model_validate и project_save.",
+      {
+        room: z.string().min(1).describe("комната (метка R<n> или id сайта)"),
+        wall: z.string().min(1).describe("стена ребра развёртки (id сайта из model_get)"),
+        along_mm: mmInt.describe("центр молдинга от начала развёртки (от начала линии ребра), мм"),
+        bottom_mm: mmInt.describe("центр молдинга от низа развёртки (от пола), мм"),
+        width_mm: mmInt.describe("ширина молдинга, мм"),
+        height_mm: mmInt.describe("высота молдинга, мм"),
+        width_line_mm: mmInt.optional().describe("толщина линии тонкого молдинга, мм (по умолчанию 40)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const rec = ws.apply("wall_molding_add", (m) => addPrsFigure(m, "wall_molding", {
+          room: a["room"] as string,
+          wall: a["wall"] as string,
+          alongMm: a["along_mm"] as number,
+          bottomMm: a["bottom_mm"] as number,
+          widthMm: a["width_mm"] as number,
+          heightMm: a["height_mm"] as number,
+          widthLineMm: a["width_line_mm"] as number | undefined,
+        }));
+        return ok({ molding_id: prsFigureLabel(ws.model, "wall_molding", rec.id), site_id: rec.id, type: rec.type, prs: rec.prs, hint: SCENARIO_HINT });
+      },
+    ),
+
+    wall_molding_update: tool(
+      "Изменить молдинг развёртки (molding_id из model_get wall_moldings): позиция и размеры " +
+        "пересчитываются как новая постановка (валидация — как у wall_molding_add).",
+      {
+        molding_id: z.string().min(1).describe("метка WM<n> из model_get или id сайта"),
+        along_mm: mmInt.optional(),
+        bottom_mm: mmInt.optional(),
+        width_mm: mmInt.optional(),
+        height_mm: mmInt.optional(),
+        width_line_mm: mmInt.optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const rec = ws.apply("wall_molding_update", (m) => updatePrsFigure(m, "wall_molding", a["molding_id"] as string, {
+          alongMm: a["along_mm"] as number | undefined,
+          bottomMm: a["bottom_mm"] as number | undefined,
+          widthMm: a["width_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+          widthLineMm: a["width_line_mm"] as number | undefined,
+        }));
+        return ok({ molding_id: prsFigureLabel(ws.model, "wall_molding", rec.id), site_id: rec.id, type: rec.type, prs: rec.prs, hint: SCENARIO_HINT });
+      },
+    ),
+
+    wall_molding_delete: tool(
+      "Удалить молдинг развёртки (molding_id из model_get wall_moldings).",
+      { molding_id: z.string().min(1).describe("метка WM<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        const id = ws.apply("wall_molding_delete", (m) => deletePrsFigure(m, "wall_molding", a["molding_id"] as string));
+        return ok({ deleted: id, hint: SCENARIO_HINT });
+      },
+    ),
+
+    wall_niche_add: tool(
+      "Добавить нишу на развёртку (лист «Развёртки»): стена ребра развёртки, позиция и размеры. " +
+        "Ниша не может пересекать другую нишу той же развёртки и не ставится на стеклянные/реечные " +
+        "стены и балконы (как в редакторе). Не PRO (разметка бесплатного тарифа). После добавления " +
+        "вызывайте model_validate и project_save.",
+      {
+        room: z.string().min(1).describe("комната (метка R<n> или id сайта)"),
+        wall: z.string().min(1).describe("стена ребра развёртки (id сайта из model_get)"),
+        along_mm: mmInt.describe("центр ниши от начала развёртки, мм"),
+        bottom_mm: mmInt.describe("центр ниши от низа развёртки (от пола), мм"),
+        width_mm: mmInt.describe("ширина ниши, мм (минимум 100)"),
+        height_mm: mmInt.describe("высота ниши, мм (минимум 100)"),
+        depth_mm: mmInt.optional().describe("глубина ниши, мм (по умолчанию 200)"),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const rec = ws.apply("wall_niche_add", (m) => addPrsFigure(m, "wall_niche", {
+          room: a["room"] as string,
+          wall: a["wall"] as string,
+          alongMm: a["along_mm"] as number,
+          bottomMm: a["bottom_mm"] as number,
+          widthMm: a["width_mm"] as number,
+          heightMm: a["height_mm"] as number,
+          depthMm: a["depth_mm"] as number | undefined,
+        }));
+        return ok({ niche_id: prsFigureLabel(ws.model, "wall_niche", rec.id), site_id: rec.id, type: rec.type, prs: rec.prs, hint: SCENARIO_HINT });
+      },
+    ),
+
+    wall_niche_update: tool(
+      "Изменить нишу развёртки (niche_id из model_get wall_niches): позиция, размеры, глубина.",
+      {
+        niche_id: z.string().min(1).describe("метка WN<n> из model_get или id сайта"),
+        along_mm: mmInt.optional(),
+        bottom_mm: mmInt.optional(),
+        width_mm: mmInt.optional(),
+        height_mm: mmInt.optional(),
+        depth_mm: mmInt.optional(),
+      },
+      async (a) => {
+        const ws = wsOf();
+        const rec = ws.apply("wall_niche_update", (m) => updatePrsFigure(m, "wall_niche", a["niche_id"] as string, {
+          alongMm: a["along_mm"] as number | undefined,
+          bottomMm: a["bottom_mm"] as number | undefined,
+          widthMm: a["width_mm"] as number | undefined,
+          heightMm: a["height_mm"] as number | undefined,
+          depthMm: a["depth_mm"] as number | undefined,
+        }));
+        return ok({ niche_id: prsFigureLabel(ws.model, "wall_niche", rec.id), site_id: rec.id, type: rec.type, prs: rec.prs, hint: SCENARIO_HINT });
+      },
+    ),
+
+    wall_niche_delete: tool(
+      "Удалить нишу развёртки (niche_id из model_get wall_niches).",
+      { niche_id: z.string().min(1).describe("метка WN<n> из model_get или id сайта") },
+      async (a) => {
+        const ws = wsOf();
+        const id = ws.apply("wall_niche_delete", (m) => deletePrsFigure(m, "wall_niche", a["niche_id"] as string));
         return ok({ deleted: id, hint: SCENARIO_HINT });
       },
     ),

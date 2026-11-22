@@ -764,6 +764,36 @@ export type PictureEntity = {
   [key: string]: unknown;
 };
 
+/**
+ * Фигура на развёртке (лист «Развёртки», режим «Стены»): настенный молдинг
+ * (WallMolding, wall_molding_slim/wall_molding_slim_h — авто-тип при высоте
+ * ≤ 10 см) и ниша (WallNiche). Сериализация бандла:
+ *   WallMolding.serialize: {id, type, pc, width, height, plan, plan_, prs,
+ *   width_line, on_size} (width_line default 4);
+ *   WallNiche.serialize: {id, type, pc, width, height, plan, plan_, prs,
+ *   depth, on_size} (depth default 20).
+ * pc — центр в координатной рамке развёрток (рамка детерминирована: линии
+ * развёрток слева направо, зазор 20 между циклами, низ на y=30+total_height,
+ * бандл Projections.getPolygons); prs.pc_xd/pc_yd — смещение центра от
+ * xMin/yMin полигона развёртки (getParentProjection), пересчитываются
+ * редактором при каждой перерисовке развёрток (позиция меняется при смене
+ * prs_first/скрытии — семантическая сверка save идёт по pc_xd/pc_yd, не pc).
+ */
+export type PrsFigureEntity = {
+  id: string;
+  type: string;
+  pc: Point;
+  width: number;
+  height: number;
+  plan: string;
+  plan_?: string;
+  prs: Record<string, unknown>;
+  width_line?: number;
+  depth?: number;
+  on_size?: number;
+  [key: string]: unknown;
+};
+
 export type Model = {
   v: number;
   id: string;
@@ -826,6 +856,10 @@ export type Model = {
   free_figures?: Record<string, FreeFigureEntity>;
   /** Изображения на плане (кнопка «Изображение», класс Picture); может отсутствовать. */
   pictures?: Record<string, PictureEntity>;
+  /** Настенные молдинги развёрток (лист «Развёртки», класс WallMolding); может отсутствовать. */
+  wall_moldings?: Record<string, PrsFigureEntity>;
+  /** Ниши развёрток (лист «Развёртки», класс WallNiche); может отсутствовать. */
+  wall_niches?: Record<string, PrsFigureEntity>;
   /** Конструктор электрощитка (лист «Электрощиток»); у старых моделей может отсутствовать. */
   shields?: Record<string, Shield>;
   /**

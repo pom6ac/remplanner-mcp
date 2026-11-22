@@ -62,6 +62,7 @@ import {
   type RigelSig,
   type SubsItemSig,
 } from "../verify/index.ts";
+import { prsFigureUserMismatches, prsSettingsMismatches } from "../verify/projections.ts";
 import type { EditorLike, OpenProject, WorkspaceDeps } from "../workspace.ts";
 
 export type SaveOutcome = {
@@ -154,6 +155,8 @@ const ENTITY_DELETE_LABELS: Record<Exclude<ModelEntityCollection, "walls">, stri
   thick_lines: "толстые линии",
   free_figures: "фигуры",
   pictures: "изображения",
+  wall_moldings: "молдинги развёрток",
+  wall_niches: "ниши развёрток",
 };
 
 /**
@@ -319,6 +322,11 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
   const expectedThickLines = structuredClone((norm.model as { thick_lines?: Record<string, never> }).thick_lines ?? {}) as Record<string, never>;
   const expectedFigures = structuredClone((norm.model as { free_figures?: Record<string, never> }).free_figures ?? {}) as Record<string, never>;
   const expectedPictures = structuredClone((norm.model as { pictures?: Record<string, never> }).pictures ?? {}) as Record<string, never>;
+  // этап 389: молдинги/ниши развёрток и настройки prs_* — ожидаемые из
+  // нормализованной модели (сверка и до save, и после save по GET)
+  const expectedMoldings = structuredClone((norm.model as { wall_moldings?: Record<string, never> }).wall_moldings ?? {}) as Record<string, never>;
+  const expectedNiches = structuredClone((norm.model as { wall_niches?: Record<string, never> }).wall_niches ?? {}) as Record<string, never>;
+  const expectedPrsRooms = structuredClone(((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, never>);
   // часть 2: ожидаемые кабели-проводка — из нормализованной модели (длина — производная)
   const expectedElec: Partial<Record<"cables_socket" | "cables_warm_floor" | "cables_conditioner", Record<string, GasLineSig>>> = {};
   for (const coll of ["cables_socket", "cables_warm_floor", "cables_conditioner"] as const) {
@@ -582,6 +590,18 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
   const thickLinesNorm = drawLineUserMismatches((host.model().thick_lines ?? {}) as Record<string, never>, (norm.model as Record<string, unknown>)["thick_lines"] as Record<string, never> | undefined ?? {}, "толстая линия");
   const figuresNorm = figureUserMismatches((host.model().free_figures ?? {}) as Record<string, never>, (norm.model as Record<string, unknown>)["free_figures"] as Record<string, never> | undefined ?? {});
   const picturesNorm = pictureUserMismatches((host.model().pictures ?? {}) as Record<string, never>, (norm.model as Record<string, unknown>)["pictures"] as Record<string, never> | undefined ?? {});
+  // этап 389: развёртки до save — локальная копия против normalize
+  const moldingsNorm = prsFigureUserMismatches(
+    { rooms: (host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, coll: (host.model().wall_moldings ?? {}) as Record<string, never> as Record<string, never> as never as Record<string, never> & { } } as { rooms?: Record<string, Record<string, unknown>>; coll?: Record<string, never> },
+    { rooms: ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined, coll: ((norm.model as Record<string, unknown>)["wall_moldings"] ?? {}) as Record<string, never> },
+    "молдинг развёртки",
+  );
+  const nichesNorm = prsFigureUserMismatches(
+    { rooms: (host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, coll: (host.model().wall_niches ?? {}) as Record<string, never> },
+    { rooms: ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined, coll: ((norm.model as Record<string, unknown>)["wall_niches"] ?? {}) as Record<string, never> },
+    "ниша развёртки",
+  );
+  const prsNorm = prsSettingsMismatches((host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined);
   if (roomsBefore > 0 && normRooms === 0) {
     warnings.push(`редактор убрал комнаты при нормализации (${roomsBefore} → 0) — имя и отделка комнат могут быть потеряны; проверьте rooms_list после сохранения`);
   }
@@ -599,7 +619,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     zoneResurrected.problems.length > 0 ||
     warmNorm.problems.length > 0 ||
     ceilingRigelNorm.problems.length > 0 ||
-    sheetsNorm.length > 0 || freelinesNorm.length > 0 || thickLinesNorm.length > 0 || figuresNorm.length > 0 || picturesNorm.length > 0 ||
+    sheetsNorm.length > 0 || freelinesNorm.length > 0 || thickLinesNorm.length > 0 || figuresNorm.length > 0 || picturesNorm.length > 0 || moldingsNorm.length > 0 || nichesNorm.length > 0 || prsNorm.length > 0 ||
     elecNorm.some((e) => e.lost.length > 0 || e.graph.length > 0 || e.conn.length > 0)
   ) {
     throw new McpError("NORMALIZATION_DROPPED", "редактор потерял объекты при нормализации", {
@@ -647,6 +667,9 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         thick_lines_mismatches: thickLinesNorm,
         free_figures_mismatches: figuresNorm,
         picture_mismatches: picturesNorm,
+        wall_molding_mismatches: moldingsNorm,
+        wall_niche_mismatches: nichesNorm,
+        prs_mismatches: prsNorm,
         ...Object.fromEntries(elecNorm.flatMap((e) => [
           [`lost_${e.coll}`, e.lost],
           [`${e.coll}_mismatches`, e.graph],
@@ -887,6 +910,18 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     const thickLinesAfter = drawLineUserMismatches(expectedThickLines, ((after.model["thick_lines"] as Record<string, unknown> | undefined) ?? {}), "толстая линия");
     const figuresAfter = figureUserMismatches(expectedFigures, ((after.model["free_figures"] as Record<string, unknown> | undefined) ?? {}));
     const picturesAfter = pictureUserMismatches(expectedPictures, ((after.model["pictures"] as Record<string, unknown> | undefined) ?? {}));
+    // этап 389: развёртки после save — нормализованное ожидание против сервера
+    const moldingsAfter = prsFigureUserMismatches(
+      { rooms: expectedPrsRooms, coll: expectedMoldings as unknown as Record<string, never> },
+      { rooms: ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {}, coll: ((after.model["wall_moldings"] as Record<string, unknown> | undefined) ?? {}) as Record<string, never> },
+      "молдинг развёртки",
+    );
+    const nichesAfter = prsFigureUserMismatches(
+      { rooms: expectedPrsRooms, coll: expectedNiches as unknown as Record<string, never> },
+      { rooms: ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {}, coll: ((after.model["wall_niches"] as Record<string, unknown> | undefined) ?? {}) as Record<string, never> },
+      "ниша развёртки",
+    );
+    const prsAfter = prsSettingsMismatches(expectedPrsRooms, ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {});
     const roomsLost = normRooms > 0 && roomsAfter === 0;
     // этап 126: комнаты после save — строго (по каноническому контуру и
     // пользовательским полям): частичная потеря N→M>0 и потеря имени/зон — не verified
@@ -908,7 +943,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         ),
       },
     ).problems;
-    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && ceilingRigelAfter.length === 0 && sheetsAfter.length === 0 && freelinesAfter.length === 0 && thickLinesAfter.length === 0 && figuresAfter.length === 0 && picturesAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
+    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && ceilingRigelAfter.length === 0 && sheetsAfter.length === 0 && freelinesAfter.length === 0 && thickLinesAfter.length === 0 && figuresAfter.length === 0 && picturesAfter.length === 0 && moldingsAfter.length === 0 && nichesAfter.length === 0 && prsAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
       verified = true;
       finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
       host.onVerified(toModel(structuredClone(after.model)));
@@ -968,6 +1003,9 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
           thick_lines_mismatches: thickLinesAfter,
           free_figures_mismatches: figuresAfter,
           picture_mismatches: picturesAfter,
+          wall_molding_mismatches: moldingsAfter,
+          wall_niche_mismatches: nichesAfter,
+          prs_mismatches: prsAfter,
           ...Object.fromEntries(elecAfter.flatMap((e) => [
             [`${e.coll}_mismatches`, e.graph],
             [`${e.coll}_connection_mismatches`, e.conn],

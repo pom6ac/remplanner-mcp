@@ -120,7 +120,9 @@
       "freelines": 0,
       "thick_lines": 0,
       "free_figures": 0,
-      "pictures": 0
+      "pictures": 0,
+      "wall_moldings": 0,
+      "wall_niches": 0
     },
     "warnings": []
   },
