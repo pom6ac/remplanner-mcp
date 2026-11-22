@@ -128,8 +128,8 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 
 ## 4. Карта покрытия
 
-Актуализировано по фактическому `src` на этапе 356 (2026-11-21): столбец MCP — да/частично/нет с именами инструментов;
-снапшот контракта — 142 инструмента (`tests/unit/snapshots/c4-contract-snapshot.json`).
+Актуализировано по фактическому `src` на этапе 360 (2026-11-22): столбец MCP — да/частично/нет с именами инструментов;
+снапшот контракта — 145 инструментов (`tests/unit/snapshots/c4-contract-snapshot.json`).
 
 Столбцы: **MCP** — покрыто ли существующими инструментами (design §7): да / нет / частично. **Эталон** — нужен ли снимок из UI
 до реализации (F2-01). **PRO** — инструмент закрыт на бесплатном тарифе. Ключи — `global_tools`.
@@ -158,11 +158,11 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 | Исходный план → «Коммуникации» | Сантехнический стояк, стояки ГВС/ХВС, канализационный (`water`, `water_column_hot\|cold`, `drainage_column`) | `items` («шахты»: `items_mines`, `items_on_walls` — ставятся у стены) | частично: `item_add` требует точку внутри комнаты, привязка к стене не проверялась | да | да | нет |
 | Исходный план | Ввод водоснабжения (`ceiling_water`) | `items` | частично: `item_add` (эталон `ui-ref-comm-ceiling_water`) | да | нет |
 | Сантехника (`santeh`) | 176 позиций (`santeh_furniture` 136 + `furniture` 40) | `items` с `plan.santeh` | **да** (`item_add`, `catalog_search`) | нет (эталон ванны/унитаза есть в T1) | 23 группы PRO (поддоны, уголки, накладные раковины…) |
-| Водоснабжение (`waterplan`) | Выводы: ХВС+ГВС, ХВС+канализация, ХВС+ГВС+канализация, ГВС+канализация (`waterspot_cold_hot`, `waterspot_drainage_cold`, `waterspot_drainage_cold_hot`, `waterspot_drainage_hot`) | `items` (`waterspots`), высота `over_floor` 50 см, у канализации своя высота (`#cm-waterspot--drainage-over-floor`), группа (`GroupWaterSpots`) | частично: `item_add` (высота из каталога, группа — item_update layer) | да | нет |
-| Водоснабжение | Одиночные выводы ХВС, ГВС, канализации (`waterspot_cold\|hot\|drainage`) | `items` | частично: `item_add` (PRO-гейт по единому списку is_pro-ключей, `src/server/pro-editor-keys.generated.ts`; ревью 329 №2, 331 Н2) | да | **да** |
+| Водоснабжение (`waterplan`) | Выводы: ХВС+ГВС, ХВС+канализация, ХВС+ГВС+канализация, ГВС+канализация (`waterspot_cold_hot`, `waterspot_drainage_cold`, `waterspot_drainage_cold_hot`, `waterspot_drainage_hot`) | `items` (`waterspots`), высота `over_floor` 50 см, у канализации своя высота (`#cm-waterspot--drainage-over-floor`), группа (`GroupWaterSpots`) | **да**: `item_add` (высота из каталога) + `waterspot_merge`/`waterspot_unset` (объединение/снятие части, переименование, габариты и высоты как в редакторе, каскад труб; этап 360, эталоны `ui-ref-plumb3-*`) | да | нет |
+| Водоснабжение | Одиночные выводы ХВС, ГВС, канализации (`waterspot_cold\|hot\|drainage`) | `items` | **да**: `item_add` (PRO-гейт по единому списку is_pro-ключей, `src/server/pro-editor-keys.generated.ts`; ревью 329 №2, 331 Н2); `waterspot_merge`/`waterspot_unset` — PRO-гейт по `part` (этап 360) | да (`ui-ref-plumb3-*`) | **да** |
 | Водоснабжение | Коллекторный узел (`waterspot_collector`) | `items`, `anchor: wall`, h 150 | частично: `item_add` against_wall | да | **да** |
-| Водоснабжение | Узел (`waterspot_node`) | вершина графа труб | частично: подключается через `pipe_add` path | да | нет |
-| Водоснабжение | Трубы ХВС, ГВС, канализации (`water_pipe`, `water_hot_pipe`, `drainage_pipe`) | `pipes[]` (граф); метраж для сметы — вдоль стен, не по линии | **да**: `pipe_add kind=water/hot/drainage` + `pipe_update/delete` (этап 78, эталон `ui-ref-plumb-pipe`); PRO-гейт 328 | да | **да** |
+| Водоснабжение | Узел (`waterspot_node`) | `items` (предмет 4×4, группа waterspots) + вершина трубы | **да**: `item_add` (предмет, эталон `ui-ref-plumb3-waterspot-node`), подключение через `pipe_add {item_id}` — вершина `node` в точке предмета (эталон `ui-ref-plumb3-node-pipe`); удаление с каскадом через `item_delete` | да | нет |
+| Водоснабжение | Трубы ХВС, ГВС, канализации (`water_pipe`, `water_hot_pipe`, `drainage_pipe`) | `pipes[]` (граф); метраж для сметы — вдоль стен, не по линии | **да**: `pipe_add kind=water/hot/drainage` + `pipe_update/delete` (этап 78, эталон `ui-ref-plumb-pipe`); `pipe_node_delete` — удаление вершины с каскадом split/shrink как в редакторе (этап 360); PRO-гейт 328 | да (`ui-ref-plumb3-node-pipe`) | **да** |
 | Водоснабжение | Построить автоматически | мастер (`load_v2_modal('santeh_pipes')`) | нет | нет | **да** |
 
 ### 4.3 Электрика и свет
