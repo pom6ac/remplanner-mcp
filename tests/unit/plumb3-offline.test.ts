@@ -14,7 +14,7 @@ import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/worksp
 import type { LoadedModel } from "../../src/api.ts";
 import type { Model, ItemProps, Pipe } from "../../src/model/types.ts";
 import { McpError } from "../../src/errors.ts";
-import { addPipe, PIPE_LINK_KEY_BY_TYPE } from "../../src/model/pipes.ts";
+import { addPipe, PIPE_LINK_KEY_BY_TYPE, deletePipe } from "../../src/model/pipes.ts";
 import { addWarmFloor } from "../../src/model/climate.ts";
 import { addItem } from "../../src/model/items.ts";
 import { addWall } from "../../src/model/walls.ts";
@@ -324,4 +324,74 @@ test("367: mock save — unset composite→composite через ws.apply: value_
   assert.equal(out.verified, true, "save verified без ложной потери value_2");
   const saved = ((server.model["items"] as Record<string, { over_floor?: Record<string, unknown> }>)[s.id]!).over_floor;
   assert.deepEqual(saved, { value: 50, display: false, value_2: 40 }, "value_2 дошёл до сервера");
+});
+
+// ---------- ревью 368 F2: держатель вершины ventHole (walls.holes.props) ----------
+
+type HoleRaw = { id: string; type: string; props?: Record<string, unknown>; [k: string]: unknown };
+
+test("368 F2: mock save — pipe_delete трубы вентиляции с вершиной-ventHole: ссылка отверстия снята, save verified", async () => {
+  const build = () => {
+    const model = emptyModel();
+    const wallId = Object.keys(model.walls)[0]!;
+    const wall = model.walls[wallId] as unknown as { holes: Record<string, HoleRaw> };
+    wall.holes = { VH1: { id: "VH1", type: "ventHole", pc: { x: 250, y: 150 }, width: 20, height: 20 } };
+    // труба вентиляции, нарисованная пользователем: вершина-отверстие
+    // (getTypeItem бандла — "waterspot", is_multi false) + узел
+    const vertexes = [
+      { id: "VH1", point: { x: 250, y: 150 }, type: "waterspot" },
+      { id: "_n1", point: { x: 400, y: 150 }, type: "node" },
+    ];
+    const matrix: ({ length: number } | null)[][] = [[null, { length: 1 }], [{ length: 1 }, null]];
+    (model as unknown as Record<string, Record<string, Pipe>>).pipes_ventilation = {
+      PV1: {
+        id: "PV1", type: "ventpipe_out" as Pipe["type"], length: 1.5,
+        items: { VH1: "waterspot", _n1: "node" }, vertexes, matrix,
+      } as unknown as Pipe,
+    };
+    (wall.holes.VH1!.props as Record<string, unknown>) = { id: "VH1", name: "ventHole", pipes_ventilation: { ventpipe_out_id: "PV1" } };
+    return { model, wallId };
+  };
+  // pipe_delete: обратная ссылка отверстия снимается через реестр держателей
+  {
+    const { model, wallId } = build();
+    const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, () => {});
+    await ws.open("0", "1");
+    ws.apply("pipe_delete", (m) => {
+      deletePipe(m, "PV1");
+      return true;
+    });
+    const after = ws.model as Model;
+    const props = ((after.walls[wallId] as unknown as { holes: Record<string, HoleRaw> }).holes.VH1!.props ?? {}) as Record<string, unknown>;
+    assert.deepEqual(props.pipes_ventilation, {}, "ссылка отверстия на удалённую трубу снята");
+    const out = await ws.save();
+    assert.equal(out.verified, true, "save verified: сверка держателей видит ventHole");
+  }
+  // распад: вершина-отверстие переживает pipe_node_delete — ссылка сохраняется
+  {
+    const { model, wallId } = build();
+    const pipeRaw = (model as unknown as Record<string, Record<string, Pipe>>).pipes_ventilation?.PV1;
+    if (!pipeRaw) throw new Error("труба PV1 не создана");
+    pipeRaw.vertexes = [
+      { id: "VH1", point: { x: 250, y: 150 }, type: "waterspot" },
+      { id: "_n1", point: { x: 400, y: 150 }, type: "node" },
+      { id: "_n2", point: { x: 500, y: 250 }, type: "node" },
+    ];
+    pipeRaw.matrix = [[null, { length: 1 }, null], [{ length: 1 }, null, { length: 1 }], [null, { length: 1 }, null]];
+    const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, () => {});
+    await ws.open("0", "1");
+    ws.apply("pipe_node_delete", (m) => removePipeVertex(m, "PV1", "_n1"));
+    const after = ws.model as Model;
+    const props = ((after.walls[wallId] as unknown as { holes: Record<string, HoleRaw> }).holes.VH1!.props ?? {}) as Record<string, unknown>;
+    const live = Object.values(after.pipes_ventilation ?? {}).some((p) => p.items["VH1"]);
+    if (live) {
+      assert.deepEqual(props.pipes_ventilation, { ventpipe_out_id: Object.keys(after.pipes_ventilation ?? {})[0] }, "ссылка отверстия перенесена на живой кусок");
+    } else {
+      assert.deepEqual(props.pipes_ventilation, {}, "ссылка отверстия снята");
+    }
+    const out = await ws.save();
+    assert.equal(out.verified, true, "save verified");
+  }
 });
