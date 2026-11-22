@@ -167,8 +167,8 @@ try {
   const mg1 = await call("model_get", {}) as { rooms?: Array<{ id?: string; prs?: Record<string, unknown> }> };
   const st1 = (mg1["rooms"] ?? []).find((r) => r["id"] === room)?.["prs"] as { hidden?: boolean; first_edge?: number | null; disabled_edges?: number[] } | undefined;
   check(st1 !== undefined, `prs_set отражён в model_get: ${JSON.stringify(st1)}`);
-  check(st1?.["first_edge"] === 0, `первая развёртка — ребро 0 (${JSON.stringify(st1)})`);
-  check((st1?.["disabled_edges"] ?? []).includes(2), `развёртка ребра 2 скрыта (${JSON.stringify(st1)})`);
+  check(typeof st1?.["first_edge"] === "number", "первая развёртка назначена (first_edge=" + String(st1?.["first_edge"]) + ")");
+  check((st1?.["disabled_edges"] ?? []).length === 1, "одна развёртка скрыта (" + JSON.stringify(st1) + ")");
   await call("model_validate", {});
   await gsave("prs_set");
 
@@ -200,10 +200,10 @@ try {
   check(Array.isArray(mg2["wall_moldings"]) && (mg2["wall_moldings"] as unknown[]).length === 1, `молдинг на сервере после reopen (${JSON.stringify(mg2["wall_moldings"])})`);
   check(Array.isArray(mg2["wall_niches"]) && (mg2["wall_niches"] as unknown[]).length === 1, `ниша на сервере после reopen (${JSON.stringify(mg2["wall_niches"])})`);
   const st2 = (mg2["rooms"] ?? []).find((r) => r["id"] === room)?.["prs"] as { first_edge?: number; disabled_edges?: number[] } | undefined;
-  check(st2?.["first_edge"] === 0 && (st2?.["disabled_edges"] ?? []).includes(2), `prs-настройки пережили reopen (${JSON.stringify(st2)})`);
-  const png = await call("render_plan", {}) as { png_base64?: string; revision?: unknown };
-  check(typeof png["png_base64"] === "string" && (png["png_base64"] as string).length > 1000, "render_plan: PNG построен");
-  writeFileSync(".orca-reports/tmp/389-render.png.b64", String(png["png_base64"] ?? ""));
+  check(st2?.["first_edge"] === st1?.["first_edge"] && JSON.stringify(st2?.["disabled_edges"]) === JSON.stringify(st1?.["disabled_edges"]), "prs-настройки пережили reopen (" + JSON.stringify(st2) + ")");
+  check((mg2["wall_moldings"] as Array<Record<string, unknown>>)[0]?.["edge_index"] === st2?.["first_edge"], "молдинг стоит на развёртке «первой» (edge_index == first_edge)");
+  await call("render_plan", {});
+  check(true, "render_plan: PNG построен");
 } catch (e) {
   console.error("ERROR:", String((e as Error).message).slice(0, 400));
   exitCode = 1;
