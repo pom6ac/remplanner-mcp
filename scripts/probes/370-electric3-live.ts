@@ -233,9 +233,9 @@ try {
           { x: Math.round((ox + MID + 50) * 10), y: Math.round((oy + 60) * 10) },
           { item_id: i2.site_id, sub_id: i2.socket_group?.[0]?.id },
         ],
-      }) as { entity?: { id?: string } };
+      }) as { entity?: { id?: string; site_id?: string } };
       console.log("wiring_add:", JSON.stringify(wiring.entity ?? {}));
-      const wiringId = String(wiring.entity?.id ?? "");
+      const wiringId = String(wiring.entity?.site_id ?? wiring.entity?.id ?? "");
       if (wiringId) created.push({ kind: "cable", siteId: wiringId });
       journal();
       const save1 = await gsave("электрика слоёв");
@@ -261,14 +261,14 @@ try {
       created.push({ kind: "item", siteId: col.entity.site_id });
       const wf1 = await call("warm_floor_add", { kind: "water", corner1: { x: Math.round((ox + 30) * 10), y: Math.round((oy + 30) * 10) }, corner2: { x: Math.round((ox + 250) * 10), y: Math.round((oy + 200) * 10) } }) as { entity: { id?: string; site_id?: string } };
       const wf2 = await call("warm_floor_add", { kind: "water", corner1: { x: Math.round((ox + MID + 30) * 10), y: Math.round((oy + 30) * 10) }, corner2: { x: Math.round((ox + TW - 30) * 10), y: Math.round((oy + 200) * 10) } }) as { entity: { id?: string; site_id?: string } };
-      const wf1Id = String(wf1.entity.id ?? wf1.entity.site_id ?? "");
-      const wf2Id = String(wf2.entity.id ?? wf2.entity.site_id ?? "");
+      const wf1Id = String(wf1.entity.site_id ?? wf1.entity.id ?? "");
+      const wf2Id = String(wf2.entity.site_id ?? wf2.entity.id ?? "");
       created.push({ kind: "warm_floor", siteId: wf1Id }, { kind: "warm_floor", siteId: wf2Id });
       journal();
-      const p1 = await call("pipe_add", { kind: "warm_floor", path: [{ item_id: col.entity.site_id }, { x: Math.round((ox + 270) * 10), y: Math.round((oy + 210) * 10) }, { item_id: wf1Id }] }) as { entity?: { id?: string } };
-      const p2 = await call("pipe_add", { kind: "warm_floor", path: [{ item_id: col.entity.site_id }, { x: Math.round((ox + MID + 100) * 10), y: Math.round((oy + 210) * 10) }, { item_id: wf2Id }] }) as { entity?: { id?: string } };
-      const p2Id = String(p2.entity?.id ?? "");
-      created.push({ kind: "pipe", siteId: String(p1.entity?.id ?? "") }, { kind: "pipe", siteId: p2Id });
+      const p1 = await call("pipe_add", { kind: "warm_floor", path: [{ item_id: col.entity.site_id }, { x: Math.round((ox + 270) * 10), y: Math.round((oy + 210) * 10) }, { item_id: wf1Id }] }) as { entity?: { id?: string; site_id?: string } };
+      const p2 = await call("pipe_add", { kind: "warm_floor", path: [{ item_id: col.entity.site_id }, { x: Math.round((ox + MID + 100) * 10), y: Math.round((oy + 210) * 10) }, { item_id: wf2Id }] }) as { entity?: { id?: string; site_id?: string } };
+      const p2Id = String(p2.entity?.site_id ?? "");
+      created.push({ kind: "pipe", siteId: String(p1.entity?.site_id ?? "") }, { kind: "pipe", siteId: p2Id });
       journal();
       const save2 = await gsave("два контура");
       check(save2["verified"] === true, "save verified (коллектор + 2 контура + 2 магистрали)");
@@ -284,11 +284,12 @@ try {
       console.log("сырой GET до мутации: ref1:", JSON.stringify(ref1pre), "ref2:", JSON.stringify(ref2pre));
       check(Object.keys(ref1pre).length === 1 && Object.keys(ref2pre).length === 1, "предусловие F1: оба контура на сервере со ссылкой на свою магистраль (проверка не тавтологична)");
 
-      // rebuild (б): удаляем вершину-контур второй магистрали → контур-одиночка,
-      // ссылка снимается (unset_tree_id) сразу в ws.model; сырой GET до save —
-      // сервер ещё держит прежнюю ссылку (мутация не записана)
+      // rebuild (б): удаляем УЗЕЛ рядом с контуром второй магистрали
+      // ([коллектор, n1, n2, контур] → кусок [коллектор, n1] + контур-одиночка,
+      // одиночка выбрасывается rebuildGraph, ссылка снимается unset_tree_id);
+      // сырой GET до save — сервер ещё держит прежнюю ссылку (мутация не записана)
       const del = await call("pipe_node_delete", { pipe_id: p2Id, vertex: 2 }) as { deleted?: unknown[]; created?: unknown[]; removed?: boolean };
-      console.log("pipe_node_delete (вершина контура wf2):", JSON.stringify({ deleted: del["deleted"], created: del["created"], removed: del["removed"] }));
+      console.log("pipe_node_delete (узел n2 рядом с контуром wf2):", JSON.stringify({ deleted: del["deleted"], created: del["created"], removed: del["removed"] }));
       const raw2 = await loadModel(ctx.session(), ids.objectId, ids.planId);
       const wfs2 = (raw2.model["warm_floors"] ?? {}) as WfMap;
       console.log("сырой GET до save: ref2 на сервере ещё прежний:", JSON.stringify(wfs2[wf2Id]?.props?.pipes_warm_floor ?? {}));
