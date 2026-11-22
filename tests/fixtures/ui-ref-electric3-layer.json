@@ -1,0 +1,62 @@
+{
+ "_source": "СИНТЕТИЧЕСКИЙ эталон (не живой UI): форма слоя вертикального блока розеточной группы по бандлу app.3.0 (268-app.js) — dragmoveWall пишет props.layer ЧИСЛОМ 2/3 (layer = чужой.layer ? чужой.layer + 1 : 2), pc = pointNearLineEnd(baseline.p1, projection, getHeight()/2 − offset + get_offset_layer2(), position); get_offset_layer2 = 2==layer ? 26 : 3==layer ? 52 : 0 (у скосов 22/44). Живое подтверждение записи слоя — пробы 370-1/370-10 (item_update layer=2, save, reopen). id предмета/под-розетки/id_wall/id_room обезличены («0», «id1»), координаты синтетические (комната-прямоугольник, верхняя стена). Пользовательские поля: name «socket_group», layer 2, socket_group из одной под-розетки, over_floor {value, display, vd}.",
+ "menu_title": "Стандартная розетка",
+ "tool_id": "plannertool_socket",
+ "catalog_defaults_cm": {
+  "id": 20,
+  "group": "sockets",
+  "width": 14,
+  "height": 14,
+  "self_height": 0,
+  "plan": {
+   "sockets": 9
+  },
+  "anchor": "wall",
+  "over_floor": {
+   "value": 30,
+   "display": false
+  },
+  "title": "Стандартная розетка"
+ },
+ "model_object": {
+  "id": "0",
+  "name": "socket_group",
+  "pc": {
+   "x": 97,
+   "y": 33
+  },
+  "width": 14,
+  "height": 14,
+  "angle": 180,
+  "id_wall": "0",
+  "id_room": "0",
+  "plan": {
+   "sockets": 9
+  },
+  "legend": "",
+  "layer": 2,
+  "over_floor": {
+   "value": 30,
+   "display": true,
+   "vd": 30
+  },
+  "socket_group": [
+   {
+    "id": "id1",
+    "name": "socket",
+    "real_center": {
+     "x": 97,
+     "y": 33
+    },
+    "center": {
+     "x": 97,
+     "y": 33
+    },
+    "center_prs": {
+     "x": 97,
+     "y": 33
+    }
+   }
+  ]
+ }
+}

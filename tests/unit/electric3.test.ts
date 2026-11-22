@@ -8,8 +8,10 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Model, ItemProps } from "../../src/model/types.ts";
-import { addRoomRect } from "../../src/model/walls.ts";
-import { addItem, updateItem } from "../../src/model/items.ts";
+import { addRoomRect, splitWall } from "../../src/model/walls.ts";
+import { roomPolygons } from "../../src/model/rooms.ts";
+import { addItem, updateItem, socketGroupAngleDeg } from "../../src/model/items.ts";
+import { againstWallCenter } from "../../src/dto/items.ts";
 import {
   addCable, SOCKET_LAYER_OFFSET_CM, socketLayerOf, applySocketGroupLayer,
 } from "../../src/model/electric.ts";
@@ -124,18 +126,20 @@ const COMPAT = { bundle: "x", version: "1", schema: 1 } as never;
 
 type SaveServer = { saveId: string; model: Record<string, unknown> };
 
-function saveMock(server: SaveServer): Workspace {
+function saveMock(server: SaveServer, afterSave: (s: SaveServer) => void = () => {}, transformNorm?: (m: Record<string, unknown>) => void): Workspace {
   let normalized: Record<string, unknown> | null = null;
   const editor: EditorLike = {
     objectId: "0", planId: "1",
     async normalize(m) {
       normalized = structuredClone(m as object) as Record<string, unknown>;
+      transformNorm?.(normalized);
       const walls = Object.keys(m.walls as Record<string, unknown>).length;
       const c = { walls, holes: 0, items: 0, pillars: 0, rigels: 0 };
       return { model: structuredClone(normalized as object) as Record<string, unknown>, rooms: [], before: c, after: c };
     },
     async save() {
       server.model = structuredClone(normalized!);
+      afterSave(server);
       return { ok: true, saveId: "s2", conflict: false };
     },
     async renderPng() { return Buffer.from(""); },
@@ -202,4 +206,212 @@ test("370: mock save — wall_move при живом слое 2: слой сох
   assert.equal(moved.layer, 2, "слой пережил перенос стены");
   const out = await ws.save();
   assert.equal(out.verified, true, "стена делит/двигается — без ложной ошибки, слой на месте");
+});
+
+// ---------- ревью 371 №1: перенос вдоль стены сохраняет смещение слоя ----------
+
+/** item_update against_wall тем же вызовом, что tools-plan (centerCm + resnapToWall). */
+function moveAgainstWall(m: Model, item: ItemProps, wallId: string, offsetMm: number, layer?: number): void {
+  const wall = m.walls[wallId]!;
+  const at = againstWallCenter(wall, { offset_mm: offsetMm, gap_mm: 0 }, item.width, item.height, roomPolygons(m));
+  updateItem(m, {
+    itemId: item.id,
+    centerCm: at.pcCm,
+    angleDeg: socketGroupAngleDeg(at.angleDeg),
+    idWall: wall.id,
+    resnapToWall: true,
+    rooms: roomPolygons(m),
+    layer,
+  });
+}
+
+test("372 (371 №1): item_update against_wall у розетки со слоем 2 — смещение слоя сохранено (база слоя 1 + 26), явный layer учитывается", () => {
+  const m = baseModel();
+  const wid = topWall(m);
+  // база слоя 1 (расстояние пластины от оси) — константа стены, не зависит от offset вдоль
+  const probe = addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 1000 } });
+  const base = distFromAxis(m, probe);
+  assert.ok(base > 0);
+  updateItem(m, { itemId: probe.id, layer: 2 });
+  assert.ok(Math.abs(distFromAxis(m, probe) - (base + 26)) < 0.11, "слой 2 без переноса: base+26");
+  // (а) без явного layer — редактор держит смещение (dragmoveWall: pc = база + get_offset_layer2())
+  moveAgainstWall(m, probe, wid, 2500);
+  assert.equal(probe.layer, 2, "слой остался 2");
+  assert.ok(Math.abs(distFromAxis(m, probe) - (base + 26)) < 0.11, `расстояние = база + 26, получили ${distFromAxis(m, probe)}`);
+  // (б) явный layer:2 в том же вызове — то же правило относительно новой позиции
+  moveAgainstWall(m, probe, wid, 3000, 2);
+  assert.equal(probe.layer, 2);
+  assert.ok(Math.abs(distFromAxis(m, probe) - (base + 26)) < 0.11, `расстояние = база + 26, получили ${distFromAxis(m, probe)}`);
+  // (в) явный layer:3 — база + 52; (г) явный layer:1 — вернуть к пластине
+  moveAgainstWall(m, probe, wid, 1500, 3);
+  assert.equal(probe.layer, 3);
+  assert.ok(Math.abs(distFromAxis(m, probe) - (base + 52)) < 0.11);
+  moveAgainstWall(m, probe, wid, 1500, 1);
+  assert.equal(probe.layer, null);
+  assert.ok(Math.abs(distFromAxis(m, probe) - base) < 0.11, "слой 1 — пластина");
+  // у розетки без слоя перенос ничего не меняет
+  const plain = addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 2000 } });
+  const plainDist = distFromAxis(m, plain);
+  moveAgainstWall(m, plain, wid, 2200);
+  assert.equal(plain.layer ?? null, null);
+  assert.ok(Math.abs(distFromAxis(m, plain) - plainDist) < 0.11, "у розетки без слоя расстояние не изменилось");
+});
+
+test("372 (371 №1): полный путь через Workspace — против переноса слоя 2 сохраняется, save verified; под-розетки следуют", async () => {
+  const build = () => {
+    const m = baseModel();
+    const wid = topWall(m);
+    const it = addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 1000 } });
+    updateItem(m, { itemId: it.id, layer: 2 });
+    return { m, wid, it };
+  };
+  // save verified: смещение слоя дошло до сервера без расхождений
+  {
+    const { m, it } = build();
+    const distBefore = distFromAxis(m, it); // база слоя 1 + 26
+    const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+    const ws = saveMock(server);
+    await ws.open("0", "1");
+    ws.apply("move-against-wall", (mm) => {
+      const it = Object.values(mm.items).find((i) => i.name === "socket_group")!;
+      moveAgainstWall(mm, it, topWall(mm), 2500);
+      return true;
+    });
+    const after = ws.model as Model;
+    const moved = Object.values(after.items).find((i) => i.name === "socket_group")!;
+    assert.equal(moved.layer, 2, "слой 2 после переноса along стену");
+    assert.ok(Math.abs(distFromAxis(after, moved) - distBefore) < 0.11, `расстояние = база + 26 сохранено (${distFromAxis(after, moved)})`);
+    const out = await ws.save();
+    assert.equal(out.verified, true, "save verified: слой и центр согласованы");
+  }
+  // нормализатор уронил слой → NORMALIZATION_DROPPED (слой — пользовательское поле, сверка до save)
+  {
+    const { m } = build();
+    const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, () => {}, (norm) => {
+      const it = Object.values(norm.items as Record<string, ItemProps>).find((i) => i.name === "socket_group")!;
+      it.layer = null;
+    });
+    await ws.open("0", "1");
+    await assert.rejects(() => ws.save(), (e: unknown) => {
+      const ok = e instanceof McpError && (e as McpError).code === "NORMALIZATION_DROPPED";
+      if (ok) {
+        const det = (e as McpError).details as Record<string, unknown>;
+        assert.ok(Array.isArray(det["socket_group_mismatches"]) && (det["socket_group_mismatches"] as string[]).some((s) => s.includes("слой")), "подробность про слой");
+      }
+      return ok;
+    });
+  }
+  // сервер добавил слой, которого нет в ожидании → SITE_ERROR (сверка после save двусторонняя)
+  {
+    const m = baseModel();
+    addItemByName(m, "socket", { againstWall: { wallId: topWall(m), offsetMm: 1000 } });
+    const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, (srv) => {
+      const it = Object.values((srv.model as { items: Record<string, ItemProps> }).items).find((i) => i.name === "socket_group")!;
+      it.layer = 2;
+    });
+    await ws.open("0", "1");
+    await assert.rejects(() => ws.save(), (e: unknown) => {
+      const ok = e instanceof McpError && (e as McpError).code === "SITE_ERROR";
+      if (ok) {
+        const det = (e as McpError).details as Record<string, unknown>;
+        assert.ok(
+          (Array.isArray(det["socket_group_mismatches"]) && (det["socket_group_mismatches"] as string[]).some((s) => s.includes("слой"))) ||
+          JSON.stringify(det).includes("слой"),
+          "появившийся слой пойман",
+        );
+      }
+      return ok;
+    });
+  }
+});
+
+test("372 (371 №2): slope_side в форме бандла («1»/«2») — смещения скоса 22/44", () => {
+  const m = baseModel();
+  const wid = topWall(m);
+  // отдельные предметы под каждое значение (в редакторе slope_side пишется
+  // перетаскиванием на откос вместе с пересчётом pc, а не задним числом)
+  const s1 = addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 1000 } });
+  (s1 as { slope_side?: unknown }).slope_side = "1";
+  updateItem(m, { itemId: s1.id, layer: 2 });
+  const base1 = distFromAxis(m, s1) - 22;
+  assert.ok(base1 > 0);
+  // редактор пишет строку стороны (slope_side = _.side: "1"/"2"), сброс — void 0;
+  // бандл проверяет истинность (2==layer ? slope_side ? 22 : 26 : …)
+  const s2 = addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 1000 } });
+  const base2 = distFromAxis(m, s2);
+  (s2 as { slope_side?: unknown }).slope_side = "1";
+  updateItem(m, { itemId: s2.id, layer: 2 });
+  assert.ok(Math.abs(distFromAxis(m, s2) - (base2 + 22)) < 0.11, `скос «1», слой 2: ${distFromAxis(m, s2)} = base+22`);
+  const s3 = addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 1000 } });
+  const base3 = distFromAxis(m, s3);
+  (s3 as { slope_side?: unknown }).slope_side = "2";
+  updateItem(m, { itemId: s3.id, layer: 3 });
+  assert.ok(Math.abs(distFromAxis(m, s3) - (base3 + 44)) < 0.11, `скос «2», слой 3: ${distFromAxis(m, s3)} = base+44`);
+  // без скоса — плоские 26/52
+  const s4 = addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 1000 } });
+  const base4 = distFromAxis(m, s4);
+  updateItem(m, { itemId: s4.id, layer: 2 });
+  assert.ok(Math.abs(distFromAxis(m, s4) - (base4 + 26)) < 0.11, "без скоса слой 2: base+26");
+});
+
+test("372 (371 №4): стена делит комнату (wall_split) — слой и расстояние сохранены, save verified без ложной ошибки", async () => {
+  const m = baseModel();
+  const wid = topWall(m);
+  const it = addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 1000 } });
+  updateItem(m, { itemId: it.id, layer: 2 });
+  const distBefore = distFromAxis(m, it);
+  const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+  const ws = saveMock(server);
+  await ws.open("0", "1");
+  ws.apply("split-wall", (mm) => {
+    splitWall(mm, topWall(mm), 2000);
+    return true;
+  });
+  const after = ws.model as Model;
+  const split = Object.values(after.items).find((i) => i.name === "socket_group")!;
+  assert.equal(split.id_wall, it.id_wall, "id_wall не изменился (предмет на первой половине)");
+  assert.equal(split.layer, 2, "слой пережил разрез стены");
+  assert.ok(Math.abs(distFromAxis(after, split) - distBefore) < 0.11, `расстояние до оси сохранено (${distFromAxis(after, split)})`);
+  const out = await ws.save();
+  assert.equal(out.verified, true, "стена делит комнату — без ложной ошибки");
+});
+
+// ---------- ревью 371 №4: эталоны ui-ref-electric3-* в обе стороны ----------
+
+test("372 (371 №4): эталон ui-ref-electric3-layer — форма слоя из бандла; модель воспроизводит эталон", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-electric3-layer.json"), "utf8")) as {
+    model_object: ItemProps;
+  };
+  // эталон → форма: слой — число 2, группа розеток, id/стена обезличены
+  assert.equal(fx.model_object.layer, 2);
+  assert.equal(fx.model_object.name, "socket_group");
+  assert.ok(Array.isArray(fx.model_object.socket_group) && fx.model_object.socket_group.length === 1);
+  // модель → эталон: item_add + layer 2 даёт те же пользовательские поля
+  const m = baseModel();
+  const it = addItemByName(m, "socket", { againstWall: { wallId: topWall(m), offsetMm: 1000 } });
+  updateItem(m, { itemId: it.id, layer: 2 });
+  assert.equal(it.layer, fx.model_object.layer);
+  assert.equal(it.name, fx.model_object.name);
+  assert.equal((it.socket_group as { id: string }[]).length, (fx.model_object.socket_group as unknown[]).length);
+  const of = it.over_floor as { value: number; display: boolean; vd: number };
+  const ofFx = fx.model_object.over_floor as { value: number; display: boolean; vd: number };
+  assert.deepEqual([of.value, of.display, of.vd], [ofFx.value, ofFx.display, ofFx.vd]);
+});
+
+test("372 (371 №4): эталон ui-ref-electric3-slope — slope_side строкой стороны («1»), смещение скоса 22; модель воспроизводит", () => {
+  const fx = JSON.parse(readFileSync(join(here, "../fixtures/ui-ref-electric3-slope.json"), "utf8")) as {
+    model_object: ItemProps;
+  };
+  // эталон → форма: slope_side — строка «1» (бандл: slope_side = _.side), слой — число
+  assert.equal(fx.model_object.slope_side, "1");
+  assert.equal(fx.model_object.layer, 2);
+  // модель → эталон: предмет со slope_side «1» и слоем 2 несёт те же пользовательские поля
+  const m = baseModel();
+  const it = addItemByName(m, "socket", { againstWall: { wallId: topWall(m), offsetMm: 1000 } });
+  (it as { slope_side?: unknown }).slope_side = "1";
+  updateItem(m, { itemId: it.id, layer: 2 });
+  assert.equal(it.slope_side, fx.model_object.slope_side);
+  assert.equal(it.layer, fx.model_object.layer);
 });

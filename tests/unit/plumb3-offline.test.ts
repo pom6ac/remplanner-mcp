@@ -395,3 +395,80 @@ test("368 F2: mock save — pipe_delete трубы вентиляции с ве�
     assert.equal(out.verified, true, "save verified");
   }
 });
+
+// ---------- ревью 371 №5: проекция ventHole в сверке подключений (pipeLinkHolders) ----------
+
+test("372 (371 №5): mock save — живая ссылка ventHole проходит save; сервер потерял/добавил ссылку у отверстия → SITE_ERROR (подключения труб климата)", async () => {
+  const build = () => {
+    const model = emptyModel();
+    const wallId = Object.keys(model.walls)[0]!;
+    const wall = model.walls[wallId] as unknown as { holes: Record<string, HoleRaw> };
+    wall.holes = { VH1: { id: "VH1", type: "ventHole", pc: { x: 250, y: 150 }, width: 20, height: 20 } };
+    const vertexes = [
+      { id: "VH1", point: { x: 250, y: 150 }, type: "waterspot" },
+      { id: "_n1", point: { x: 400, y: 150 }, type: "node" },
+    ];
+    const matrix: ({ length: number } | null)[][] = [[null, { length: 1 }], [{ length: 1 }, null]];
+    (model as unknown as Record<string, Record<string, Pipe>>).pipes_ventilation = {
+      PV1: {
+        id: "PV1", type: "ventpipe_out" as Pipe["type"], length: 1.5,
+        items: { VH1: "waterspot", _n1: "node" }, vertexes, matrix,
+      } as unknown as Pipe,
+    };
+    (wall.holes.VH1!.props as Record<string, unknown>) = { id: "VH1", name: "ventHole", pipes_ventilation: { ventpipe_out_id: "PV1" } };
+    return { model, wallId };
+  };
+  // (а) живая валидная связка «труба ↔ ventHole» — save verified (без проекции
+  // отверстий в держателях сверка давала бы ложное «предмет VH1 исчез»)
+  {
+    const { model } = build();
+    const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, () => {});
+    await ws.open("0", "1");
+    const out = await ws.save();
+    assert.equal(out.verified, true, "save verified: держатель ventHole виден сверке");
+  }
+  // (б) сервер потерял ссылку отверстия после save → SITE_ERROR
+  {
+    const { model, wallId } = build();
+    const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, (srv) => {
+      const w = (srv.model as { walls: Record<string, { holes: Record<string, HoleRaw> }> }).walls[wallId]!;
+      delete w.holes.VH1!.props!.pipes_ventilation;
+    });
+    await ws.open("0", "1");
+    await assert.rejects(() => ws.save(), (e: unknown) => {
+      const ok = e instanceof McpError && (e as McpError).code === "SITE_ERROR";
+      if (ok) {
+        const det = (e as McpError).details as Record<string, unknown>;
+        assert.ok(
+          JSON.stringify(det["climate_mismatches"] ?? det).includes("VH1") &&
+          (JSON.stringify(det["climate_mismatches"] ?? "").includes("потеря") || JSON.stringify(det["climate_mismatches"] ?? "").includes("потерял")),
+          `потеря ссылки ventHole поймана: ${JSON.stringify(det["climate_mismatches"] ?? []).slice(0, 300)}`,
+        );
+      }
+      return ok;
+    });
+  }
+  // (в) сервер добавил лишнюю ссылку у отверстия → SITE_ERROR (лишняя обратная ссылка)
+  {
+    const { model, wallId } = build();
+    const server: SaveServer = { saveId: "s1", model: structuredClone(model) as unknown as Record<string, unknown> };
+    const ws = saveMock(server, (srv) => {
+      const w = (srv.model as { walls: Record<string, { holes: Record<string, HoleRaw> }> }).walls[wallId]!;
+      (w.holes.VH1!.props!.pipes_ventilation as Record<string, unknown>).ventpipe_in_id = "PV9";
+    });
+    await ws.open("0", "1");
+    await assert.rejects(() => ws.save(), (e: unknown) => {
+      const ok = e instanceof McpError && (e as McpError).code === "SITE_ERROR";
+      if (ok) {
+        const det = (e as McpError).details as Record<string, unknown>;
+        assert.ok(
+          JSON.stringify(det["climate_mismatches"] ?? det).includes("PV9"),
+          `лишняя ссылка ventHole поймана: ${JSON.stringify(det["climate_mismatches"] ?? []).slice(0, 300)}`,
+        );
+      }
+      return ok;
+    });
+  }
+});

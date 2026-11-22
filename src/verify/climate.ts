@@ -1,6 +1,6 @@
 import type { Model, WarmFloor } from "../model/types.ts";
 import { warmFloorMismatches } from "../model/climate.ts";
-import { CLIMATE_PIPE_KINDS, PIPE_LINK_KEY_BY_TYPE } from "../model/pipes.ts";
+import { CLIMATE_PIPE_KINDS, PIPE_LINK_KEY_BY_TYPE, pipeLinkHolders } from "../model/pipes.ts";
 import { gasLineGraphMismatches, type GasLineSig } from "./graphs.ts";
 import { pipeConnectionMismatches, type PipeLinkItem } from "./pipes.ts";
 import { missingIds } from "./ids.ts";
@@ -76,16 +76,13 @@ export function climateGraphMismatches(
       return merged;
     };
     const onlyTypes = new Set(Object.values(CLIMATE_PIPE_KINDS).map((c) => c.type));
-    // держатели ссылок: предметы плюс водяные контуры (вершина-контур магистрали
-    // хранит обратную ссылку в props контура — climate ч.2)
-    const holdersExpected = { ...opts.itemsExpected } as Record<string, PipeLinkItem>;
-    for (const wf of Object.values((local as Model).warm_floors ?? {})) {
-      holdersExpected[wf.id] = { ...(wf.props ?? {}), name: wf.type };
-    }
-    const holdersGot = { ...opts.itemsGot } as Record<string, PipeLinkItem>;
-    for (const wf of Object.values(((norm as Record<string, unknown>).warm_floors ?? {}) as Record<string, WarmFloor>)) {
-      holdersGot[wf.id] = { ...(wf.props ?? {}), name: wf.type };
-    }
+    // держатели ссылок — общая проекция pipeLinkHolders (модель/фрагмент):
+    // предметы, водяные контуры (вершина-контур магистрали хранит обратную
+    // ссылку в props контура — climate ч.2) и отверстия стен ventHole
+    // (вершина вентиляции держит ссылку в props отверстия — ревью 371 №5:
+    // без отверстий в проекции потеря/добавление ссылки у ventHole не ловится)
+    const holdersExpected = pipeLinkHolders({ ...(local as Model), items: (opts.itemsExpected ?? {}) as unknown as Model["items"] } as Model) as unknown as Record<string, PipeLinkItem>;
+    const holdersGot = pipeLinkHolders({ ...(norm as unknown as Model), items: (opts.itemsGot ?? {}) as unknown as Model["items"] } as Model) as unknown as Record<string, PipeLinkItem>;
     const conn = pipeConnectionMismatches(
       mergeColls(local as unknown as Record<string, unknown>),
       holdersExpected,

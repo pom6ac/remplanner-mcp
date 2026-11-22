@@ -579,8 +579,10 @@ export function refreshCablesForItem(model: Model, itemId: string): void {
  * Связка (pairing_line, has_layer_up) — производная, в модели не хранится.
  * MCP: слой задаётся явно (1 — снять), pc пересчитывается тем же правилом с
  * сохранением собственного отступа пластины предмета (height/2 − offset), угол
- * и over_floor не трогаются. Слои 4+ не поддерживаются (get_offset_layer2
- * обрабатывает только 2 и 3).
+ * и over_floor не трогаются. Перенос against_wall (resnap) ставит предмет на
+ * базу слоя 1 и держит смещение слоя поверх неё, как dragmoveWall редактора
+ * (major 371 №1); явный layer в том же вызове ставится относительно новой
+ * позиции. Слои 4+ не поддерживаются (get_offset_layer2 обрабатывает только 2 и 3).
  */
 export const SOCKET_LAYER_OFFSET_CM: Record<number, { flat: number; slope: number }> = {
   2: { flat: 26, slope: 22 },
@@ -597,7 +599,10 @@ export function socketLayerOf(item: ItemProps): number {
  * item_update layer: поменять слой вертикального блока у пристенной
  * электрики (socket_group). Возвращает true, если pc изменился.
  */
-export function applySocketGroupLayer(model: Model, item: ItemProps, layer: number): boolean {
+export function applySocketGroupLayer(
+  model: Model, item: ItemProps, layer: number,
+  opts: { prevOffsetCm?: number } = {},
+): boolean {
   if (!Array.isArray(item.socket_group)) {
     throw new McpError(
       "INVALID_ARGUMENT",
@@ -631,8 +636,14 @@ export function applySocketGroupLayer(model: Model, item: ItemProps, layer: numb
   const currentDist = (item.pc.x - proj.x) * inward.x + (item.pc.y - proj.y) * inward.y;
   const prev = socketLayerOf(item);
   const next = layer === 1 ? 1 : layer;
-  const slope = (item as { slope_side?: unknown }).slope_side === true;
-  const prevOffset = SOCKET_LAYER_OFFSET_CM[prev]?.[slope ? "slope" : "flat"] ?? 0;
+  // ревью 371 №2: бандл проверяет истинность slope_side, а редактор пишет туда
+  // строку стороны ("1"/"2" из _.side, сброс — void 0) — сравнение === true
+  // никогда не срабатывало и скос получал смещение плоского слоя (26/52 вместо 22/44)
+  const slope = Boolean((item as { slope_side?: unknown }).slope_side);
+  // major 371 №1: после переноса against_wall (resnap) новая позиция — база слоя 1
+  // (редактор при перетаскивании вдоль стены держит смещение слоя поверх базы:
+  // dragmoveWall pc = ... + get_offset_layer2()), поэтому prevOffset = 0
+  const prevOffset = opts.prevOffsetCm ?? SOCKET_LAYER_OFFSET_CM[prev]?.[slope ? "slope" : "flat"] ?? 0;
   const nextOffset = SOCKET_LAYER_OFFSET_CM[next]?.[slope ? "slope" : "flat"] ?? 0;
   const newDist = currentDist - prevOffset + nextOffset;
   const newPc = add(proj, scale(inward, newDist));

@@ -15,6 +15,7 @@ import { deleteShieldsForItem } from "./shield.ts";
 import { detachRulerItemTargets, itemComments, deleteComment, refreshRulersForItem, refreshItemComments } from "./dims.ts";
 import {
   applySocketGroupLayer, CABLE_LAMP_ITEMS, cablesReferencingItem, refreshCablesForItem, refreshSocketGroupSubs,
+  socketLayerOf,
   STANDALONE_SOCKETS, SWITCH_ITEMS, type SocketGroupSub,
 } from "./electric.ts";
 
@@ -603,7 +604,14 @@ export function updateItem(model: Model, params: UpdateItemParams): ItemProps {
   // get_offset_layer2 бандла (26/52 см от оси, 22/44 у slope_side); под-розетки,
   // вершины связей/кабелей и размеры пересчитываются ниже как при переносе
   let layerMoved = false;
-  if (params.layer !== undefined) {
+  if (params.resnapToWall === true && Array.isArray(props.socket_group)) {
+    // major 371 №1: перенос against_wall ставит предмет на базу слоя 1 (правило
+    // пластины againstWallCenter), а редактор при перетаскивании вдоль стены
+    // держит смещение слоя поверх базы (dragmoveWall: pc = pointNearLineEnd(…,
+    // getHeight()/2 − offset + get_offset_layer2(), position)) — prevOffset = 0,
+    // слой: явный params.layer ?? прежний слой предмета
+    layerMoved = applySocketGroupLayer(model, props, params.layer ?? socketLayerOf(props), { prevOffsetCm: 0 });
+  } else if (params.layer !== undefined) {
     layerMoved = applySocketGroupLayer(model, props, params.layer);
   }
   // этап 88: транзитивный пересчёт затронутых привязок электрики — под-розетки

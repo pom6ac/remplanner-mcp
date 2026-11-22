@@ -2,9 +2,10 @@ import type { VerificationMismatches } from "./types.ts";
 
 /**
  * Состав и пользовательские свойства под-розеток socket_group (ревью 90 R1,
- * 92 R1a/R1b): число под-розеток, id, тип (name) и высота установки группы
- * (over_floor.value, см). Производная геометрия (center, real_center, vd,
- * id_wall) до save НЕ сверяется: редактор легитимно пересчитывает её при
+ * 92 R1a/R1b): число под-розеток, id, тип (name), высота установки группы
+ * (over_floor.value, см) и слой вертикального блока (props.layer, 2/3 —
+ * электрика ч.3; ревью 371 №3). Производная геометрия (center, real_center,
+ * vd, id_wall) до save НЕ сверяется: редактор легитимно пересчитывает её при
  * нормализации (магнит к стене, перенос/удаление стены). Если ожидается
  * числовой over_floor.value — его наличие и равенство обязательны (R1b);
  * совпадающее отсутствие необязательного поля на обеих сторонах — не расхождение.
@@ -12,7 +13,17 @@ import type { VerificationMismatches } from "./types.ts";
 export type SubsItemSig = {
   socket_group?: Array<{ name?: string; id?: string }>;
   over_floor?: unknown;
+  /** Электрика ч.3: слой вертикального блока (2/3; null/отсутствие — у стены). */
+  layer?: number | string | null;
 };
+
+/** Слой вертикального блока как число (строку "2" редактор трактует как 2 —
+ *  бандл 2==layer); отсутствие/null — null. */
+function socketLayerNum(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
 
 export function socketGroupSubsUserMismatches(
   expected: Record<string, SubsItemSig>,
@@ -50,6 +61,17 @@ export function socketGroupSubsUserMismatches(
       const gh = overFloorValueOf(g);
       if (gh === undefined) out.push(`${itemId}: высота установки (over_floor.value) потеряна после сохранения`);
       else if (Math.abs(h - gh) > 0.1) out.push(`${itemId}: высота установки изменилась (на сервере ${gh}; ожидалось ${h})`);
+    }
+    // ревью 371 №3: слой — пользовательское поле, сверяется двусторонне (появился
+    // или пропал — расхождение), и до save тоже (локальная модель против normalize:
+    // если нормализатор уронил слой, потеря не проходит с verified=true)
+    const el = socketLayerNum(it.layer);
+    const gl = socketLayerNum((g as { layer?: unknown } | undefined)?.layer);
+    if (el !== null && el >= 2) {
+      if (gl === null || gl < 2) out.push(`${itemId}: слой вертикального блока потерялся после сохранения (ожидался ${el})`);
+      else if (gl !== el) out.push(`${itemId}: слой вертикального блока изменился (на сервере ${gl}; ожидался ${el})`);
+    } else if (el === null && gl !== null && gl >= 2) {
+      out.push(`${itemId}: на сервере появился слой вертикального блока ${gl}, в ожидании слоя нет`);
     }
   }
   return out;

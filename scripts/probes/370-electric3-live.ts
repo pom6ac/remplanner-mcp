@@ -89,16 +89,6 @@ async function deleteCreatedObjects(call: CallFn, created: ProbeCreated[], log: 
     const r = await tryCall("item_delete", { item_id: id });
     log(`item_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
   }
-  // довылов по имени ТОЛЬКО для предметов пробы, которых в бэкапе нет
-  // (прогон упал до записи журнала; имена проверены по backup-<OBJECT>-370.json)
-  for (const name of (process.env["REMPLANNER_PROBE_ITEM_NAMES"] ?? "").split(",").filter(Boolean)) {
-    const mg = await call("model_get", {});
-    const items = (mg["items"] ?? []) as Array<{ id: string; site_id: string; name: string }>;
-    for (const it of items.filter((i) => i.name === name)) {
-      const r = await tryCall("item_delete", { item_id: it.site_id });
-      log(`item_delete ${it.site_id} (${name}): ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
-    }
-  }
 }
 
 try {
@@ -122,10 +112,10 @@ try {
     await call("render_plan", {});
     const edC = editorOf();
     await assertEditorPlanMatch(edC, ids.planId);
-    // зачистка по журналу захваченных ID (кабели/трубы/контуры/предметы)…
-    // …плюс довылов из env (прогон упал до записи журнала — IDs последней сцены)
+    // зачистка только по журналу захваченных ID (кабели/трубы/контуры/предметы);
+    // удаление по имени и по ID из env запрещено (ревью 371 №6) — журнал
+    // по site_id пишется до первой мутации, упавший прогон чистится cleanup-фазой
     const capturedPath = process.env["REMPLANNER_PROBE_CAPTURED"] ?? "";
-    const envList = (key: string): string[] => (process.env[key] ?? "").split(",").filter(Boolean);
     let created: ProbeCreated[] = [];
     if (capturedPath) {
       const j = JSON.parse(readFileSync(capturedPath, "utf8")) as { items?: string[]; pipes?: string[]; warm_floors?: string[]; cables?: string[]; walls?: string[] };
@@ -137,11 +127,8 @@ try {
         ...((j.cables ?? []).map((siteId) => ({ kind: "cable", siteId }))),
       ];
     } else {
-      created = envList("REMPLANNER_PROBE_WALL_SITE_IDS").map((siteId) => ({ kind: "wall", siteId }));
+      created = (process.env["REMPLANNER_PROBE_WALL_SITE_IDS"] ?? "").split(",").filter(Boolean).map((siteId) => ({ kind: "wall", siteId }));
     }
-    for (const siteId of envList("REMPLANNER_PROBE_EXTRA_CABLE_IDS")) created.push({ kind: "cable", siteId });
-    for (const siteId of envList("REMPLANNER_PROBE_EXTRA_WARM_FLOOR_IDS")) created.push({ kind: "warm_floor", siteId });
-    for (const siteId of envList("REMPLANNER_PROBE_EXTRA_ITEM_IDS")) created.push({ kind: "item", siteId });
     console.log("cleanup: журнал:", capturedPath || "(нет)", "объектов в зачистке:", created.length);
     await deleteCreatedObjects(call as unknown as CallFn, created, (l) => console.log("cleanup:", l));
     // …и restore стен общим probe-restore (по тем же захваченным ID); save —
