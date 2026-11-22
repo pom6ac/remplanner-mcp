@@ -266,7 +266,7 @@ try {
       created.push({ kind: "warm_floor", siteId: wf1Id }, { kind: "warm_floor", siteId: wf2Id });
       journal();
       const p1 = await call("pipe_add", { kind: "warm_floor", path: [{ item_id: col.entity.site_id }, { x: Math.round((ox + 270) * 10), y: Math.round((oy + 210) * 10) }, { item_id: wf1Id }] }) as { entity?: { id?: string; site_id?: string } };
-      const p2 = await call("pipe_add", { kind: "warm_floor", path: [{ item_id: col.entity.site_id }, { x: Math.round((ox + MID + 100) * 10), y: Math.round((oy + 210) * 10) }, { item_id: wf2Id }] }) as { entity?: { id?: string; site_id?: string } };
+      const p2 = await call("pipe_add", { kind: "warm_floor", path: [{ item_id: col.entity.site_id }, { x: Math.round((ox + MID + 80) * 10), y: Math.round((oy + 210) * 10) }, { x: Math.round((ox + MID + 140) * 10), y: Math.round((oy + 210) * 10) }, { item_id: wf2Id }] }) as { entity?: { id?: string; site_id?: string } };
       const p2Id = String(p2.entity?.site_id ?? "");
       created.push({ kind: "pipe", siteId: String(p1.entity?.site_id ?? "") }, { kind: "pipe", siteId: p2Id });
       journal();
