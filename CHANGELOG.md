@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Добавлено (этап 389 — развёртки)
+
+- **Настройки развёрток комнаты** (`prs_set`): hidden — «Скрыть развёртки» (`prs_hidden=1` +
+  все oid в `prs_disabled`, как обработчик #cm-room2), first_wall — «Назначить первой»
+  (`prs_first`, null — авто), hide_walls/show_walls — скрытие/показ развёртки ребра стены
+  (знак развёртки). Состояние — `model_get` `rooms[].prs` (`hidden`, `first_edge`,
+  `disabled_edges`). Настройки привязаны к развёртке ребра комнаты (edge_index), oid
+  развёрток редактор перегенерирует при каждой перерисовке и при wall-операциях —
+  семантическая сверка save идёт по edge-индексам, при изменении нарезки рёбер — skip.
+- **Молдинги и ниши развёрток**: `wall_molding_add/update/delete` (метки WM<n>, типы
+  wall_molding/wall_molding_slim/wall_molding_slim_h — как в draw бандле при высоте/ширине
+  ≤ 10 см, толщина линии width_line 40 мм) и `wall_niche_add/update/delete` (метки WN<n>,
+  depth 200 мм, минимум 100×100 мм, без пересечений ниш одной развёртки, нельзя на
+  стеклянных/реечных стенах и балконах). Позиция — семантическая: along_mm от начала
+  развёртки ребра, bottom_mm от пола; pc пишется в детерминированной рамке развёрток
+  (Projections.getPolygons), prs.pc_xd/pc_yd — пользовательские поля. Не PRO.
+- **Точка укладки плитки на стене** (`finish_wall_anchor_set`, инструмент anchor_decor
+  листа «Развёртки», режим 2): along_mm/height_mm на развёртке ребра с отделкой,
+  angle=0 (wall_woodbatten → 90), custom_angle снимается — как обработчик бандла.
+  НЕ PRO (в отличие от точки укладки пола anchor_floor).
+- `model_get`: аддитивные коллекции `wall_moldings`, `wall_niches` (метки WM<n>/WN<n>)
+  и `rooms[].prs`. Коллекции зарегистрированы в общем реестре (clear/import/счётчики),
+  схема импорта с лимитами; сверка после save — `wall_molding_mismatches`,
+  `wall_niche_mismatches`, `prs_mismatches`, `wall_anchor_mismatches`.
+- follow-up ревью 387 (PR #58): №41 — канон sig живых проб исключает производные поля
+  потолка polygon2/polygons_layout_points/area_childs/index_parent/index_childs
+  (доказательство по сериализатору бандла; пользовательские поля различаются — тест);
+  №42 — assertEditorPlanMatch после project_open в finally проб 382/384/386;
+  №43 — тест, что openEditor создаёт контекст только через newContextOptions().
+
 ### Добавлено (этап 375 — нижняя панель и листы)
 
 - **Пользовательские листы** (`sheet_add`/`sheet_update`/`sheet_delete`): модель `custom_plans`

@@ -267,6 +267,15 @@ finish_ceiling_complex_set  # двухуровневый потолок (лис�
                           #  площадь зоны ≥ 4 м², снятия нет (ластик complex не снимает)
 finish_floor_molding_set / finish_ceiling_molding_set  # плинтусы (напольные 7 видов и потолочный, PRO)
 finish_ceiling_niche_add  # закарнизная ниша (PRO; требует потолок не краску/побелку)
+prs_set                   # настройки развёрток комнаты (лист «Развёртки», режим «Стены»): hidden —
+                          #  «Скрыть развёртки», first_wall — «Назначить первой», hide_walls/show_walls —
+                          #  знак развёртки ребра стены (model_get: rooms[].prs)
+wall_molding_add / wall_niche_add (+ update/delete)  # молдинги и ниши развёрток (не PRO):
+                          #  стена ребра развёртки, along_mm/bottom_mm — позиция, размеры в мм;
+                          #  ниша без пересечений и не на стекле/балконе (model_get: wall_moldings/
+                          #  wall_niches, метки WM1…/WN1…)
+finish_wall_anchor_set    # точка укладки плитки на стене (anchor_decor, режим 2 развёрток, не PRO):
+                          #  along_mm/height_mm на развёртке ребра с отделкой; угол раскладки сбрасывается
 finish_floor_offset_set   # подъём пола-подиума (0..1000 мм, 0 — сброс; apply_to_all_zero —
                           #  «Применить ко всем» редактора)
 finish_floor_anchor_set   # точка начала укладки покрытия (PRO): точка в мм внутри пола,
