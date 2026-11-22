@@ -65,27 +65,40 @@ type CallFn = (name: string, args?: Record<string, unknown>) => Promise<Record<s
 
 /** Зачистка созданных объектов пробы по захваченным ID (обратный порядок
  *  зависимостей, как в редакторе): кабели → трубы → контуры ТП → предметы.
- *  Отдельные отказы логируются, не останавливают зачистку. */
+ *  Отдельные отказы логируются, не останавливают зачистку. Записи стен
+ *  сохраняются в created (их удаляет общий probe-restore). */
 async function deleteCreatedObjects(call: CallFn, created: ProbeCreated[], log: (line: string) => void): Promise<void> {
-  const idsOf = (kind: string): string[] =>
-    created.filter((c) => c.kind === kind && c.siteId).map((c) => c.siteId!);
-  for (const id of idsOf("cable")) {
+  const take = (kind: string): string[] => {
+    const ids = created.filter((c) => c.kind === kind && c.siteId).map((c) => c.siteId!);
+    for (const id of ids) created.splice(created.findIndex((c) => c.kind === kind && c.siteId === id), 1);
+    return ids;
+  };
+  for (const id of take("cable")) {
     const r = await tryCall("wiring_delete", { wiring_id: id });
     log(`wiring_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
   }
-  for (const id of idsOf("pipe")) {
+  for (const id of take("pipe")) {
     const r = await tryCall("pipe_delete", { pipe_id: id });
     log(`pipe_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
   }
-  for (const id of idsOf("warm_floor")) {
+  for (const id of take("warm_floor")) {
     const r = await tryCall("warm_floor_delete", { warm_floor_id: id });
     log(`warm_floor_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
   }
-  for (const id of idsOf("item").reverse()) {
+  for (const id of take("item").reverse()) {
     const r = await tryCall("item_delete", { item_id: id });
     log(`item_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
   }
-  created.length = 0;
+  // довылов по имени ТОЛЬКО для предметов пробы, которых в бэкапе нет
+  // (прогон упал до записи журнала; имена проверены по backup-<OBJECT>-370.json)
+  for (const name of (process.env["REMPLANNER_PROBE_ITEM_NAMES"] ?? "").split(",").filter(Boolean)) {
+    const mg = await call("model_get", {});
+    const items = (mg["items"] ?? []) as Array<{ id: string; site_id: string; name: string }>;
+    for (const it of items.filter((i) => i.name === name)) {
+      const r = await tryCall("item_delete", { item_id: it.site_id });
+      log(`item_delete ${it.site_id} (${name}): ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
+    }
+  }
 }
 
 try {
