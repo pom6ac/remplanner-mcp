@@ -1,4 +1,5 @@
 import type { VerificationMismatches } from "./types.ts";
+import { socketLayerNum } from "../model/electric.ts";
 
 /**
  * Состав и пользовательские свойства под-розеток socket_group (ревью 90 R1,
@@ -16,14 +17,6 @@ export type SubsItemSig = {
   /** Электрика ч.3: слой вертикального блока (2/3; null/отсутствие — у стены). */
   layer?: number | string | null;
 };
-
-/** Слой вертикального блока как число (строку "2" редактор трактует как 2 —
- *  бандл 2==layer); отсутствие/null — null. */
-function socketLayerNum(v: unknown): number | null {
-  if (v === null || v === undefined || v === "") return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
 
 export function socketGroupSubsUserMismatches(
   expected: Record<string, SubsItemSig>,

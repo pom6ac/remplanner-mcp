@@ -2,6 +2,63 @@
 
 ## Unreleased
 
+### Добавлено (этап 375 — нижняя панель и листы)
+
+- **Пользовательские листы** (`sheet_add`/`sheet_update`/`sheet_delete`): модель `custom_plans`
+  `{id, name, after_plan, content, date}`; лист адресуется в `plan` других инструментов как
+  `custom_<id>` или по имени. after_plan — «first» или встроенный лист (позиция вкладки),
+  content — что видно на листе (`plan`/`furniture_santeh`/`light`/`electro_points`). Удаление —
+  каскад объектов листа, как `CustomPlan.delete` редактора (комментарии, фигуры, изображения,
+  свободные/толстые линии, размеры). Листы видны в `model_get` (`custom_plans`), счётчики —
+  в `will_delete`/`model_get` (аддитивно).
+- **«Нарисовать элемент»** (кнопка нижней панели, **PRO** — `#freelines_opener` is_pro):
+  `freeline_add/update/delete` (свободные линии-ломаные, 2..200 точек), `thick_line_add/update/delete`
+  (толстые линии, ширина 2..1500 мм в ячейках matrix `{length, width}`), `figure_add/update/delete`
+  (14 типов фигур бандла: rect, rect_round, round, hexagon, …). Свободная геометрия: привязок
+  к стенам нет, mm-вход, план — встроенный лист или `custom_<id>`, цвет/стиль контура/заливка.
+- **Изображения на плане**: `image_upload` — загрузка на хранилище сайта тем же
+  POST /setup/api/load_picture/, что у кнопки «Изображение» (вход — только base64; только
+  растровые jpeg/png по сигнатуре файла; лимит 5 242 880 байт — как в редакторе) и
+  `image_add`/`image_update`/`image_delete` (url, центр, размеры: явные или вписывание в
+  200×200 см по правилу бандла, подпись). Кнопка `#addimage_opener` в разметке бесплатного
+  тарифа без is_pro (проба 375-sheets-ui) — тарифным гейтом не закрыта.
+- `model_get`/compact: аддитивные коллекции `custom_plans`, `freelines`, `thick_lines`,
+  `free_figures`, `pictures` (метки S<n>/FL<n>/TL<n>/DE<n>/PIC<n> + site_id).
+- Коллекции зарегистрированы в общем реестре (clear/import/счётчики), схема импорта —
+  с лимитами; сверка после save — по пользовательским полям в обе стороны
+  (`sheet_mismatches`, `freelines_mismatches`, `thick_lines_mismatches`,
+  `free_figures_mismatches`, `picture_mismatches`).
+- Эталоны `tests/fixtures/ui-ref-sheet-custom.json`, `ui-ref-draw-freeline.json`,
+  `ui-ref-draw-thick-line.json`, `ui-ref-draw-figure.json`, `ui-ref-picture.json`
+  (синтетические, по бандлу app.3.0); живая проверка в dev-объекте — проба
+  `375-sheets-live` (save verified → reopen → сверка → render PNG → зачистка → sig == backup).
+
+### Исправлено (этап 375 — follow-up ревью 373, электрика ч.3)
+
+- **F1: `item_update against_wall` у розеток и бра снимает слой вертикального
+  блока**, как перетаскивание в редакторе (`dragmoveWall`, ветка
+  `can_move_between_walls`: `layer = void 0`; слой ставится заново только
+  сцепкой с другой розеткой — в MCP задаётся явным `layer: 2/3`). Касается
+  типов каталога с флагом `can_move_between_walls: true` (весь известный набор
+  из живого каталога): `socket`, `socket_thermo`, `furniture_socket`, `bra`,
+  `bra_shades`. У бра/бра с абажуром слой в редакторе не ставится вовсе
+  (сцепка действует только для групп sockets/switches/wires) — MCP слоя у них
+  не поддерживает, как раньше. У прочей пристенной электрики (выключатели —
+  флага в каталоге нет) смещение слоя при `against_wall` сохраняется, как
+  раньше (major 371 №1). Описание `item_update` переформулировано: слой —
+  явное поле MCP, а не «как в редакторе».
+- **F2: `against_wall` сбрасывает привязку к прежней опоре** — `slope_side`,
+  `id_hole`, `hole_group` удаляются (dragmoveWall бандла снимает их при
+  переносе между стенами); иначе у розетки, поставленной из UI на откос,
+  после переноса на обычную стену смещение слоя считалось по скосу (22/44
+  вместо 26/52).
+- **F3: единая функция чтения слоя** `socketLayerNum` (модель и сверка):
+  строковый `"2"` трактуется как слой 2 и моделью, и сверкой (раньше
+  `socketLayerOf` считал строку отсутствием слоя — against_wall молча
+  сбрасывал слой legacy-записи к пластине).
+- Проба `372-electric3-live`: `process.exit(1)` в середине сцены заменён на
+  `throw` — аварийный выход больше не обходит `finally` restore.
+
 ### Добавлено (этап 370 — электрика ч.3: вертикальные блоки розеток, держатель ventHole)
 
 - **`item_update` — параметр `layer`** у пристенной электрики (группы розеток и

@@ -703,6 +703,67 @@ export type Shield = {
   [key: string]: unknown;
 };
 
+
+// ---------- Нижняя панель и листы (этап 375) ----------
+
+export type CustomPlanEntity = {
+  id: string;
+  name: string;
+  after_plan: string;
+  content: string[];
+  /** Порядок среди листов после одного after_plan (секунды epoch). */
+  date: number;
+};
+
+export type GraphDrawRec = {
+  id: string;
+  matrix: ({ length: number; width?: number } | null)[][];
+  vertexes: Array<{ id: string; point: Point; type: string }>;
+  items: Record<string, string>;
+  type: string;
+  length: number;
+  plan: string;
+  color_custom?: string;
+  width_stroke?: number;
+  type_stroke?: string;
+  fill?: string;
+  on_size?: number;
+  on_width?: number;
+  level_layer?: number;
+  pc?: Point;
+  [key: string]: unknown;
+};
+
+export type FreeFigureEntity = {
+  id: string;
+  type?: string;
+  plan?: string;
+  pc?: Point;
+  width?: number;
+  height?: number;
+  angle?: number;
+  [key: string]: unknown;
+};
+
+export type PictureEntity = {
+  id: string;
+  url: string;
+  pc?: Point;
+  pointer_pc?: Point;
+  width: number;
+  height: number;
+  width_original: number;
+  height_original: number;
+  text?: string;
+  font_size?: number;
+  plan?: string;
+  plan_?: string;
+  prs?: Record<string, unknown>;
+  level_layer?: number;
+  type?: string;
+  [key: string]: unknown;
+};
+
 export type Model = {
   v: number;
   id: string;
@@ -755,6 +816,16 @@ export type Model = {
   rulers?: Record<string, RulerEntity>;
   /** Текстовые комментарии (кнопка «Текстовый комментарий», PRO в UI); может отсутствовать. */
   comments?: Record<string, CommentEntity>;
+  /** Пользовательские листы (нижняя панель → «Добавить лист», CustomPlan); может отсутствовать. */
+  custom_plans?: Record<string, CustomPlanEntity>;
+  /** Свободные линии («Нарисовать элемент», FreeLine extends GraphLines, PRO); может отсутствовать. */
+  freelines?: Record<string, GraphDrawRec>;
+  /** Толстые линии («Нарисовать элемент», ThickLine extends GraphLines, PRO); может отсутствовать. */
+  thick_lines?: Record<string, GraphDrawRec>;
+  /** Фигуры («Нарисовать элемент», класс FreeFigure, PRO); может отсутствовать. */
+  free_figures?: Record<string, FreeFigureEntity>;
+  /** Изображения на плане (кнопка «Изображение», класс Picture); может отсутствовать. */
+  pictures?: Record<string, PictureEntity>;
   /** Конструктор электрощитка (лист «Электрощиток»); у старых моделей может отсутствовать. */
   shields?: Record<string, Shield>;
   /**

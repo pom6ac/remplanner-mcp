@@ -121,15 +121,18 @@ PRO-инструменты помечены в разметке редактор
 «Штукатурка» — `plaster_*`, а также элементы «Нарисовать элемент»/изображения и прочее вне модели MCP) гейтом не
 проверяются — их в MCP не поставить.
 
-Кроме инструментов, за PRO закрыты: комментарии, «Нарисовать элемент» (фигуры и линии), изображения на плане, PDF/PNG/SVG,
-DXF (старшие тарифы), 3D, «Построить автоматически» (водоснабжение и щиток). На dev-аккаунте («Расширенный») конструктор
+Кроме инструментов, за PRO закрыты: комментарии, «Нарисовать элемент» (фигуры и линии — кнопка `#freelines_opener`
+нижней панели с is_pro, проба 375-sheets-ui; гейтятся `freeline_*`/`thick_line_*`/`figure_*`), PDF/PNG/SVG,
+DXF (старшие тарифы), 3D, «Построить автоматически» (водоснабжение и щиток). Уточнение этапа 375 по свежей
+разметке: кнопка «Изображение» (`#addimage_opener`) на бесплатном тарифе БЕЗ is_pro — загрузка/постановка
+изображений гейтом не закрыта (живая проверка в dev-объекте — проба 375-4). На dev-аккаунте («Расширенный») конструктор
 щитка доступен (проба 255-shield-scout). Живой проверки гейта на бесплатном аккаунте не было — открытый вопрос (dev-объект
 с платным тарифом; правило new-entity-section: не заявлять, что поведение free проверено).
 
 ## 4. Карта покрытия
 
-Актуализировано по фактическому `src` на этапе 360 (2026-11-22): столбец MCP — да/частично/нет с именами инструментов;
-снапшот контракта — 145 инструментов (`tests/unit/snapshots/c4-contract-snapshot.json`).
+Актуализировано по фактическому `src` на этапе 375 (2026-11-22): столбец MCP — да/частично/нет с именами инструментов;
+снапшот контракта — 161 инструмент (`tests/unit/snapshots/c4-contract-snapshot.json`).
 
 Столбцы: **MCP** — покрыто ли существующими инструментами (design §7): да / нет / частично. **Эталон** — нужен ли снимок из UI
 до реализации (F2-01). **PRO** — инструмент закрыт на бесплатном тарифе. Ключи — `global_tools`.
@@ -232,8 +235,9 @@ DXF (старшие тарифы), 3D, «Построить автоматиче
 | Отделка стен | Фартук, комбинированные (покраска+плитка, обои+плитка), меловая покраска, рейки, клинкер, камень, листовые/плиточные панели | то же | **да**: `finish_wall_set` — двухслойные painting_tile/wallpaper_tiles и фартук wall_apron (этап 245, эталон `ui-ref-finish2-wall-layers`); меловая покраска, рейки, клинкер, камень, листовые/плиточные панели — обычными покрытиями `finish_wall_set` (PRO-виды — гейт по материалу, ревью 329 №2) | да | **да** |
 | Нижняя панель | Добавить размер (линейка) | `rulers[]` `{p1, p2, offset, plan, show_everywhere, p1_target, p2_target}`; точное значение задаётся в меню (анонс 25.08.2026) | **да**: `dim_add/update/delete`, `dims_list` (этап 113) | да | нет |
 | Нижняя панель | Текстовый комментарий | `comments[]` | **да**: `comment_add/update/delete`, `comments_list` (этап 113; экранирование текста, лимиты; PRO-гейт 329 №2) | да | **да** |
-| Нижняя панель | Нарисовать элемент (фигуры, линии, толстые линии), изображение | `free_figures`, `freelines`, `thick_lines`, `pictures` | нет | нет | **да** |
-| Пользовательские листы | Добавить лист | `custom_plans` | нет | нет | [проверить] |
+| Нижняя панель | Нарисовать элемент: фигуры (`free_figures`: rect/rect_2/rect_round/rect_round_2/round/round_2/hexagon/octagon/triangle/triangle_2/semicircle/anticircle/quartercircle/roof), линии (`freelines`), толстые линии (`thick_lines`, ширина в ячейках matrix `{length, width}`) | serialize классов FreeFigure/FreeLine/ThickLine бандла (этап 375, эталоны `ui-ref-draw-*` синтетические по бандлу; живая проба 375-4 в dev-объекте: save verified → reopen → сверка) | **да**: `figure_add/update/delete`, `freeline_add/update/delete`, `thick_line_add/update/delete` (свободная геометрия, план — встроенный лист или custom_<id>, мм) | синтетические (по бандлу) | **да** (кнопка `#freelines_opener` — is_pro, проба 375-sheets-ui; гейт реестра pro.ts) |
+| Нижняя панель | Изображение на плане (кнопка «Изображение», `#addimage_opener` — БЕЗ is_pro в разметке бесплатного тарифа, проба 375-sheets-ui — уточнение §3) | `pictures[]` `{url (хранилище, POST /setup/api/load_picture/), pc, width/height (вписано в 200×200), width_original/height_original, text, font_size, plan, type:"user"}` (этап 375, эталон `ui-ref-picture` синтетический; живая проба 375-4: загрузка → постановка → save verified → reopen) | **да**: `image_upload` (base64, только jpeg/png по сигнатуре, лимит 5 242 880 байт как в редакторе, MCP не читает локальные файлы), `image_add/update/delete` (метки PIC<n>) | синтетический (по бандлу) | нет (по разметке 375) |
+| Пользовательские листы | «Добавить лист» (#groups_navi .add — без is_pro, проба 375-sheets-ui) | `custom_plans[]` `{id, name, after_plan, content, date}`; объекты привязываются планом `custom_<id>` (этап 375, эталон `ui-ref-sheet-custom` синтетический; живая проба 375-4) | **да**: `sheet_add/update/delete` (удаление — каскад объектов листа, как CustomPlan.delete: comments/free_figures/pictures/freelines/thick_lines/rulers); model_get → `custom_plans` | синтетический (по бандлу) | нет |
 | Развёртки (режим «Стены») | Автоматические развёртки, нумерация стен, «назначить первой», «скрыть стену» | `rooms2[rid].prs_first`, `prs_disabled`, `prs_hidden`, `edges_prs` | нет | да | нет (просмотр); экспорт — PDF, PRO |
 | Развёртки | Молдинги, ниши, профили, линейный свет, точка укладки плитки (`wall_molding`, `wall_niche`, `wall_profile`, `line_light`, `anchor_decor`) | `wall_moldings`, `wall_niches`, `line_strips` (`plan:"projections"`), `decors[].anchor` | нет | да | `line_light` — **да**; остальное [проверить] |
 | Гидроизоляция, изоляция, штукатурка, стяжка | схемы для бригады (вне 4 областей) | `rooms2[rid].hydroisolations`, `isolations`, `plasters*`, `caps`; зонирование гидроизоляции/стяжки — `zone_delimiters` `zone_hydroisolation` (plan `hydroisolation`) / `zone_floor_cap` (plan `floor_cap`) (этап 296) | **да**: `zone_hydroisolation_add/remove`, `zone_floor_cap_add/remove` (эталоны `ui-ref-hydrozone-delimiter`, `ui-ref-capzone-delimiter`) | — | частично |

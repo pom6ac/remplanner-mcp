@@ -7,6 +7,8 @@ import { parseSaveResponse, isReloadResponse } from "../api.ts";
 import { saveLimiter } from "../http.ts";
 import { PAGE } from "./inject.js";
 import { wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm } from "../model/walls.ts";
+import { assertModelSafeForEditor } from "../model/strings.ts";
+import type { Model } from "../model/types.ts";
 import { readCompat, assertCompatible, trackVersion, type CompatInfo, type CompatPresent } from "./compat.ts";
 import type { SessionState } from "../session.ts";
 
@@ -231,6 +233,12 @@ export function buildHandle(
     compat,
     page,
     async normalize(model, waitMs = 1200): Promise<NormalizeResult> {
+      // ревью 378 №14/№15: граница передачи модели в Chromium — restore ниже
+      // исполняет CustomPlans.restore → addIconToPage (innerHTML имени листа,
+      // data-id/data-date) прямо в page.evaluate. Проверка перед КАЖДОЙ
+      // передачей, независимо от состояния редактора и пути модели
+      // (единая точка assertModelSafeForEditor).
+      assertModelSafeForEditor(model as unknown as Model);
       await page.evaluate(PAGE.clearFog);
       // R2-16 + ревью v0.1.1 №4: сравниваем ВХОДНУЮ модель с результатом — молчаливое
       // удаление элементов редактором не должно проходить как успех. Стены сравниваются

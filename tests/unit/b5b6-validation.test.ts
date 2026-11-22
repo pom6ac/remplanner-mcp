@@ -289,6 +289,12 @@ function fixtureEntities(name: string, root: Record<string, unknown>): [string, 
   if (mo !== undefined && mo !== null && typeof mo === "object") {
     if (name.startsWith("ui-ref-rigel-")) push("rigels", mo);
     else if (name.startsWith("ui-ref-pillar-")) push("pillars", mo);
+    // нижняя панель и листы (этап 375)
+    else if (name.startsWith("ui-ref-sheet-")) push("custom_plans", mo);
+    else if (name.startsWith("ui-ref-draw-freeline")) push("freelines", mo);
+    else if (name.startsWith("ui-ref-draw-thick-line")) push("thick_lines", mo);
+    else if (name.startsWith("ui-ref-draw-figure")) push("free_figures", mo);
+    else if (name.startsWith("ui-ref-picture")) push("pictures", mo);
     else if (name.startsWith("ui-ref-light-led_strip")) push("led_strips", mo);
     else if (name.startsWith("ui-ref-light-line_light")) push("line_strips", mo);
     else if (name.startsWith("ui-ref-light-pendent_strip")) push("stripes_light", mo);

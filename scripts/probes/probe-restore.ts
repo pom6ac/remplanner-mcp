@@ -22,19 +22,30 @@ export type RestoreDeps = {
   log: (line: string) => void;
 };
 
-/** Снимок захваченных ID для журнала (файл вне git). */
+/** Снимок захваченных ID для журнала (файл вне git). Major 376 №4: журнал —
+ *  ПОЛНЫЙ (все виды, которые пишут пробы раздела нижней панели: sheets,
+ *  freelines, thick_lines, figures, pictures), пишется ДО каждой записи,
+ *  зачистка — только общим deleteCreatedByCaptured по журналу. */
 export function capturedSnapshot(created: readonly ProbeCreated[], ownRoomIds: readonly string[]): Record<string, unknown> {
+  const idsOf = (kind: string): string[] =>
+    created.filter((c) => c.kind === kind && c.siteId).map((c) => c.siteId!);
   return {
     rooms: [...ownRoomIds],
-    walls: created.filter((c) => c.kind === "wall" && c.siteId).map((c) => c.siteId),
-    delimiters: created.filter((c) => c.kind === "delimiter" && c.siteId).map((c) => c.siteId),
+    walls: idsOf("wall"),
+    delimiters: idsOf("delimiter"),
     // этап 360: предметы и трубы проб тоже в журнале (зачистка pipe_delete → item_delete);
     // этап 367: контуры тёплого пола пробы (warm_floor_delete, до стен)
-    items: created.filter((c) => c.kind === "item" && c.siteId).map((c) => c.siteId),
-    pipes: created.filter((c) => c.kind === "pipe" && c.siteId).map((c) => c.siteId),
-    warm_floors: created.filter((c) => c.kind === "warm_floor" && c.siteId).map((c) => c.siteId),
+    items: idsOf("item"),
+    pipes: idsOf("pipe"),
+    warm_floors: idsOf("warm_floor"),
     // этап 370: кабели-проводка пробы (wiring_delete, до предметов)
-    cables: created.filter((c) => c.kind === "cable" && c.siteId).map((c) => c.siteId),
+    cables: idsOf("cable"),
+    // этап 377 (major 376 №4): нижняя панель и листы — журнал не пустой
+    sheets: idsOf("sheet"),
+    freelines: idsOf("freeline"),
+    thick_lines: idsOf("thick_line"),
+    figures: idsOf("figure"),
+    pictures: idsOf("picture"),
   };
 }
 
@@ -117,6 +128,33 @@ export async function deleteWallsBySiteIds(deps: RestoreDeps): Promise<void> {
       continue;
     }
     await new Promise((r) => setTimeout(r, 1200));
+  }
+}
+
+/** Зачистка СВОИХ объектов раздела нижней панели по захваченным site_id
+ *  (major 376 №4): изображения → фигуры → толстые/свободные линии → листы
+ *  (каскад листа удаляет объекты его плана — удаляется последним). Не выбирает
+ *  по геометрии/именам — только по журналу; удалённая запись убирается из
+ *  created на месте, отказ отдельного объекта не останавливает цикл. */
+const DELETE_BY_KIND: ReadonlyArray<readonly [kind: string, tool: string, arg: string]> = [
+  ["picture", "image_delete", "image_id"],
+  ["figure", "figure_delete", "figure_id"],
+  ["thick_line", "thick_line_delete", "line_id"],
+  ["freeline", "freeline_delete", "line_id"],
+  ["sheet", "sheet_delete", "sheet_id"],
+];
+
+export async function deleteCreatedByCaptured(call: ProbeCall, created: ProbeCreated[], log: (line: string) => void): Promise<void> {
+  for (const [kind, tool, arg] of DELETE_BY_KIND) {
+    for (const c of created.filter((x) => x.kind === kind && x.siteId).reverse()) {
+      const id = c.siteId!;
+      try {
+        await call(tool, { [arg]: id });
+        created.splice(created.findIndex((x) => x.kind === kind && x.siteId === id), 1);
+      } catch (e) {
+        log(`${tool} ${id}: ${String((e as Error).message).slice(0, 150)}`);
+      }
+    }
   }
 }
 

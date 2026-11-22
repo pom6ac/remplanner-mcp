@@ -19,6 +19,7 @@ import { toToolEntry, type ToolEntry } from "../../src/catalog.ts";
 import { Workspace, type WorkspaceDeps, type EditorLike } from "../../src/workspace.ts";
 import type { LoadedModel } from "../../src/api.ts";
 import { itemVerificationMismatches } from "../../src/verify/items.ts";
+import { socketGroupSubsUserMismatches } from "../../src/verify/sockets.ts";
 import { McpError } from "../../src/errors.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -34,6 +35,10 @@ function baseModel(): Model {
 function elecEntry(name: string): ToolEntry {
   const CATALOG: Record<string, Record<string, unknown>> = {
     chandelier: { id: 35, group: "lights", width: 24, height: 24, self_height: 0, plan: { light: 10 }, anchor: "free", over_floor: false, title: "Люстра" },
+    socket_thermo: { id: 44, group: "sockets", width: 14, height: 14, self_height: 0, plan: { warm_floor: 11 }, anchor: "wall", over_floor: { value: 90, display: true }, title: "Терморегулятор" },
+    furniture_socket: { id: 45, group: "sockets", width: 14, height: 14, self_height: 0, plan: { sockets: 9 }, anchor: "wall", over_floor: { value: 30, display: true }, title: "Мебельная розетка" },
+    bra: { id: 46, group: "lights", width: 20, height: 20, self_height: 30, plan: { light: 10 }, anchor: "wall", over_floor: { value: 140, display: true }, title: "Светильник-бра" },
+    bra_shades: { id: 1196, group: "lights", width: 25, height: 30, self_height: 31, plan: { light: 10 }, anchor: "wall", over_floor: { value: 140, display: true }, title: "Светильник-бра с абажуром" },
   };
   const fx = join(here, `../fixtures/ui-ref-elec-${name}.json`);
   if (CATALOG[name]) return toToolEntry(name, CATALOG[name]!);
@@ -225,7 +230,7 @@ function moveAgainstWall(m: Model, item: ItemProps, wallId: string, offsetMm: nu
   });
 }
 
-test("372 (371 №1): item_update against_wall у розетки со слоем 2 — смещение слоя сохранено (база слоя 1 + 26), явный layer учитывается", () => {
+test("375 (373 F1): item_update against_wall у розетки (can_move_between_walls) — слой снимается, как в редакторе; явный layer ставится заново", () => {
   const m = baseModel();
   const wid = topWall(m);
   // база слоя 1 (расстояние пластины от оси) — константа стены, не зависит от offset вдоль
@@ -234,11 +239,12 @@ test("372 (371 №1): item_update against_wall у розетки со слоем
   assert.ok(base > 0);
   updateItem(m, { itemId: probe.id, layer: 2 });
   assert.ok(Math.abs(distFromAxis(m, probe) - (base + 26)) < 0.11, "слой 2 без переноса: base+26");
-  // (а) без явного layer — редактор держит смещение (dragmoveWall: pc = база + get_offset_layer2())
+  // (а) без явного layer — dragmoveWall бандла (ветка canMoveBetweenWalls) слой
+  //     снимает; редактор ставит его заново только сцепкой с другой розеткой
   moveAgainstWall(m, probe, wid, 2500);
-  assert.equal(probe.layer, 2, "слой остался 2");
-  assert.ok(Math.abs(distFromAxis(m, probe) - (base + 26)) < 0.11, `расстояние = база + 26, получили ${distFromAxis(m, probe)}`);
-  // (б) явный layer:2 в том же вызове — то же правило относительно новой позиции
+  assert.equal(probe.layer, null, "слой снят (F1)");
+  assert.ok(Math.abs(distFromAxis(m, probe) - base) < 0.11, `расстояние = база пластины, получили ${distFromAxis(m, probe)}`);
+  // (б) явный layer:2 в том же вызове — сцепка задаётся явно, слой ставится относительно новой позиции
   moveAgainstWall(m, probe, wid, 3000, 2);
   assert.equal(probe.layer, 2);
   assert.ok(Math.abs(distFromAxis(m, probe) - (base + 26)) < 0.11, `расстояние = база + 26, получили ${distFromAxis(m, probe)}`);
@@ -257,18 +263,97 @@ test("372 (371 №1): item_update against_wall у розетки со слоем
   assert.ok(Math.abs(distFromAxis(m, plain) - plainDist) < 0.11, "у розетки без слоя расстояние не изменилось");
 });
 
-test("372 (371 №1): полный путь через Workspace — против переноса слоя 2 сохраняется, save verified; под-розетки следуют", async () => {
-  const build = () => {
+test("375 (373 F1): против переноса у выключателя (без can_move_between_walls) — смещение слоя сохранено (база + 26)", () => {
+  const m = baseModel();
+  const wid = topWall(m);
+  const probe = addItemByName(m, "light_switch", { againstWall: { wallId: wid, offsetMm: 1000 } });
+  const base = distFromAxis(m, probe);
+  assert.ok(base > 0);
+  updateItem(m, { itemId: probe.id, layer: 2 });
+  assert.ok(Math.abs(distFromAxis(m, probe) - (base + 26)) < 0.11, "слой 2 без переноса: base+26");
+  // у выключателя флага can_move_between_walls в каталоге нет — общая ветка
+  // dragmoveWall смещение слоя сохраняет (371 №1, поведение не менялось)
+  moveAgainstWall(m, probe, wid, 2500);
+  assert.equal(probe.layer, 2, "слой остался 2");
+  assert.ok(Math.abs(distFromAxis(m, probe) - (base + 26)) < 0.11, `расстояние = база + 26, получили ${distFromAxis(m, probe)}`);
+  moveAgainstWall(m, probe, wid, 3000, 3);
+  assert.equal(probe.layer, 3);
+  assert.ok(Math.abs(distFromAxis(m, probe) - (base + 52)) < 0.11);
+});
+
+test("375 (373 F2): against_wall сбрасывает привязку к прежней опоре (slope_side, hole_group); id_hole не трогает (minor 376 №13)", () => {
+  const m = baseModel();
+  const wid = topWall(m);
+  // предмет с формой эталона ui-ref-electric3-slope: slope_side строкой стороны,
+  // id_hole/hole_group редактор пишет вместе с ним (dragmoveWall откоса);
+  // minor 376 №13: dragmoveWall бандла id_hole НЕ сбрасывает — MCP тоже не удаляет
+  const it = addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 1000 } });
+  const loose = it as unknown as Record<string, unknown>;
+  loose["slope_side"] = "1";
+  loose["id_hole"] = "hole1";
+  loose["hole_group"] = "windows";
+  const base = distFromAxis(m, it);
+  updateItem(m, { itemId: it.id, layer: 2 });
+  assert.ok(Math.abs(distFromAxis(m, it) - (base + 22)) < 0.11, `скос: смещение 22 (${distFromAxis(m, it)})`);
+  moveAgainstWall(m, it, topWall(m), 2500);
+  assert.equal(loose["slope_side"], undefined, "slope_side сброшен");
+  assert.equal(loose["id_hole"], "hole1", "id_hole сохранён — как в dragmoveWall бандла");
+  assert.equal(loose["hole_group"], undefined, "hole_group сброшен");
+  assert.equal(it.layer, null, "слой снят (F1, socket)");
+  assert.ok(Math.abs(distFromAxis(m, it) - base) < 0.11, `расстояние = база пластины (${distFromAxis(m, it)})`);
+  // у выключателя со скосом сброс полей не ломает сохранение слоя (22 → 22)
+  const sw = addItemByName(m, "light_switch", { againstWall: { wallId: wid, offsetMm: 1500 } });
+  const swBase = distFromAxis(m, sw);
+  const swLoose = sw as unknown as Record<string, unknown>;
+  swLoose["slope_side"] = "2";
+  swLoose["id_hole"] = "hole2";
+  swLoose["hole_group"] = "doors";
+  updateItem(m, { itemId: sw.id, layer: 2 });
+  assert.ok(Math.abs(distFromAxis(m, sw) - (swBase + 22)) < 0.11, `выключатель со скосом: 22 (${distFromAxis(m, sw)})`);
+  moveAgainstWall(m, sw, topWall(m), 2500);
+  assert.equal(swLoose["slope_side"], undefined, "slope_side сброшен у выключателя");
+  assert.equal(swLoose["hole_group"], undefined, "hole_group сброшен у выключателя");
+  assert.equal(swLoose["id_hole"], "hole2", "id_hole сохранён у выключателя");
+  assert.equal(sw.layer, 2, "слой выключателя сохранён");
+  assert.ok(Math.abs(distFromAxis(m, sw) - (swBase + 26)) < 0.11, `без скоса: 26 (${distFromAxis(m, sw)})`);
+});
+
+test("375 (373 F3): строковый layer «2» трактуется единообразно моделью и сверкой", () => {
+  const m = baseModel();
+  const wid = topWall(m);
+  // выключатель с legacy-строковым слоем: against_wall сохраняет слой как число 2
+  const sw = addItemByName(m, "light_switch", { againstWall: { wallId: wid, offsetMm: 1000 } });
+  const swBase = distFromAxis(m, sw);
+  (sw as unknown as { layer?: unknown }).layer = "2";
+  moveAgainstWall(m, sw, topWall(m), 2500);
+  assert.equal(sw.layer, 2, "строковый «2» — слой 2, не null");
+  assert.ok(Math.abs(distFromAxis(m, sw) - (swBase + 26)) < 0.11, `расстояние = база + 26 (${distFromAxis(m, sw)})`);
+  // сверка: строковый слой в ожидании и числовой на сервере — не расхождение
+  const mismatch = socketGroupSubsUserMismatches(
+    { [sw.id]: { socket_group: [{ id: "id1", name: "light_switch" }], layer: "2" } },
+    { [sw.id]: { socket_group: [{ id: "id1", name: "light_switch" }], layer: 2 } },
+  );
+  assert.deepEqual(mismatch, [], "строка «2» == число 2 в сверке");
+  const mismatch2 = socketGroupSubsUserMismatches(
+    { [sw.id]: { socket_group: [{ id: "id1", name: "light_switch" }], layer: 2 } },
+    { [sw.id]: { socket_group: [{ id: "id1", name: "light_switch" }], layer: null } },
+  );
+  assert.equal(mismatch2.length, 1, "потеря слоя ловится");
+  // socketLayerOf един для модели и сверки
+  assert.equal(socketLayerOf({ layer: "2" } as ItemProps), 2);
+  assert.equal(socketLayerOf({ layer: "1" } as ItemProps), 1);
+  assert.equal(socketLayerOf({ layer: null } as ItemProps), 1);
+  assert.equal(socketLayerOf({} as ItemProps), 1);
+});
+
+test("375 (373 F1): полный путь через Workspace — розетка: слой снят (verified); выключатель: слой сохранён (verified); под-розетки следуют", async () => {
+  // розетка (can_move_between_walls): against_wall без layer — слой снят, save verified
+  {
     const m = baseModel();
     const wid = topWall(m);
     const it = addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 1000 } });
+    const base = distFromAxis(m, it);
     updateItem(m, { itemId: it.id, layer: 2 });
-    return { m, wid, it };
-  };
-  // save verified: смещение слоя дошло до сервера без расхождений
-  {
-    const { m, it } = build();
-    const distBefore = distFromAxis(m, it); // база слоя 1 + 26
     const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
     const ws = saveMock(server);
     await ws.open("0", "1");
@@ -279,14 +364,39 @@ test("372 (371 №1): полный путь через Workspace — проти�
     });
     const after = ws.model as Model;
     const moved = Object.values(after.items).find((i) => i.name === "socket_group")!;
-    assert.equal(moved.layer, 2, "слой 2 после переноса along стену");
-    assert.ok(Math.abs(distFromAxis(after, moved) - distBefore) < 0.11, `расстояние = база + 26 сохранено (${distFromAxis(after, moved)})`);
+    assert.equal(moved.layer, null, "слой розетки снят при against_wall (F1)");
+    assert.ok(Math.abs(distFromAxis(after, moved) - base) < 0.11, `расстояние = база пластины (${distFromAxis(after, moved)})`);
     const out = await ws.save();
     assert.equal(out.verified, true, "save verified: слой и центр согласованы");
   }
+  // выключатель (без флага): смещение слоя сохранено — поведение 371 №1
+  {
+    const m = baseModel();
+    const wid = topWall(m);
+    const it = addItemByName(m, "light_switch", { againstWall: { wallId: wid, offsetMm: 1000 } });
+    const base = distFromAxis(m, it);
+    updateItem(m, { itemId: it.id, layer: 2 });
+    const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+    const ws = saveMock(server);
+    await ws.open("0", "1");
+    ws.apply("move-against-wall", (mm) => {
+      const it = Object.values(mm.items).find((i) => i.name === "socket_group")!;
+      moveAgainstWall(mm, it, topWall(mm), 2500);
+      return true;
+    });
+    const after = ws.model as Model;
+    const moved = Object.values(after.items).find((i) => i.name === "socket_group")!;
+    assert.equal(moved.layer, 2, "слой выключателя пережил перенос");
+    assert.ok(Math.abs(distFromAxis(after, moved) - (base + 26)) < 0.11, `расстояние = база + 26 (${distFromAxis(after, moved)})`);
+    const out = await ws.save();
+    assert.equal(out.verified, true, "save verified: смещение слоя дошло без расхождений");
+  }
   // нормализатор уронил слой → NORMALIZATION_DROPPED (слой — пользовательское поле, сверка до save)
   {
-    const { m } = build();
+    const m = baseModel();
+    const wid = topWall(m);
+    const it = addItemByName(m, "light_switch", { againstWall: { wallId: wid, offsetMm: 1000 } });
+    updateItem(m, { itemId: it.id, layer: 2 });
     const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
     const ws = saveMock(server, () => {}, (norm) => {
       const it = Object.values(norm.items as Record<string, ItemProps>).find((i) => i.name === "socket_group")!;
@@ -305,7 +415,8 @@ test("372 (371 №1): полный путь через Workspace — проти�
   // сервер добавил слой, которого нет в ожидании → SITE_ERROR (сверка после save двусторонняя)
   {
     const m = baseModel();
-    addItemByName(m, "socket", { againstWall: { wallId: topWall(m), offsetMm: 1000 } });
+    const wid = topWall(m);
+    addItemByName(m, "socket", { againstWall: { wallId: wid, offsetMm: 1000 } });
     const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
     const ws = saveMock(server, (srv) => {
       const it = Object.values((srv.model as { items: Record<string, ItemProps> }).items).find((i) => i.name === "socket_group")!;
@@ -324,6 +435,62 @@ test("372 (371 №1): полный путь через Workspace — проти�
       }
       return ok;
     });
+  }
+});
+
+/** 375 (373 F1): по типу каталога — типы с can_move_between_walls. У розеточных
+ *  (socket, socket_thermo, furniture_socket) against_wall снимает слой —
+ *  краснеет без фикса. У bra/bra_shades (group lights) слоя в редакторе нет
+ *  (сцепка ставит слой только группам sockets/switches/wires) — plain-предмет,
+ *  MCP слоя не поддерживает: layer — INVALID_ARGUMENT, перенос без слоя. */
+test("375 (373 F1): каждый тип с can_move_between_walls через Workspace", async () => {
+  for (const name of ["socket", "socket_thermo", "furniture_socket"]) {
+    const m = baseModel();
+    const wid = topWall(m);
+    const it = addItemByName(m, name, { againstWall: { wallId: wid, offsetMm: 1000 } });
+    assert.equal(it.name, "socket_group", `${name} — группа socket_group`);
+    const base = distFromAxis(m, it);
+    updateItem(m, { itemId: it.id, layer: 2 });
+    const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+    const ws = saveMock(server);
+    await ws.open("0", "1");
+    ws.apply(`move-${name}`, (mm) => {
+      const it = Object.values(mm.items).find((i) => i.name === "socket_group")!;
+      moveAgainstWall(mm, it, topWall(mm), 2500);
+      return true;
+    });
+    const after = ws.model as Model;
+    const moved = Object.values(after.items).find((i) => i.name === "socket_group")!;
+    assert.equal(moved.layer, null, `${name}: слой снят при against_wall (F1)`);
+    assert.ok(Math.abs(distFromAxis(after, moved) - base) < 0.11, `${name}: расстояние = база пластины (${distFromAxis(after, moved)})`);
+    const out = await ws.save();
+    assert.equal(out.verified, true, `${name}: save verified`);
+  }
+  // bra/bra_shades — plain-предметы (group lights): слоя в редакторе нет,
+  // MCP слоя не поддерживает; against_wall переносит предмет, verified
+  for (const name of ["bra", "bra_shades"]) {
+    const m = baseModel();
+    const wid = topWall(m);
+    const it = addItemByName(m, name, { againstWall: { wallId: wid, offsetMm: 1000 } });
+    assert.notEqual(it.name, "socket_group", `${name} — plain-предмет, не socket_group`);
+    assert.throws(
+      () => updateItem(m, { itemId: it.id, layer: 2 }),
+      (e: unknown) => e instanceof McpError && /socket_group/.test((e as McpError).message),
+      `${name}: слой не поддерживается (INVALID_ARGUMENT)`,
+    );
+    const server: SaveServer = { saveId: "s1", model: structuredClone(m) as unknown as Record<string, unknown> };
+    const ws = saveMock(server);
+    await ws.open("0", "1");
+    ws.apply(`move-${name}`, (mm) => {
+      const it = Object.values(mm.items).find((i) => i.name === name)!;
+      moveAgainstWall(mm, it, topWall(mm), 2500);
+      return true;
+    });
+    const after = ws.model as Model;
+    const moved = Object.values(after.items).find((i) => i.name === name)!;
+    assert.equal(moved.layer ?? null, null, `${name}: слоя нет`);
+    const out = await ws.save();
+    assert.equal(out.verified, true, `${name}: save verified`);
   }
 });
 

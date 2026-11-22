@@ -222,6 +222,16 @@ wiring_add / wiring_update / wiring_delete     # кабели-проводка (
                           #  wire_earth_*, wire_tv/utp/… (cables_socket), warm_floor_wire (терморегулятор
                           #  ↔ кабельный/ИК контур тёплого пола (ссылка в props контура) и тёплая
                           #  стена (вершина warm_wall, ссылка в props части)), conditioner_wire
+sheet_add / sheet_update / sheet_delete  # пользовательские листы (нижняя панель → «Добавить лист»):
+                          #  имя, позиция вкладки (after_plan), что видно (content); объекты других
+                          #  инструментов ставятся на лист планом custom_<id>; удаление — каскад
+                          #  объектов листа (model_get: custom_plans, метки S1…)
+freeline_add / thick_line_add / figure_add    # «Нарисовать элемент» нижней панели (PRO): свободные
+                          #  линии-ломаные, толстые линии (ширина 2..1500 мм), фигуры (rect, rect_round,
+                          #  round, hexagon, …); свободная геометрия, план — встроенный лист или custom_<id>
+image_upload + image_add  # изображения на плане (кнопка «Изображение»): загрузка base64 (jpeg/png,
+                          #  лимит 5 МБ как в редакторе) на хранилище сайта, постановка по url,
+                          #  размеры из исходника или явные, подпись (model_get: pictures, метки PIC1…)
 shield_rail_add / shield_module_add (+ update/delete)  # конструктор электрощитка (лист «Электрощиток»,
                           #  старшие тарифы PRO): DIN-рейки и модули (автоматы, УЗО, дифавтоматы и др.,
                           #  35 типов; номинал subtype, номер группы, подпись); shield_wire_add/delete —

@@ -19,7 +19,7 @@ import { modelCounts, modelIsContentEmpty } from "../../src/workspace.ts";
 import { compactModel } from "../../src/model/compact.ts";
 import { PLANS_DIR } from "../../src/config.ts";
 import type { ModelEntityCollection } from "../../src/model/collections.ts";
-import type { Model, GasLine, LevelHole, LedStrip, LineStrip, Pipe, StripLight, WarmFloor, FixtureEnvelope, ElecCable } from "../../src/model/types.ts";
+import type { Model, GasLine, LevelHole, LedStrip, LineStrip, Pipe, StripLight, WarmFloor, FixtureEnvelope, ElecCable, GraphDrawRec } from "../../src/model/types.ts";
 // ElecCable импортируется в списке типов ниже
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -129,6 +129,23 @@ function elecCable(id: string, type: string): ElecCable {
   };
 }
 
+/** Свободная/толстая линия «Нарисовать элемент» (этап 375, GraphLines). */
+function drawLine(id: string, type: string): GraphDrawRec {
+  return {
+    id,
+    matrix: [[null, { length: 1 }], [{ length: 1 }, null]],
+    vertexes: [
+      { id: `${id}_n1`, point: POINT, type: "node" },
+      { id: `${id}_n2`, point: { x: 200, y: 100 }, type: "node" },
+    ],
+    items: { [`${id}_n1`]: "node", [`${id}_n2`]: "node" },
+    type,
+    length: 1,
+    plan: "plan",
+    level_layer: 7,
+  } as GraphDrawRec;
+}
+
 /**
  * Эталон: все коллекции реестра, по одной сущности в каждой (включая ригель
  * и газовую линию). Тип Pick<Model, ModelEntityCollection> требует, чтобы при
@@ -161,6 +178,12 @@ const FULL_COLLECTIONS: Pick<Model, ModelEntityCollection> = {
   pipes_heat: { ph1: pipe("ph1", "heat_pipe_hot") },
   pipes_ventilation: { pv1: pipe("pv1", "ventpipe_out") },
   zone_delimiters: { zd1: { id: "zd1", type: "zone_ceiling", plan: "ceiling", length: 0.5, id_room: "room1", matrix: [[null, EDGE], [EDGE, null]], vertexes: [{ id: "zd1_n1", point: POINT, type: "node" }, { id: "zd1_n2", point: { x: 150, y: 100 }, type: "node" }], items: { zd1_n1: "node", zd1_n2: "node" }, on_size: 1 } },
+  // этап 375: нижняя панель и листы
+  custom_plans: { sp1: { id: "sp1", name: "Мой лист", after_plan: "create_walls", content: ["plan"], date: 1700000000 } },
+  freelines: { fl1: drawLine("fl1", "freeline") },
+  thick_lines: { tl1: { ...drawLine("tl1", "thick_line"), on_width: 1 } },
+  free_figures: { de1: { id: "de1", type: "rect", pc: POINT, width: 50, height: 50, angle: 0, rotated: 0, radius: 0, depth: 0, color: "#148515", plan: "plan", prs: {}, width_stroke: 1, type_stroke: "solid", level_layer: 7 } },
+  pictures: { pic1: { id: "pic1", url: "u1.png", pc: POINT, width: 100, height: 100, width_original: 300, height_original: 300, plan: "plan", prs: {}, level_layer: 7, type: "user" } },
 };
 
 /** Полная модель импорта: эталон + корневые поля Model. */

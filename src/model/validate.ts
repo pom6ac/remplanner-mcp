@@ -29,7 +29,8 @@ export type ValidationProblem = {
     | "LEVEL_HOLE_BAD_GEOMETRY"
     | "LEVEL_HOLES_OVERLAP"
     | "MISSING_WALL_FACES"
-    | "MISSING_HOLE_POINTS";
+    | "MISSING_HOLE_POINTS"
+    | "SHEET_PLAN_DANGLING";
   message: string;
   details?: Record<string, unknown>;
 };
@@ -448,6 +449,30 @@ export function validateModel(model: Model, rooms?: RoomPolygon[]): ValidationPr
           code: "LEVEL_HOLES_OVERLAP",
           message: `проёмы ${holes[i]!.id} и ${holes[j]!.id} пересекаются (${Math.round(area * 100) / 100} см²)`,
           details: { holes: [holes[i]!.id, holes[j]!.id], overlap_cm2: Math.round(area * 100) / 100 },
+        });
+      }
+    }
+  }
+
+  // minor 376 №10: висячие plan-ссылки нижней панели — объекты с plan
+  // custom_<id>, чей лист удалён (restore редактора их не покажет, а пользователь
+  // не увидит причину). Валидатор раньше не проверял ни одну из коллекций
+  // раздела — «проблем 0» было вакуумным утверждением.
+  const sheetIds = new Set(Object.keys(model.custom_plans ?? {}));
+  const SHEET_PLAN_COLLECTIONS = [
+    ["comments", "комментарий"], ["free_figures", "фигура"], ["pictures", "изображение"],
+    ["freelines", "свободная линия"], ["thick_lines", "толстая линия"], ["rulers", "размер"],
+  ] as const;
+  for (const [coll, title] of SHEET_PLAN_COLLECTIONS) {
+    const map = model[coll] as Record<string, { plan?: string }> | undefined;
+    if (!map) continue;
+    for (const [id, rec] of Object.entries(map)) {
+      const plan = rec?.plan ?? "";
+      if (plan.startsWith("custom_") && !sheetIds.has(plan.slice("custom_".length))) {
+        problems.push({
+          code: "SHEET_PLAN_DANGLING",
+          message: `${title} ${id} привязан к несуществующему листу ${plan} — редактор его не показывает`,
+          details: { collection: coll, entity_id: id, plan },
         });
       }
     }

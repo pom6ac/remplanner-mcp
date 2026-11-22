@@ -112,7 +112,12 @@
       "pipes_warm_floor": 0,
       "pipes_conditioner": 0,
       "pipes_heat": 0,
-      "pipes_ventilation": 0
+      "pipes_ventilation": 0,
+      "custom_plans": 0,
+      "freelines": 0,
+      "thick_lines": 0,
+      "free_figures": 0,
+      "pictures": 0
     },
     "warnings": []
   },

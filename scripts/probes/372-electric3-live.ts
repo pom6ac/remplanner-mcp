@@ -138,7 +138,7 @@ try {
     // ==== сцена (1): перенос вдоль стены розетки со слоем 2 (major 371 №1) ====
     const mg0 = (await call("model_get", {})) as unknown as { walls: Array<{ id: string; site_id?: string }> };
     const tw = mg0.walls.find((w) => w.site_id === created[0]!.siteId);
-    if (!tw) { console.error("своя перегородка не найдена — СТОП"); process.exit(1); }
+    if (!tw) throw new Error("своя перегородка не найдена — СТОП (throw: не обходит finally restore)");
     const s1 = await call("item_add", { name: "socket", position: { against_wall: { wall_id: tw.id, offset_mm: 1000 } } }) as { entity: { site_id: string } };
     const s2 = await call("item_add", { name: "socket", position: { against_wall: { wall_id: tw.id, offset_mm: 1000 } } }) as { entity: { site_id: string } };
     created.push({ kind: "item", siteId: s1.entity.site_id }, { kind: "item", siteId: s2.entity.site_id });

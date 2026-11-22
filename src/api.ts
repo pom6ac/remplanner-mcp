@@ -336,3 +336,40 @@ export async function createAnonProject(session: SessionState): Promise<AnonProj
     throw e;
   }
 }
+
+export type PictureUpload = { url: string };
+
+/** Разбор ответа POST /setup/api/load_picture/: {status:"success", url}. */
+export function parseLoadPictureResponse(body: unknown): PictureUpload {
+  if (typeof body === "object" && body !== null) {
+    const b = body as Record<string, unknown>;
+    if (b["status"] === "success" && typeof b["url"] === "string" && b["url"] !== "") {
+      return { url: b["url"] };
+    }
+  }
+  throw new McpError("SITE_ERROR", "не удалось разобрать ответ загрузки изображения (ожидался {status, url})");
+}
+
+/**
+ * Загрузка изображения на хранилище сайта — тот же эндпоинт, что у редактора
+ * (бандл app.3.0: POST /setup/api/load_picture/, FormData file+type;
+ * формат кнопки #addimage_opener). body — готовый FormData с file и type.
+ */
+export async function uploadPicture(session: SessionState, form: FormData): Promise<PictureUpload> {
+  const res = await httpRequestRaw({
+    path: "/setup/api/load_picture/",
+    method: "POST",
+    session,
+    body: form,
+  });
+  const text = await res.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new McpError("SITE_ERROR", "не-JSON ответ на /setup/api/load_picture/", {
+      details: unknownBodySummary(res.status, res.headers.get("content-type"), text.length),
+    });
+  }
+  return parseLoadPictureResponse(body);
+}

@@ -33,6 +33,12 @@ const EXPECTED_TOOLS = [
   "rigel_add", "rigel_update", "rigel_delete",
   // §7.4d — газовая линия (пункт меню «Коммуникации», этап 57)
   "gas_line_add", "gas_line_update", "gas_line_delete",
+  // нижняя панель и листы (этап 375)
+  "sheet_add", "sheet_update", "sheet_delete",
+  "freeline_add", "freeline_update", "freeline_delete",
+  "thick_line_add", "thick_line_update", "thick_line_delete",
+  "figure_add", "figure_update", "figure_delete",
+  "image_upload", "image_add", "image_update", "image_delete",
   "pipe_add", "pipe_update", "pipe_delete", "pipe_node_delete",
   "waterspot_merge", "waterspot_unset",
   "led_strip_add", "led_strip_update", "led_strip_delete",

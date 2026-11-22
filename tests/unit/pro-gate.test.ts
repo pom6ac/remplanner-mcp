@@ -156,6 +156,18 @@ function minimalArgs(tool: string): Record<string, unknown> {
       return { point: { x: 0, y: 0 }, text: "тест" };
     case "comment_update":
       return { comment_id: "1" };
+    // этап 375: «Нарисовать элемент»
+    case "freeline_add":
+    case "thick_line_add":
+      return { points: [{ x: 0, y: 0 }, { x: 1000, y: 0 }] };
+    case "freeline_update":
+      return { line_id: "1" };
+    case "thick_line_update":
+      return { line_id: "1", width_mm: 200 };
+    case "figure_add":
+      return { type: "rect", center: { x: 0, y: 0 } };
+    case "figure_update":
+      return { figure_id: "1", center: { x: 0, y: 0 } };
     default:
       return {};
   }

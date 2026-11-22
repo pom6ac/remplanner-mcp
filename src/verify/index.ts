@@ -20,3 +20,4 @@ export type { ElecCableColl } from "../model/electric2.ts";
 export { wallAxisCoveredBy, wallRoleMismatches, balconyWallPropertyMismatches, type BalconyWallProps } from "./walls.ts";
 export { pipeConnectionMismatches, type PipeLinkItem, ALL_PIPE_TYPES, WATER_PIPE_KEYS, WATER_PIPE_TYPES } from "./pipes.ts";
 export { climateGraphMismatches } from "./climate.ts";
+export { sheetUserMismatches, drawLineUserMismatches, figureUserMismatches, pictureUserMismatches } from "./draw.ts";

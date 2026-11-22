@@ -9,6 +9,7 @@ import type { NormalizeResult, EditorSaveResult, RenderOptions, CompatInfo, Edit
 import type { Model, Point } from "./model/types.ts";
 import { MODEL_ENTITY_COLLECTIONS, PUBLIC_COLLECTION_KEYS } from "./model/collections.ts";
 import { modelCounts, modelIsContentEmpty, modelHash, toModel, type ModelCounts } from "./model/canonical.ts";
+import { assertModelSafeForEditor, findUnsafeEditorStrings, type UnsafeStringHit } from "./model/strings.ts";
 import { runSave, type SaveHost, type SaveOutcome } from "./save/orchestration.ts";
 
 // Канонические помощники переехали в src/model/canonical.ts, тип SaveOutcome —
@@ -193,6 +194,8 @@ export class Workspace {
   private lastErrors: Record<string, number> | null = null;
   /** Проект открыт с пустой моделью (дефект 3, отчёт 11) — сохранение под защитой. */
   private openedEmpty = false;
+  /** major 376 №3: опасные строки модели, найденные при открытии (см. open). */
+  private unsafeEditorStrings: UnsafeStringHit[] = [];
   /** База сверки комнат (этап 128, ревью 127 R1/R2/R4): модель с сервера / после
    *  последнего успешного save. Комнаты в normalize сравниваются с ней, а не с
    *  локальной моделью после операции; изменённые пользователем стены = разница
@@ -288,6 +291,11 @@ export class Workspace {
     return this.editorInternal;
   }
 
+  /** major 376 №3: опасные строки модели, найденные при открытии проекта. */
+  get unsafeStrings(): readonly UnsafeStringHit[] {
+    return this.unsafeEditorStrings;
+  }
+
   /**
    * Каноническая модель читается по HTTP (GET /setup/api/planner/).
    * opts.anon — анонимный проект: редактор открывается без аккаунтных cookies
@@ -316,6 +324,12 @@ export class Workspace {
       });
     }
     this.openedEmpty = modelIsContentEmpty(this.modelInternal);
+    // major 376 №3 (ИБ): уже сохранённые строки, которые редактор вставляет в
+    // HTML без экранирования (имена пользовательских листов → innerHTML вкладки,
+    // id/after_plan → jQuery-селекторы; подписи изображений с < > &). Редактор
+    // в Chromium MCP с такими строками НЕ запускается (fail-closed), ответ
+    // project_open предупреждает (warnings у OpenProjectResult в context.open).
+    this.unsafeEditorStrings = findUnsafeEditorStrings(this.modelInternal);
     if (this.editorInternal && (this.editorInternal.objectId !== objectId || this.editorInternal.planId !== planId)) {
       await this.editorInternal.close().catch(() => {});
       this.editorInternal = null;
@@ -980,6 +994,13 @@ export class Workspace {
 
   /** Ленивый запуск редактора (каталог, рендер, сохранение). */
   async ensureEditor(): Promise<EditorLike> {
+    // ревью 378 №14/№15 (единая точка, assertModelSafeForEditor): проверка
+    // КАЖДЫЙ раз перед запуском/использованием редактора — по ТЕКУЩЕЙ рабочей
+    // копии, а не по кешу от момента открытия: закрывает повторный project_open
+    // при запущенном редакторе, undo/redo и reload после save. Страница редактора
+    // сама загружает серверную модель и исполняет addIconToPage (innerHTML) —
+    // с опасными строками Chromium не запускаем вовсе.
+    assertModelSafeForEditor(this.model);
     if (!this.editorInternal) {
       const p = this.project!;
       // инцидент 2026-11-15: анонимный проект — редактор без аккаунтных cookies;

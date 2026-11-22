@@ -37,6 +37,11 @@ export const MODEL_ENTITY_COLLECTIONS = [
   "pipes_conditioner",
   "pipes_heat",
   "pipes_ventilation",
+  "custom_plans",
+  "freelines",
+  "thick_lines",
+  "free_figures",
+  "pictures",
 ] as const;
 
 export type ModelEntityCollection = (typeof MODEL_ENTITY_COLLECTIONS)[number];
@@ -73,6 +78,11 @@ export const PUBLIC_COLLECTION_KEYS = {
   pipes_conditioner: "pipes_conditioner",
   pipes_heat: "pipes_heat",
   pipes_ventilation: "pipes_ventilation",
+  custom_plans: "custom_plans",
+  freelines: "freelines",
+  thick_lines: "thick_lines",
+  free_figures: "free_figures",
+  pictures: "pictures",
 } as const satisfies Record<ModelEntityCollection, string>;
 
 export type PublicCollectionKey = (typeof PUBLIC_COLLECTION_KEYS)[ModelEntityCollection];
