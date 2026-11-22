@@ -3,7 +3,7 @@
 // доступность инструмента. Запуск: node scripts/probes/360-ws-node.ts
 import {
   launch, newAnonProject, buildBase, copyServer, switchSheet, pickTool, clickAt, escape,
-  diffModels, writeOut, shot,
+  diffModels, writeOut, shot, saveAndReload,
 } from "./phase2-lib.ts";
 
 const browser = await launch();
