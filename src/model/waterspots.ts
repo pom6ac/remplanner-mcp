@@ -2,7 +2,10 @@ import type { Model, Point, Pipe } from "./types.ts";
 import { newId } from "./types.ts";
 import { McpError } from "../errors.ts";
 import { assignCandidate } from "./assign.ts";
-import { gasLineLengthM, unlinkItems, PIPE_COLLECTIONS, pipeColl, type PipeCollKey } from "./pipes.ts";
+import {
+  gasLineLengthM, unlinkItems, PIPE_COLLECTIONS, pipeColl, type PipeCollKey,
+  pipeLinkKey, pipeLinkBoxOfColl, isMultiPipeItem,
+} from "./pipes.ts";
 
 /**
  * Группы выводов воды (этап 360): класс GroupWaterSpots бандла app.3.0 — механика
@@ -188,11 +191,16 @@ export function unsetWaterSpot(
   const candidate = structuredClone(item) as typeof item;
   candidate.name = result;
   const of = candidate.over_floor as OverFloor;
-  if (WS_COMPOSITE_ITEMS.has(item.name) && isWallAttached(candidate) && of && typeof of === "object") {
+  // ревью 364 №1: условие бандла — !in_array(i, composite_items), где i — РЕЗУЛЬТАТ:
+  // composite→composite высоты не трогаются (groupWaterSpotLevels правит объект на месте,
+  // поэтому перезапись {...of} с точечным delete value_2 вместо сборки нового объекта)
+  if (WS_COMPOSITE_ITEMS.has(item.name) && !WS_COMPOSITE_ITEMS.has(result) && isWallAttached(candidate) && of && typeof of === "object") {
     if (!WS_WATER_ITEMS.has(result) && of.value_2 !== undefined) {
-      candidate.over_floor = { value: of.value_2, display: of.display };
+      candidate.over_floor = { ...of, value: of.value_2 };
+      delete candidate.over_floor.value_2;
     } else if (WS_WATER_ITEMS.has(result)) {
-      candidate.over_floor = { value: of.value, display: of.display };
+      candidate.over_floor = { ...of };
+      delete candidate.over_floor.value_2;
     }
   }
   candidate.width = params.widthCm;
@@ -233,18 +241,20 @@ function componentsOf(matrix: (unknown | null)[][], indices: number[]): number[]
 /**
  * Удаление вершины трубы (узла или предмета) как в редакторе (deleteByItem):
  * труба из 2 вершин удаляется целиком; иначе рёбра вершины вычищаются и граф
- * распадается — один связный кусок остаётся той же трубой (без вершины), несколько
- * кусков ≥2 вершин становятся НОВЫМИ трубами (новый id, тот же type, длина по
- * рёбрам), одиночные вершины-предметы теряют обратную ссылку, узлы исчезают;
- * пустой граф — труба удаляется. Обратные ссылки снимаются/переписываются как у
- * редактора (unsetFromItems/set_tree_id). Работает по всем коллекциям-графам труб.
+ * распадается — один кусок С РЁБРАМИ остаётся той же трубой (без вершины;
+ * бандл: 1===A.length → rebuildGraph), несколько кусков ≥2 вершин становятся
+ * НОВЫМИ трубами (новый id, тот же type, длина по рёбрам, прочие поля исходной
+ * трубы — spots/color_custom и т.п. — наследуются), одиночные вершины-предметы
+ * теряют обратную ссылку, узлы исчезают; пустой граф — труба удаляется.
+ * Обратные ссылки снимаются/переписываются как у редактора
+ * (unsetFromItems/set_tree_id, ключи — PIPE_LINK_KEY_BY_TYPE). Multi-предмет
+ * в нескольких вершинах одного графа снимается из каждой (рекурсия deleteByItem).
  */
 export function removePipeVertex(model: Model, pipeId: string, vertexId: string): PipeVertexRemoval {
   const found = findPipeAny(model, pipeId);
   if (!found) throw new McpError("NOT_FOUND", `труба ${pipeId} не найдена`);
   const { coll, pipe } = found;
-  const n = pipe.vertexes.findIndex((v) => v.id === vertexId);
-  if (n === -1) {
+  if (!pipe.vertexes.some((v) => v.id === vertexId)) {
     throw new McpError("NOT_FOUND", `вершина ${vertexId} не найдена в трубе ${pipeId}`);
   }
   const deleted: string[] = [];
@@ -254,63 +264,80 @@ export function removePipeVertex(model: Model, pipeId: string, vertexId: string)
     delete (model[coll] as Record<string, Pipe>)[pipeId];
     deleted.push(pipeId);
   };
-  if (pipe.vertexes.length === 2) {
-    removeWhole();
-    return { deleted, created, removed: true };
-  }
-  // копия графа без вершины n: матрица с вычищенными рёбрами
-  const matrix = pipe.matrix.map((row, i) => row.map((cell, j) => (i === n || j === n ? null : cell)));
-  const rest = pipe.vertexes.map((_, i) => i).filter((i) => i !== n);
-  const comps = componentsOf(matrix, rest);
-  const linked = comps.filter((c) => c.length >= 2);
-  if (linked.length === 0) {
-    // рёбер не осталось (одиночки или пусто) — труба удаляется целиком
-    removeWhole();
-    return { deleted, created, removed: true };
-  }
-  if (comps.length === 1 && comps[0]!.length === rest.length) {
-    // один связный кусок на все оставшиеся вершины — та же труба без вершины
-    const candidate = structuredClone(pipe);
-    candidate.vertexes = candidate.vertexes.filter((_, i) => i !== n);
-    candidate.matrix = candidate.matrix
-      .filter((_, i) => i !== n)
-      .map((row) => row.filter((_, j) => j !== n));
-    delete candidate.items[vertexId];
-    candidate.length = gasLineLengthM(candidate);
-    assignCandidate(pipe, candidate);
-    return { deleted, created, removed: true };
-  }
-  // граф распался: исходная труба удаляется, куски ≥2 вершин — новые трубы
-  unlinkItems(model, pipe, coll);
-  delete (model[coll] as Record<string, Pipe>)[pipeId];
-  deleted.push(pipeId);
-  for (const comp of linked) {
-    const vertexes = comp.map((i) => structuredClone(pipe.vertexes[i]!));
-    const size = comp.length;
-    const m: (null | { length: number })[][] = Array.from({ length: size }, () => Array.from({ length: size }, () => null));
-    for (let a = 0; a < size; a++) {
-      for (let b = 0; b < size; b++) {
-        const cell = pipe.matrix[comp[a]!]![comp[b]!];
-        if (cell) m[a]![b] = { ...cell };
-      }
+  // ревью 364 №5: multi-предмет может стоять в нескольких вершинах одного графа —
+  // бандл снимает рекурсивно, поэтому повторяем снятие, пока вершина с id есть
+  for (;;) {
+    const n = pipe.vertexes.findIndex((v) => v.id === vertexId);
+    if (n === -1) break;
+    if (pipe.vertexes.length === 2) {
+      removeWhole();
+      break;
     }
-    const items: Record<string, string> = {};
-    for (const v of vertexes) items[v.id] = v.type;
-    const fresh: Pipe = {
-      id: newId(10),
-      matrix: m,
-      vertexes,
-      items,
-      type: pipe.type,
-      length: gasLineLengthM({ vertexes, matrix: m }),
-    };
-    (model[coll] as Record<string, Pipe>)[fresh.id] = fresh;
-    relinkPipe(model, fresh, coll);
-    created.push(fresh.id);
-  }
-  for (const comp of comps.filter((c) => c.length === 1)) {
-    const v = pipe.vertexes[comp[0]!]!;
-    if (v.type !== "node") unlinkVertexRef(model, v.id, coll, pipeLinkKeyOf(pipe.type));
+    // копия графа без вершины n: матрица с вычищенными рёбрами
+    const matrix = pipe.matrix.map((row, i) => row.map((cell, j) => (i === n || j === n ? null : cell)));
+    const rest = pipe.vertexes.map((_, i) => i).filter((i) => i !== n);
+    const comps = componentsOf(matrix, rest);
+    const linked = comps.filter((c) => c.length >= 2);
+    if (linked.length === 0) {
+      // рёбер не осталось (одиночки или пусто) — труба удаляется целиком
+      removeWhole();
+      break;
+    }
+    if (linked.length === 1) {
+      // один кусок с рёбрами — та же труба (rebuildGraph редактора): вершины
+      // без рёбер (снятая и изолированные одиночки) из графа уходят
+      const key = pipeLinkKey(pipe.type);
+      // тип снятой вершины и одиночки — ДО перезаписи pipe (индексы старые)
+      const removedType = pipe.vertexes[n]!.type;
+      const singles = comps.filter((c) => c.length === 1).map((c) => pipe.vertexes[c[0]!]!);
+      const keep = new Set(linked[0]!);
+      const candidate = structuredClone(pipe);
+      candidate.vertexes = candidate.vertexes.filter((_, i) => keep.has(i));
+      candidate.matrix = candidate.matrix
+        .filter((_, i) => keep.has(i))
+        .map((row) => row.filter((_, j) => keep.has(j)));
+      candidate.items = Object.fromEntries(candidate.vertexes.map((v) => [v.id, v.type]));
+      candidate.length = gasLineLengthM(candidate);
+      assignCandidate(pipe, candidate);
+      // ревью 364 №2: предмет снятой вершины больше не в вершинах трубы —
+      // обратная ссылка снимается (иначе висячая ссылка ловится сверкой)
+      if (removedType !== "node") unlinkVertexRef(model, vertexId, coll, key, pipeId);
+      for (const v of singles) {
+        if (v.type !== "node") unlinkVertexRef(model, v.id, coll, key, pipeId);
+      }
+      // multi-предмет может остаться в других вершинах — цикл продолжается
+      continue;
+    }
+    // граф распался: исходная труба удаляется, куски ≥2 вершин — новые трубы
+    unlinkItems(model, pipe, coll);
+    delete (model[coll] as Record<string, Pipe>)[pipeId];
+    deleted.push(pipeId);
+    for (const comp of linked) {
+      const vertexes = comp.map((i) => structuredClone(pipe.vertexes[i]!));
+      const size = comp.length;
+      const m: (null | { length: number })[][] = Array.from({ length: size }, () => Array.from({ length: size }, () => null));
+      for (let a = 0; a < size; a++) {
+        for (let b = 0; b < size; b++) {
+          const cell = pipe.matrix[comp[a]!]![comp[b]!];
+          if (cell) m[a]![b] = { ...cell };
+        }
+      }
+      const items: Record<string, string> = {};
+      for (const v of vertexes) items[v.id] = v.type;
+      // ревью 364 №3: кусок наследует ВСЕ поля исходной трубы, кроме графа и длины
+      // (spots у воздуховодов, color_custom и прочее — как addNew бандла)
+      const { id: _id, matrix: _matrix, vertexes: _vertexes, items: _items, length: _length, ...rest } =
+        structuredClone(pipe) as unknown as Record<string, unknown>;
+      const fresh = { ...rest, id: newId(10), matrix: m, vertexes, items, type: pipe.type, length: gasLineLengthM({ vertexes, matrix: m }) } as unknown as Pipe;
+      (model[coll] as Record<string, Pipe>)[fresh.id] = fresh;
+      relinkPipe(model, fresh, coll);
+      created.push(fresh.id);
+    }
+    for (const comp of comps.filter((c) => c.length === 1)) {
+      const v = pipe.vertexes[comp[0]!]!;
+      if (v.type !== "node") unlinkVertexRef(model, v.id, coll, pipeLinkKey(pipe.type), pipeId);
+    }
+    break;
   }
   return { deleted, created, removed: true };
 }
@@ -323,22 +350,16 @@ function findPipeAny(model: Model, pipeId: string): { coll: PipeCollKey; pipe: P
   return null;
 }
 
-function pipeLinkKeyOf(pipeType: string): string {
-  // ключ обратной ссылки (PIPE_LINK_KEY_BY_TYPE не импортируется, чтобы не
-  // расширять цикл: формат `${type}_id` покрывает все виды труб)
-  return `${pipeType}_id`;
-}
-
 /** Записать обратные ссылки вершины-предметов новой трубы (после split). */
 function relinkPipe(model: Model, pipe: Pipe, coll: PipeCollKey): void {
-  const key = pipeLinkKeyOf(pipe.type);
-  const box = coll === "pipes" ? "pipes" : coll;
+  const key = pipeLinkKey(pipe.type);
+  const box = pipeLinkBoxOfColl(coll);
   for (const v of pipe.vertexes) {
     if (v.type === "node") continue;
     const item = model.items?.[v.id] as (Record<string, unknown> & { name?: string }) | undefined;
     if (!item) continue;
     const holder = (item[box] ??= {}) as Record<string, unknown>;
-    if (isMultiName(item.name)) {
+    if (isMultiPipeItem(item.name ?? "")) {
       const arr = Array.isArray(holder[key]) ? (holder[key] as string[]) : [];
       if (!arr.includes(pipe.id)) arr.push(pipe.id);
       holder[key] = arr;
@@ -348,26 +369,22 @@ function relinkPipe(model: Model, pipe: Pipe, coll: PipeCollKey): void {
   }
 }
 
-/** Снять обратную ссылку одной вершины-предмета (одиночка после split). */
-function unlinkVertexRef(model: Model, itemId: string, coll: PipeCollKey, key: string): void {
-  const box = coll === "pipes" ? "pipes" : coll;
+/** Снять обратную ссылку вершины-предмета (одиночки после split/rebuild):
+ *  скаляр — delete; массив multi — id трубы убирается из массива (пустой — delete). */
+function unlinkVertexRef(model: Model, itemId: string, coll: PipeCollKey, key: string, pipeId: string): void {
+  const box = pipeLinkBoxOfColl(coll);
   const item = model.items?.[itemId] as (Record<string, unknown> & { name?: string }) | undefined;
   if (!item) return;
   const holder = item[box] as Record<string, unknown> | undefined;
   if (!holder) return;
   const cur = holder[key];
   if (Array.isArray(cur)) {
-    // multi-массив не чистится по одиночке: ссылка на удалённую трубу снята
-    // unlinkItems при удалении исходной трубы
+    const arr = cur.filter((x) => x !== pipeId);
+    if (arr.length > 0) holder[key] = arr;
+    else delete holder[key];
     return;
   }
-  delete holder[key];
-}
-
-function isMultiName(name: string | undefined): boolean {
-  return name === "waterspot_collector" || name === "water_column_cold" || name === "water_column_hot"
-    || name === "radiator_collector" || name === "ext_manifold_box" || name === "int_manifold_box"
-    || name === "ventilation_system";
+  if (cur === pipeId) delete holder[key];
 }
 
 /** Точка предмета в см модели (для тестов и сверок). */

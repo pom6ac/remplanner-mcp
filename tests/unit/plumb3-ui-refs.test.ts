@@ -12,12 +12,13 @@ import { fileURLToPath } from "node:url";
 import type { Model, ItemProps, Pipe } from "../../src/model/types.ts";
 import { addRoomRect } from "../../src/model/walls.ts";
 import { addItem, deleteItem, updateItem } from "../../src/model/items.ts";
-import { addPipe, deletePipe } from "../../src/model/pipes.ts";
+import { addPipe, deletePipe, PIPE_LINK_KEY_BY_TYPE } from "../../src/model/pipes.ts";
 import {
   mergeWaterSpot, unsetWaterSpot, removePipeVertex,
   waterSpotMergeResult, waterSpotUnsetError,
   WS_MERGE_RESULT, WS_UNSET_RESULT, WS_SINGLE_SPOTS, WS_COMPOSITE_ITEMS, WS_WATER_ITEMS,
 } from "../../src/model/waterspots.ts";
+import { pipeConnectionMismatches, WATER_PIPE_TYPES } from "../../src/verify/pipes.ts";
 import { McpError } from "../../src/errors.ts";
 import { assertProPartialAllowed, PRO_WATER_SPOT_SINGLES } from "../../src/server/pro.ts";
 
@@ -235,7 +236,16 @@ test("360: unset over_floor — остаток-канализация забир
   (s2.over_floor as { value: number; display: boolean; value_2?: number }).value_2 = 40;
   unsetWaterSpot(m2, { itemId: s2.id, part: "waterspot_hot", widthCm: 21, heightCm: 15 });
   assert.equal(s2.name, "waterspot_drainage_cold");
-  assert.deepEqual(s2.over_floor, { value: 40, display: false }, "остаток-канализация: value = value_2");
+  // ревью 364 №1: результат drainage_cold — тоже composite (GroupWaterSpots.unset_item:
+  // !in_array(i, composite_items)) — высоты composite→composite не трогаются
+  assert.deepEqual(s2.over_floor, { value: 50, display: false, value_2: 40 }, "composite→composite: value и value_2 сохранены");
+
+  const m2b = baseModel();
+  const s2b = addWallSpot(m2b, 1500, "waterspot_drainage_cold_hot");
+  (s2b.over_floor as { value: number; display: boolean; value_2?: number }).value_2 = 40;
+  unsetWaterSpot(m2b, { itemId: s2b.id, part: "waterspot_cold", widthCm: 21, heightCm: 15 });
+  assert.equal(s2b.name, "waterspot_drainage_hot");
+  assert.deepEqual(s2b.over_floor, { value: 50, display: false, value_2: 40 }, "composite→composite (hot): высоты не трогаются");
 
   // не пристенный вывод: высоты не трогаются (freeAndWallIsWall ложно в редакторе)
   const m3 = baseModel();
@@ -303,6 +313,122 @@ test("360: unset каскад с внутренней вершиной 5-вер�
   assert.deepEqual((mid as ItemProps & { pipes?: Record<string, unknown> }).pipes, {});
 });
 
+test("365: unset — конец трубы из 3 вершин: висячей ссылки нет, сверка подключений пуста", () => {
+  const model = baseModel();
+  const col = addSpot(model, 100, 100, "waterspot_drainage");
+  const a = addSpot(model, 300, 100, "waterspot_drainage_cold_hot");
+  const pipe = addPipe(model, { kind: "drainage", path: [{ itemId: col.id }, { x: 1500, y: 1000 }, { itemId: a.id }] });
+  assert.equal(pipe.vertexes.length, 3);
+  const res = unsetWaterSpot(model, { itemId: a.id, part: "waterspot_drainage", widthCm: 16, heightCm: 9 });
+  assert.equal(res.result, "waterspot_cold_hot");
+  // один связный кусок [вывод, узел] — та же труба (rebuildGraph редактора)
+  assert.deepEqual(res.pipes, { deleted: [], created: [] });
+  const p = pipesOf(model)[pipe.id]!;
+  assert.ok(p, "труба жива");
+  assert.deepEqual(p.vertexes.map((v) => v.id).sort(), [col.id, pipe.vertexes[1]!.id].sort());
+  // ревью 364 №2: у снятого вывода не остаётся ссылки на трубу, в которой его больше нет
+  assert.deepEqual((a as ItemProps & { pipes?: Record<string, unknown> }).pipes, {}, "у снятой вершины ссылки нет");
+  assert.equal((col as ItemProps & { pipes?: Record<string, unknown> }).pipes!.drainage_pipe_id, pipe.id, "ссылка соседа жива");
+  // сверка подключений на той же модели пуста (иначе онлайн-нормализация откатит мутацию)
+  const mm = pipeConnectionMismatches(structuredClone(pipesOf(model)), model.items as never, structuredClone(pipesOf(model)), model.items as never, { onlyTypes: WATER_PIPE_TYPES });
+  assert.deepEqual(mm, []);
+});
+
+// ---------- распад труб всех видов: ключи обратных ссылок (ревью 364 №11) ----------
+
+type RawItem = ItemProps & Record<string, unknown>;
+
+function rawSpot(model: Model, id: string, name: string, xCm: number, box: string): RawItem {
+  const item = {
+    id, name, pc: { x: xCm, y: 100 }, width: 10, height: 10, angle: 0, plan: { water: 27 },
+    [box]: {},
+  } as RawItem;
+  model.items[id] = item;
+  return item;
+}
+
+function rawSplitPipe(
+  model: Model,
+  pipeId: string,
+  type: string,
+  coll: string,
+  ends: [string, string],
+): void {
+  const ids = [ends[0]!, "n1", "x", "n2", ends[1]!];
+  const types: Record<string, string> = { n1: "node", x: "node", n2: "node" };
+  const vertexes = ids.map((id, i) => ({ id, point: { x: 100 + i * 100, y: 100 }, type: types[id] ?? "waterspot" }));
+  const matrix: ({ length: number } | null)[][] = Array.from({ length: 5 }, () => Array.from({ length: 5 }, () => null));
+  for (let i = 0; i + 1 < 5; i++) {
+    matrix[i]![i + 1] = { length: 1 };
+    matrix[i + 1]![i] = { length: 1 };
+  }
+  (model as unknown as Record<string, Record<string, Pipe>>)[coll]![pipeId] = {
+    id: pipeId, type: type as Pipe["type"], length: 4, items: Object.fromEntries(ids.map((id) => [id, types[id] ?? "waterspot"])),
+    vertexes, matrix,
+  } as Pipe;
+}
+
+test("365: распад трубы каждого вида — обратные ссылки по PIPE_LINK_KEY_BY_TYPE, сверка пуста", () => {
+  const CASES: { type: string; coll: string; kind: "water" | "climate"; item: string; box: string; multi?: boolean }[] = [
+    { type: "water_pipe", coll: "pipes", kind: "water", item: "waterspot_cold", box: "pipes" },
+    { type: "water_hot_pipe", coll: "pipes", kind: "water", item: "waterspot_hot", box: "pipes" },
+    { type: "drainage_pipe", coll: "pipes", kind: "water", item: "waterspot_drainage", box: "pipes" },
+    { type: "warm_floor_pipe", coll: "pipes_warm_floor", kind: "climate", item: "radiator_collector", box: "pipes_warm_floor", multi: true },
+    { type: "conditioner_drainage", coll: "pipes_conditioner", kind: "climate", item: "conditioner", box: "pipes_conditioner" },
+    { type: "heat_pipe_hot", coll: "pipes_heat", kind: "climate", item: "radiator_bimetal", box: "pipes_heat" },
+    { type: "ventpipe_out", coll: "pipes_ventilation", kind: "climate", item: "fan", box: "pipes_ventilation" },
+  ];
+  for (const c of CASES) {
+    const model = baseModel();
+    (model as unknown as Record<string, Record<string, Pipe>>)[c.coll] ??= {};
+    const left = rawSpot(model, "L", c.item, 100, c.box);
+    const right = rawSpot(model, "S", c.item, 500, c.box);
+    rawSplitPipe(model, "P1", c.type, c.coll, ["L", "S"]);
+    const res = removePipeVertex(model, "P1", "x");
+    assert.equal(res.created.length, 2, `${c.type}: два куска`);
+    assert.deepEqual(res.deleted, ["P1"]);
+    const key = PIPE_LINK_KEY_BY_TYPE[c.type]!;
+    for (const end of [left, right]) {
+      const held = end[c.box] as Record<string, unknown>;
+      const piece = Object.values((model as unknown as Record<string, Record<string, Pipe>>)[c.coll]!).find((p) => p.items[end.id])!;
+      const ref = held[key];
+      assert.ok(
+        c.multi ? Array.isArray(ref) && ref.includes(piece.id) : ref === piece.id,
+        `${c.type}: у ${end.id} ссылка ${key} → ${piece.id} (факт ${JSON.stringify(ref)})`,
+      );
+      // прежний ошибочный ключ `${type}_id` не появляется там, где он не канонический
+      // (ревью 364 №11: conditioner_drainage/warm_floor_pipe)
+      if (`${c.type}_id` !== key) assert.equal(held[`${c.type}_id`], undefined, `${c.type}: ключа ${c.type}_id нет`);
+    }
+    const pipes = (model as unknown as Record<string, Record<string, Pipe>>)[c.coll];
+    const onlyTypes = new Set([c.type]);
+    const mm = pipeConnectionMismatches(structuredClone(pipes) as never, model.items as never, structuredClone(pipes) as never, model.items as never, { onlyTypes });
+    assert.deepEqual(mm, [], `${c.type}: сверка подключений пуста`);
+  }
+});
+
+test("365: removePipeVertex — multi-предмет в двух вершинах одной трубы: снимается из обеих", () => {
+  const model = baseModel();
+  const col = rawSpot(model, "C", "waterspot_collector", 200, "pipes") as RawItem;
+  (model as unknown as Record<string, Record<string, Pipe>>).pipes ??= {};
+  // труба C(вершина 0) – n1 – x – n2 – C(вершина 4): multi-предмет в двух вершинах
+  rawSplitPipe(model, "P1", "water_pipe", "pipes", ["C", "C"]);
+  const pipe = (model as unknown as Record<string, Record<string, Pipe>>).pipes!["P1"]!;
+  pipe.items["C"] = "multi";
+  pipe.vertexes[0]!.type = "multi";
+  pipe.vertexes[4]!.type = "multi";
+  (col.pipes as Record<string, unknown>)!.water_pipe_id = ["P1"];
+  // бандл deleteByItem: рекурсивное снятие обоих вхождений; после снятия остаётся
+  // связный кусок узлов — та же труба без multi-предмета, ссылка снята
+  const res = removePipeVertex(model, "P1", "C");
+  assert.deepEqual(res.deleted, [], "кусок узлов жив — та же труба (rebuildGraph)");
+  assert.deepEqual(res.created, []);
+  const rest = pipesOf(model)["P1"]!;
+  assert.ok(rest, "труба узлов жива");
+  assert.deepEqual(rest.vertexes.map((v) => v.id).sort(), ["n1", "n2", "x"].sort());
+  assert.deepEqual(col.pipes, {}, "ссылка коллектора снята");
+});
+
 // ---------- removePipeVertex (deleteByItem) ----------
 
 test("360: removePipeVertex — концевой узел укорачивает, внутренний делит, из двух вершин удаляет", () => {
@@ -314,17 +440,18 @@ test("360: removePipeVertex — концевой узел укорачивает
   const n1 = pipe.vertexes[1]!.id;
   const n2 = pipe.vertexes[2]!.id;
   const n3 = pipe.vertexes[3]!.id;
-  // 1) концевой узел n3: у оставшихся вершин остаётся связный кусок [a,n1,n2] и
-  // одиночка b — как в редакторе (A.length>1), исходная труба заменяется новой
+  // 1) концевой узел n3: остался один кусок С РЁБРАМИ [a,n1,n2] и одиночка b —
+  // бандл (1===A.length → rebuildGraph): та же труба без вершины, b теряет ссылку
+  // (ревью 364 №3: условие «та же труба» — linked.length===1, не comps.length===1)
   const resEdge = removePipeVertex(model, pipe.id, n3);
-  assert.deepEqual(resEdge.deleted, [pipe.id]);
-  assert.equal(resEdge.created.length, 1);
-  const p1 = pipesOf(model)[resEdge.created[0]!]!;
+  assert.deepEqual(resEdge.deleted, [], "id трубы сохранён (rebuildGraph редактора)");
+  assert.deepEqual(resEdge.created, []);
+  const p1 = pipesOf(model)[pipe.id]!;
   assert.equal(p1.vertexes.length, 3, "кусок = связная тройка a-n1-n2");
   assert.deepEqual([...p1.vertexes.map((v) => v.id)].sort(), [a.id, n1, n2].sort());
   assert.equal(p1.length, gasLengthM(p1));
   assert.deepEqual((b as ItemProps & { pipes?: Record<string, unknown> }).pipes, {}, "отрезанный конец теряет ссылку");
-  assert.equal((a as ItemProps & { pipes?: Record<string, unknown> }).pipes!.water_pipe_id, p1.id, "ссылка a переписана на новую трубу");
+  assert.equal((a as ItemProps & { pipes?: Record<string, unknown> }).pipes!.water_pipe_id, pipe.id, "ссылка a жива (id сохранён)");
   // 2) внутренний узел n2 — оставшиеся a,n1 связны и покрывают весь граф (A.length===1):
   // та же труба без вершины (rebuildGraph редактора), id сохраняется
   const res = removePipeVertex(model, p1.id, n2);

@@ -713,7 +713,7 @@ export function pipeLinkHolders(model: Model): Record<string, Record<string, unk
  * pipe_delete: труба удаляется (из своей коллекции), обратные ссылки
  * props.<box> у её предметов/контура снимаются. Сам предмет (вывод воды, стояк,
  * радиатор) не удаляется — item_delete отклоняет предметы, подключённые к трубам
- * (сначала pipe_delete, затем item_delete).
+ * (pipe_delete для трубы снимается каскадом item_delete сам: ревью 364 №6).
  */
 export function deletePipe(model: Model, pipeId: string): void {
   const found = findPipe(model, pipeId);
