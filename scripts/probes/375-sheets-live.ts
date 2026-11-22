@@ -62,6 +62,10 @@ const editorOf = (): Parameters<typeof assertEditorPlanMatch>[0] | null =>
 
 type CallFn = (name: string, args?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 
+/** model_get detail=full отдаёт коллекции словарём (как в модели) — приводим к списку. */
+const asList = (v: unknown): Record<string, unknown>[] =>
+  Array.isArray(v) ? v as Record<string, unknown>[] : Object.values((v ?? {}) as Record<string, Record<string, unknown>>);
+
 /** Синтетический PNG 8×6 (IHDR 8×6) — не ПДн, рисуется в коде пробы. */
 function pngBytes(w: number, h: number): Buffer {
   const ihdr = Buffer.alloc(17);
@@ -158,10 +162,10 @@ try {
     check(typeof fig.id === "string", `figure_add: id=${fig.id} (rect_round 600×400)`);
 
     const mg1 = await call("model_get", { detail: "full" }) as Record<string, unknown>;
-    const sheets1 = (mg1["custom_plans"] ?? []) as Array<{ site_id: string; name: string; after_plan: string; content: string[] }>;
-    const fls1 = (mg1["freelines"] ?? []) as Array<{ site_id: string; plan: string; points_mm: number[][] }>;
-    const tls1 = (mg1["thick_lines"] ?? []) as Array<{ site_id: string; plan: string; width_mm?: number }>;
-    const figs1 = (mg1["free_figures"] ?? []) as Array<{ site_id: string; type: string; plan: string }>;
+    const sheets1 = asList(mg1["custom_plans"]) as Array<{ site_id: string; name: string; after_plan: string; content: string[] }>;
+    const fls1 = asList(mg1["freelines"]) as Array<{ site_id: string; plan: string; points_mm: number[][] }>;
+    const tls1 = asList(mg1["thick_lines"]) as Array<{ site_id: string; plan: string; width_mm?: number }>;
+    const figs1 = asList(mg1["free_figures"]) as Array<{ site_id: string; type: string; plan: string }>;
     check(sheets1.some((s) => s.site_id === sheetAdd.id && s.name === "Лист 375" && Array.isArray(s.content) && s.content.includes("plan")), `model_get: лист на месте (${JSON.stringify(sheets1.map((s) => s.name))})`);
     check(fls1.some((l) => l.site_id === fl.id && l.plan === sheetAdd.plan && l.points_mm.length === 3), `model_get: свободная линия на месте (${fls1.length} шт.)`);
     check(tls1.some((l) => l.site_id === tl.id && l.width_mm === 300), `model_get: толстая линия с шириной 300 мм (${JSON.stringify(tls1.map((l) => l.width_mm))})`);
@@ -177,10 +181,10 @@ try {
     await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
     await assertEditorPlanMatch(editorOf(), ids.planId);
     const mg2 = await call("model_get", { detail: "full" }) as Record<string, unknown>;
-    const sheets2 = (mg2["custom_plans"] ?? []) as Array<{ site_id: string; name: string }>;
-    const fls2 = (mg2["freelines"] ?? []) as Array<{ site_id: string; plan: string }>;
-    const tls2 = (mg2["thick_lines"] ?? []) as Array<{ site_id: string }>;
-    const figs2 = (mg2["free_figures"] ?? []) as Array<{ site_id: string; type: string }>;
+    const sheets2 = asList(mg2["custom_plans"]) as Array<{ site_id: string; name: string }>;
+    const fls2 = asList(mg2["freelines"]) as Array<{ site_id: string; plan: string }>;
+    const tls2 = asList(mg2["thick_lines"]) as Array<{ site_id: string }>;
+    const figs2 = asList(mg2["free_figures"]) as Array<{ site_id: string; type: string }>;
     check(sheets2.some((s) => s.site_id === sheetAdd.id && s.name === "Лист 375"), "reopen: лист сохранился");
     check(fls2.some((l) => l.site_id === fl.id && l.plan === sheetAdd.plan), "reopen: свободная линия сохранилась (лист custom_<id>)");
     check(tls2.some((l) => l.site_id === tl.id), "reopen: толстая линия сохранилась");
@@ -211,7 +215,7 @@ try {
     await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
     await assertEditorPlanMatch(editorOf(), ids.planId);
     const mg3 = await call("model_get", { detail: "full" }) as Record<string, unknown>;
-    const pics3 = (mg3["pictures"] ?? []) as Array<{ site_id: string; url: string; text?: string }>;
+    const pics3 = asList(mg3["pictures"]) as Array<{ site_id: string; url: string; text?: string }>;
     check(pics3.some((p) => p.site_id === pic.id && p.url === up.url), "reopen: изображение с тем же url сохранилось");
     check(pics3.some((p) => p.site_id === pic.id && p.text === "Проба 375"), "reopen: подпись изображения сохранилась");
     const render2 = await tryCall("render_plan", {});
