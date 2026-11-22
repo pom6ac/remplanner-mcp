@@ -93,7 +93,10 @@ export async function removeRoomFinishByHint(call: ProbeCall, roomId: string, lo
 }
 
 /** Удаление своих стен по захваченным site_id. Холостой список не крутится:
- *  нет стены — выход; удалённая стена убирается из created (на месте). */
+ *  нет стены — выход; удалённая стена убирается из created (на месте). Стена,
+ *  чьё удаление редактор отверг (например, контур ТП в удаляемой комнате ещё
+ *  не снят), не останавливает цикл — попытка повторяется следующими проходами,
+ *  пока хоть что-то удаляется (этап 370). */
 export async function deleteWallsBySiteIds(deps: RestoreDeps): Promise<void> {
   const ids = new Set(deps.created.filter((c) => c.kind === "wall" && c.siteId).map((c) => c.siteId!));
   for (let guard = 0; guard < 40 && ids.size > 0; guard++) {
@@ -106,7 +109,13 @@ export async function deleteWallsBySiteIds(deps: RestoreDeps): Promise<void> {
       await deps.call("wall_delete", { wall_id: hit.id });
       deps.created.splice(deps.created.findIndex((c) => c.kind === "wall" && c.siteId === hit.site_id), 1);
     }
-    catch (e) { deps.log(`wall_delete ${hit.id}: ${String((e as Error).message).slice(0, 200)}`); break; }
+    catch (e) {
+      deps.log(`wall_delete ${hit.id}: ${String((e as Error).message).slice(0, 200)}`);
+      ids.add(hit.site_id); // вернём в очередь — попробуем после остальных
+      const next = walls.find((w) => ids.has(w.site_id) && w.id !== hit.id);
+      if (!next) break; // больше нечего пробовать — отказ не уходим
+      continue;
+    }
     await new Promise((r) => setTimeout(r, 1200));
   }
 }

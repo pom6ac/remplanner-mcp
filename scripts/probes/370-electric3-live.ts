@@ -144,18 +144,15 @@ try {
     for (const siteId of envList("REMPLANNER_PROBE_EXTRA_ITEM_IDS")) created.push({ kind: "item", siteId });
     console.log("cleanup: журнал:", capturedPath || "(нет)", "объектов в зачистке:", created.length);
     await deleteCreatedObjects(call as unknown as CallFn, created, (l) => console.log("cleanup:", l));
-    // …и restore стен общим probe-restore (по тем же захваченным ID)
-    if (created.some((c) => c.siteId)) {
-      await restoreByCaptured({
-        call,
-        created,
-        ownRoomIds: [],
-        save: () => gsave("cleanup"),
-        log: (line) => console.log("restore:", line),
-      });
-    } else {
-      console.log("cleanup: журнал пуст — restore-save пропущен");
-    }
+    // …и restore стен общим probe-restore (по тем же захваченным ID); save —
+    // всегда (зачистка могла снять объекты без журнала стен)
+    await restoreByCaptured({
+      call,
+      created,
+      ownRoomIds: [],
+      save: () => gsave("cleanup"),
+      log: (line) => console.log("restore:", line),
+    });
     const after: LoadedModel = await loadModel(ctx.session(), ids.objectId, ids.planId);
     const ref = JSON.parse(readFileSync(backupPath, "utf8")) as LoadedModel;
     const same = sig(after.model) === sig(ref.model);
