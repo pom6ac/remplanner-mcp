@@ -33,6 +33,8 @@ export function capturedSnapshot(created: readonly ProbeCreated[], ownRoomIds: r
     items: created.filter((c) => c.kind === "item" && c.siteId).map((c) => c.siteId),
     pipes: created.filter((c) => c.kind === "pipe" && c.siteId).map((c) => c.siteId),
     warm_floors: created.filter((c) => c.kind === "warm_floor" && c.siteId).map((c) => c.siteId),
+    // этап 370: кабели-проводка пробы (wiring_delete, до предметов)
+    cables: created.filter((c) => c.kind === "cable" && c.siteId).map((c) => c.siteId),
   };
 }
 

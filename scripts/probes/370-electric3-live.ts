@@ -3,15 +3,17 @@
 //   (1) вертикальные блоки: розетка + item_update layer=2 → save verified →
 //       reopen → сверка слоя/центра/под-розеток → wiring между слоями → render PNG;
 //   (2) F1 ревью 368: rebuild контура-одиночки по сырому GET до save — ОТДЕЛЬНЫЙ
-//       контур (второй warm_floor_add), проверка на reopen с expect "none".
+//       контур (второй warm_floor_add в другой комнате), проверка на reopen с
+//       expect "none".
 // Гарды: probe-guard (пара объект/план, READONLY-гард по корневому эталону без
 // REF_INIT), checkEditorPlanMatch fail-closed перед каждым project_open,
-// assertUnchanged перед каждой записью (guardedSave), бэкап
+// assertUnchanged перед каждой записью, бэкап
 // .orca-reports/backup-OBJECT_ID-370.json непосредственно перед прогоном,
-// restore — общий probe-restore по журналу захваченных ID в finally,
-// сверка sig с бэкапом в конце (и в catch), ≤30 запросов/мин (лимитер MCP).
+// restore — общий probe-restore по журналу захваченных ID в finally (+ зачистка
+// предметов/кабелей/труб/контуров общим хелпером), сверка sig с бэкапом в конце
+// и в catch (ревью 368 F4), ≤30 запросов/мин (лимитер MCP).
 //   node scripts/probes/370-electric3-live.ts run
-//   … те же env + REMPLANNER_PROBE_WALL_SITE_IDS из журнала \
+//   … те же env + REMPLANNER_PROBE_CAPTURED=<журнал> \
 //   node scripts/probes/370-electric3-live.ts cleanup
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -59,6 +61,33 @@ const check = (ok: boolean, msg: string): void => {
 const editorOf = (): Parameters<typeof assertEditorPlanMatch>[0] | null =>
   (ctx as unknown as { workspaceOrNull: { editorOrNull: () => Parameters<typeof assertEditorPlanMatch>[0] | null } | null }).workspaceOrNull?.editorOrNull?.() ?? null;
 
+type CallFn = (name: string, args?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+
+/** Зачистка созданных объектов пробы по захваченным ID (обратный порядок
+ *  зависимостей, как в редакторе): кабели → трубы → контуры ТП → предметы.
+ *  Отдельные отказы логируются, не останавливают зачистку. */
+async function deleteCreatedObjects(call: CallFn, created: ProbeCreated[], log: (line: string) => void): Promise<void> {
+  const idsOf = (kind: string): string[] =>
+    created.filter((c) => c.kind === kind && c.siteId).map((c) => c.siteId!);
+  for (const id of idsOf("cable")) {
+    const r = await tryCall("wiring_delete", { wiring_id: id });
+    log(`wiring_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
+  }
+  for (const id of idsOf("pipe")) {
+    const r = await tryCall("pipe_delete", { pipe_id: id });
+    log(`pipe_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
+  }
+  for (const id of idsOf("warm_floor")) {
+    const r = await tryCall("warm_floor_delete", { warm_floor_id: id });
+    log(`warm_floor_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
+  }
+  for (const id of idsOf("item").reverse()) {
+    const r = await tryCall("item_delete", { item_id: id });
+    log(`item_delete ${id}: ${"__error" in (r ?? {}) ? String((r as { __error?: string }).__error).slice(0, 120) : "ok"}`);
+  }
+  created.length = 0;
+}
+
 try {
   const { probeWriteEnv, assertTargetPair, readonlyGuard, readonlyRefPath } = await import("./probe-guard.ts");
   const ids = probeWriteEnv();
@@ -80,10 +109,25 @@ try {
     await call("render_plan", {});
     const edC = editorOf();
     await assertEditorPlanMatch(edC, ids.planId);
-    const wallSiteIds = (process.env["REMPLANNER_PROBE_WALL_SITE_IDS"] ?? "").split(",").filter(Boolean);
-    console.log("cleanup: удаляю стены по захваченным site_id:", JSON.stringify(wallSiteIds));
-    const created: ProbeCreated[] = wallSiteIds.map((siteId) => ({ kind: "wall", siteId }));
-    if (created.length > 0) {
+    // зачистка по журналу захваченных ID (кабели/трубы/контуры/предметы)…
+    const capturedPath = process.env["REMPLANNER_PROBE_CAPTURED"] ?? "";
+    let created: ProbeCreated[] = [];
+    if (capturedPath) {
+      const j = JSON.parse(readFileSync(capturedPath, "utf8")) as { items?: string[]; pipes?: string[]; warm_floors?: string[]; cables?: string[]; walls?: string[] };
+      created = [
+        ...((j.walls ?? []).map((siteId) => ({ kind: "wall", siteId }))),
+        ...((j.items ?? []).map((siteId) => ({ kind: "item", siteId }))),
+        ...((j.pipes ?? []).map((siteId) => ({ kind: "pipe", siteId }))),
+        ...((j.warm_floors ?? []).map((siteId) => ({ kind: "warm_floor", siteId }))),
+        ...((j.cables ?? []).map((siteId) => ({ kind: "cable", siteId }))),
+      ];
+    } else {
+      const wallSiteIds = (process.env["REMPLANNER_PROBE_WALL_SITE_IDS"] ?? "").split(",").filter(Boolean);
+      created = wallSiteIds.map((siteId) => ({ kind: "wall", siteId }));
+    }
+    await deleteCreatedObjects(call as unknown as CallFn, created, (l) => console.log("cleanup:", l));
+    // …и restore стен общим probe-restore (по тем же захваченным ID)
+    if (created.some((c) => c.siteId)) {
       await restoreByCaptured({
         call,
         created,
@@ -123,25 +167,29 @@ try {
       console.log("журнал захваченных ID:", capturedPath);
     };
     try {
-      // — пробная комната правее/ниже всей геометрии (как 359) —
+      // — пробная комната из перегородок правее/ниже всей геометрии, с внутренней
+      // перегородкой: две комнаты под два контура ТП (в комнате один контур) —
       const rawWalls = (before.model["walls"] ?? {}) as Record<string, { p1: { x: number; y: number }; p2: { x: number; y: number } }>;
       const maxX = Math.max(...Object.values(rawWalls).flatMap((w) => [w.p1.x, w.p2.x]));
       const maxY = Math.max(...Object.values(rawWalls).flatMap((w) => [w.p1.y, w.p2.y]));
-      const ox = Math.ceil(maxX) + 300, oy = Math.ceil(maxY) + 300, TW = 300, TH = 240;
+      const ox = Math.ceil(maxX) + 300, oy = Math.ceil(maxY) + 300, TW = 600, TH = 240, MID = 300;
       const mm = (p: { x: number; y: number }): { x: number; y: number } => ({ x: Math.round(p.x * 10), y: Math.round(p.y * 10) });
-      const rect: [{ x: number; y: number }, { x: number; y: number }][] = [
-        [{ x: ox, y: oy }, { x: ox + TW, y: oy }],
+      const walls: [{ x: number; y: number }, { x: number; y: number }][] = [
+        [{ x: ox, y: oy }, { x: ox + MID, y: oy }],
+        [{ x: ox + MID, y: oy }, { x: ox + TW, y: oy }],
         [{ x: ox + TW, y: oy }, { x: ox + TW, y: oy + TH }],
-        [{ x: ox + TW, y: oy + TH }, { x: ox, y: oy + TH }],
+        [{ x: ox + TW, y: oy + TH }, { x: ox + MID, y: oy + TH }],
+        [{ x: ox + MID, y: oy + TH }, { x: ox, y: oy + TH }],
         [{ x: ox, y: oy + TH }, { x: ox, y: oy }],
+        [{ x: ox + MID, y: oy }, { x: ox + MID, y: oy + TH }],
       ];
-      for (const [s, e] of rect) {
+      for (const [s, e] of walls) {
         const r = await call("wall_add", { start: mm(s), end: mm(e), thickness_mm: 100, kind: "partition" });
         created.push({ kind: "wall", siteId: (r["entity"] as { site_id?: string })?.site_id });
       }
       journal();
       const save0 = await gsave("trial-room");
-      check(save0["verified"] === true, "save verified (пробная комната)");
+      check(save0["verified"] === true, "save verified (пробные комнаты)");
 
       // ==== сцена (1): вертикальные блоки ====
       const mg0 = (await call("model_get", {})) as unknown as { walls: Array<{ id: string; site_id?: string }> };
@@ -151,7 +199,7 @@ try {
       const s2 = await call("item_add", { name: "socket", position: { against_wall: { wall_id: tw.id, offset_mm: 1000 } } }) as { entity: { site_id: string } };
       created.push({ kind: "item", siteId: s1.entity.site_id }, { kind: "item", siteId: s2.entity.site_id });
       journal();
-      const upd = await call("item_update", { item_id: s2.entity.site_id, layer: 2 }) as { entity?: { site_id?: string; layer?: number; y_mm?: number; y1_mm?: number } };
+      const upd = await call("item_update", { item_id: s2.entity.site_id, layer: 2 }) as { entity?: Record<string, unknown> };
       console.log("item_update layer=2 →", JSON.stringify(upd.entity ?? {}));
       const mg1 = (await call("model_get", {})) as unknown as { items: Array<{ site_id: string; name: string; layer?: number; y_mm: number; socket_group?: Array<{ id: string; x_mm: number; y_mm: number }> }> };
       const i1 = mg1.items.find((i) => i.site_id === s1.entity.site_id)!;
@@ -167,7 +215,7 @@ try {
         kind: "wire_3_25",
         path: [
           { item_id: i1.site_id, sub_id: i1.socket_group?.[0]?.id },
-          { x: Math.round((ox + TW / 2) * 10), y: Math.round((oy + 60) * 10) },
+          { x: Math.round((ox + MID + 50) * 10), y: Math.round((oy + 60) * 10) },
           { item_id: i2.site_id, sub_id: i2.socket_group?.[0]?.id },
         ],
       }) as { entity?: { id?: string } };
@@ -182,7 +230,7 @@ try {
       await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
       const ed2 = editorOf();
       await assertEditorPlanMatch(ed2, ids.planId);
-      const mg2 = (await call("model_get", {})) as unknown as typeof mg1 & { cables_socket?: Array<{ id: string; items?: unknown[] }> };
+      const mg2 = (await call("model_get", {})) as unknown as typeof mg1 & { cables_socket?: unknown[] };
       const j1 = mg2.items.find((i) => i.site_id === s1.entity.site_id)!;
       const j2 = mg2.items.find((i) => i.site_id === s2.entity.site_id)!;
       check(j2.layer === 2, `после reopen: слой 2 сохранился (layer=${j2.layer})`);
@@ -193,18 +241,19 @@ try {
       check(bytes > 10000, `render_plan sockets отдал PNG (${bytes})`);
 
       // ==== сцена (2) — F1 ревью 368: rebuild контура-одиночки, сырой GET до save ====
-      const col = await call("item_add", { name: "radiator_collector", position: { against_wall: { wall_id: tw.id, offset_mm: 2400 } } }) as { entity: { site_id: string } };
+      // два КОНТУРА в РАЗНЫХ комнатах (в комнате один контур — правило редактора)
+      const col = await call("item_add", { name: "radiator_collector", position: { against_wall: { wall_id: tw.id, offset_mm: 2200 } } }) as { entity: { site_id: string } };
       created.push({ kind: "item", siteId: col.entity.site_id });
-      const wf1 = await call("warm_floor_add", { kind: "water", corner1: { x: Math.round((ox + 20) * 10), y: Math.round((oy + 20) * 10) }, corner2: { x: Math.round((ox + 100) * 10), y: Math.round((oy + 100) * 10) } }) as { entity: { id?: string; site_id?: string } };
-      const wf2 = await call("warm_floor_add", { kind: "water", corner1: { x: Math.round((ox + 140) * 10), y: Math.round((oy + 20) * 10) }, corner2: { x: Math.round((ox + 220) * 10), y: Math.round((oy + 100) * 10) } }) as { entity: { id?: string; site_id?: string } };
+      const wf1 = await call("warm_floor_add", { kind: "water", corner1: { x: Math.round((ox + 30) * 10), y: Math.round((oy + 30) * 10) }, corner2: { x: Math.round((ox + 250) * 10), y: Math.round((oy + 200) * 10) } }) as { entity: { id?: string; site_id?: string } };
+      const wf2 = await call("warm_floor_add", { kind: "water", corner1: { x: Math.round((ox + MID + 30) * 10), y: Math.round((oy + 30) * 10) }, corner2: { x: Math.round((ox + TW - 30) * 10), y: Math.round((oy + 200) * 10) } }) as { entity: { id?: string; site_id?: string } };
       const wf1Id = String(wf1.entity.id ?? wf1.entity.site_id ?? "");
       const wf2Id = String(wf2.entity.id ?? wf2.entity.site_id ?? "");
       created.push({ kind: "warm_floor", siteId: wf1Id }, { kind: "warm_floor", siteId: wf2Id });
       journal();
-      const p1 = await call("pipe_add", { kind: "warm_floor", path: [{ item_id: col.entity.site_id }, { x: Math.round((ox + 120) * 10), y: Math.round((oy + 130) * 10) }, { item_id: wf1Id }] }) as { entity?: { id?: string } };
-      const p2 = await call("pipe_add", { kind: "warm_floor", path: [{ item_id: col.entity.site_id }, { x: Math.round((ox + 240) * 10), y: Math.round((oy + 130) * 10) }, { item_id: wf2Id }] }) as { entity?: { id?: string } };
+      const p1 = await call("pipe_add", { kind: "warm_floor", path: [{ item_id: col.entity.site_id }, { x: Math.round((ox + 270) * 10), y: Math.round((oy + 210) * 10) }, { item_id: wf1Id }] }) as { entity?: { id?: string } };
+      const p2 = await call("pipe_add", { kind: "warm_floor", path: [{ item_id: col.entity.site_id }, { x: Math.round((ox + MID + 100) * 10), y: Math.round((oy + 210) * 10) }, { item_id: wf2Id }] }) as { entity?: { id?: string } };
       const p2Id = String(p2.entity?.id ?? "");
-      if (p2Id) created.push({ kind: "pipe", siteId: p2Id });
+      created.push({ kind: "pipe", siteId: String(p1.entity?.id ?? "") }, { kind: "pipe", siteId: p2Id });
       journal();
       const save2 = await gsave("два контура");
       check(save2["verified"] === true, "save verified (коллектор + 2 контура + 2 магистрали)");
@@ -221,10 +270,11 @@ try {
       check(Object.keys(ref1pre).length === 1 && Object.keys(ref2pre).length === 1, "предусловие F1: оба контура на сервере со ссылкой на свою магистраль (проверка не тавтологична)");
 
       // rebuild (б): удаляем вершину-контур второй магистрали → контур-одиночка,
-      // ссылка снимается (unset_tree_id) СРАЗУ в ws.model и после save+reopen
+      // ссылка снимается (unset_tree_id) сразу в ws.model; сырой GET до save —
+      // сервер ещё держит прежнюю ссылку (мутация не записана)
       const del = await call("pipe_node_delete", { pipe_id: p2Id, vertex: 2 }) as { deleted?: unknown[]; created?: unknown[]; removed?: boolean };
-      console.log("pipe_node_delete (вершина контура wf2):", JSON.stringify(del));
-      const raw2 = await loadModel(ctx.session(), ids.objectId, ids.planId); // сырой GET ДО save
+      console.log("pipe_node_delete (вершина контура wf2):", JSON.stringify({ deleted: del["deleted"], created: del["created"], removed: del["removed"] }));
+      const raw2 = await loadModel(ctx.session(), ids.objectId, ids.planId);
       const wfs2 = (raw2.model["warm_floors"] ?? {}) as WfMap;
       console.log("сырой GET до save: ref2 на сервере ещё прежний:", JSON.stringify(wfs2[wf2Id]?.props?.pipes_warm_floor ?? {}));
       const save3 = await gsave("rebuild контура-одиночки");
@@ -249,27 +299,17 @@ try {
       // — зачистка созданных объектов (обратный порядок зависимостей) —
       await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
       await assertEditorPlanMatch(editorOf(), ids.planId);
-      if (wiringId) console.log("wiring_delete:", JSON.stringify(await tryCall("wiring_delete", { wiring_id: wiringId })));
-      for (const pid of [p2Id, String(p1.entity?.id ?? "")]) {
-        if (pid) console.log("pipe_delete", pid, JSON.stringify(await tryCall("pipe_delete", { pipe_id: pid })));
-      }
-      for (const wf of [wf1Id, wf2Id]) {
-        if (wf) console.log("warm_floor_delete", wf, JSON.stringify(await tryCall("warm_floor_delete", { warm_floor_id: wf })));
-      }
-      for (const iid of [col.entity.site_id, s2.entity.site_id, s1.entity.site_id]) {
-        console.log("item_delete", iid, JSON.stringify(await tryCall("item_delete", { item_id: iid })));
-      }
+      await deleteCreatedObjects(call as unknown as CallFn, created, (l) => console.log("cleanup:", l));
+      journal();
       const saveCleanup = await gsave("зачистка объектов");
       check(saveCleanup["verified"] === true, "save verified (зачистка объектов)");
-      created.length = 0; // объекты удалены — стены удаляет restore ниже
-      journal();
     } finally {
       try {
         await roGuard.assertUnchanged("restore");
-        const nothingToRestore = !created.some((c) => c.siteId);
-        if (nothingToRestore) {
-          console.log("restore: захватов нет — restore-save пропущен");
-        } else {
+        // объекты (кабели/трубы/контуры/предметы) — общим хелпером по журналу,
+        // затем стены — общим probe-restore
+        if (created.some((c) => c.siteId)) {
+          await deleteCreatedObjects(call as unknown as CallFn, created, (l) => console.log("restore-obj:", l));
           await restoreByCaptured({
             call,
             created,
@@ -277,6 +317,8 @@ try {
             save: () => gsave("restore"),
             log: (line) => console.log("restore:", line),
           });
+        } else {
+          console.log("restore: захватов нет — restore-save пропущен");
         }
       } catch (e) {
         console.log("restore error:", String((e as Error).message).slice(0, 250));
@@ -287,7 +329,7 @@ try {
       const same = sig(after.model) === sig(ref.model);
       console.log("sig restored == backup:", same);
       if (!same) {
-        console.error(`модель dev-объекта не совпала с бэкапом ${backupPath} — восстановите cleanup-фазой пробы по захваченным ID`);
+        console.error(`модель dev-объекта не совпала с бэкапом ${backupPath} — восстановите cleanup-фазой пробы по журналу ${capturedPath}`);
         exitCode = 1;
       }
       await roGuard.checkFinal("finally");
@@ -300,10 +342,8 @@ try {
     const ids = (await import("./probe-guard.ts")).probeWriteEnv();
     const afterFail = await loadModel(ctx.session(), ids.objectId, ids.planId);
     const backupPath = `.orca-reports/backup-${ids.objectId}-370.json`;
-    if (readFileSync(backupPath, "utf8")) {
-      const ref = JSON.parse(readFileSync(backupPath, "utf8")) as LoadedModel;
-      console.error("FAIL-restore: сверка sig с бэкапом:", sig(afterFail.model) === sig(ref.model) ? "OK" : "РАСХОЖДЕНИЕ");
-    }
+    const ref = JSON.parse(readFileSync(backupPath, "utf8")) as LoadedModel;
+    console.error("FAIL-restore: сверка sig с бэкапом:", sig(afterFail.model) === sig(ref.model) ? "OK" : "РАСХОЖДЕНИЕ");
   } catch (fe) { console.error("FAIL-restore check:", String((fe as Error).message).slice(0, 300)); }
   await client.close().catch(() => {});
   try { await closeBrowser(); } catch { /* */ }
