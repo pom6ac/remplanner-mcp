@@ -8,7 +8,7 @@
 // Гарды: probe-guard (пара объект/план, READONLY-гард по корневому эталону без
 // REF_INIT), checkEditorPlanMatch fail-closed перед каждым project_open,
 // assertUnchanged перед каждой записью, бэкап
-// .orca-reports/backup-OBJECT_ID-370.json непосредственно перед прогоном,
+// .orca-reports/backup-<OBJECT_ID>-370.json непосредственно перед прогоном,
 // restore — общий probe-restore по журналу захваченных ID в finally (+ зачистка
 // предметов/кабелей/труб/контуров общим хелпером), сверка sig с бэкапом в конце
 // и в catch (ревью 368 F4), ≤30 запросов/мин (лимитер MCP).
