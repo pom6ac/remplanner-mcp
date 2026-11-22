@@ -2,12 +2,39 @@
 // производные поля (полигоны/рёбра зон, ids, edges2, служебные ключи) приводятся
 // к канонической форме — сверка модели с бэкапом и контрольного проекта до/после
 // идёт по пользовательским данным (ревью 285 №3, ревью 311 №5).
+// Этап 382 (wall-мутация туда-обратно): редактор при каждом пересчёте комнат
+// даёт шум координат ~1e-4 см (292.5 ↔ 292.4999), перегенерирует oid рёбер в
+// edges_prs, меняет порядок ключей rooms1/rooms2 и число exist:false заглушек
+// в контейнерах отделки (следует за перегенерированной нарезкой рёбер) —
+// канон дополнил: округление чисел комнатных записей до 1e-2 см, псевдоним
+// комнат по ОТСОРТИРОВАННОМУ набору канонических полигонов (устойчив к
+// перестановке), состав контейнеров отделки — только записи exist:true.
 export function sig(m: unknown): string {
   const c = structuredClone(m) as Record<string, unknown>;
   for (const k of ["errors", "logs", "log_plan", "session", "version", "drawing", "params", "final", "signals", "smeta_water_pipes", "save_id", "is_forced"]) delete c[k];
   for (const k of ["borders", "drawings"]) {
     if (Array.isArray(c[k])) c[k] = [...(c[k] as unknown[])].map((e) => JSON.stringify(e)).sort();
   }
+  // шум координат от пересчёта комнат (382): округление чисел до 1e-2 вглубь
+  const roundDeep = (v: unknown): unknown => {
+    if (typeof v === "number") return Math.round(v * 100) / 100;
+    if (Array.isArray(v)) return v.map(roundDeep);
+    if (v !== null && typeof v === "object") {
+      const o: Record<string, unknown> = {};
+      for (const kk of Object.keys(v as Record<string, unknown>).sort()) o[kk] = roundDeep((v as Record<string, unknown>)[kk]);
+      return o;
+    }
+    return v;
+  };
+  // контейнеры отделки комнат: число exist:false заглушек следует за
+  // перегенерированной нарезкой рёбер — состав пользовательской отделки это
+  // только записи exist:true (382)
+  const USER_DATA_ARR = [
+    "floorMoldings", "ceilingMoldings", "warms_walls",
+    "floors", "hydroisolations", "hydroisolations_walls",
+    "plasters", "plasters_ceilings", "plasters_slopes",
+    "isolations", "isolations_slopes", "decors", "decors_slopes",
+  ];
   const walls = (c["walls"] ?? {}) as Record<string, Record<string, unknown>>;
   for (const w of Object.values(walls)) {
     const eds2 = w["eds2"] as Record<string, unknown> | undefined;
@@ -37,25 +64,35 @@ export function sig(m: unknown): string {
     }
     return pts.map((p) => `${p.x},${p.y}`).join(";") + `#${min}`;
   };
-  const polyList: string[] = [];
-  const polyIndex = new Map<string, number>();
-  for (const r of Object.values(rooms)) {
-    const k = canonPoly(r["polygon"]);
-    if (!polyIndex.has(k)) {
-      polyIndex.set(k, polyList.length);
-      polyList.push(k);
-    }
-  }
+  // псевдоним по каноническому полигону: ОТСОРТИРОВАННЫЙ набор уникальных
+  // ключей — индекс не зависит от порядка ключей rooms1/rooms2, который
+  // редактор перегенерирует при каждом restore (382)
+  const uniq = [...new Set(Object.values(rooms).map((r) => canonPoly(r["polygon"])))].sort();
+  const polyIndex = new Map<string, number>(uniq.map((k, i) => [k, i]));
   const roomAlias = new Map<string, string>();
   Object.entries(rooms).forEach(([rid, r]) => {
     const k = canonPoly(r["polygon"]);
     const idx = polyIndex.get(k);
-    roomAlias.set(rid, `RR${idx === undefined ? polyList.length : idx}`);
+    roomAlias.set(rid, `RR${idx === undefined ? uniq.length : idx}`);
   });
   for (const rk of ["rooms1", "rooms2"]) {
     const map = (c[rk] ?? null) as Record<string, Record<string, unknown>> | null;
     if (map && typeof map === "object") {
       for (const rec of Object.values(map)) {
+        // контейнеры отделки: только exist:true (382 — см. шапку)
+        for (const uk of USER_DATA_ARR) {
+          if (Array.isArray(rec[uk])) {
+            rec[uk] = (rec[uk] as Array<Record<string, unknown>>)
+              .filter((e) => e && e["exist"] === true)
+              .map((e) => JSON.stringify(roundDeep(e), Object.keys(e).sort()))
+              .sort();
+          }
+        }
+        // округление шума координат (382): до канонов, читающих числа
+        for (const kk of Object.keys(rec)) rec[kk] = roundDeep(rec[kk]);
+        if (Array.isArray(rec["edges_prs"])) {
+          rec["edges_prs"] = (rec["edges_prs"] as Array<Record<string, unknown>>).map((e) => ({ ...e, oid: null }));
+        }
         if (Array.isArray(rec["edges"])) {
           rec["edges"] = (rec["edges"] as Array<Record<string, unknown>>).map((e, i) => ({ ...e, id: `ed${i}` }));
         }
