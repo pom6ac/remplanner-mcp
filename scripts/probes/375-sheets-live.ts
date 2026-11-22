@@ -209,7 +209,7 @@ try {
     const up = await call("image_upload", { data_base64: b64 }) as { url: string; width_original_px: number; height_original_px: number; mime: string };
     check(up.mime === "image/png" && up.width_original_px === 8 && up.height_original_px === 6 && typeof up.url === "string" && up.url.length > 0,
       `image_upload: url=${String(up.url).slice(0, 30)}, ${up.width_original_px}×${up.height_original_px} ${up.mime}`);
-    const pic = await call("image_add", { url: up.url, center: { x: 6000, y: 4000 }, text: "Проба 375" }) as { id: string; width_mm: number };
+    const pic = await call("image_add", { url: up.url, center: { x: 6000, y: 4000 }, width_original_px: up.width_original_px, height_original_px: up.height_original_px, text: "Проба 375" }) as { id: string; width_mm: number };
     created.push({ kind: "picture", siteId: pic.id });
     journal();
     check(typeof pic.id === "string", `image_add: id=${pic.id}, размер из исходника ${pic.width_mm} мм`);
