@@ -291,7 +291,22 @@ export function setPrsSettings(model: Model, roomRef: string, params: PrsSetting
         disabled.add(e.edgeIndex);
         hiddenAllIfAllHidden();
       } else {
-        if (map && typeof map === "object" && !Array.isArray(map)) delete map[e.oid];
+        if (map && typeof map === "object" && !Array.isArray(map)) {
+          delete map[e.oid];
+          // №11 follow-up 402: на комнате без раскладки ключи — синтетические
+          // derived_<i>; унаследованный derived_k, записанный при другой
+          // нумерации рёбер, к стене по текущему индексу однозначно не
+          // сопоставить — снимаются ВСЕ derived_* (допустимо по ревью 402),
+          // иначе show_walls молча ничего не делает
+          if (e.oid.startsWith("derived_")) {
+            for (const k of Object.keys(map)) {
+              if (!k.startsWith("derived_")) continue;
+              delete map[k];
+              const idx = prsEdges.find((x) => x.oid === k)?.edgeIndex;
+              if (idx !== undefined) disabled.delete(idx);
+            }
+          }
+        }
         room["prs_hidden"] = 0;
         disabled.delete(e.edgeIndex);
       }

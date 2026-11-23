@@ -117,6 +117,26 @@ test("401 №5: show_walls на комнате без раскладки — с�
   assert.equal((roomOf(m)["prs_hidden"] as unknown), 0);
 });
 
+test("403 №11: show_walls без раскладки снимает унаследованные derived_* при другой нумерации", () => {
+  const m = baseModel();
+  const room = roomOf(m);
+  (room as AnyRec)["edges_prs"] = [];
+  // derived_0/derived_2 записаны прежней версией MCP при ДРУГОЙ нумерации
+  // рёбер; по текущим рёбрам w2 — ребро 1 (derived_1): однозначно сопоставить
+  // ключи со стенами нельзя — снимаются ВСЕ derived_* (допустимо по ревью 402)
+  (room["prs_disabled"] as unknown as AnyRec) = { derived_0: "", derived_2: "" } as never;
+  const st = setPrsSettings(m, "R1", { showWalls: ["w2"] });
+  assert.deepEqual(Object.keys((roomOf(m)["prs_disabled"] as AnyRec) ?? {}), [], "унаследованные derived_* сняты");
+  assert.equal((roomOf(m)["prs_hidden"] as unknown), 0, "prs_hidden=0");
+  assert.deepEqual(st.disabled_edges, [], "ответ не содержит скрытых развёрток");
+  // настоящий oid (раскладка есть) не трогается: show снимает только свой ключ
+  const m2 = baseModel();
+  setPrsSettings(m2, "R1", { hideWalls: ["w2"] });
+  setPrsSettings(m2, "R1", { hideWalls: ["w3"] });
+  setPrsSettings(m2, "R1", { showWalls: ["w2"] });
+  assert.deepEqual(Object.keys((roomOf(m2)["prs_disabled"] as AnyRec) ?? {}), ["oid3"], "с раскладкой чужие oid не сняты");
+});
+
 test("401 №5: first_wall:null на комнате без раскладки — prs_first=0 (авто) без отказа", () => {
   const m = baseModel();
   const room = roomOf(m);
