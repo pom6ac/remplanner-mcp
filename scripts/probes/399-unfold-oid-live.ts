@@ -171,8 +171,11 @@ try {
   }
   if (phase === "check") {
     // read-only диагностика расхождения sig: GET целевого объекта, канон-дифф
-    // против бэкапа (без записи), стены пробной зоны по site_id из журналов
-    const backupPath = `.orca-reports/backup-${ids.objectId}-399.json`;
+    // против бэкапа (без записи), стены пробной зоны по site_id из журналов.
+    // Эталон — REMPLANNER_PROBE_CHECK_BACKUP (умолчание — бэкап 399 прогона):
+    // сверка с более ранним эталоном (например, backup-…-377.json) допустима,
+    // когда все этапы между ними завершались «sig vs backup: OK».
+    const backupPath = process.env["REMPLANNER_PROBE_CHECK_BACKUP"] ?? `.orca-reports/backup-${ids.objectId}-399.json`;
     if (!existsSync(backupPath)) { console.error("нет бэкапа", backupPath); process.exit(1); }
     const cur = await loadModel(ctx.session(), ids.objectId, ids.planId);
     const { canon } = await import("./probe-sig.ts");
