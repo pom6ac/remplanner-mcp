@@ -169,8 +169,40 @@ try {
     console.log("EXIT:", same ? 0 : 1);
     process.exit(same ? 0 : 1);
   }
+  if (phase === "check") {
+    // read-only диагностика расхождения sig: GET целевого объекта, канон-дифф
+    // против бэкапа (без записи), стены пробной зоны по site_id из журналов
+    const backupPath = `.orca-reports/backup-${ids.objectId}-399.json`;
+    if (!existsSync(backupPath)) { console.error("нет бэкапа", backupPath); process.exit(1); }
+    const cur = await loadModel(ctx.session(), ids.objectId, ids.planId);
+    const { canon } = await import("./probe-sig.ts");
+    const c1 = canon(cur.model) as Record<string, unknown>;
+    const c0 = canon(JSON.parse(readFileSync(backupPath, "utf8")).model) as Record<string, unknown>;
+    const same = JSON.stringify(c1) === JSON.stringify(c0);
+    console.log("sig (check) vs backup:", same ? "OK" : "РАСХОЖДЕНИЕ");
+    if (!same) {
+      const keys = [...new Set([...Object.keys(c0), ...Object.keys(c1)])].sort();
+      for (const k of keys) {
+        const a = JSON.stringify(c0[k]), b = JSON.stringify(c1[k]);
+        if (a !== b) {
+          console.log(`diff ${k}: backup ${a === undefined ? "нет" : a.length > 300 ? `${a.length}b` : a} → текущая ${b === undefined ? "нет" : b.length > 300 ? `${b.length}b` : b}`);
+        }
+      }
+      // комнаты: ключи и полигоны
+      const roomsOf = (c: Record<string, unknown>): Record<string, unknown> => ((c["rooms2"] ?? c["rooms1"] ?? {}) as Record<string, unknown>);
+      console.log("rooms backup:", Object.keys(roomsOf(c0)).join(","));
+      console.log("rooms текущая:", Object.keys(roomsOf(c1)).join(","));
+    }
+    // стены в зоне пробы (только чтение)
+    const walls = (cur.model["walls"] ?? {}) as Record<string, { p1?: { x: number; y: number }; p2?: { x: number; y: number } }>;
+    for (const [wid, w] of Object.entries(walls)) {
+      if (w.p1 && w.p2 && w.p1.x >= 8900 && w.p1.x <= 9400 && w.p1.y >= 8900 && w.p1.y <= 9400) console.log("wall в зоне пробы:", wid, JSON.stringify(w.p1), JSON.stringify(w.p2));
+    }
+    await closeBrowser().catch(() => {});
+    process.exit(0);
+  }
   if (phase !== "run") {
-    console.error("фаза: run | cleanup");
+    console.error("фаза: run | cleanup | check");
     process.exit(1);
   }
 
@@ -227,8 +259,9 @@ try {
     `раскладка материализована: edges=${matState?.edges} edges_prs=${matState?.edgesPrs} oids=${JSON.stringify(matState?.oids)}`,
   );
   if (!oidsReal) throw new Error("раскладка развёрток не материализована — живой путь с реальными oid недоступен");
-  const roomLabel2 = ((await call("model_get", {}) as { rooms?: Array<{ id?: string }> }).rooms ?? [])
-    .find((r) => typeof r["id"] === "string")?.id ?? matState!.siteId;
+  // prs_set адресует комнату по site id пробной комнаты (не по общей метке:
+  // model_get rooms[] может начаться с чужой комнаты)
+  const roomLabel2 = matState.siteId;
 
   // ==== 2) prs_set скрывает развёртку НЕТРОНУТОЙ стены (w3) — ключ обязан ====
   // ==== совпасть с oid из edges_prs (фикс A) ====
