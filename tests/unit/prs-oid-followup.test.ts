@@ -69,14 +69,11 @@ const throwsInvalid = (fn: () => unknown): { code?: string; message?: string } =
 
 // ---------- 399 A: prs_set без раскладки развёрток ----------
 
-test("399 A: prs_set на комнате с пустым edges_prs — INVALID_ARGUMENT, ключи derived_<i> не пишутся", () => {
+test("399 A: prs_set (записи под oid) на комнате с пустым edges_prs — INVALID_ARGUMENT, ключи derived_<i> не пишутся", () => {
   const params: Array<Parameters<typeof setPrsSettings>[2]> = [
     { hidden: true },
-    { hidden: false },
     { firstWall: "w2" },
-    { firstWall: null },
     { hideWalls: ["w2"] },
-    { showWalls: ["w1"] },
   ];
   for (const p of params) {
     const m = baseModel();
@@ -85,11 +82,48 @@ test("399 A: prs_set на комнате с пустым edges_prs — INVALID_A
     assert.equal(err.code, "INVALID_ARGUMENT", `отказ для ${JSON.stringify(p)}: ${JSON.stringify(err)}`);
     assert.match(err.message ?? "", /раскладк/, `понятный текст: ${String(err.message)}`);
     assert.match(err.message ?? "", /Развёртк/i, "подсказка — открыть развёртки в редакторе");
+    // находка 3 ревью 400: текст отказа адресован агенту — раскладку создаёт
+    // ПОЛЬЗОВАТЕЛЬ (MCP сам её не создаёт)
+    assert.match(err.message ?? "", /пользовател|попросите/, `текст для агента: ${String(err.message)}`);
     const room = roomOf(m);
     assert.deepEqual(Object.keys((room["prs_disabled"] as AnyRec) ?? {}), [], `prs_disabled не тронут (${JSON.stringify(p)})`);
     assert.equal(room["prs_first"], 0, `prs_first не тронут (${JSON.stringify(p)})`);
     assert.ok(!JSON.stringify(room).includes("derived_"), `синтетических ключей нет (${JSON.stringify(p)})`);
   }
+});
+
+// ---------- 401 №5: гард не блокирует операции, которым oid не нужен ----------
+
+test("401 №5: hidden:false на комнате без раскладки — очищает prs_disabled (в т.ч. унаследованные derived_*) и prs_hidden", () => {
+  const m = baseModel();
+  const room = roomOf(m);
+  (room as AnyRec)["edges_prs"] = [];
+  (room["prs_disabled"] as unknown as AnyRec) = { derived_2: "", derived_3: "" } as never;
+  (room["prs_hidden"] as unknown) = 1;
+  const st = setPrsSettings(m, "R1", { hidden: false });
+  assert.equal(st.hidden, false);
+  assert.deepEqual(Object.keys((roomOf(m)["prs_disabled"] as AnyRec) ?? {}), [], "prs_disabled очищен");
+  assert.equal((roomOf(m)["prs_hidden"] as unknown), 0, "prs_hidden=0");
+});
+
+test("401 №5: show_walls на комнате без раскладки — снимает унаследованный derived_* ключ", () => {
+  const m = baseModel();
+  const room = roomOf(m);
+  (room as AnyRec)["edges_prs"] = [];
+  (room["prs_disabled"] as unknown as AnyRec) = { derived_1: "" } as never; // скрыто ребро w2 (derived_1)
+  const st = setPrsSettings(m, "R1", { showWalls: ["w2"] });
+  assert.deepEqual(Object.keys((roomOf(m)["prs_disabled"] as AnyRec) ?? {}), [], "унаследованный ключ снят");
+  assert.deepEqual(st.disabled_edges, []);
+  assert.equal((roomOf(m)["prs_hidden"] as unknown), 0);
+});
+
+test("401 №5: first_wall:null на комнате без раскладки — prs_first=0 (авто) без отказа", () => {
+  const m = baseModel();
+  const room = roomOf(m);
+  (room as AnyRec)["edges_prs"] = [];
+  (room["prs_first"] as unknown) = "derived_0";
+  setPrsSettings(m, "R1", { firstWall: null });
+  assert.equal((roomOf(m)["prs_first"] as unknown), 0, "prs_first сброшен в авто");
 });
 
 test("399 A: раскладка частичная (запись edges_prs без oid) — тоже отказ", () => {
@@ -302,4 +336,89 @@ test("399 E: комната исчезла без наследника — пр�
   const out = prsSettingsResetWarnings({ rooms2: before } as never, { rooms2: after } as never as Model);
   assert.equal(out.length, 1);
   assert.match(out[0]!, /наследник не найден/);
+});
+
+// ---------- 401 №4: sameState — мультимножество рёбер одной стены ----------
+
+/** Комната со стеной w5, разрезанной колонной на ДВА ребра одной стороны
+ *  (рёбра 0 и 1), плюс ребро 2 (w6); edges_prs с oid a/b/c. */
+function splitWallModel(disabledOids: string[]): Model {
+  const room = {
+    name: "Комната", plan: "rooms", height: 270, area: 12,
+    polygon: FULL, points: [], pc: null, corners: [],
+    zones: [{ name: "Комната" }], floors: [], ceilings: [], decors: [],
+    edges: [
+      { p1: { x: 0, y: 0 }, p2: { x: 200, y: 0 }, pid: "w5", length: 200, room_side: "l" },
+      { p1: { x: 200, y: 0 }, p2: { x: 400, y: 0 }, pid: "w5", length: 200, room_side: "l" },
+      { p1: { x: 400, y: 0 }, p2: { x: 0, y: 300 }, pid: "w6", length: 500, room_side: "l" },
+    ],
+    edges_prs: [
+      { edge_index: 0, p1: { x: 0, y: 0 }, p2: { x: 200, y: 0 }, oid: "a", pillars: [] },
+      { edge_index: 1, p1: { x: 200, y: 0 }, p2: { x: 400, y: 0 }, oid: "b", pillars: [] },
+      { edge_index: 2, p1: { x: 400, y: 0 }, p2: { x: 0, y: 300 }, oid: "c", pillars: [] },
+    ],
+    prs_disabled: Object.fromEntries(disabledOids.map((o) => [o, ""])), prs_first: 0, prs_hidden: 0,
+  };
+  return { rooms2: { roomA: room } } as unknown as Model;
+}
+
+test("401 №4: два сегмента одной стены, редактор сбросил один — предупреждение о сбросе", () => {
+  const before = splitWallModel(["a", "b"]); // скрыты ОБА сегмента w5
+  const after = splitWallModel(["a"]); // редактор сбросил один
+  const out = prsSettingsResetWarnings(before, after);
+  assert.equal(out.length, 1, `сброс одного из двух сегментов той же стены ловится: ${JSON.stringify(out)}`);
+  assert.match(out[0]!, /сброшены/);
+  // оба сегмента живы после пересоздания (рёбра с другой вершины, настройки
+  // перенесены на те же стены под новыми oid) — ложного «сброшены» нет
+  const afterKept = structuredClone(before) as Model;
+  const room = ((afterKept.rooms2 as AnyRec) as Record<string, AnyRec>)["roomA"] as AnyRec;
+  const rot = <T,>(arr: T[]): T[] => [arr[2]!, arr[0]!, arr[1]!];
+  (room["edges"] as AnyRec[]) = rot((room["edges"] as AnyRec[]).map((e) => structuredClone(e)));
+  (room["edges_prs"] as AnyRec[]) = rot((room["edges_prs"] as AnyRec[]).map((e) => structuredClone(e)))
+    .map((e, i) => ({ ...e, edge_index: i, oid: `n${i + 1}` }));
+  // скрыты те же два сегмента w5 (сегменты 1 и 2 → новые рёбра 1 и 2, oid n2/n3)
+  (room["prs_disabled"] as unknown as AnyRec) = { n2: "", n3: "" } as never;
+  assert.deepEqual(prsSettingsResetWarnings(before, afterKept), [], `оба сегмента живы — предупреждения нет: ${JSON.stringify(prsSettingsResetWarnings(before, afterKept))}`);
+});
+
+// ---------- 401 №8: prsSettingsMismatches — семантика по стене, как в sameState ----------
+
+test("401 №8: сверка save — сдвинутая нумерация рёбер при той же нарезке — без ложной problem", () => {
+  const m = baseModel();
+  setPrsSettings(m, "R1", { hideWalls: ["w3"], firstWall: "w2" });
+  const before = (m.rooms2 as AnyRec) as Record<string, AnyRec>;
+  // редактор пересоздал комнату с той же нарезкой, но рёбра с другой вершины
+  const after = structuredClone(before) as Record<string, AnyRec>;
+  const room = after["roomA"] as AnyRec;
+  const rot = <T,>(arr: T[]): T[] => [arr[1]!, arr[2]!, arr[3]!, arr[0]!];
+  (room["edges"] as AnyRec[]) = rot((room["edges"] as AnyRec[]).map((e) => structuredClone(e)));
+  (room["edges_prs"] as AnyRec[]) = rot((room["edges_prs"] as AnyRec[]).map((e) => structuredClone(e)))
+    .map((e, i) => ({ ...e, edge_index: i, oid: `n${i + 1}` }));
+  (room["prs_disabled"] as AnyRec) = { n2: "" }; // та же стена w3 (ребро 1 после сдвига)
+  (room["prs_first"] as unknown) = "n1"; // та же стена w2 (ребро 0 после сдвига)
+  const out = prsSettingsMismatches(before, after);
+  assert.deepEqual(out.problems, [], `та же стена (+порядок) — ложной problem нет: ${JSON.stringify(out)}`);
+  assert.deepEqual(out.warnings, []);
+  // настройка уехала на ДРУГУЮ стену — problem есть
+  const reset = structuredClone(after) as Record<string, AnyRec>;
+  ((reset["roomA"] as AnyRec)["prs_disabled"] as AnyRec) = { n1: "" }; // w2 вместо w3
+  const outReset = prsSettingsMismatches(before, reset);
+  assert.equal(outReset.problems.length, 1);
+  assert.match(outReset.problems[0]!, /набор скрытых развёрток изменился/);
+});
+
+// ---------- 401 №7: edges_prs не массив — Array.isArray-защита в тексте отказа ----------
+
+test("401 №7: edges_prs не массив (legacy) при новом висячем ключе — проблема без TypeError", () => {
+  const m = baseModel();
+  const before = (m.rooms2 as AnyRec) as Record<string, AnyRec>;
+  ((before["roomA"] as AnyRec)["edges_prs"] as unknown) = null; // legacy/rooms1-запись
+  const after = structuredClone(before) as Record<string, AnyRec>;
+  const room = after["roomA"] as AnyRec;
+  (room["edges_prs"] as unknown) = null;
+  (room["prs_disabled"] as AnyRec) = { legacyX: "" };
+  const out = prsSettingsMismatches(before, after);
+  assert.equal(out.problems.length, 1, `висячий ключ пойман без TypeError: ${JSON.stringify(out)}`);
+  assert.match(out.problems[0]!, /legacyX/);
+  assert.match(out.problems[0]!, /развертки комнаты: нет/);
 });

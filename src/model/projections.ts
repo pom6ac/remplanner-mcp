@@ -129,6 +129,13 @@ export function prsEdgesOf(room: RoomRec): PrsEdge[] {
  * prs_first редактор не знает и не переносит (restoreElementPrs @2863309
  * переносит только по реальному oid старой развёртки), поэтому записи prs на
  * такой комнате консервативно отвергаются.
+ *
+ * Находка 3 ревью 400: oid НЕ нестабильны — по бандлу раскладка, созданная
+ * редактором, сериализуется (createEdgesPrs → serialize пишет edges_prs и
+ * id_of_edges, @1018941), и назначенные oid стабильны до пересчёта линий.
+ * Причина отказа не в нестабильности oid, а в том, что их ЕЩЁ НЕТ в модели:
+ * MCP сам раскладку не создаёт — её создаёт открытие развёрток комнаты
+ * пользователем в редакторе (лист «Развёртки») и save проекта.
  */
 export function hasRealPrsLayout(room: RoomRec): boolean {
   const raw = Array.isArray(room["edges_prs"]) ? (room["edges_prs"] as Array<Record<string, unknown>>) : [];
@@ -214,13 +221,22 @@ export function setPrsSettings(model: Model, roomRef: string, params: PrsSetting
   // находка A ревью 397: без реальной раскладки (edges_prs пуст) oid развёрток
   // редактор ещё не назначил (Projections.getLines: oid=LIB.id() — случайно),
   // записи prs_disabled/prs_first ушли бы под ключами derived_<i>, которых
-  // редактор не знает и не переносит — консервативный отказ
-  if (!hasRealPrsLayout(room)) {
+  // редактор не знает и не переносит — консервативный отказ. Находка 5 ревью
+  // 400: операции, которым oid НЕ нужен (скрытие: false — prs_disabled={},
+  // first_wall: null — prs_first=0, show_walls — удаление ключей, в том числе
+  // унаследованных derived_*), не блокируются — иначе висячие ключи прежних
+  // версий MCP через MCP не очистить
+  const needsOid =
+    params.hidden === true ||
+    (params.firstWall !== undefined && params.firstWall !== null) ||
+    (params.hideWalls !== undefined && params.hideWalls.length > 0);
+  if (!hasRealPrsLayout(room) && needsOid) {
     throw new McpError(
       "INVALID_ARGUMENT",
-      `у комнаты ${roomRef} нет раскладки развёрток (edges_prs пуст — редактор создаёт раскладку при первом ` +
-        `открытии листа «Развёртки» и назначает развёрткам случайные oid, которых ещё нет в модели): ` +
-        `откройте развёртки комнаты в редакторе (лист «Развёртки») и сохраните проект, затем повторите`,
+      `у комнаты ${roomRef} нет раскладки развёрток (edges_prs пуст — раскладку создаёт редактор при первом ` +
+        `открытии листа «Развёртки»; MCP сам раскладку не создаёт, а oid, назначенные при её создании, ` +
+        `в модели ещё не известны): попросите пользователя открыть развёртки комнаты в редакторе ` +
+        `(лист «Развёртки») и сохранить проект, затем повторите`,
     );
   }
   const disabled = prsDisabledEdges(room);
