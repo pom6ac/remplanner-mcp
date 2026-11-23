@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseModelImport } from "../../src/model/import-schema.ts";
-import { prsFigureUserMismatches, prsSettingsMismatches } from "../../src/verify/projections.ts";
+import { prsFigureUserMismatches, prsSettingsMismatches, prsSettingsResetWarnings } from "../../src/verify/projections.ts";
 import {
   prsEdgesOf, prsStateOf, setPrsSettings, prsDisabledEdges, prsFirstEdge,
   addPrsFigure, updatePrsFigure, deletePrsFigure, resolvePrsFigure, prsFigureLabel,
@@ -352,6 +352,49 @@ test("389: сверка prs-настроек — по edge_index, skip при и
   assert.deepEqual(prsSettingsMismatches(before, recut), []);
   // стена делит комнату — без ложной ошибки (число развёрток меняется)
   assert.deepEqual(prsSettingsMismatches(before, recut), []);
+});
+
+// ---------- 392 follow-up №17: предупреждение только о фактическом сбросе prs ----------
+
+test("392 №17: wall_move без смены нарезки (настройки не тронуты) — предупреждения о prs нет", () => {
+  const m = baseModel();
+  setPrsSettings(m, "R1", { hideWalls: ["w2"], firstWall: "w3" });
+  // редактор пересчитал комнаты, но настройки перенёс (совпавшие линии) —
+  // состояние prs «до → после» совпадает
+  const after = structuredClone(m) as Model;
+  assert.deepEqual(prsSettingsResetWarnings(m, after), [], "без фактического сброса предупреждения нет");
+});
+
+test("392 №17: сброс настроек — предупреждение с перечнем комнат; переименованная комната сопоставляется по контуру", () => {
+  const m = baseModel();
+  setPrsSettings(m, "R1", { hideWalls: ["w2"], firstWall: "w3" });
+  // редактор сбросил настройки (restorePrsChangeEdges при смене числа граней)
+  const reset = structuredClone(m) as Model;
+  const room = (reset.rooms2 as AnyRec)["roomA"] as AnyRec;
+  room["prs_first"] = 0;
+  room["prs_disabled"] = {};
+  const out = prsSettingsResetWarnings(m, reset);
+  assert.equal(out.length, 1);
+  assert.match(out[0]!, /roomA/, "в предупреждении перечислены комнаты со сбросом");
+  // комната переименована (id сменился, контур тот же), настройки пережили — без предупреждения
+  const renamed = structuredClone(m) as Model;
+  const rooms = (renamed.rooms2 as AnyRec) as Record<string, AnyRec>;
+  rooms["roomB"] = rooms["roomA"]!;
+  delete rooms["roomA"];
+  assert.deepEqual(prsSettingsResetWarnings(m, renamed), [], "комната найдена по устойчивому ключу контура — сброса нет");
+  // переименованная комната со сбросом — предупреждение
+  const renamedReset = structuredClone(renamed) as Model;
+  const roomB = (renamedReset.rooms2 as AnyRec)["roomB"] as AnyRec;
+  roomB["prs_first"] = 0;
+  roomB["prs_disabled"] = {};
+  assert.equal(prsSettingsResetWarnings(m, renamedReset).length, 1);
+  // комната с настройками исчезла (wall_delete) — предупреждение
+  const gone = structuredClone(m) as Model;
+  delete (gone.rooms2 as AnyRec)["roomA"];
+  assert.equal(prsSettingsResetWarnings(m, gone).length, 1);
+  // без не-дефолтных настроек предупреждений нет вовсе
+  const plain = baseModel();
+  assert.deepEqual(prsSettingsResetWarnings(plain, structuredClone(plain) as Model), []);
 });
 
 // ---------- PRO ----------

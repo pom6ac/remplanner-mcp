@@ -331,34 +331,6 @@ export function prsFiguresAffectedByWalls(before: Model, after: Model): PrsFigur
   return { warnings, dangling };
 }
 
-/**
- * Настройки развёрток комнат при изменении стен редактор сбрасывает: комнаты
- * пересоздаются ($Restorer.restore_rooms), restorePrsChangeEdges переносит
- * prs_first/prs_disabled ТОЛЬКО на совпавшие линии (areLinesEqual или длина
- * в допуске 2 см) — при сдвиге стены настройки теряются молча (живой прогон
- * 391-1: prs_hidden пропал при wall_move без смены числа рёбер). Предупреждение
- * агенту — при любом wall-изменении, если в рабочей копии были не-дефолтные
- * настройки развёрток (minor 14 ревью 390).
- */
-export function prsSettingsResetWarnings(before: Model, after: Model): string[] {
-  void after;
-  const rooms = ((before as Record<string, unknown>)["rooms2"] ?? (before as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, Record<string, unknown>>;
-  const withSettings: string[] = [];
-  for (const [rid, rb] of Object.entries(rooms)) {
-    const hidden = rb["prs_hidden"] === 1;
-    const first = typeof rb["prs_first"] === "string" && rb["prs_first"] !== "";
-    const disabled = rb["prs_disabled"];
-    const hasDisabled = disabled !== null && typeof disabled === "object" && !Array.isArray(disabled) && Object.keys(disabled as Record<string, unknown>).length > 0;
-    if (hidden || first || hasDisabled) withSettings.push(rid);
-  }
-  if (withSettings.length === 0) return [];
-  return [
-    `в комнатах ${withSettings.join(", ")} были настройки развёрток (prs_hidden/prs_first/prs_disabled) — ` +
-    `при изменении стен редактор пересоздаёт комнаты и может сбросить их ` +
-    `(restorePrsChangeEdges переносит настройки только на совпавшие линии); проверьте model_get rooms[].prs`,
-  ];
-}
-
 export type PrsFigureParams = {
   room: string;
   /** Стена ребра развёртки (id сайта из model_get или W-форма). */

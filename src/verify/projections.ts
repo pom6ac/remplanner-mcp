@@ -1,5 +1,8 @@
 import { McpError } from "../errors.ts";
 import type { PrsFigureEntity } from "../model/projections.ts";
+import { prsStateOf } from "../model/projections.ts";
+import type { Model } from "../model/types.ts";
+import type { RoomRec } from "../model/finish.ts";
 import type { VerificationMismatches } from "./types.ts";
 
 /**
@@ -117,6 +120,55 @@ export function prsSettingsMismatches(
     }
   }
   return out;
+}
+
+/**
+ * Предупреждение о ФАКТИЧЕСКОМ сбросе настроек развёрток при wall-операциях
+ * (№17 follow-up 392): prs-состояние комнат «до → после» сравнивается
+ * (prs_hidden/prs_first/prs_disabled — по edge-семантике развёрток), комнаты
+ * сопоставляются по id, а при переименовании (редактор пересоздаёт комнаты) —
+ * по устойчивому ключу контура (canonPoly). Предупреждение — только о
+ * комнатах, у которых настройки изменились или комната исчезла; без сброса
+ * предупреждения нет. По бандлу restorePrsChangeEdges сбрасывает
+ * prs_first/prs_disabled и переносит их только на совпавшие линии — при
+ * смене числа граней.
+ */
+export function prsSettingsResetWarnings(before: Model, after: Model): string[] {
+  const roomsB = ((before as Record<string, unknown>)["rooms2"] ?? (before as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, RoomRec>;
+  const roomsA = ((after as Record<string, unknown>)["rooms2"] ?? (after as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, RoomRec>;
+  const keyOf = (r: RoomRec): string => canonPoly(r["polygon"] ?? r["points"]) || "";
+  const aliasA = new Map<string, string>();
+  for (const [rid, ra] of Object.entries(roomsA)) {
+    const k = keyOf(ra);
+    if (k !== "") aliasA.set(k, rid);
+  }
+  const sameState = (rb: RoomRec, ra: RoomRec): boolean => {
+    const stB = prsStateOf(rb);
+    const stA = prsStateOf(ra);
+    return (
+      stB.hidden === stA.hidden &&
+      stB.firstEdge === stA.firstEdge &&
+      stB.disabledEdges.length === stA.disabledEdges.length &&
+      stB.disabledEdges.every((v, i) => v === stA.disabledEdges[i])
+    );
+  };
+  const reset: string[] = [];
+  for (const [rid, rb] of Object.entries(roomsB)) {
+    const hidden = rb["prs_hidden"] === 1;
+    const first = typeof rb["prs_first"] === "string" && rb["prs_first"] !== "";
+    const disabled = rb["prs_disabled"];
+    const hasDisabled = disabled !== null && typeof disabled === "object" && !Array.isArray(disabled) && Object.keys(disabled as Record<string, unknown>).length > 0;
+    if (!hidden && !first && !hasDisabled) continue;
+    const heirRid = aliasA.get(keyOf(rb));
+    const ra = roomsA[rid] ?? (heirRid !== undefined ? roomsA[heirRid] : undefined);
+    if (!ra || !sameState(rb, ra)) reset.push(rid);
+  }
+  if (reset.length === 0) return [];
+  return [
+    `настройки развёрток (prs_hidden/prs_first/prs_disabled) сброшены редактором в комнатах ${reset.join(", ")} ` +
+    `(restorePrsChangeEdges бандла переносит их только при смене числа граней и только на совпавшие линии); ` +
+    `проверьте model_get rooms[].prs`,
+  ];
 }
 
 function disabledEdgesOf(room: Record<string, unknown>): number[] {
