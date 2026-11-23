@@ -185,7 +185,13 @@ try {
     return null;
   };
   const facesBefore = roomFullOf(mgFull);
-  check(facesBefore !== null && facesBefore.edges === 4 && facesBefore.edgesPrs === 4, `число граней до: edges=${facesBefore?.edges} edges_prs=${facesBefore?.edgesPrs} (${roomSiteId})`);
+  // проверка числа граней ДО: edges (грани комнаты) = 4; edges_prs —
+  // информационно: комната, созданная редактором из стен при save
+  // (room_new_from_walls), несёт пустой edges_prs до первой раскладки
+  // развёрток — доказано независимым model_get прогона 396-1 (prs при этом
+  // существует: prs_set отработал, disabled_count=1), критерий пробы —
+  // число граней edges до/после wall_move, не edges_prs
+  check(facesBefore !== null && facesBefore.edges === 4, `число граней до: edges=${facesBefore?.edges} edges_prs=${facesBefore?.edgesPrs} (${roomSiteId})`);
   const prsRes = await call("prs_set", { room, hide_walls: [wallIds[2]] }) as { hidden?: boolean; disabled_edges?: unknown[] };
   check(prsRes["hidden"] === false, `prs_set скрыл развёртку НЕТРОНУТОЙ стены w3 (hidden=false, disabled=${JSON.stringify(prsRes["disabled_edges"])})`);
   journal();
