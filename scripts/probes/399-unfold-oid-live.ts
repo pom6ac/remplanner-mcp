@@ -100,27 +100,38 @@ const roomStateOf = (mg: { rooms2?: Record<string, unknown> }): RoomState | null
     if (poly.length < 3) continue;
     if (!poly.every((p) => p.x >= X0 / 10 - 10 && p.x <= (X0 + 3000) / 10 + 10 && p.y >= Y0 / 10 - 10 && p.y <= (Y0 + 2600) / 10 + 10)) continue;
     const edgesRaw = r.edges ?? [];
-    const edges = edgesRaw as Array<{ pid?: string; p1?: { x: number; y: number }; p2?: { x: number; y: number } }>;
+    const edges = edgesRaw as Array<{ pid?: string; p1?: { x: number; y: number }; p2?: { x: number; y: number }; room_side?: string }>;
     const edgesPrs = r.edges_prs ?? [];
     const oids = edgesPrs.map((e) => (typeof e.oid === "string" ? e.oid : ""));
     const disabled = (r.prs_disabled ?? {}) as Record<string, unknown>;
     const disabledKeys = Object.keys(disabled);
+    // семантика настройки — СТЕНА ребра и сторона (как sameState фикса D):
+    // oid перегенерируется при каждом пересчёте комнат, сравнивать ключи нельзя
+    const edgeSem = (ei: number): string => `${String(edges[ei]?.pid ?? `?edge${ei}`)}|${String(edges[ei]?.room_side ?? "?")}`;
     const disabledWalls: string[] = [];
     for (const k of disabledKeys) {
       const ei = edgesPrs.find((e) => e.oid === k)?.edge_index;
-      disabledWalls.push(typeof ei === "number" ? String(edges[ei]?.pid ?? `?edge${ei}`) : "?nooid");
+      disabledWalls.push(typeof ei === "number" ? edgeSem(ei) : "?nooid");
     }
+    const firstEi = edgesPrs.find((e) => e.oid === r.prs_first)?.edge_index;
+    const firstSem = typeof firstEi === "number" ? edgeSem(firstEi) : null;
     return {
       siteId: rid,
       edges: edges.length,
       edgesPrs: edgesPrs.length,
       oids,
       prsHidden: r.prs_hidden,
-      prsFirst: r.prs_first !== "" && r.prs_first !== 0 ? r.prs_first : null,
+      prsFirst: firstSem,
       disabledKeys,
       disabledKeysReal: disabledKeys.every((k) => oids.includes(k)),
       disabledWalls,
-      prsSnapshot: JSON.stringify({ hidden: r.prs_hidden, first: r.prs_first, disabled: disabledKeys.slice().sort() }),
+      // семантический снимок: oid не входит (перегенерируется), только
+      // скрытие/первая/скрытые — по стене ребра и стороне
+      prsSnapshot: JSON.stringify({
+        hidden: r.prs_hidden,
+        first: firstSem,
+        disabled: disabledWalls.slice().sort(),
+      }),
       edgePids: edges.map((e) => ({
         pid: String(e.pid ?? "?"),
         p1: { x: e.p1?.x ?? NaN, y: e.p1?.y ?? NaN },
@@ -357,11 +368,10 @@ try {
   // скрытое ребро после пересчёта обязано лежать на верхней стене с той же
   // стороной, что и до (редактор переносит по геометрии — restoreElementPrs)
   const pidTopAfter = stAfter ? edgePidByY(stAfter, (Y0 + 2600) / 10 - 10) : null;
-  const sameWall = keysStillReal && pidTopAfter !== null && stAfter!.disabledWalls.length === 1 && stAfter!.disabledWalls[0] === pidTopAfter;
+  const sameWall = keysStillReal && pidTopAfter !== null && stAfter!.disabledWalls.length === 1 && stAfter!.disabledWalls[0]!.startsWith(`${pidTopAfter}|`);
   console.log(`disabledWalls после: ${JSON.stringify(stAfter?.disabledWalls)} (до: ${JSON.stringify(stBefore?.disabledWalls)}); pidTop после пересчёта: ${pidTopAfter}`);
   // предупреждение MCP соответствует факту: сверка состояния «до → после»
-  // по стене ребра и стороне (как sameState фикса D) — здесь через полную
-  // запись prs_disabled/prs_first/prs_hidden и стену скрытого ребра
+  // по семантике (стена ребра + сторона; скрытие/первая/скрытые), oid не входит
   const keptFact = sameWall && stBefore!.prsSnapshot === stAfter!.prsSnapshot;
   const prsWarn = moveWarn.filter((w) => /настройки развёрток/.test(w));
   const consistent = keptFact ? prsWarn.length === 0 : prsWarn.length > 0;
