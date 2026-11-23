@@ -1,6 +1,14 @@
 import { McpError } from "../errors.ts";
 import type { PrsFigureEntity } from "../model/projections.ts";
+import { prsStateOf } from "../model/projections.ts";
+import type { Model } from "../model/types.ts";
+import { matchRoomsByContour, roomHeirs } from "../model/room-geo.ts";
+import type { RoomRec } from "../model/finish.ts";
 import type { VerificationMismatches } from "./types.ts";
+
+/** Результат сверки молдингов/ниш развёрток: problems — расхождения (блокируют
+ *  save/verified), warnings — предупреждения (save проходит). */
+export type PrsFigureCompare = { problems: VerificationMismatches; warnings: string[] };
 
 /**
  * Сверка молдингов/ниш развёрток после save (этап 389) — семантическая
@@ -14,8 +22,9 @@ export function prsFigureUserMismatches(
   expected: { rooms?: Record<string, Record<string, unknown>>; coll?: Record<string, PrsFigureEntity> },
   got: { rooms?: Record<string, Record<string, unknown>>; coll?: Record<string, unknown> },
   title: string,
-): VerificationMismatches {
+): PrsFigureCompare {
   const out: string[] = [];
+  const inherited: string[] = [];
   const alias = (rooms: Record<string, Record<string, unknown>> | undefined): Map<string, string> => {
     const out = new Map<string, string>();
     for (const [rid, r] of Object.entries(rooms ?? {})) {
@@ -62,7 +71,22 @@ export function prsFigureUserMismatches(
       out.push(`${title}: на сервере лишняя запись (${k}; на сервере ${n}, ожидалось ${w})`);
     }
   }
-  return out;
+  // №18 follow-up 392 (находка 4 ревью 395): висячая ссылка prs.room (комнаты
+  // нет среди rooms сервера) — ошибка сверки, только если она ПОЯВИЛАСЬ при
+  // правке (в expected этой висячей ссылки не было). Унаследованная висячая
+  // ссылка (была и в expected) — предупреждение: редактор такие записи терпит
+  // (if(this.prs.room){s=ROOMS2[...];if(s){…}}, @255886/@258958 бандла) и сам
+  // не удаляет — блокировать save легитимного проекта из-за неё нельзя
+  for (const [id, g] of Object.entries(got.coll ?? {})) {
+    const prs = ((g as PrsFigureEntity).prs ?? {}) as Record<string, unknown>;
+    const room = typeof prs["room"] === "string" ? prs["room"] : "";
+    if (room === "" || got.rooms === undefined || got.rooms[room] !== undefined) continue;
+    const was = (expected.coll ?? {})[id] as PrsFigureEntity | undefined;
+    const wasRoom = ((was?.prs ?? {}) as Record<string, unknown>)["room"];
+    const wasDangling = was !== undefined && wasRoom === room && (expected.rooms ?? {})[room] === undefined;
+    (wasDangling ? inherited : out).push(`${title}: висячая ссылка prs.room после сохранения — комнаты ${room} нет среди rooms (${title} ${id})`);
+  }
+  return { problems: out, warnings: inherited };
 }
 
 /** Канонический контур комнаты (полигональный алиас, как в probe-sig). */
@@ -115,6 +139,77 @@ export function prsSettingsMismatches(
     if (firstB !== firstA) {
       out.push(`${rid}: «первая» развёртка изменилась после сохранения (ожидалось ребро ${firstB ?? "авто"}; на сервере ребро ${firstA ?? "авто"})`);
     }
+  }
+  return out;
+}
+
+/**
+ * Предупреждение о ФАКТИЧЕСКОМ сбросе настроек развёрток при wall-операциях
+ * (№17 follow-up 392; находка 1 ревью 395): prs-состояние комнат «до → после»
+ * сравнивается (prs_hidden/prs_first/prs_disabled — по edge-семантике развёрток),
+ * комнаты сопоставляются как в остальных сверках — matchRoomsByContour +
+ * roomHeirs (наследник — kind «same», по перекрытию). По бандлу при перестройке
+ * комнат (268-app.js@90669) пару получают только комнаты с arePolygonsEqual,
+ * остальные Room.delete() + new Room2({id:LIB.id()}) → Restorer.restore_rooms
+ * (@93237) → restoreOneToOne/restorePrs (@1014145)/restoreElementPrs (@2863309,
+ * перенос prs_disabled/prs_first только на совпавшие линии: тот же pid/side,
+ * areLinesEqual или Δдлины < 2); новая комната стартует с prs_disabled={}
+ * (конструктор Room2). Поэтому при изменении контура id всегда новый — точный
+ * контур наследника не находит. Предупреждение — только при фактическом
+ * расхождении prs-состояния; у комнаты без наследника — отдельная формулировка
+ * «комната пересоздана» (сверка невозможна). При смене числа граней редактор
+ * восстанавливает иначе — restorePrsChangeEdges (@2858382, ветка
+ * edges.length!==edges_decors.length @2592793).
+ */
+export function prsSettingsResetWarnings(before: Model, after: Model): string[] {
+  const roomsB = ((before as Record<string, unknown>)["rooms2"] ?? (before as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, RoomRec>;
+  const roomsA = ((after as Record<string, unknown>)["rooms2"] ?? (after as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, RoomRec>;
+  const { pairs: exact } = matchRoomsByContour(roomsB, roomsA);
+  const heirOf = roomHeirs(roomsB, roomsA, exact, "normalize");
+  const heirRidOf = (rid: string): string | undefined => {
+    const e = exact.get(rid);
+    if (e !== undefined) return e;
+    const h = heirOf.get(rid);
+    return h && h.kind === "same" ? h.key : undefined;
+  };
+  const sameState = (rb: RoomRec, ra: RoomRec): boolean => {
+    const stB = prsStateOf(rb);
+    const stA = prsStateOf(ra);
+    return (
+      stB.hidden === stA.hidden &&
+      stB.firstEdge === stA.firstEdge &&
+      stB.disabledEdges.length === stA.disabledEdges.length &&
+      stB.disabledEdges.every((v, i) => v === stA.disabledEdges[i])
+    );
+  };
+  const reset: string[] = [];
+  const recreated: string[] = [];
+  for (const [rid, rb] of Object.entries(roomsB)) {
+    const hidden = rb["prs_hidden"] === 1;
+    const first = typeof rb["prs_first"] === "string" && rb["prs_first"] !== "";
+    const disabled = rb["prs_disabled"];
+    const hasDisabled = disabled !== null && typeof disabled === "object" && !Array.isArray(disabled) && Object.keys(disabled as Record<string, unknown>).length > 0;
+    if (!hidden && !first && !hasDisabled) continue;
+    const heirRid = heirRidOf(rid);
+    if (heirRid === undefined) {
+      recreated.push(rid);
+      continue;
+    }
+    const ra = roomsA[heirRid];
+    // в перечне — id комнат ПОСЛЕ (наследников): их агент проверяет model_get
+    if (!ra || !sameState(rb, ra)) reset.push(heirRid);
+  }
+  const out: string[] = [];
+  if (reset.length > 0) {
+    out.push(
+      `настройки развёрток (prs_hidden/prs_first/prs_disabled) сброшены редактором в комнатах ${reset.join(", ")} ` +
+      `(механизм по бандлу: при перестройке комнат редактор пересоздаёт комнату и восстанавливает развёртки ` +
+      `через Restorer.restore_rooms → restorePrs/restoreElementPrs, перенося настройки только на совпавшие линии; ` +
+      `при смене числа граней — restorePrsChangeEdges); проверьте model_get rooms[].prs`,
+    );
+  }
+  for (const rid of recreated) {
+    out.push(`комната ${rid} пересоздана, настройки развёртки проверьте (наследник не найден — сверка prs «до → после» невозможна); проверьте model_get rooms[].prs`);
   }
   return out;
 }

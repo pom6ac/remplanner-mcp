@@ -23,7 +23,8 @@ import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmat
 import { dist } from "./model/geometry.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { finishCompare, finishLossHint, matchRoomsByContour, roomHeirs } from "./model/finish.ts";
-import { prsFiguresAffectedByWalls, prsSettingsResetWarnings } from "./model/projections.ts";
+import { prsFiguresAffectedByWalls } from "./model/projections.ts";
+import { prsSettingsResetWarnings } from "./verify/projections.ts";
 import { zoneDelimiterCompare, roomsWithChangedZoneCDividers, resurrectedZoneCDividers } from "./model/zone.ts";
 import { ceilingRigelCompare } from "./model/ceiling-rigels.ts";
 import { warmWallsCompare } from "./verify/warmwall.ts";

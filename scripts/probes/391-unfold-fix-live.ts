@@ -217,7 +217,9 @@ try {
       const overlap = Math.min(eHi, len) - Math.max(eLo, 0);
       if (overlap > len * 0.5) hits.push(idx);
     });
-    return hits.length === 1 ? hits[0]! : (hits.length > 1 ? hits[0]! : null);
+    // №20 follow-up 392: несколько подходящих рёбер — неоднозначность → FAIL
+    // (раньше молча брали первое), комната обязана найтись однозначно
+    return hits.length === 1 ? hits[0]! : null;
   };
 
   // ==== prs_set: скрытие по одной → все скрыты → prs_hidden=true (minor 6) ====
@@ -305,10 +307,12 @@ try {
   check((mg2["wall_niches"] ?? []).length === 1, `ниша на сервере после reopen (${JSON.stringify(mg2["wall_niches"])})`);
   // после wall_move/wall_split редактор пересоздаёт комнаты и сбрасывает
   // настройки развёрток (restorePrsChangeEdges переносит только совпавшие
-  // линии) — ожидаемо st2.hidden === false (minor 14; до wall-операций
-  // prs_hidden=true подтверждён выше на mg1)
+  // линии) — ожидаемо st2.hidden === false (№17 follow-up 392: по бандлу
+  // restorePrsChangeEdges срабатывает при смене числа граней; wall_split
+  // меняет). Комната ОБЯЗАНА найтись — undefined тоже FAIL (№20).
   const st2 = (mg2["rooms"] ?? []).find((r) => r["id"] === room)?.["prs"] as { hidden?: boolean; disabled_edges?: number[] } | undefined;
-  check(st2 === undefined || st2?.["hidden"] === false, `настройки развёрток сброшены редактором при изменении стен (ожидаемо, minor 14): ${JSON.stringify(st2)}`);
+  check(st2 !== undefined, `комната с настройками найдена в model_get после reopen (${JSON.stringify(st2)})`);
+  check(st2?.["hidden"] === false, `настройки развёрток сброшены редактором при изменении стен (ожидаемо): ${JSON.stringify(st2)}`);
   const render = await call("render_plan", {}) as { bytes?: number; path?: string };
   check(typeof render["bytes"] === "number" && render["bytes"] > 1000, `render_plan: PNG реальный, bytes=${String(render["bytes"])} (minor 8)`);
 } catch (e) {
@@ -341,7 +345,13 @@ try {
       call,
       created,
       ownRoomIds,
-      save: async () => { await roGuard!.assertUnchanged("cleanup-save"); await call("project_save", {}); await delay(5500); },
+      save: async () => {
+        await roGuard!.assertUnchanged("cleanup-save");
+        // №20 follow-up 392: cleanup-save в finally проверяет verified
+        const r = await call("project_save", {}) as { verified?: boolean };
+        if (r["verified"] !== true) throw new Error("cleanup save (finally) не verified");
+        await delay(5500);
+      },
       log: (l) => console.error("restore:", l),
     });
     const after = await loadModel(ctx.session(), ids.objectId, ids.planId);

@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseModelImport } from "../../src/model/import-schema.ts";
-import { prsFigureUserMismatches, prsSettingsMismatches } from "../../src/verify/projections.ts";
+import { prsFigureUserMismatches, prsSettingsMismatches, prsSettingsResetWarnings } from "../../src/verify/projections.ts";
 import {
   prsEdgesOf, prsStateOf, setPrsSettings, prsDisabledEdges, prsFirstEdge,
   addPrsFigure, updatePrsFigure, deletePrsFigure, resolvePrsFigure, prsFigureLabel,
@@ -312,23 +312,56 @@ test("389: сверка молдингов/ниш — потеря, лишняя
   const normModel = structuredClone(m) as Model;
   // редактор пересчитал pc (рамка сдвинулась) — не расхождение
   ((normModel.wall_moldings as AnyRec)[rec.id] as AnyRec)["pc"] = { x: 999, y: 999 };
-  assert.deepEqual(prsFigureUserMismatches({ rooms: rooms as never, coll: m.wall_moldings }, { rooms: (normModel.rooms2 as AnyRec) as never, coll: normModel.wall_moldings }, "молдинг"), []);
+  assert.deepEqual(prsFigureUserMismatches({ rooms: rooms as never, coll: m.wall_moldings }, { rooms: (normModel.rooms2 as AnyRec) as never, coll: normModel.wall_moldings }, "молдинг").problems, []);
   // размер изменился — расхождение
   const broken = structuredClone(m) as Model;
   ((broken.wall_moldings as AnyRec)[rec.id] as AnyRec)["width"] = 999;
-  const sizeOut = prsFigureUserMismatches({ rooms: rooms as never, coll: m.wall_moldings }, { rooms: (broken.rooms2 as AnyRec) as never, coll: broken.wall_moldings }, "молдинг");
+  const sizeOut = prsFigureUserMismatches({ rooms: rooms as never, coll: m.wall_moldings }, { rooms: (broken.rooms2 as AnyRec) as never, coll: broken.wall_moldings }, "молдинг").problems;
   assert.equal(sizeOut.length, 2, "смена размера — потеря ожидаемой и лишняя на сервере");
   assert.match(sizeOut[0]!, /потеряна/);
   // запись потеряна
   const lost = structuredClone(m) as Model;
   lost.wall_moldings = {};
-  const lostOut = prsFigureUserMismatches({ rooms: rooms as never, coll: m.wall_moldings }, { rooms: (lost.rooms2 as AnyRec) as never, coll: lost.wall_moldings }, "молдинг");
+  const lostOut = prsFigureUserMismatches({ rooms: rooms as never, coll: m.wall_moldings }, { rooms: (lost.rooms2 as AnyRec) as never, coll: lost.wall_moldings }, "молдинг").problems;
   assert.equal(lostOut.length, 1);
   assert.match(lostOut[0]!, /потеряна/);
   // лишняя запись
   const extra = structuredClone(m) as Model;
   ((extra.wall_moldings as AnyRec)["x9"] as AnyRec) = { ...(extra.wall_moldings as AnyRec)[rec.id] as AnyRec, id: "x9" };
-  assert.match(prsFigureUserMismatches({ rooms: rooms as never, coll: m.wall_moldings }, { rooms: (extra.rooms2 as AnyRec) as never, coll: extra.wall_moldings }, "молдинг")[0]!, /лишняя/);
+  assert.match(prsFigureUserMismatches({ rooms: rooms as never, coll: m.wall_moldings }, { rooms: (extra.rooms2 as AnyRec) as never, coll: extra.wall_moldings }, "молдинг").problems[0]!, /лишняя/);
+});
+
+test("392 №18: сверка save ловит висячий prs.room (комнаты нет в rooms сервера)", () => {
+  const m = baseModel();
+  addPrsFigure(m, "wall_molding", { room: "R1", wall: "w1", alongMm: 500, bottomMm: 500, widthMm: 400, heightMm: 80 });
+  const rooms = (m.rooms2 as AnyRec) as Record<string, AnyRec>;
+  // редактор оставил запись с prs.room, которого нет среди rooms (Room.delete не сработал)
+  const roomsGone = structuredClone(rooms) as Record<string, AnyRec>;
+  delete roomsGone["roomA"];
+  const out = prsFigureUserMismatches({ rooms: rooms as never, coll: m.wall_moldings }, { rooms: roomsGone as never, coll: m.wall_moldings }, "молдинг");
+  assert.ok(out.problems.some((w) => /висячая ссылка prs\.room/.test(w)), `висячая ссылка — ошибка сверки: ${JSON.stringify(out)}`);
+});
+
+// находка 4 ревью 395 (№18): унаследованная висячая ссылка prs.room — уже была
+// в проекте до правки (редактор её терпит: @255886/@258958 бандла) — сверка до
+// save не блокирует (предупреждение), иначе MCP не сохранял бы такой проект
+test("ревью 395 №4: унаследованный висячий prs.room (был и в expected) — предупреждение, не ошибка", () => {
+  const rooms = { roomA: { polygon: [{ x: 0, y: 0 }, { x: 400, y: 0 }, { x: 400, y: 300 }, { x: 0, y: 300 }] } };
+  const coll = { n1: { id: "n1", type: "wall_niche", prs: { room: "roomGONE", edge_index: 0, pc_xd: 10, pc_yd: 10 }, width: 40, height: 40, depth: 20 } };
+  const out = prsFigureUserMismatches({ rooms: rooms as never, coll: coll as never }, { rooms: rooms as never, coll: coll as never }, "ниша развёртки");
+  assert.deepEqual(out.problems, [], "унаследованная висячая ссылка не блокирует save");
+  assert.equal(out.warnings.length, 1);
+  assert.match(out.warnings[0]!, /висячая ссылка prs\.room/);
+  // ссылка стала висячей ТОЛЬКО после правки: в expected комната roomGONE
+  // ещё была (запись не висячая), после — комната исчезла — ошибка сверки
+  const roomsBefore = { ...rooms, roomGONE: { polygon: [] } };
+  const outNew = prsFigureUserMismatches(
+    { rooms: roomsBefore as never, coll: structuredClone(coll) as never },
+    { rooms: {} as never, coll: structuredClone(coll) as never },
+    "ниша развёртки",
+  );
+  assert.equal(outNew.problems.length, 1);
+  assert.match(outNew.problems[0]!, /висячая ссылка prs\.room/);
 });
 
 test("389: сверка prs-настроек — по edge_index, skip при изменённой нарезке", () => {
@@ -352,6 +385,134 @@ test("389: сверка prs-настроек — по edge_index, skip при и
   assert.deepEqual(prsSettingsMismatches(before, recut), []);
   // стена делит комнату — без ложной ошибки (число развёрток меняется)
   assert.deepEqual(prsSettingsMismatches(before, recut), []);
+});
+
+// ---------- 392 follow-up №19: унаследованная глубина ниши при update ----------
+
+test("392 №19: update ниши после утоньшения стены — унаследованная глубина обрезается до предела, а не отвергается", () => {
+  const m = baseModel();
+  addPrsFigure(m, "wall_niche", { room: "R1", wall: "w1", alongMm: 1000, bottomMm: 1200, widthMm: 400, heightMm: 400 });
+  const w1 = (m.walls as AnyRec)["w1"] as AnyRec;
+  assert.equal(resolvePrsFigure(m, "wall_niche", "WN1").depth, 20, "умолчание на стене 20 см");
+  // толщина стены уменьшилась до 10 см: правка позиции (along_mm) проходит,
+  // глубина обрезается редактором (restorePrsChangeEdges: N<_.depth&&(_.depth=N))
+  w1["depth"] = 10;
+  const upd = updatePrsFigure(m, "wall_niche", "WN1", { alongMm: 1500 });
+  assert.equal(upd.depth, 10, "унаследованная глубина обрезана до текущего предела min(80, толщина 10 см)");
+  assert.equal((upd.prs as AnyRec)["pc_xd"], 150, "позиция обновлена");
+  // явно переданная глубина вне предела — INVALID_ARGUMENT
+  assert.throws(() => updatePrsFigure(m, "wall_niche", "WN1", { depthMm: 1000 }), /50 до 100/);
+  // унаследованная глубина уже в пределе — не меняется
+  const upd2 = updatePrsFigure(m, "wall_niche", "WN1", { alongMm: 2000 });
+  assert.equal(upd2.depth, 10);
+});
+
+test("392 №19: умолчание на стене тоньше 5 см — отказ, значение < 50 мм не создаётся", () => {
+  const m = baseModel();
+  ((m.walls as AnyRec)["w1"] as AnyRec)["depth"] = 4;
+  assert.throws(
+    () => addPrsFigure(m, "wall_niche", { room: "R1", wall: "w1", alongMm: 1000, bottomMm: 1200, widthMm: 400, heightMm: 400 }),
+    /тоньше 5 см/,
+    "умолчание min(200, толщина 40 мм) < 50 мм — отказ (correctValue(t,5,min(80,getWallDepth())): верхняя граница ниже нижней)",
+  );
+  // унаследованная глубина < 50 мм (запись редактора на тонкой стене) при update
+  // позиции не отвергается — обрезается только до верхнего предела, не поднимается
+  const m2 = baseModel();
+  addPrsFigure(m2, "wall_niche", { room: "R1", wall: "w1", alongMm: 1000, bottomMm: 1200, widthMm: 400, heightMm: 400 });
+  (resolvePrsFigure(m2, "wall_niche", "WN1") as AnyRec)["depth"] = 3; // пришло из редактора
+  ((m2.walls as AnyRec)["w1"] as AnyRec)["depth"] = 4;
+  const upd = updatePrsFigure(m2, "wall_niche", "WN1", { alongMm: 1500 });
+  assert.equal(upd.depth, 3, "унаследованная глубина < 50 мм не поднимается (бандл только обрезает: N<_.depth&&(_.depth=N))");
+});
+
+// ---------- 392 follow-up №17: предупреждение только о фактическом сбросе prs ----------
+
+test("392 №17: wall_move без смены нарезки (настройки не тронуты) — предупреждения о prs нет", () => {
+  const m = baseModel();
+  setPrsSettings(m, "R1", { hideWalls: ["w2"], firstWall: "w3" });
+  // редактор пересчитал комнаты, но настройки перенёс (совпавшие линии) —
+  // состояние prs «до → после» совпадает
+  const after = structuredClone(m) as Model;
+  assert.deepEqual(prsSettingsResetWarnings(m, after), [], "без фактического сброса предупреждения нет");
+});
+
+test("392 №17: сброс настроек — предупреждение с перечнем комнат; переименованная комната сопоставляется по контуру", () => {
+  const m = baseModel();
+  setPrsSettings(m, "R1", { hideWalls: ["w2"], firstWall: "w3" });
+  // редактор сбросил настройки (restorePrsChangeEdges при смене числа граней)
+  const reset = structuredClone(m) as Model;
+  const room = (reset.rooms2 as AnyRec)["roomA"] as AnyRec;
+  room["prs_first"] = 0;
+  room["prs_disabled"] = {};
+  const out = prsSettingsResetWarnings(m, reset);
+  assert.equal(out.length, 1);
+  assert.match(out[0]!, /roomA/, "в предупреждении перечислены комнаты со сбросом");
+  // комната переименована (id сменился, контур тот же), настройки пережили — без предупреждения
+  const renamed = structuredClone(m) as Model;
+  const rooms = (renamed.rooms2 as AnyRec) as Record<string, AnyRec>;
+  rooms["roomB"] = rooms["roomA"]!;
+  delete rooms["roomA"];
+  assert.deepEqual(prsSettingsResetWarnings(m, renamed), [], "комната найдена по устойчивому ключу контура — сброса нет");
+  // переименованная комната со сбросом — предупреждение
+  const renamedReset = structuredClone(renamed) as Model;
+  const roomB = (renamedReset.rooms2 as AnyRec)["roomB"] as AnyRec;
+  roomB["prs_first"] = 0;
+  roomB["prs_disabled"] = {};
+  assert.equal(prsSettingsResetWarnings(m, renamedReset).length, 1);
+  // комната с настройками исчезла (wall_delete) — предупреждение
+  const gone = structuredClone(m) as Model;
+  delete (gone.rooms2 as AnyRec)["roomA"];
+  assert.equal(prsSettingsResetWarnings(m, gone).length, 1);
+  // без не-дефолтных настроек предупреждений нет вовсе
+  const plain = baseModel();
+  assert.deepEqual(prsSettingsResetWarnings(plain, structuredClone(plain) as Model), []);
+});
+
+// находка 1 ревью 395 (№17 переоткрыт): wall_move меняет контур комнаты, и
+// редактор пересоздаёт её с НОВЫМ id (268-app.js@90669: пары только по
+// arePolygonsEqual, остальные delete() + new Room2({id:LIB.id()})) — наследник
+// ищется как в остальных сверках (roomHeirs, перекрытие), а не по точному
+// контуру; перенос настроек на совпавшие линии (restoreElementPrs) — 0 предупреждений
+test("ревью 395 №1: wall_move — id и контур сменились, настройки пережили — предупреждений нет", () => {
+  const m = baseModel();
+  setPrsSettings(m, "R1", { hideWalls: ["w3"] });
+  // редактор пересоздал комнату с новым id и сдвинутым контуром (w1 сдвинута
+  // на 20 см вниз), настройки на w3 перенёс (та же линия, Δдлины < 2 см)
+  const after = structuredClone(m) as Model;
+  const r = (after.rooms2 as AnyRec)["roomA"] as AnyRec;
+  delete (after.rooms2 as AnyRec)["roomA"];
+  (after.rooms2 as AnyRec)["roomB"] = r;
+  (r["polygon"] as AnyRec[])[0]!["y"] = 20;
+  ((r["polygon"] as AnyRec[])[1]! as AnyRec)["y"] = 20;
+  for (const e of r["edges"] as AnyRec[]) {
+    if (e["pid"] === "w1") { (e["p1"] as AnyRec)["y"] = 20; (e["p2"] as AnyRec)["y"] = 20; }
+    if (e["pid"] === "w2") { (e["p1"] as AnyRec)["y"] = 20; }
+    if (e["pid"] === "w4") { (e["p2"] as AnyRec)["y"] = 20; }
+    if (e["pid"] === "w1" || e["pid"] === "w4") e["length"] = 280;
+  }
+  for (const e of r["edges_prs"] as AnyRec[]) {
+    if (e["edge_index"] === 0) { (e["p1"] as AnyRec)["y"] = 20; (e["p2"] as AnyRec)["y"] = 20; }
+    if (e["edge_index"] === 1) (e["p1"] as AnyRec)["y"] = 20;
+    if (e["edge_index"] === 3) (e["p2"] as AnyRec)["y"] = 20;
+  }
+  (((after.walls as AnyRec)["w1"] as AnyRec)["p1"] as AnyRec)["y"] = 20;
+  (((after.walls as AnyRec)["w1"] as AnyRec)["p2"] as AnyRec)["y"] = 20;
+  assert.deepEqual(prsStateOf((m.rooms2 as AnyRec)["roomA"] as never), prsStateOf(r as never), "prs-состояние до/после совпадает (disabledEdges [2])");
+  assert.deepEqual(prsSettingsResetWarnings(m, after), [], "настройки перенесены — предупреждения нет");
+  // реальный сброс в пересозданной комнате — предупреждение с новым id
+  const reset = structuredClone(after) as Model;
+  const rb = (reset.rooms2 as AnyRec)["roomB"] as AnyRec;
+  rb["prs_disabled"] = {};
+  const out = prsSettingsResetWarnings(m, reset);
+  assert.equal(out.length, 1);
+  assert.match(out[0]!, /roomB/);
+  assert.match(out[0]!, /restore_rooms/);
+  // нет наследника вовсе (комната исчезла) — отдельная формулировка
+  const gone = structuredClone(m) as Model;
+  delete (gone.rooms2 as AnyRec)["roomA"];
+  const outGone = prsSettingsResetWarnings(m, gone);
+  assert.equal(outGone.length, 1);
+  assert.match(outGone[0]!, /пересоздана/);
 });
 
 // ---------- PRO ----------
@@ -545,7 +706,7 @@ test("391 major 1: wall_delete с висячим prs.room — каскад ка�
   assert.ok(warnings.some((w) => /ниша развёртки.*удал|висяч/.test(w) || /висячая ссылка/.test(w)), `предупреждение о каскаде: ${JSON.stringify(warnings)}`);
   assert.equal(Object.keys(ws.model.wall_niches ?? {}).length, 0, "висячая запись удалена каскадом");
   const res = await ws.save();
-  assert.equal(res.verified, true, `save verified (без каскада — NORMALIZATION_DROPPED «лишняя запись»), warnings: ${JSON.stringify(res.warnings)}`);
+  assert.equal(res.verified, true, `save verified (сверка числа фигур ловит потерю каскадом удалённой записи; №18: сверки save сами по себе висячий prs.room не ловят — его удаляет каскад), warnings: ${JSON.stringify(res.warnings)}`);
 });
 
 test("391 major 1: wall_move — фигура переживает (id комнаты сменился), потери нет; перенос ребра — предупреждение (сигнал 43)", async () => {
@@ -648,6 +809,55 @@ test("391 major 2: точка ставится только в часть, со�
   assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 1200 }), /layer/);
   // неизвестный layer — отказ
   assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 500, layer: 7 }), /layer/);
+});
+
+// ---------- 392 follow-up №16: части стороны, нарезанные по длине ----------
+
+/** Отделка ребра w1 (400 см), стороны нарезаны по длине: p1 0..200, p2 200..400,
+ *  слой 1 у обеих (split_points — линий частей две, слой один). */
+function withSplitParts(m: Model): Model {
+  const room = (m.rooms2 as AnyRec)["roomA"] as AnyRec;
+  room["decors"] = [
+    { exist: true, parts: {
+      p1: { id: "p1", type: "wall_tile", layer: 1, height_from_floor: 0, height: 250, line: { p1: { x: 0, y: 0 }, p2: { x: 200, y: 0 } } },
+      p2: { id: "p2", type: "wall_tile", layer: 1, height_from_floor: 0, height: 250, line: { p1: { x: 200, y: 0 }, p2: { x: 400, y: 0 } } },
+    } },
+    { exist: false }, { exist: false }, { exist: false },
+  ];
+  return m;
+}
+
+test("392 №16: части, нарезанные по длине — выбор по along без layer, pc_xd от начала части", () => {
+  const m = withSplitParts(baseModel());
+  // along 3000 мм → точка в части p2 (200..400 см): pc_xd = 300 − 200 = 100
+  const res = setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 3000, heightMm: 500 });
+  assert.equal(res.part, "p2", "нарезка по длине выбирается по along без layer");
+  const parts = ((((m.rooms2 as AnyRec)["roomA"] as AnyRec)["decors"] as AnyRec[])[0]!["parts"]) as Record<string, AnyRec>;
+  assert.equal((parts["p2"]!["anchor"] as AnyRec)["pc_xd"], 100, "pc_xd от начала части (getPolygon бандла: distance(e.p1, part.line))");
+  assert.equal("anchor" in parts["p1"]!, false, "другая часть не тронута");
+  // along 1000 мм → часть p1: pc_xd = 100 − 0 = 100
+  const res2 = setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 500 });
+  assert.equal(res2.part, "p1");
+  const parts2 = ((((m.rooms2 as AnyRec)["roomA"] as AnyRec)["decors"] as AnyRec[])[0]!["parts"]) as Record<string, AnyRec>;
+  assert.equal((parts2["p1"]!["anchor"] as AnyRec)["pc_xd"], 100);
+});
+
+test("392 №16: часть короче ребра — pc_xd от начала части, а не развёртки; точка вне части по along — отказ", () => {
+  const m = baseModel();
+  const room = (m.rooms2 as AnyRec)["roomA"] as AnyRec;
+  room["decors"] = [
+    { exist: true, parts: {
+      p1: { id: "p1", type: "wall_tile", layer: 1, height_from_floor: 0, height: 250, line: { p1: { x: 100, y: 0 }, p2: { x: 300, y: 0 } } },
+    } },
+    { exist: false }, { exist: false }, { exist: false },
+  ];
+  // along 1500 мм → pc_xd = 150 − 100 = 50 (не 150 от начала развёртки)
+  setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1500, heightMm: 500 });
+  const parts = ((((m.rooms2 as AnyRec)["roomA"] as AnyRec)["decors"] as AnyRec[])[0]!["parts"]) as Record<string, AnyRec>;
+  assert.equal((parts["p1"]!["anchor"] as AnyRec)["pc_xd"], 50, "pc_xd от начала части (x полигона части из part.line в бандле)");
+  // точка левее/правее части — отказ (клик бандла всегда в части)
+  assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 500, heightMm: 500 }), /вне части/);
+  assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 3500, heightMm: 500 }), /вне части/);
 });
 
 test("389: сверка точки укладки — изменение и потеря ловятся, без изменений — пусто", () => {
