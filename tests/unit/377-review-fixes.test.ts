@@ -13,6 +13,7 @@ import { addRoomRect } from "../../src/model/walls.ts";
 import { addSheet, updateSheet } from "../../src/model/sheets.ts";
 import { addFreeline, addThickLine, addFigure, validateDrawPlan, THICK_LINE_WIDTH_MM_MIN, THICK_LINE_WIDTH_MM_MAX } from "../../src/model/draw.ts";
 import { addPicture, updatePicture, deletePicture, canonicalPictureText, pictureTextWarnings } from "../../src/model/pictures.ts";
+import { addComment } from "../../src/model/dims.ts";
 import { parseModelImport } from "../../src/model/import-schema.ts";
 import { validateModel } from "../../src/model/validate.ts";
 import { addItem, updateItem } from "../../src/model/items.ts";
@@ -132,6 +133,24 @@ test("377 major2: полный путь через Workspace — подпись 
   assert.equal(out.verified, true, "server-форма проходит restore+copy без NORMALIZATION_DROPPED");
   // краснеет без фикса: сырая подпись хранится как "it's", а не server-форма "it`s" —
   // закреплено в major2-тесте выше (assert.equal(p.text, "it`s ``A``"))
+});
+
+// ---------- 394 follow-up 392: хвост 377 — подписи/комментарии/имена комнат с < > & ----------
+// Пересверка по бандлу 268-app.js (этап 394): пути строк — ТОЛЬКО svg-текст
+// (textContent): комментарий — Comment.draw → this.legend.text(this.text) и
+// $Printer-легенда legend.text(); подпись изображения — IMAGE_LEGEND.text(this.text);
+// имя комнаты/зоны — new ZoneName(pc, name) → svg.text(name) (ZoneArea/ZoneNumber —
+// тоже svg.text); ввод — $("#cm-comment--input").val(...) — value, не HTML.
+// HTML/селектор-пути нет → findUnsafeEditorStrings не расширяется; строки с
+// < > & на сайт не отправляются — проверка только офлайн.
+
+test("394 хвост 377: комментарий с кириллицей и < > & проходит сверку save без NORMALIZATION_DROPPED", async () => {
+  const m = baseModel();
+  addComment(m, { point: PT, pc: PT, text: "Комментарий <b>жирный</b> & «ёлочки» > угол <" });
+  const ws = saveMock(m, () => { /* редактор текст комментария не меняет */ });
+  await ws.open("0", "1");
+  const out = await ws.save();
+  assert.equal(out.verified, true, `комментарий с < > & — svg-текст, не HTML-сток; warnings: ${JSON.stringify(out.warnings)}`);
 });
 
 // ---------- major 376 №3: белый список строк (имена листов; схема импорта) ----------
