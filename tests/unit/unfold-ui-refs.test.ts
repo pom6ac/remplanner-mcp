@@ -331,6 +331,17 @@ test("389: сверка молдингов/ниш — потеря, лишняя
   assert.match(prsFigureUserMismatches({ rooms: rooms as never, coll: m.wall_moldings }, { rooms: (extra.rooms2 as AnyRec) as never, coll: extra.wall_moldings }, "молдинг")[0]!, /лишняя/);
 });
 
+test("392 №18: сверка save ловит висячий prs.room (комнаты нет в rooms сервера)", () => {
+  const m = baseModel();
+  addPrsFigure(m, "wall_molding", { room: "R1", wall: "w1", alongMm: 500, bottomMm: 500, widthMm: 400, heightMm: 80 });
+  const rooms = (m.rooms2 as AnyRec) as Record<string, AnyRec>;
+  // редактор оставил запись с prs.room, которого нет среди rooms (Room.delete не сработал)
+  const roomsGone = structuredClone(rooms) as Record<string, AnyRec>;
+  delete roomsGone["roomA"];
+  const out = prsFigureUserMismatches({ rooms: rooms as never, coll: m.wall_moldings }, { rooms: roomsGone as never, coll: m.wall_moldings }, "молдинг");
+  assert.ok(out.some((w) => /висячая ссылка prs\.room/.test(w)), `висячая ссылка — ошибка сверки: ${JSON.stringify(out)}`);
+});
+
 test("389: сверка prs-настроек — по edge_index, skip при изменённой нарезке", () => {
   const m = baseModel();
   setPrsSettings(m, "R1", { hideWalls: ["w2"], firstWall: "w3" });
@@ -588,7 +599,7 @@ test("391 major 1: wall_delete с висячим prs.room — каскад ка�
   assert.ok(warnings.some((w) => /ниша развёртки.*удал|висяч/.test(w) || /висячая ссылка/.test(w)), `предупреждение о каскаде: ${JSON.stringify(warnings)}`);
   assert.equal(Object.keys(ws.model.wall_niches ?? {}).length, 0, "висячая запись удалена каскадом");
   const res = await ws.save();
-  assert.equal(res.verified, true, `save verified (без каскада — NORMALIZATION_DROPPED «лишняя запись»), warnings: ${JSON.stringify(res.warnings)}`);
+  assert.equal(res.verified, true, `save verified (сверка числа фигур ловит потерю каскадом удалённой записи; №18: сверки save сами по себе висячий prs.room не ловят — его удаляет каскад), warnings: ${JSON.stringify(res.warnings)}`);
 });
 
 test("391 major 1: wall_move — фигура переживает (id комнаты сменился), потери нет; перенос ребра — предупреждение (сигнал 43)", async () => {

@@ -65,6 +65,16 @@ export function prsFigureUserMismatches(
       out.push(`${title}: на сервере лишняя запись (${k}; на сервере ${n}, ожидалось ${w})`);
     }
   }
+  // №18 follow-up 392: висячая ссылка prs.room (комнаты нет среди rooms сервера)
+  // — ошибка сверки; редактор такие записи удаляет (Room.delete), а сверка по
+  // ключу с алиасом-фолбэком на «сырой» room иначе молча пропустила бы её
+  for (const [id, g] of Object.entries(got.coll ?? {})) {
+    const prs = ((g as PrsFigureEntity).prs ?? {}) as Record<string, unknown>;
+    const room = typeof prs["room"] === "string" ? prs["room"] : "";
+    if (room !== "" && got.rooms !== undefined && got.rooms[room] === undefined) {
+      out.push(`${title}: висячая ссылка prs.room после сохранения — комнаты ${room} нет среди rooms (${title} ${id})`);
+    }
+  }
   return out;
 }
 
