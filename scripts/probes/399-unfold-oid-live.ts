@@ -340,8 +340,8 @@ try {
     `КЛЮЧ prs_disabled — реальный oid из edges_prs: keys=${JSON.stringify(stBefore?.disabledKeys)} oids=${JSON.stringify(stBefore?.oids)} (фикс A)`,
   );
   check(
-    stBefore !== null && stBefore.disabledWalls.length === 1 && stBefore.disabledWalls[0] === pidTop,
-    `скрытая развёртка на НЕТРОНУТОЙ верхней стене: disabledWalls=${JSON.stringify(stBefore?.disabledWalls)} ожидалось [${pidTop}]`,
+    stBefore !== null && stBefore.disabledWalls.length === 1 && stBefore.disabledWalls[0]!.startsWith(`${pidTop}|`),
+    `скрытая развёртка на НЕТРОНУТОЙ верхней стене: disabledWalls=${JSON.stringify(stBefore?.disabledWalls)} ожидалось ${pidTop}|<сторона>`,
   );
 
   // ==== 3) сдвиг ДРУГОЙ стены (нижняя), save, reopen + независимый GET ====
