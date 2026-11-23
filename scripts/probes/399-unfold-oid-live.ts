@@ -192,6 +192,26 @@ try {
       const roomsOf = (c: Record<string, unknown>): Record<string, unknown> => ((c["rooms2"] ?? c["rooms1"] ?? {}) as Record<string, unknown>);
       console.log("rooms backup:", Object.keys(roomsOf(c0)).join(","));
       console.log("rooms текущая:", Object.keys(roomsOf(c1)).join(","));
+      // детальный дифф коллекций-словарей (items, walls, …)
+      for (const k of keys) {
+        const a = c0[k], b = c1[k];
+        if (a === b) continue;
+        if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+          const ao = a as Record<string, unknown>, bo = b as Record<string, unknown>;
+          for (const id of [...new Set([...Object.keys(ao), ...Object.keys(bo)])].sort()) {
+            const av = JSON.stringify(ao[id]), bv = JSON.stringify(bo[id]);
+            if (av !== bv) {
+              if (av === undefined) console.log(`diff ${k}.${id}: только в текущей: ${String(bv).slice(0, 400)}`);
+              else if (bv === undefined) console.log(`diff ${k}.${id}: только в backup: ${String(av).slice(0, 400)}`);
+              else {
+                console.log(`diff ${k}.${id}:`);
+                console.log(`  backup: ${String(av).slice(0, 500)}`);
+                console.log(`  текущая: ${String(bv).slice(0, 500)}`);
+              }
+            }
+          }
+        }
+      }
     }
     // стены в зоне пробы (только чтение)
     const walls = (cur.model["walls"] ?? {}) as Record<string, { p1?: { x: number; y: number }; p2?: { x: number; y: number } }>;
