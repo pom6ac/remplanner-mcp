@@ -79,7 +79,8 @@ function r2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
-/** Развёртки комнаты: rooms2[rid].edges_prs (fallback — рёбра комнаты). */
+/** Развёртки комнаты: rooms2[rid].edges_prs (fallback — рёбра комнаты с
+ *  синтетическими ключами derived_<i>). */
 export function prsEdgesOf(room: RoomRec): PrsEdge[] {
   const edges = Array.isArray(room.edges) ? room.edges : [];
   const raw = Array.isArray(room["edges_prs"]) ? (room["edges_prs"] as Array<Record<string, unknown>>) : [];
@@ -113,6 +114,26 @@ export function prsEdgesOf(room: RoomRec): PrsEdge[] {
     p2: { x: e.p2?.x ?? 0, y: e.p2?.y ?? 0 },
     wallId: e.pid,
   }));
+}
+
+/**
+ * Есть ли у комнаты РЕАЛЬНАЯ раскладка развёрток (находка A ревью 397): у
+ * комнаты без edges_prs (так бывает у каждой комнаты, созданной из стен, до
+ * первого открытия листа «Развёртки») редактор назначает oid при построении
+ * линий случайно — Projections.getLines (268-app.js): `t[e].oid =
+ * i.id_of_edges[e] ? i.id_of_edges[e] : LIB.id()`, а LIB.id —
+ * `"_"+Math.random().toString(36).substr(2,5)` (@20601). Точный порт
+ * невозможен: MCP не может знать oid, которые редактор ещё не назначил
+ * (id_of_edges в модели пуст вместе с edges_prs — фикстуры редактора:
+ * editor-corridor-3rooms, ui-ref-sofa). Ключи derived_<i> в prs_disabled/
+ * prs_first редактор не знает и не переносит (restoreElementPrs @2863309
+ * переносит только по реальному oid старой развёртки), поэтому записи prs на
+ * такой комнате консервативно отвергаются.
+ */
+export function hasRealPrsLayout(room: RoomRec): boolean {
+  const raw = Array.isArray(room["edges_prs"]) ? (room["edges_prs"] as Array<Record<string, unknown>>) : [];
+  if (raw.length === 0) return false;
+  return raw.every((e) => typeof e["oid"] === "string" && e["oid"] !== "");
 }
 
 /** Скрытые развёртки комнаты: набор edge_index (prs_disabled через oid). */
@@ -179,12 +200,28 @@ export type PrsSettingsResult = {
   disabled_edges: number[];
 };
 
-/** Настройки развёрток комнаты (prs_hidden/prs_disabled/prs_first) — как в редакторе. */
+/**
+ * Настройки развёрток комнаты (prs_hidden/prs_disabled/prs_first) — как в редакторе.
+ * Требует реальной раскладки развёрток (edges_prs с oid редактора — hasRealPrsLayout):
+ * на комнате без раскладки — INVALID_ARGUMENT (находка A ревью 397).
+ */
 export function setPrsSettings(model: Model, roomRef: string, params: PrsSettings): PrsSettingsResult {
   const { id, room } = resolveRoom(model, roomRef);
   const prsEdges = prsEdgesOf(room);
   if (prsEdges.length === 0) {
     throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет рёбер — развёрток нет`);
+  }
+  // находка A ревью 397: без реальной раскладки (edges_prs пуст) oid развёрток
+  // редактор ещё не назначил (Projections.getLines: oid=LIB.id() — случайно),
+  // записи prs_disabled/prs_first ушли бы под ключами derived_<i>, которых
+  // редактор не знает и не переносит — консервативный отказ
+  if (!hasRealPrsLayout(room)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `у комнаты ${roomRef} нет раскладки развёрток (edges_prs пуст — редактор создаёт раскладку при первом ` +
+        `открытии листа «Развёртки» и назначает развёрткам случайные oid, которых ещё нет в модели): ` +
+        `откройте развёртки комнаты в редакторе (лист «Развёртки») и сохраните проект, затем повторите`,
+    );
   }
   const disabled = prsDisabledEdges(room);
   // isShortLine бандла: длина ≤ 10 см (defs.projection_line.length_min) и на

@@ -368,23 +368,25 @@ test("389: сверка prs-настроек — по edge_index, skip при и
   const m = baseModel();
   setPrsSettings(m, "R1", { hideWalls: ["w2"], firstWall: "w3" });
   const before = (m.rooms2 as AnyRec) as Record<string, AnyRec>;
-  // на сервере oid перегенерирован, но edge-семантика та же
+  // на сервере oid перегенерирован, но edge-семантика та же (ключи заменены
+  // новыми oid — редактор переносит настройки под новыми oid и старые ключи
+  // не оставляет: restorePrs/restoreElementPrs копируют prs_disabled[n.oid])
   const after = structuredClone(before) as Record<string, AnyRec>;
   const room = after["roomA"] as AnyRec;
   (room["edges_prs"] as AnyRec[]).forEach((e, i) => { (e as AnyRec)["oid"] = `new${i}`; });
-  (room["prs_disabled"] as AnyRec)["new1"] = "";
+  room["prs_disabled"] = { new1: "" };
   room["prs_first"] = "new2";
-  assert.deepEqual(prsSettingsMismatches(before, after), []);
+  assert.deepEqual(prsSettingsMismatches(before, after).problems, []);
   // «первая» уехала на другое ребро — расхождение
   const broken = structuredClone(after) as Record<string, AnyRec>;
   ((broken["roomA"] as AnyRec)["prs_first"] as string) = "new0";
-  assert.equal(prsSettingsMismatches(before, broken).length, 1);
+  assert.equal(prsSettingsMismatches(before, broken).problems.length, 1);
   // нарезка изменилась (wall-операция) — skip (редактор переносит по геометрии)
   const recut = structuredClone(after) as Record<string, AnyRec>;
   ((recut["roomA"] as AnyRec)["edges_prs"] as unknown[]).push({ edge_index: 4, p1: { x: 0, y: 0 }, p2: { x: 10, y: 0 }, oid: "new4" });
-  assert.deepEqual(prsSettingsMismatches(before, recut), []);
+  assert.deepEqual(prsSettingsMismatches(before, recut).problems, []);
   // стена делит комнату — без ложной ошибки (число развёрток меняется)
-  assert.deepEqual(prsSettingsMismatches(before, recut), []);
+  assert.deepEqual(prsSettingsMismatches(before, recut).problems, []);
 });
 
 // ---------- 392 follow-up №19: унаследованная глубина ниши при update ----------
