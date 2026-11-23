@@ -130,9 +130,10 @@ const roomStateOf = (mg: { rooms2?: Record<string, unknown> }): RoomState | null
   }
   return null;
 };
-/** pid ребра стены по геометрии (верх/низ пробной комнаты), см. */
+/** pid ребра стены по геометрии (верх/низ пробной комнаты), см; допуск 3 см —
+ *  внутренняя грань смещается на толщину и на сдвиг стены (wall_move 20 мм). */
 const edgePidByY = (st: RoomState, yCm: number): string | null => {
-  const e = st.edgePids.find((e) => Math.abs(e.p1.y - yCm) < 1 && Math.abs(e.p2.y - yCm) < 1);
+  const e = st.edgePids.find((e) => Math.abs(e.p1.y - yCm) < 3 && Math.abs(e.p2.y - yCm) < 3);
   return e ? e.pid : null;
 };
 
