@@ -595,16 +595,22 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     ((m as Record<string, unknown>)["rooms2"] ?? (m as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined;
   const prsCollOf = (m: Model, key: string): Record<string, never> =>
     (((m as Record<string, unknown>)[key] ?? {}) as Record<string, never>);
-  const moldingsNorm = prsFigureUserMismatches(
+  // находка 4 ревью 395 (№18): унаследованная висячая ссылка prs.room —
+  // предупреждение (save проходит), а не блокирующее расхождение
+  const moldingsNormCheck = prsFigureUserMismatches(
     { rooms: prsRoomsOf(host.model()), coll: prsCollOf(host.model(), "wall_moldings") },
     { rooms: prsRoomsOf(norm.model as Model), coll: prsCollOf(norm.model as Model, "wall_moldings") },
     "молдинг развёртки",
   );
-  const nichesNorm = prsFigureUserMismatches(
+  warnings.push(...moldingsNormCheck.warnings);
+  const moldingsNorm = moldingsNormCheck.problems;
+  const nichesNormCheck = prsFigureUserMismatches(
     { rooms: prsRoomsOf(host.model()), coll: prsCollOf(host.model(), "wall_niches") },
     { rooms: prsRoomsOf(norm.model as Model), coll: prsCollOf(norm.model as Model, "wall_niches") },
     "ниша развёртки",
   );
+  warnings.push(...nichesNormCheck.warnings);
+  const nichesNorm = nichesNormCheck.problems;
   const prsNorm = prsSettingsMismatches((host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined);
   // точка укладки отделки стены (anchor_decor) до save — локальная копия против normalize
   const anchorNorm = wallDecorAnchorMismatches((host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined);
@@ -918,16 +924,21 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     const figuresAfter = figureUserMismatches(expectedFigures, ((after.model["free_figures"] as Record<string, unknown> | undefined) ?? {}));
     const picturesAfter = pictureUserMismatches(expectedPictures, ((after.model["pictures"] as Record<string, unknown> | undefined) ?? {}));
     // этап 389: развёртки после save — нормализованное ожидание против сервера
-    const moldingsAfter = prsFigureUserMismatches(
+    // (находка 4 ревью 395: унаследованная висячая prs.room — предупреждение)
+    const moldingsAfterCheck = prsFigureUserMismatches(
       { rooms: expectedPrsRooms, coll: expectedMoldings as unknown as Record<string, never> },
       { rooms: ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {}, coll: ((after.model["wall_moldings"] as Record<string, unknown> | undefined) ?? {}) as Record<string, never> },
       "молдинг развёртки",
     );
-    const nichesAfter = prsFigureUserMismatches(
+    warnings.push(...moldingsAfterCheck.warnings);
+    const moldingsAfter = moldingsAfterCheck.problems;
+    const nichesAfterCheck = prsFigureUserMismatches(
       { rooms: expectedPrsRooms, coll: expectedNiches as unknown as Record<string, never> },
       { rooms: ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {}, coll: ((after.model["wall_niches"] as Record<string, unknown> | undefined) ?? {}) as Record<string, never> },
       "ниша развёртки",
     );
+    warnings.push(...nichesAfterCheck.warnings);
+    const nichesAfter = nichesAfterCheck.problems;
     const prsAfter = prsSettingsMismatches(expectedPrsRooms, ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {});
     const anchorAfter = wallDecorAnchorMismatches(expectedPrsRooms, ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {});
     const roomsLost = normRooms > 0 && roomsAfter === 0;
