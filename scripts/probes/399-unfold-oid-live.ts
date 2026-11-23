@@ -271,7 +271,7 @@ try {
   journal();
   check(room0.edges === 4, `грани до материализации: edges=${room0.edges} edges_prs=${room0.edgesPrs} (${room0.siteId})`);
   console.log(`рёбра до материализации: ${JSON.stringify(room0.edgePids)}`);
-  const pidBottom0 = edgePidByY(room0, Y0 / 10);
+  const pidBottom0 = edgePidByY(room0, Y0 / 10 + 10);
   check(pidBottom0 !== null && pidBottom0 !== "?", `нижняя стена до материализации найдена среди рёбер (${pidBottom0})`);
   if (pidBottom0 === null || pidBottom0 === "?") throw new Error("нижняя стена пробной комнаты не распознана");
 
@@ -298,8 +298,8 @@ try {
   // СДВИГАЕМАЯ стена берутся из pids ТЕКУЩИХ рёбер комнаты (редактор при
   // пересчёте может перерезать стены — исходные site_id не обязаны жить):
   // скрытие — НЕТРОНУТАЯ верхняя стена (y = Y0+2600), сдвиг — нижняя (w1)
-  const pidTop = edgePidByY(matState, (Y0 + 2600) / 10);
-  const pidBottom = edgePidByY(matState, Y0 / 10);
+  const pidTop = edgePidByY(matState, (Y0 + 2600) / 10 - 10);
+  const pidBottom = edgePidByY(matState, Y0 / 10 + 10);
   console.log(`рёбра комнаты: ${JSON.stringify(matState.edgePids)}; скрытие — pidTop=${pidTop}, сдвиг — pidBottom=${pidBottom}`);
   check(pidTop !== null && pidTop !== "?", `верхняя стена найдена среди рёбер (${pidTop})`);
   check(pidBottom !== null && pidBottom !== "?", `нижняя стена найдена среди рёбер (${pidBottom})`);
@@ -355,7 +355,7 @@ try {
   // фактический перенос — по стене ребра и СТОРОНЕ (как sameState фикса D):
   // скрытое ребро после пересчёта обязано лежать на верхней стене с той же
   // стороной, что и до (редактор переносит по геометрии — restoreElementPrs)
-  const pidTopAfter = stAfter ? edgePidByY(stAfter, (Y0 + 2600) / 10) : null;
+  const pidTopAfter = stAfter ? edgePidByY(stAfter, (Y0 + 2600) / 10 - 10) : null;
   const sameWall = keysStillReal && pidTopAfter !== null && stAfter!.disabledWalls.length === 1 && stAfter!.disabledWalls[0] === pidTopAfter;
   console.log(`disabledWalls после: ${JSON.stringify(stAfter?.disabledWalls)} (до: ${JSON.stringify(stBefore?.disabledWalls)}); pidTop после пересчёта: ${pidTopAfter}`);
   // предупреждение MCP соответствует факту: сверка состояния «до → после»
