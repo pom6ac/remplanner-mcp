@@ -650,6 +650,55 @@ test("391 major 2: точка ставится только в часть, со�
   assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 500, layer: 7 }), /layer/);
 });
 
+// ---------- 392 follow-up №16: части стороны, нарезанные по длине ----------
+
+/** Отделка ребра w1 (400 см), стороны нарезаны по длине: p1 0..200, p2 200..400,
+ *  слой 1 у обеих (split_points — линий частей две, слой один). */
+function withSplitParts(m: Model): Model {
+  const room = (m.rooms2 as AnyRec)["roomA"] as AnyRec;
+  room["decors"] = [
+    { exist: true, parts: {
+      p1: { id: "p1", type: "wall_tile", layer: 1, height_from_floor: 0, height: 250, line: { p1: { x: 0, y: 0 }, p2: { x: 200, y: 0 } } },
+      p2: { id: "p2", type: "wall_tile", layer: 1, height_from_floor: 0, height: 250, line: { p1: { x: 200, y: 0 }, p2: { x: 400, y: 0 } } },
+    } },
+    { exist: false }, { exist: false }, { exist: false },
+  ];
+  return m;
+}
+
+test("392 №16: части, нарезанные по длине — выбор по along без layer, pc_xd от начала части", () => {
+  const m = withSplitParts(baseModel());
+  // along 3000 мм → точка в части p2 (200..400 см): pc_xd = 300 − 200 = 100
+  const res = setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 3000, heightMm: 500 });
+  assert.equal(res.part, "p2", "нарезка по длине выбирается по along без layer");
+  const parts = ((((m.rooms2 as AnyRec)["roomA"] as AnyRec)["decors"] as AnyRec[])[0]!["parts"]) as Record<string, AnyRec>;
+  assert.equal((parts["p2"]!["anchor"] as AnyRec)["pc_xd"], 100, "pc_xd от начала части (getPolygon бандла: distance(e.p1, part.line))");
+  assert.equal("anchor" in parts["p1"]!, false, "другая часть не тронута");
+  // along 1000 мм → часть p1: pc_xd = 100 − 0 = 100
+  const res2 = setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 500 });
+  assert.equal(res2.part, "p1");
+  const parts2 = ((((m.rooms2 as AnyRec)["roomA"] as AnyRec)["decors"] as AnyRec[])[0]!["parts"]) as Record<string, AnyRec>;
+  assert.equal((parts2["p1"]!["anchor"] as AnyRec)["pc_xd"], 100);
+});
+
+test("392 №16: часть короче ребра — pc_xd от начала части, а не развёртки; точка вне части по along — отказ", () => {
+  const m = baseModel();
+  const room = (m.rooms2 as AnyRec)["roomA"] as AnyRec;
+  room["decors"] = [
+    { exist: true, parts: {
+      p1: { id: "p1", type: "wall_tile", layer: 1, height_from_floor: 0, height: 250, line: { p1: { x: 100, y: 0 }, p2: { x: 300, y: 0 } } },
+    } },
+    { exist: false }, { exist: false }, { exist: false },
+  ];
+  // along 1500 мм → pc_xd = 150 − 100 = 50 (не 150 от начала развёртки)
+  setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1500, heightMm: 500 });
+  const parts = ((((m.rooms2 as AnyRec)["roomA"] as AnyRec)["decors"] as AnyRec[])[0]!["parts"]) as Record<string, AnyRec>;
+  assert.equal((parts["p1"]!["anchor"] as AnyRec)["pc_xd"], 50, "pc_xd от начала части (x полигона части из part.line в бандле)");
+  // точка левее/правее части — отказ (клик бандла всегда в части)
+  assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 500, heightMm: 500 }), /вне части/);
+  assert.throws(() => setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 3500, heightMm: 500 }), /вне части/);
+});
+
 test("389: сверка точки укладки — изменение и потеря ловятся, без изменений — пусто", () => {
   const m = withDecor(baseModel());
   setWallDecorAnchor(m, { room: "R1", wall: "w1", alongMm: 1000, heightMm: 500 });

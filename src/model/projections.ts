@@ -674,37 +674,71 @@ export type WallAnchorParams = {
   layer?: number;
 };
 
-/** Полигон части отделки на развёртке — рамка x0..x0+L, y от (30+H−top) до (30+H−hff). */
+/**
+ * Полигон части отделки на развёртке (№16 follow-up 392): x — из part.line,
+ * как в getPolygon бандла (`[LIB.point(LIB.distance(e.p1,n.p1),d), …]`, n —
+ * линия части, упорядоченная по удалённости концов от начала ребра): xMin =
+ * проекция ближнего конца part.line на ось ребра, xMax — дальнего. Части,
+ * нарезанные по длине (split_points), имеют xMin > рамки развёртки. Без
+ * part.line (части, не нарезанные по длине) — вся развёртка ребра. y — как
+ * раньше: от height_from_floor до верха части.
+ */
 function decorPartFrame(
   room: RoomRec,
   target: PrsEdge,
   part: Record<string, unknown>,
   totalHeightCm: number,
-): { xMin: number; yMin: number; topCm: number; bottomCm: number } {
+): { xMin: number; xMax: number; yMin: number; topCm: number; bottomCm: number } {
   const frame = prsFrame(room, target);
   const hffCm = num(part["height_from_floor"]) ?? 0;
   const hCm = num(part["height"]) ?? 0;
   const topCm = hCm === 0 ? totalHeightCm : hffCm + hCm;
   const H = totalHeightCm;
-  return { xMin: frame.x0, yMin: Math.round((PRS_TOP_CM + H - topCm) * 100) / 100, topCm, bottomCm: hffCm };
+  let xMin = frame.x0;
+  let xMax = frame.x0 + frame.lengthCm;
+  const line = part["line"] as { p1?: Point; p2?: Point } | undefined;
+  if (line?.p1 && line?.p2 && target.p1 && target.p2) {
+    const dx = target.p2.x - target.p1.x;
+    const dy = target.p2.y - target.p1.y;
+    const len = Math.hypot(dx, dy);
+    if (len > 1e-9) {
+      const proj = (p: Point): number => ((p.x - target.p1.x) * dx + (p.y - target.p1.y) * dy) / len;
+      const d1 = r2(proj(line.p1));
+      const d2 = r2(proj(line.p2));
+      xMin = frame.x0 + Math.min(d1, d2);
+      xMax = frame.x0 + Math.max(d1, d2);
+    }
+  }
+  return { xMin, xMax, yMin: Math.round((PRS_TOP_CM + H - topCm) * 100) / 100, topCm, bottomCm: hffCm };
 }
 
 /**
  * Часть стороны, в которую редактор ставит точку: обработчик anchor_decor
  * адресует ОДНУ линию декора ($DecorLining.get_decor_line(decor_id)) — часть,
- * на которой пользователь кликнул. Выбор: части, содержащие точку
- * (height_from_floor ≤ h ≤ top; height=0 — часть до верха развёртки), при
- * неоднозначности — явный layer. 0 или >1 кандидатов — отказ с перечнем слоёв
- * (conservative: не угадываем).
+ * на которой пользователь кликнул. Выбор (№16 follow-up 392): части,
+ * содержащие точку по высоте (height_from_floor ≤ h ≤ top; height=0 — часть
+ * до верха развёртки), при нескольких кандидатах — по along внутри рамки
+ * части (xMin/xMax из part.line — части, нарезанные по длине, различаются
+ * без layer), затем явный layer. 0 или >1 кандидатов — отказ с перечнем
+ * слоёв (conservative: не угадываем).
  */
 function pickDecorPart(
+  room: RoomRec,
+  target: PrsEdge,
   parts: Record<string, Record<string, unknown>>,
-  params: { heightMm: number; layer?: number },
+  params: { alongMm: number; heightMm: number; layer?: number },
   totalHeightCm: number,
 ): Record<string, Record<string, unknown>> {
   const hCm = params.heightMm / 10;
+  const alongCm = params.alongMm / 10;
   const entries = Object.entries(parts);
   const layers = [...new Set(entries.map(([, p]) => num(p["layer"]) ?? 1))].sort((a, b) => a - b);
+  // рамка по along — абсолютная координата точки в рамке развёрток
+  const frameX = prsFrame(room, target).x0 + alongCm;
+  const containsAlong = (p: Record<string, unknown>): boolean => {
+    const f = decorPartFrame(room, target, p, totalHeightCm);
+    return frameX >= f.xMin - 0.01 && frameX <= f.xMax + 0.01;
+  };
   // 1) части, содержащие точку (height_from_floor ≤ h ≤ top; height=0 — часть до верха)
   let containing = entries.filter(([, p]) => {
     const hff = num(p["height_from_floor"]) ?? 0;
@@ -713,7 +747,20 @@ function pickDecorPart(
     return hCm >= hff - 0.01 && hCm <= top + 0.01;
   });
   // 2) явный layer сужает выбор (несколько частей могут делить один слой)
-  if (params.layer !== undefined) containing = containing.filter(([, p]) => (num(p["layer"]) ?? 1) === params.layer!);
+  if (params.layer !== undefined) containing = containing.filter(([, p]) => (num(p["layer"]) ?? 1) === params.layer);
+  // 3) несколько кандидатов — нарезка по длине: часть, содержащая along
+  if (containing.length > 1) {
+    const byAlong = containing.filter(([, p]) => containsAlong(p));
+    if (byAlong.length === 1) containing = byAlong;
+    else if (byAlong.length === 0) {
+      throw new McpError(
+        "INVALID_ARGUMENT",
+        `точка (${Math.round(params.alongMm)} мм от начала развёртки) между частями отделки ребра по длине — укажите layer (слои: ${layers.join(", ") || "нет"})`,
+      );
+    } else {
+      throw new McpError("INVALID_ARGUMENT", `точка (${Math.round(params.alongMm)} мм от начала развёртки, высота ${Math.round(params.heightMm)} мм от пола) попадает в несколько частей отделки ребра — укажите layer (слои: ${layers.join(", ")})`);
+    }
+  }
   if (containing.length === 1) return { [containing[0]![0]]: containing[0]![1] };
   if (containing.length === 0) {
     if (params.layer !== undefined && entries.some(([, p]) => (num(p["layer"]) ?? 1) === params.layer)) {
@@ -764,10 +811,14 @@ export function setWallDecorAnchor(model: Model, params: WallAnchorParams): Wall
     throw new McpError("INVALID_ARGUMENT", `у ребра стены ${params.wall} комнаты ${params.room} нет отделки — точка укладки не ставится (сначала finish_wall_set)`);
   }
   // точка ставится в ОДНУ часть стороны (anchor_decor: a=$DecorLining.get_decor_line(decor_id))
-  const picked = pickDecorPart(rec["parts"]!, params, H);
+  const picked = pickDecorPart(room, target, rec["parts"]!, params, H);
   const [partKey, part] = Object.entries(picked)[0]!;
   const pc = { x: Math.round((frame.x0 + alongCm) * 100) / 100, y: Math.round((30 + H - heightCm) * 100) / 100 };
   const partFrame = decorPartFrame(room, target, part, H);
+  // точка обязана лежать в части и по along (клик бандла всегда в части)
+  if (pc.x < partFrame.xMin - 0.01 || pc.x > partFrame.xMax + 0.01) {
+    throw new McpError("INVALID_ARGUMENT", `точка (${params.alongMm} мм от начала развёртки) вне части отделки по длине (часть ${Math.round((partFrame.xMin - frame.x0) * 10)}…${Math.round((partFrame.xMax - frame.x0) * 10)} мм от начала развёртки ребра ${params.wall})`);
+  }
   // pc_* — от прямоугольника САМОЙ части (бандл: new Polygon(WALL_DECORS[a.id].polygon))
   const anchor: Record<string, unknown> = { p: pc, pc_xd: Math.round((pc.x - partFrame.xMin) * 100) / 100, pc_yd: Math.round((pc.y - partFrame.yMin) * 100) / 100 };
   part["anchor"] = structuredClone(anchor);
