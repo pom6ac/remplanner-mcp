@@ -45,15 +45,19 @@ import { assertEditorPlanMatch, probeWriteEnv, assertTargetPair, readonlyGuard }
 import { restoreByCaptured, type ProbeCreated } from "./probe-restore.ts";
 
 const phase = process.argv[2] ?? "run";
-mkdirSync(".orca-reports/tmp", { recursive: true });
+// находка 10 ревью 402: журнал 399-captured-* и tmp — АБСОЛЮТНЫЙ путь через
+// gitRepoRoot, как бэкап (относительный путь зависел от cwd — фаза cleanup,
+// запущенная из другого cwd, не нашла бы журнал и не удалила созданное)
+const ROOT_DIR = (): string => {
+  const root = gitRepoRoot();
+  if (!root) throw new Error("корень репо не найден (git недоступен) — пробы нельзя адресовать");
+  return root;
+};
+mkdirSync(join(ROOT_DIR(), ".orca-reports/tmp"), { recursive: true });
 // находка 6 ревью 400: бэкап — АБСОЛЮТНЫЙ путь в корневой .orca-reports
 // (gitRepoRoot — общий .git, из worktree указывает на основной репо);
 // относительный путь зависел от cwd, и бэкапы оказались в двух деревьях
-const backupPathOf = (objectId: string): string => {
-  const root = gitRepoRoot();
-  if (!root) throw new Error("корень репо не найден (git недоступен) — бэкап не адресуется");
-  return join(root, ".orca-reports", `backup-${objectId}-399.json`);
-};
+const backupPathOf = (objectId: string): string => join(ROOT_DIR(), ".orca-reports", `backup-${objectId}-399.json`);
 setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
 
 const ctx = new ServerContext();
@@ -75,7 +79,7 @@ if (!/^\d+$/.test(runN)) {
   console.error("нужен REMPLANNER_PROBE_RUN_N=<номер прогона> — журнал пробы пишется по номеру (399-captured-<N>.json), не перезаписывается");
   process.exit(1);
 }
-const capturedPath = (n: number): string => `.orca-reports/tmp/399-captured-${runN}-${n}.json`;
+const capturedPath = (n: number): string => join(ROOT_DIR(), ".orca-reports/tmp", `399-captured-${runN}-${n}.json`);
 let capturedN = 0;
 while (existsSync(capturedPath(capturedN))) capturedN++;
 const CAPTURED = capturedPath(capturedN);
