@@ -79,7 +79,8 @@ function r2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
-/** Развёртки комнаты: rooms2[rid].edges_prs (fallback — рёбра комнаты). */
+/** Развёртки комнаты: rooms2[rid].edges_prs (fallback — рёбра комнаты с
+ *  синтетическими ключами derived_<i>). */
 export function prsEdgesOf(room: RoomRec): PrsEdge[] {
   const edges = Array.isArray(room.edges) ? room.edges : [];
   const raw = Array.isArray(room["edges_prs"]) ? (room["edges_prs"] as Array<Record<string, unknown>>) : [];
@@ -113,6 +114,33 @@ export function prsEdgesOf(room: RoomRec): PrsEdge[] {
     p2: { x: e.p2?.x ?? 0, y: e.p2?.y ?? 0 },
     wallId: e.pid,
   }));
+}
+
+/**
+ * Есть ли у комнаты РЕАЛЬНАЯ раскладка развёрток (находка A ревью 397): у
+ * комнаты без edges_prs (так бывает у каждой комнаты, созданной из стен, до
+ * первого открытия листа «Развёртки») редактор назначает oid при построении
+ * линий случайно — Projections.getLines (268-app.js): `t[e].oid =
+ * i.id_of_edges[e] ? i.id_of_edges[e] : LIB.id()`, а LIB.id —
+ * `"_"+Math.random().toString(36).substr(2,5)` (@20601). Точный порт
+ * невозможен: MCP не может знать oid, которые редактор ещё не назначил
+ * (id_of_edges в модели пуст вместе с edges_prs — фикстуры редактора:
+ * editor-corridor-3rooms, ui-ref-sofa). Ключи derived_<i> в prs_disabled/
+ * prs_first редактор не знает и не переносит (restoreElementPrs @2863309
+ * переносит только по реальному oid старой развёртки), поэтому записи prs на
+ * такой комнате консервативно отвергаются.
+ *
+ * Находка 3 ревью 400: oid НЕ нестабильны — по бандлу раскладка, созданная
+ * редактором, сериализуется (createEdgesPrs → serialize пишет edges_prs и
+ * id_of_edges, @1018941), и назначенные oid стабильны до пересчёта линий.
+ * Причина отказа не в нестабильности oid, а в том, что их ЕЩЁ НЕТ в модели:
+ * MCP сам раскладку не создаёт — её создаёт открытие развёрток комнаты
+ * пользователем в редакторе (лист «Развёртки») и save проекта.
+ */
+export function hasRealPrsLayout(room: RoomRec): boolean {
+  const raw = Array.isArray(room["edges_prs"]) ? (room["edges_prs"] as Array<Record<string, unknown>>) : [];
+  if (raw.length === 0) return false;
+  return raw.every((e) => typeof e["oid"] === "string" && e["oid"] !== "");
 }
 
 /** Скрытые развёртки комнаты: набор edge_index (prs_disabled через oid). */
@@ -179,12 +207,37 @@ export type PrsSettingsResult = {
   disabled_edges: number[];
 };
 
-/** Настройки развёрток комнаты (prs_hidden/prs_disabled/prs_first) — как в редакторе. */
+/**
+ * Настройки развёрток комнаты (prs_hidden/prs_disabled/prs_first) — как в редакторе.
+ * Требует реальной раскладки развёрток (edges_prs с oid редактора — hasRealPrsLayout):
+ * на комнате без раскладки — INVALID_ARGUMENT (находка A ревью 397).
+ */
 export function setPrsSettings(model: Model, roomRef: string, params: PrsSettings): PrsSettingsResult {
   const { id, room } = resolveRoom(model, roomRef);
   const prsEdges = prsEdgesOf(room);
   if (prsEdges.length === 0) {
     throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет рёбер — развёрток нет`);
+  }
+  // находка A ревью 397: без реальной раскладки (edges_prs пуст) oid развёрток
+  // редактор ещё не назначил (Projections.getLines: oid=LIB.id() — случайно),
+  // записи prs_disabled/prs_first ушли бы под ключами derived_<i>, которых
+  // редактор не знает и не переносит — консервативный отказ. Находка 5 ревью
+  // 400: операции, которым oid НЕ нужен (скрытие: false — prs_disabled={},
+  // first_wall: null — prs_first=0, show_walls — удаление ключей, в том числе
+  // унаследованных derived_*), не блокируются — иначе висячие ключи прежних
+  // версий MCP через MCP не очистить
+  const needsOid =
+    params.hidden === true ||
+    (params.firstWall !== undefined && params.firstWall !== null) ||
+    (params.hideWalls !== undefined && params.hideWalls.length > 0);
+  if (!hasRealPrsLayout(room) && needsOid) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `у комнаты ${roomRef} нет раскладки развёрток (edges_prs пуст — раскладку создаёт редактор при первом ` +
+        `открытии листа «Развёртки»; MCP сам раскладку не создаёт, а oid, назначенные при её создании, ` +
+        `в модели ещё не известны): попросите пользователя открыть развёртки комнаты в редакторе ` +
+        `(лист «Развёртки») и сохранить проект, затем повторите`,
+    );
   }
   const disabled = prsDisabledEdges(room);
   // isShortLine бандла: длина ≤ 10 см (defs.projection_line.length_min) и на
@@ -238,7 +291,22 @@ export function setPrsSettings(model: Model, roomRef: string, params: PrsSetting
         disabled.add(e.edgeIndex);
         hiddenAllIfAllHidden();
       } else {
-        if (map && typeof map === "object" && !Array.isArray(map)) delete map[e.oid];
+        if (map && typeof map === "object" && !Array.isArray(map)) {
+          delete map[e.oid];
+          // №11 follow-up 402: на комнате без раскладки ключи — синтетические
+          // derived_<i>; унаследованный derived_k, записанный при другой
+          // нумерации рёбер, к стене по текущему индексу однозначно не
+          // сопоставить — снимаются ВСЕ derived_* (допустимо по ревью 402),
+          // иначе show_walls молча ничего не делает
+          if (e.oid.startsWith("derived_")) {
+            for (const k of Object.keys(map)) {
+              if (!k.startsWith("derived_")) continue;
+              delete map[k];
+              const idx = prsEdges.find((x) => x.oid === k)?.edgeIndex;
+              if (idx !== undefined) disabled.delete(idx);
+            }
+          }
+        }
         room["prs_hidden"] = 0;
         disabled.delete(e.edgeIndex);
       }

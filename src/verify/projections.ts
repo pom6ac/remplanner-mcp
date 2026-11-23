@@ -110,14 +110,38 @@ function canonPoly(poly: unknown): string {
  * При изменении числа рёбер/развёрток комнаты (wall-операция) редактор переносит
  * настройки по геометрии (restorePrsChangeEdges) — сверка пропускается
  * (консервативно: потерю настроек на wall-операции сверка не ловит).
+ *
+ * Ключ prs_disabled/prs_first, не совпадающий ни с одним oid edges_prs (находка
+ * A ревью 397 — синтетические derived_<i> или устаревший oid), — ошибка сверки,
+ * если он ПОЯВИЛСЯ при правке (в expected такого висячего ключа не было), и
+ * предупреждение, если он унаследован (был и до правки — как №18 follow-up 392
+ * для висячего prs.room: редактор такие ключи игнорирует, блокировать
+ * легитимный проект из-за них нельзя).
  */
 export function prsSettingsMismatches(
   before: Record<string, Record<string, unknown>> | undefined,
   after: Record<string, Record<string, unknown>> | undefined,
-): VerificationMismatches {
+  // №9 follow-up 402: стены для оси «порядок вдоль стены» (edgeSemKeyOf) —
+  // walls до/после; wallsAfter по умолчанию = walls
+  walls?: Record<string, unknown>,
+  wallsAfter?: Record<string, unknown>,
+): { problems: VerificationMismatches; warnings: string[] } {
   const out: string[] = [];
+  const inherited: string[] = [];
   const b = before ?? {};
   const a = after ?? {};
+  const danglingKeysOf = (room: Record<string, unknown>): string[] => {
+    const edgesPrs = Array.isArray(room["edges_prs"]) ? (room["edges_prs"] as Array<Record<string, unknown>>) : [];
+    const oids = new Set(edgesPrs.map((e) => e["oid"]).filter((v): v is string => typeof v === "string" && v !== ""));
+    const keys: string[] = [];
+    const disabled = room["prs_disabled"];
+    if (disabled !== null && typeof disabled === "object" && !Array.isArray(disabled)) {
+      keys.push(...Object.keys(disabled as Record<string, unknown>).filter((k) => !oids.has(k)));
+    }
+    const first = room["prs_first"];
+    if (typeof first === "string" && first !== "" && !oids.has(first)) keys.push(first);
+    return keys;
+  };
   for (const [rid, rb] of Object.entries(b)) {
     const ra = a[rid];
     if (!ra) continue;
@@ -129,18 +153,30 @@ export function prsSettingsMismatches(
     if (hidB !== hidA) {
       out.push(`${rid}: скрытие развёрток изменилось после сохранения (ожидалось ${hidB ? "скрыты" : "показаны"}; на сервере ${hidA ? "скрыты" : "показаны"})`);
     }
-    const disB = disabledEdgesOf(rb);
-    const disA = disabledEdgesOf(ra);
+    const disB = disabledEdgeSemKeys(rb, walls);
+    const disA = disabledEdgeSemKeys(ra, wallsAfter ?? walls);
     if (disB.join(",") !== disA.join(",")) {
       out.push(`${rid}: набор скрытых развёрток изменился после сохранения (ожидалось [${disB.join(",")}]; на сервере [${disA.join(",")}])`);
     }
-    const firstB = firstEdgeOf(rb);
-    const firstA = firstEdgeOf(ra);
+    const firstB = firstEdgeSemKeyOf(rb, walls);
+    const firstA = firstEdgeSemKeyOf(ra, wallsAfter ?? walls);
     if (firstB !== firstA) {
-      out.push(`${rid}: «первая» развёртка изменилась после сохранения (ожидалось ребро ${firstB ?? "авто"}; на сервере ребро ${firstA ?? "авто"})`);
+      out.push(`${rid}: «первая» развёртка изменилась после сохранения (ожидалось ${firstB ?? "авто"}; на сервере ${firstA ?? "авто"})`);
+    }
+    // находка A ревью 397: ключи, не совпадающие ни с одним oid edges_prs
+    for (const k of danglingKeysOf(ra)) {
+      const wasDangling = danglingKeysOf(rb).includes(k);
+      const oidsShown = Array.isArray(ra["edges_prs"])
+        ? (ra["edges_prs"] as Array<Record<string, unknown>>).map((e) => String(e["oid"])).join(", ")
+        : "нет";
+      (wasDangling ? inherited : out).push(
+        `${rid}: ключ «${k}» в prs_disabled/prs_first не совпадает ни с одним oid edges_prs` +
+        `${wasDangling ? " (унаследован — был в модели до правки)" : ""} — редактор такой ключ не знает ` +
+        `(развертки комнаты: ${oidsShown})`,
+      );
     }
   }
-  return out;
+  return { problems: out, warnings: inherited };
 }
 
 /**
@@ -154,8 +190,10 @@ export function prsSettingsMismatches(
  * (@93237) → restoreOneToOne/restorePrs (@1014145)/restoreElementPrs (@2863309,
  * перенос prs_disabled/prs_first только на совпавшие линии: тот же pid/side,
  * areLinesEqual или Δдлины < 2); новая комната стартует с prs_disabled={}
- * (конструктор Room2). Поэтому при изменении контура id всегда новый — точный
- * контур наследника не находит. Предупреждение — только при фактическом
+ * (конструктор Room2). При изменении контура id может смениться (пары по
+ * arePolygonsEqual — 268-app.js@90669), а может и сохраниться (живые прогоны
+ * 396: сдвиг контура на 20 мм — id прежний), поэтому точный контур наследника
+ * не всегда находит пару. Предупреждение — только при фактическом
  * расхождении prs-состояния; у комнаты без наследника — отдельная формулировка
  * «комната пересоздана» (сверка невозможна). При смене числа граней редактор
  * восстанавливает иначе — restorePrsChangeEdges (@2858382, ветка
@@ -166,33 +204,46 @@ export function prsSettingsResetWarnings(before: Model, after: Model): string[] 
   const roomsA = ((after as Record<string, unknown>)["rooms2"] ?? (after as Record<string, unknown>)["rooms1"] ?? {}) as Record<string, RoomRec>;
   const { pairs: exact } = matchRoomsByContour(roomsB, roomsA);
   const heirOf = roomHeirs(roomsB, roomsA, exact, "normalize");
-  const heirRidOf = (rid: string): string | undefined => {
-    const e = exact.get(rid);
-    if (e !== undefined) return e;
-    const h = heirOf.get(rid);
-    return h && h.kind === "same" ? h.key : undefined;
-  };
+  // №9 follow-up 402: ось стены для «порядка вдоль стены» — walls своей модели
+  const wallsB = ((before as Record<string, unknown>)["walls"] ?? {}) as Record<string, unknown>;
+  const wallsA = ((after as Record<string, unknown>)["walls"] ?? {}) as Record<string, unknown>;
+  // находка D ревью 397: состояние «до/после» сравнивается по СТЕНЕ ребра и
+  // стороне (pid + room_side), а не по edge_index — пересозданная комната может
+  // нумеровать рёбра с другой вершины, и при переносе настроек на ту же стену
+  // сравнение по индексу давало бы ложное «сброшены». Находка 4 ревью 400:
+  // сравнение — мультимножеством ключей «стена|сторона|порядок вдоль стены»
+  // (edgeSemKeyOf): набор «стена|сторона» схлопывал несколько рёбер одной
+  // стены и стороны (стена, разрезанная колонной/пилястрой), и при сбросе
+  // редактором ОДНОГО из скрытых сегментов предупреждения не было
   const sameState = (rb: RoomRec, ra: RoomRec): boolean => {
     const stB = prsStateOf(rb);
     const stA = prsStateOf(ra);
-    return (
-      stB.hidden === stA.hidden &&
-      stB.firstEdge === stA.firstEdge &&
-      stB.disabledEdges.length === stA.disabledEdges.length &&
-      stB.disabledEdges.every((v, i) => v === stA.disabledEdges[i])
-    );
+    if (stB.hidden !== stA.hidden) return false;
+    const firstB = stB.firstEdge === null ? null : edgeSemKeyOf(rb, stB.firstEdge, wallsB);
+    const firstA = stA.firstEdge === null ? null : edgeSemKeyOf(ra, stA.firstEdge, wallsA);
+    if (firstB !== firstA) return false;
+    const disB = stB.disabledEdges.map((i) => edgeSemKeyOf(rb, i, wallsB)).sort();
+    const disA = stA.disabledEdges.map((i) => edgeSemKeyOf(ra, i, wallsA)).sort();
+    return disB.length === disA.length && disB.every((k, i) => k === disA[i]);
   };
   const reset: string[] = [];
-  const recreated: string[] = [];
+  // находка E ревью 397: различаем «наследник не найден» и «наследник не
+  // однозначен (разделение/слияние)» — при kind split/merge наследник ЕСТЬ,
+  // но сопоставить состояние «до → после» нельзя
+  const recreated: Array<{ rid: string; reason: "none" | "ambiguous" }> = [];
   for (const [rid, rb] of Object.entries(roomsB)) {
     const hidden = rb["prs_hidden"] === 1;
     const first = typeof rb["prs_first"] === "string" && rb["prs_first"] !== "";
     const disabled = rb["prs_disabled"];
     const hasDisabled = disabled !== null && typeof disabled === "object" && !Array.isArray(disabled) && Object.keys(disabled as Record<string, unknown>).length > 0;
     if (!hidden && !first && !hasDisabled) continue;
-    const heirRid = heirRidOf(rid);
+    const exactHeir = exact.get(rid);
+    const h = heirOf.get(rid);
+    const heirRid = exactHeir ?? (h && h.kind === "same" ? h.key : undefined);
     if (heirRid === undefined) {
-      recreated.push(rid);
+      // находка E ревью 397: наследник ЕСТЬ, но не однозначен (split/merge) —
+      // отдельная формулировка; наследника нет вовсе — «не найден»
+      recreated.push({ rid, reason: h && h.kind !== "same" ? "ambiguous" : "none" });
       continue;
     }
     const ra = roomsA[heirRid];
@@ -208,30 +259,102 @@ export function prsSettingsResetWarnings(before: Model, after: Model): string[] 
       `при смене числа граней — restorePrsChangeEdges); проверьте model_get rooms[].prs`,
     );
   }
-  for (const rid of recreated) {
-    out.push(`комната ${rid} пересоздана, настройки развёртки проверьте (наследник не найден — сверка prs «до → после» невозможна); проверьте model_get rooms[].prs`);
+  for (const { rid, reason } of recreated) {
+    out.push(
+      reason === "ambiguous"
+        ? `комната ${rid} пересоздана, настройки развёртки проверьте (наследник не однозначен — разделение/слияние комнат, сверка prs «до → после» невозможна); проверьте model_get rooms[].prs`
+        : `комната ${rid} пересоздана, настройки развёртки проверьте (наследник не найден — сверка prs «до → после» невозможна); проверьте model_get rooms[].prs`,
+    );
   }
   return out;
 }
 
-function disabledEdgesOf(room: Record<string, unknown>): number[] {
+/**
+ * Ключ ребра «стена|сторона|порядок вдоль стены» (находки 4/8 ревью 400):
+ * стена может быть разрезана колонной/пилястрой на несколько рёбер одной
+ * стороны — ключ «pid|room_side» (находка D ревью 397) схлопывал такие рёбра
+ * в один элемент набора и пропускал сброс части сегментов. Порядок —
+ * ПОЛОЖЕНИЕ ребра на стене: проекция середины ребра на ось стены
+ * walls[pid].p1→p2, номер среди рёбер той же стены и стороны по этому
+ * расстоянию (№9 follow-up 402: при пересозданной комнате обход контура может
+ * начаться МЕЖДУ сегментами разрезанной стены — индексы обхода сегментов
+ * меняются местами 0↔1, положение на стене — нет; раньше это давало ложное
+ * «сброшены» в sameState и ложную problem в prsSettingsMismatches). Ось
+ * канонически ориентирована (инвариант к смене p1↔p2 записи стены). Стена
+ * неизвестна/вырождена или у ребра нет p1/p2 — прежний порядок обхода.
+ */
+function edgeSemKeyOf(room: Record<string, unknown>, edgeIndex: number, walls?: Record<string, unknown>): string {
+  const edges = Array.isArray(room["edges"]) ? (room["edges"] as Array<Record<string, unknown>>) : [];
+  const pidOf = (e?: Record<string, unknown>): string => String(e?.["pid"] ?? "");
+  const sideOf = (e?: Record<string, unknown>): string => String(e?.["room_side"] ?? "");
+  const pid = pidOf(edges[edgeIndex]);
+  const side = sideOf(edges[edgeIndex]);
+  const ptOf = (o: unknown): { x: number; y: number } | null => {
+    const p = o as { x?: unknown; y?: unknown } | undefined;
+    return p && typeof p.x === "number" && typeof p.y === "number" ? { x: p.x, y: p.y } : null;
+  };
+  const wall = walls?.[pid] as { p1?: unknown; p2?: unknown } | undefined;
+  const w1 = ptOf(wall?.p1);
+  const w2 = ptOf(wall?.p2);
+  if (w1 && w2) {
+    let dx = w2.x - w1.x;
+    let dy = w2.y - w1.y;
+    const len = Math.hypot(dx, dy);
+    if (len > 1e-9) {
+      // каноническая ориентация оси: проекция не зависит от направления записи стены
+      if (dx < 0 || (dx === 0 && dy < 0)) {
+        dx = -dx;
+        dy = -dy;
+      }
+      const ux = dx / len;
+      const uy = dy / len;
+      const projOf = (i: number): number | null => {
+        const p1 = ptOf(edges[i]?.["p1"]);
+        const p2 = ptOf(edges[i]?.["p2"]);
+        if (!p1 || !p2) return null;
+        return Math.round((((p1.x + p2.x) / 2) * ux + ((p1.y + p2.y) / 2) * uy) * 1000) / 1000;
+      };
+      const me = projOf(edgeIndex);
+      if (me !== null) {
+        let n = 0;
+        for (let i = 0; i < edges.length; i++) {
+          if (i === edgeIndex || pidOf(edges[i]) !== pid || sideOf(edges[i]) !== side) continue;
+          const p = projOf(i);
+          if (p !== null && (p < me || (p === me && i < edgeIndex))) n++;
+        }
+        return `${pid}|${side}|${n}`;
+      }
+    }
+  }
+  let n = 0;
+  for (let i = 0; i < edgeIndex && i < edges.length; i++) {
+    if (pidOf(edges[i]) === pid && sideOf(edges[i]) === side) n++;
+  }
+  return `${pid}|${side}|${n}`;
+}
+
+/** Скрытые развёртки комнаты мультимножеством ключей edgeSemKeyOf (sorted). */
+function disabledEdgeSemKeys(room: Record<string, unknown>, walls?: Record<string, unknown>): string[] {
   const disabled = room["prs_disabled"];
   if (!disabled || typeof disabled !== "object" || Array.isArray(disabled)) return [];
   const oids = new Set(Object.keys(disabled as Record<string, unknown>));
-  const out: number[] = [];
+  const out: string[] = [];
   const edgesPrs = Array.isArray(room["edges_prs"]) ? (room["edges_prs"] as Array<Record<string, unknown>>) : [];
   for (const e of edgesPrs) {
-    if (typeof e["oid"] === "string" && oids.has(e["oid"]) && typeof e["edge_index"] === "number") out.push(e["edge_index"]);
+    if (typeof e["oid"] === "string" && oids.has(e["oid"]) && typeof e["edge_index"] === "number") {
+      out.push(edgeSemKeyOf(room, e["edge_index"], walls));
+    }
   }
-  return out.sort((x, y) => x - y);
+  return out.sort();
 }
 
-function firstEdgeOf(room: Record<string, unknown>): number | null {
+/** «Первая» развёртка комнаты ключом edgeSemKeyOf или null (prs_first 0/пусто). */
+function firstEdgeSemKeyOf(room: Record<string, unknown>, walls?: Record<string, unknown>): string | null {
   const first = room["prs_first"];
   if (typeof first !== "string" || first === "") return null;
   const edgesPrs = Array.isArray(room["edges_prs"]) ? (room["edges_prs"] as Array<Record<string, unknown>>) : [];
   const e = edgesPrs.find((x) => x["oid"] === first);
-  return e && typeof e["edge_index"] === "number" ? e["edge_index"] : null;
+  return e && typeof e["edge_index"] === "number" ? edgeSemKeyOf(room, e["edge_index"], walls) : null;
 }
 
 // ---------- точка укладки плитки на стене (anchor_decor) ----------
