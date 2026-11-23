@@ -16,8 +16,11 @@
 // НЕПРОТИВОРЕЧИВОСТЬ предупреждения MCP факту и совпадение ключей с oid.
 // Гарды (канон 394/396): probe-guard (пара объект/план fail-closed, READONLY-гард
 // по корневому эталону БЕЗ REF_INIT, assertEditorPlanMatch), assertUnchanged
-// перед каждой записью, бэкап .orca-reports/backup-<OBJECT_ID>-399.json
-// (не перезаписывается, пишется непосредственно перед первым прогоном),
+// перед каждой записью, бэкап <корень репо>/.orca-reports/backup-<OBJECT_ID>-399.json
+// (АБСОЛЮТНЫЙ путь в корневой .orca-reports — находка 6 ревью 400: относительный
+// путь зависел от cwd, и rm по ошибочному cwd сменил эталон незаметно;
+// fail-closed: НЕ перезаписывается, пишется ТОЛЬКО фазой run с явным флагом
+// REMPLANNER_PROBE_WRITE_BACKUP=1, при отсутствии — стоп),
 // журнал site_id ДО каждой записи (399-captured-<N>-<n>.json, не
 // перезаписывается), restore по журналу в finally (стены — deleteWallsBySiteIds
 // из probe-restore), cleanup-save в finally проверяет verified, sig в конце и в
@@ -26,20 +29,31 @@
 // (process.exit(1) внутри гарда).
 //   REMPLANNER_PROBE_OBJECT_ID=… REMPLANNER_PROBE_PLAN_ID=… \
 //   REMPLANNER_PROBE_READONLY_ID=… REMPLANNER_PROBE_READONLY_PLAN_ID=… \
-//   REMPLANNER_PROBE_RUN_N=1 node scripts/probes/399-unfold-oid-live.ts run
+//   REMPLANNER_PROBE_RUN_N=1 [REMPLANNER_PROBE_WRITE_BACKUP=1] \
+//   node scripts/probes/399-unfold-oid-live.ts run
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { closeBrowser } from "../../src/browser.ts";
 import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { loadModel, type LoadedModel } from "../../src/api.ts";
+import { gitRepoRoot } from "../../src/repo-root.ts";
 import { sig } from "./probe-sig.ts";
 import { assertEditorPlanMatch, probeWriteEnv, assertTargetPair, readonlyGuard } from "./probe-guard.ts";
 import { restoreByCaptured, type ProbeCreated } from "./probe-restore.ts";
 
 const phase = process.argv[2] ?? "run";
 mkdirSync(".orca-reports/tmp", { recursive: true });
+// находка 6 ревью 400: бэкап — АБСОЛЮТНЫЙ путь в корневой .orca-reports
+// (gitRepoRoot — общий .git, из worktree указывает на основной репо);
+// относительный путь зависел от cwd, и бэкапы оказались в двух деревьях
+const backupPathOf = (objectId: string): string => {
+  const root = gitRepoRoot();
+  if (!root) throw new Error("корень репо не найден (git недоступен) — бэкап не адресуется");
+  return join(root, ".orca-reports", `backup-${objectId}-399.json`);
+};
 setTimeout(() => { console.error("WATCHDOG"); process.exit(90); }, 14 * 60_000).unref();
 
 const ctx = new ServerContext();
@@ -163,10 +177,23 @@ try {
     await delay(5500);
     return r;
   };
-  const backupPath = `.orca-reports/backup-${ids.objectId}-399.json`;
-  const before: LoadedModel = await loadModel(ctx.session(), ids.objectId, ids.planId);
-  if (existsSync(backupPath)) console.log("backup exists — НЕ перезаписывается:", backupPath);
-  else { writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n"); console.log("backup written:", backupPath); }
+  const backupPath = backupPathOf(ids.objectId);
+  if (existsSync(backupPath)) {
+    console.log("backup exists — НЕ перезаписывается:", backupPath);
+  } else if (phase === "run" && process.env["REMPLANNER_PROBE_WRITE_BACKUP"] === "1") {
+    // находка 6 ревью 400, fail-closed: бэкап пишется ТОЛЬКО фазой run с явным
+    // флагом — молчаливое пересоздание сменяло эталон незаметно (инцидент 399)
+    const before: LoadedModel = await loadModel(ctx.session(), ids.objectId, ids.planId);
+    writeFileSync(backupPath, JSON.stringify(before, null, 1) + "\n");
+    console.log("backup written (run + REMPLANNER_PROBE_WRITE_BACKUP=1):", backupPath);
+  } else {
+    console.error(
+      `нет бэкапа ${backupPath} — СТОП (пишется только фазой run с REMPLANNER_PROBE_WRITE_BACKUP=1; ` +
+        "молчаливое пересоздание запрещено — оно незаметно меняет эталон)",
+    );
+    await closeBrowser().catch(() => {});
+    process.exit(1);
+  }
   await roGuard!.assertUnchanged("before");
 
   if (phase === "cleanup") {
@@ -200,7 +227,7 @@ try {
     // Эталон — REMPLANNER_PROBE_CHECK_BACKUP (умолчание — бэкап 399 прогона):
     // сверка с более ранним эталоном (например, backup-…-377.json) допустима,
     // когда все этапы между ними завершались «sig vs backup: OK».
-    const backupPath = process.env["REMPLANNER_PROBE_CHECK_BACKUP"] ?? `.orca-reports/backup-${ids.objectId}-399.json`;
+    const backupPath = process.env["REMPLANNER_PROBE_CHECK_BACKUP"] ?? backupPathOf(ids.objectId);
     if (!existsSync(backupPath)) { console.error("нет бэкапа", backupPath); process.exit(1); }
     const cur = await loadModel(ctx.session(), ids.objectId, ids.planId);
     const { canon } = await import("./probe-sig.ts");
@@ -385,7 +412,7 @@ try {
   try {
     const ids = probeWriteEnv();
     const after = await loadModel(ctx.session(), ids.objectId, ids.planId);
-    const backupPath = `.orca-reports/backup-${ids.objectId}-399.json`;
+    const backupPath = backupPathOf(ids.objectId);
     if (existsSync(backupPath)) console.error("sig (catch) vs backup:", sig(after.model) === sig(JSON.parse(readFileSync(backupPath, "utf8")).model) ? "OK" : "РАСХОЖДЕНИЕ");
   } catch (ce) { console.error("sig (catch) недоступен:", String((ce as Error).message).slice(0, 150)); }
 } finally {
@@ -407,7 +434,7 @@ try {
       log: (l) => console.error("restore:", l),
     });
     const after = await loadModel(ctx.session(), ids.objectId, ids.planId);
-    const backupPath = `.orca-reports/backup-${ids.objectId}-399.json`;
+    const backupPath = backupPathOf(ids.objectId);
     if (existsSync(backupPath)) {
       const same = sig(after.model) === sig(JSON.parse(readFileSync(backupPath, "utf8")).model);
       console.log("sig (итог) vs backup:", same ? "OK" : "РАСХОЖДЕНИЕ");
