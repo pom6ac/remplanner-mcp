@@ -359,7 +359,28 @@ function splitWallModel(disabledOids: string[]): Model {
     ],
     prs_disabled: Object.fromEntries(disabledOids.map((o) => [o, ""])), prs_first: 0, prs_hidden: 0,
   };
-  return { rooms2: { roomA: room } } as unknown as Model;
+  return {
+    walls: {
+      w5: { id: "w5", plan: "a", role: "wall", depth: 20, height: 280, material: "a_block", p1: { x: 0, y: 0 }, p2: { x: 400, y: 0 }, holes: {} },
+      w6: { id: "w6", plan: "a", role: "wall", depth: 20, height: 280, material: "a_block", p1: { x: 400, y: 0 }, p2: { x: 0, y: 300 }, holes: {} },
+    },
+    rooms2: { roomA: room },
+  } as unknown as Model;
+}
+
+/** Пересозданная комната (403 №9): обход контура начат с ДРУГОГО ребра —
+ *  ротация order, oid edges_prs перегенерированы (n1..n3), настройки
+ *  переносятся под новыми oid. */
+function rotatedSplitWall(before: Model, order: number[], disabledOids: string[], firstOid: string | 0 = 0): Model {
+  const src = (((before.rooms2 as AnyRec) as Record<string, AnyRec>)["roomA"] ?? {}) as AnyRec;
+  const room: AnyRec = { ...structuredClone(src) };
+  const pick = (key: string): AnyRec[] =>
+    order.map((i) => structuredClone((src[key] as AnyRec[])[i]!));
+  room["edges"] = pick("edges");
+  room["edges_prs"] = pick("edges_prs").map((e, i) => ({ ...e, edge_index: i, oid: `n${i + 1}` }));
+  room["prs_disabled"] = Object.fromEntries(disabledOids.map((o) => [o, ""]));
+  room["prs_first"] = firstOid;
+  return { walls: structuredClone(before.walls), rooms2: { roomA: room } } as unknown as Model;
 }
 
 test("401 №4: два сегмента одной стены, редактор сбросил один — предупреждение о сбросе", () => {
@@ -379,6 +400,45 @@ test("401 №4: два сегмента одной стены, редактор 
   // скрыты те же два сегмента w5 (сегменты 1 и 2 → новые рёбра 1 и 2, oid n2/n3)
   (room["prs_disabled"] as unknown as AnyRec) = { n2: "", n3: "" } as never;
   assert.deepEqual(prsSettingsResetWarnings(before, afterKept), [], `оба сегмента живы — предупреждения нет: ${JSON.stringify(prsSettingsResetWarnings(before, afterKept))}`);
+});
+
+// ---------- 403 №9: порядок вдоль стены — по положению на стене, не по обходу ----------
+
+test("403 №9: скрыт один сегмент w5, пересоздание с обходом МЕЖДУ сегментами (ротация [1,2,0]) — без ложного «сброшены»", () => {
+  // скрыт сегмент 0..200 (oid a); после пересоздания обход начат с сегмента
+  // 200..400: сегмент 0..200 — ребро 2 (oid n3), но на стене он ПО-ПРЕЖНЕМУ
+  // первый (проекция середины x=100 < x=300) — настройки не сброшены
+  const before = splitWallModel(["a"]);
+  const after = rotatedSplitWall(before, [1, 2, 0], ["n3"]);
+  const out = prsSettingsResetWarnings(before, after);
+  assert.deepEqual(out, [], `тот же сегмент скрыт — сброса нет: ${JSON.stringify(out)}`);
+  // «первая» — тот же сегмент
+  const beforeFirst = splitWallModel([]);
+  ((beforeFirst.rooms2 as AnyRec as Record<string, AnyRec>)["roomA"]!["prs_first"] as unknown) = "a";
+  const afterFirst = rotatedSplitWall(beforeFirst, [1, 2, 0], [], "n3");
+  assert.deepEqual(prsSettingsResetWarnings(beforeFirst, afterFirst), [], "«первая» — тот же сегмент: сброса нет");
+});
+
+test("403 №9: сверка save — ротация [1,2,0] сегментов разрезанной стены — без ложной problem", () => {
+  const before = splitWallModel(["a"]);
+  const after = rotatedSplitWall(before, [1, 2, 0], ["n3"]);
+  const walls = (structuredClone(before.walls) ?? {}) as Record<string, unknown>;
+  const out = prsSettingsMismatches(
+    (before.rooms2 as AnyRec) as Record<string, AnyRec>,
+    (after.rooms2 as AnyRec) as Record<string, AnyRec>,
+    walls,
+  );
+  assert.deepEqual(out.problems, [], `тот же сегмент скрыт — problem нет: ${JSON.stringify(out)}`);
+  assert.deepEqual(out.warnings, []);
+  // настройка уехала на ДРУГОЙ сегмент той же стены — problem есть (негатив)
+  const other = rotatedSplitWall(before, [1, 2, 0], ["n1"]); // скрыт сегмент 200..400
+  const outOther = prsSettingsMismatches(
+    (before.rooms2 as AnyRec) as Record<string, AnyRec>,
+    (other.rooms2 as AnyRec) as Record<string, AnyRec>,
+    walls,
+  );
+  assert.equal(outOther.problems.length, 1, `сброс одного сегмента ловится: ${JSON.stringify(outOther)}`);
+  assert.match(outOther.problems[0]!, /набор скрытых развёрток изменился/);
 });
 
 // ---------- 401 №8: prsSettingsMismatches — семантика по стене, как в sameState ----------

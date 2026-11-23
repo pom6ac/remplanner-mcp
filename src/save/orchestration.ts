@@ -612,8 +612,11 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
   warnings.push(...nichesNormCheck.warnings);
   const nichesNorm = nichesNormCheck.problems;
   // находка A ревью 397: ключ prs_disabled/prs_first, не совпадающий ни с одним
-  // oid edges_prs, — новый: ошибка, унаследованный: предупреждение (как №18)
-  const prsNormCheck = prsSettingsMismatches((host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined);
+  // oid edges_prs, — новый: ошибка, унаследованный: предупреждение (как №18);
+  // №9 follow-up 402: стены — для оси «порядок вдоль стены» в edgeSemKeyOf
+  const wallsOf = (m: Model | Record<string, unknown>): Record<string, unknown> | undefined =>
+    (m as Record<string, unknown>)["walls"] as Record<string, unknown> | undefined;
+  const prsNormCheck = prsSettingsMismatches((host.model()["rooms2"] ?? host.model()["rooms1"]) as Record<string, Record<string, unknown>> | undefined, ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined, wallsOf(host.model()), wallsOf(norm.model as Model));
   warnings.push(...prsNormCheck.warnings);
   const prsNorm = prsNormCheck.problems;
   // точка укладки отделки стены (anchor_decor) до save — локальная копия против normalize
@@ -944,8 +947,9 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     warnings.push(...nichesAfterCheck.warnings);
     const nichesAfter = nichesAfterCheck.problems;
     // находка A ревью 397: висячий ключ prs_disabled/prs_first после save —
-    // новый: расхождение, унаследованный: предупреждение (как у фигур, №18)
-    const prsAfterCheck = prsSettingsMismatches(expectedPrsRooms, ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {});
+    // новый: расхождение, унаследованный: предупреждение (как у фигур, №18);
+    // №9 follow-up 402: стены — для оси «порядок вдоль стены» в edgeSemKeyOf
+    const prsAfterCheck = prsSettingsMismatches(expectedPrsRooms, ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {}, wallsOf(norm.model as Model), wallsOf(after.model));
     warnings.push(...prsAfterCheck.warnings);
     const prsAfter = prsAfterCheck.problems;
     const anchorAfter = wallDecorAnchorMismatches(expectedPrsRooms, ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {});
