@@ -270,6 +270,7 @@ try {
   ownRoomIds.push(room0.siteId);
   journal();
   check(room0.edges === 4, `грани до материализации: edges=${room0.edges} edges_prs=${room0.edgesPrs} (${room0.siteId})`);
+  console.log(`рёбра до материализации: ${JSON.stringify(room0.edgePids)}`);
   const pidBottom0 = edgePidByY(room0, Y0 / 10);
   check(pidBottom0 !== null && pidBottom0 !== "?", `нижняя стена до материализации найдена среди рёбер (${pidBottom0})`);
   if (pidBottom0 === null || pidBottom0 === "?") throw new Error("нижняя стена пробной комнаты не распознана");
