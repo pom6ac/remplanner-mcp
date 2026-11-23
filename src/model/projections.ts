@@ -397,7 +397,7 @@ function wallDepthOfEdge(model: Model, room: RoomRec, target: PrsEdge): number |
   return typeof wall.depth === "number" && Number.isFinite(wall.depth) ? wall.depth : undefined;
 }
 
-function buildPrsFigure(model: Model, kind: PrsFigureKind, params: PrsFigureParams, id?: string): PrsFigureResult {
+function buildPrsFigure(model: Model, kind: PrsFigureKind, params: PrsFigureParams, id?: string, opts: { depthInherited?: boolean } = {}): PrsFigureResult {
   if (params.widthLineMm !== undefined && (!Number.isFinite(params.widthLineMm) || params.widthLineMm <= 0 || params.widthLineMm > 1000)) {
     throw new McpError("INVALID_ARGUMENT", "width_line_mm — число от 0 до 1000");
   }
@@ -425,13 +425,27 @@ function buildPrsFigure(model: Model, kind: PrsFigureKind, params: PrsFigurePara
   if (kind === "wall_niche") {
     const wallDepthCm = wallDepthOfEdge(model, room, target);
     const maxDepthCm = wallDepthCm !== undefined ? Math.min(80, wallDepthCm) : 80;
-    if (params.depthMm !== undefined && (!Number.isFinite(params.depthMm) || params.depthMm < 50 || params.depthMm > maxDepthCm * 10)) {
+    // №19 follow-up 392: унаследованная глубина (update без depth_mm) уже
+    // обрезана до предела вызывающим кодом — как в бандле
+    // (restorePrsChangeEdges: N<_.depth&&(_.depth=N)) — не отвергается и не
+    // поднимается до 50 мм; явно переданная глубина валидируется как раньше
+    if (!opts.depthInherited && params.depthMm !== undefined && (!Number.isFinite(params.depthMm) || params.depthMm < 50 || params.depthMm > maxDepthCm * 10)) {
       const hint = wallDepthCm !== undefined
         ? `толщина/длина стены по развёртке — ${wallDepthCm} см`
         : "стену ребра не удалось определить — глубина ограничена 800 мм";
       throw new McpError("INVALID_ARGUMENT", `depth_mm — число от 50 до ${Math.round(maxDepthCm * 10)} мм (${hint}; редактор: меню ниши correctValue(t,5,min(80,getWallDepth())) с предупреждением wall_depth_niche, draw обрезает depth=min(depth,getWallDepth(),80))`);
     }
-    depthCm = params.depthMm !== undefined ? r2(params.depthMm / 10) : (wallDepthCm !== undefined ? Math.min(PRS_NICHE_DEPTH_CM, wallDepthCm) : PRS_NICHE_DEPTH_CM);
+    if (params.depthMm !== undefined) {
+      depthCm = r2(params.depthMm / 10);
+    } else {
+      // №19: умолчание на стене тоньше 5 см меньше 50 мм — нишу создать нельзя
+      // (correctValue(t,5,min(80,getWallDepth())): верхняя граница меню ниже
+      // нижней, значение < 50 мм не создаём)
+      if (wallDepthCm !== undefined && wallDepthCm < 5) {
+        throw new McpError("INVALID_ARGUMENT", `на стене ${params.wall} тоньше 5 см нишу создать нельзя (умолчание min(200, толщина ${wallDepthCm * 10} мм) < 50 мм; редактор: correctValue(t,5,min(80,getWallDepth())))`);
+      }
+      depthCm = wallDepthCm !== undefined ? Math.min(PRS_NICHE_DEPTH_CM, wallDepthCm) : PRS_NICHE_DEPTH_CM;
+    }
   }
   // end_draw: запись < 10 см по значимому измерению удаляется (min 10)
   if (kind === "wall_niche") {
@@ -527,11 +541,21 @@ export function updatePrsFigure(model: Model, kind: PrsFigureKind, ref: string, 
   const H = num(model.total_height) ?? 270;
   const alongMm = params.alongMm ?? (typeof oldX === "number" ? oldX * 10 : 0);
   const bottomMm = params.bottomMm ?? (typeof oldYd === "number" ? (H - oldYd) * 10 : 0);
-  const depthMm = params.depthMm ?? (rec.depth !== undefined ? rec.depth * 10 : undefined);
+  const depthMmRaw = params.depthMm ?? (rec.depth !== undefined ? rec.depth * 10 : undefined);
+  // №19 follow-up 392: унаследованная глубина обрезается до ТЕКУЩЕГО предела
+  // (бандл: restorePrsChangeEdges — N<_.depth&&(_.depth=N); редактор обрезает,
+  // если толщина стены уменьшилась), а не отвергает; явно переданная вне
+  // предела — INVALID_ARGUMENT (валидация buildPrsFigure)
+  let depthMm = depthMmRaw;
+  if (kind === "wall_niche" && params.depthMm === undefined && depthMm !== undefined) {
+    const wallDepthCm = wallDepthOfEdge(model, roomRec, target);
+    const maxDepthMm = Math.round((wallDepthCm !== undefined ? Math.min(80, wallDepthCm) : 80) * 10);
+    depthMm = Math.min(depthMm, maxDepthMm);
+  }
   const widthLineMm = params.widthLineMm ?? (rec.width_line !== undefined ? rec.width_line * 10 : undefined);
   delete (collectionOf(model, kind) as Record<string, PrsFigureEntity>)[rec.id];
   try {
-    return buildPrsFigure(model, kind, { room: roomId, wall: target.wallId ?? "", alongMm, bottomMm, widthMm, heightMm, depthMm, widthLineMm }, rec.id);
+    return buildPrsFigure(model, kind, { room: roomId, wall: target.wallId ?? "", alongMm, bottomMm, widthMm, heightMm, depthMm, widthLineMm }, rec.id, { depthInherited: params.depthMm === undefined });
   } catch (e) {
     // атомарность: вернуть запись на место
     (collectionOf(model, kind) as Record<string, PrsFigureEntity>)[rec.id] = rec;

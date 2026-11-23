@@ -365,6 +365,44 @@ test("389: сверка prs-настроек — по edge_index, skip при и
   assert.deepEqual(prsSettingsMismatches(before, recut), []);
 });
 
+// ---------- 392 follow-up №19: унаследованная глубина ниши при update ----------
+
+test("392 №19: update ниши после утоньшения стены — унаследованная глубина обрезается до предела, а не отвергается", () => {
+  const m = baseModel();
+  addPrsFigure(m, "wall_niche", { room: "R1", wall: "w1", alongMm: 1000, bottomMm: 1200, widthMm: 400, heightMm: 400 });
+  const w1 = (m.walls as AnyRec)["w1"] as AnyRec;
+  assert.equal(resolvePrsFigure(m, "wall_niche", "WN1").depth, 20, "умолчание на стене 20 см");
+  // толщина стены уменьшилась до 12 см: правка позиции (along_mm) проходит,
+  // глубина обрезается редактором (restorePrsChangeEdges: N<_.depth&&(_.depth=N))
+  w1["depth"] = 10;
+  const upd = updatePrsFigure(m, "wall_niche", "WN1", { alongMm: 1500 });
+  assert.equal(upd.depth, 10, "унаследованная глубина обрезана до текущего предела min(80, толщина 10 см)");
+  assert.equal((upd.prs as AnyRec)["pc_xd"], 150, "позиция обновлена");
+  // явно переданная глубина вне предела — INVALID_ARGUMENT
+  assert.throws(() => updatePrsFigure(m, "wall_niche", "WN1", { depthMm: 1000 }), /50 до 100/);
+  // унаследованная глубина уже в пределе — не меняется
+  const upd2 = updatePrsFigure(m, "wall_niche", "WN1", { alongMm: 2000 });
+  assert.equal(upd2.depth, 10);
+});
+
+test("392 №19: умолчание на стене тоньше 5 см — отказ, значение < 50 мм не создаётся", () => {
+  const m = baseModel();
+  ((m.walls as AnyRec)["w1"] as AnyRec)["depth"] = 4;
+  assert.throws(
+    () => addPrsFigure(m, "wall_niche", { room: "R1", wall: "w1", alongMm: 1000, bottomMm: 1200, widthMm: 400, heightMm: 400 }),
+    /тоньше 5 см/,
+    "умолчание min(200, толщина 40 мм) < 50 мм — отказ (correctValue(t,5,min(80,getWallDepth())): верхняя граница ниже нижней)",
+  );
+  // унаследованная глубина < 50 мм (запись редактора на тонкой стене) при update
+  // позиции не отвергается — обрезается только до верхнего предела, не поднимается
+  const m2 = baseModel();
+  addPrsFigure(m2, "wall_niche", { room: "R1", wall: "w1", alongMm: 1000, bottomMm: 1200, widthMm: 400, heightMm: 400 });
+  (resolvePrsFigure(m2, "wall_niche", "WN1") as AnyRec)["depth"] = 3; // пришло из редактора
+  ((m2.walls as AnyRec)["w1"] as AnyRec)["depth"] = 4;
+  const upd = updatePrsFigure(m2, "wall_niche", "WN1", { alongMm: 1500 });
+  assert.equal(upd.depth, 3, "унаследованная глубина < 50 мм не поднимается (бандл только обрезает: N<_.depth&&(_.depth=N))");
+});
+
 // ---------- 392 follow-up №17: предупреждение только о фактическом сбросе prs ----------
 
 test("392 №17: wall_move без смены нарезки (настройки не тронуты) — предупреждения о prs нет", () => {
