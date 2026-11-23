@@ -85,19 +85,22 @@ type RoomState = {
   disabledKeysReal: boolean;
   disabledWalls: string[];
   prsSnapshot: string;
+  /** pids рёбер и их геометрия (см) — адресация стен prs_set/wall_move. */
+  edgePids: Array<{ pid: string; p1: { x: number; y: number }; p2: { x: number; y: number } }>;
 };
 // prs-состояние и грани комнаты по model_get detail=full (rooms2-ключ); комната
 // ищется в границах полигона пробной комнаты (после wall_move id может смениться)
 const roomStateOf = (mg: { rooms2?: Record<string, unknown> }): RoomState | null => {
   for (const [rid, rec] of Object.entries(mg["rooms2"] ?? {})) {
     const r = rec as {
-      polygon?: Array<{ x: number; y: number }>; edges?: Array<{ pid?: string }>; edges_prs?: Array<{ oid?: string; edge_index?: number }>;
+      polygon?: Array<{ x: number; y: number }>; edges?: Array<Record<string, unknown>>; edges_prs?: Array<{ oid?: string; edge_index?: number }>;
       prs_disabled?: unknown; prs_first?: unknown; prs_hidden?: unknown;
     };
     const poly = r.polygon ?? [];
     if (poly.length < 3) continue;
     if (!poly.every((p) => p.x >= X0 / 10 - 10 && p.x <= (X0 + 3000) / 10 + 10 && p.y >= Y0 / 10 - 10 && p.y <= (Y0 + 2600) / 10 + 10)) continue;
-    const edges = r.edges ?? [];
+    const edgesRaw = r.edges ?? [];
+    const edges = edgesRaw as Array<{ pid?: string; p1?: { x: number; y: number }; p2?: { x: number; y: number } }>;
     const edgesPrs = r.edges_prs ?? [];
     const oids = edgesPrs.map((e) => (typeof e.oid === "string" ? e.oid : ""));
     const disabled = (r.prs_disabled ?? {}) as Record<string, unknown>;
@@ -118,9 +121,19 @@ const roomStateOf = (mg: { rooms2?: Record<string, unknown> }): RoomState | null
       disabledKeysReal: disabledKeys.every((k) => oids.includes(k)),
       disabledWalls,
       prsSnapshot: JSON.stringify({ hidden: r.prs_hidden, first: r.prs_first, disabled: disabledKeys.slice().sort() }),
+      edgePids: edges.map((e) => ({
+        pid: String(e.pid ?? "?"),
+        p1: { x: e.p1?.x ?? NaN, y: e.p1?.y ?? NaN },
+        p2: { x: e.p2?.x ?? NaN, y: e.p2?.y ?? NaN },
+      })),
     };
   }
   return null;
+};
+/** pid ребра стены по геометрии (верх/низ пробной комнаты), см. */
+const edgePidByY = (st: RoomState, yCm: number): string | null => {
+  const e = st.edgePids.find((e) => Math.abs(e.p1.y - yCm) < 1 && Math.abs(e.p2.y - yCm) < 1);
+  return e ? e.pid : null;
 };
 
 let roGuard: Awaited<ReturnType<typeof readonlyGuard>> | null = null;
@@ -236,9 +249,7 @@ try {
 
   // ==== пробная комната: 4 стены 3000×2600 (мм), координаты вне зон прежних проб ====
   X0 = 90000, Y0 = 90000;
-  const wallIds: string[] = [];
-  const segs: Array<[Record<string, unknown>, Record<string, unknown>]> = [
-    [{ x: X0, y: Y0 }, { x: X0 + 3000, y: Y0 }],
+  const segs: Array<[Record<string, unknown>, Record<string, unknown>]> = [    [{ x: X0, y: Y0 }, { x: X0 + 3000, y: Y0 }],
     [{ x: X0 + 3000, y: Y0 }, { x: X0 + 3000, y: Y0 + 2600 }],
     [{ x: X0 + 3000, y: Y0 + 2600 }, { x: X0, y: Y0 + 2600 }],
     [{ x: X0, y: Y0 + 2600 }, { x: X0, y: Y0 }],
@@ -247,29 +258,28 @@ try {
     const r = await call("wall_add", { start: s, end: e }) as { entity?: { site_id?: string } | null };
     const site = r["entity"]?.["site_id"];
     check(typeof site === "string" && site.length > 0, `wall_add создал стену (${site ?? "?"})`);
-    if (typeof site === "string") { wallIds.push(site); created.push({ kind: "wall", siteId: site }); }
+    if (typeof site === "string") { created.push({ kind: "wall", siteId: site }); }
   }
   journal();
   const saveWalls = await gsave("стены пробной комнаты");
   check(saveWalls["verified"] === true, "save стен verified");
-  const mgRooms = await call("model_get", {}) as { rooms?: Array<{ id?: string }> };
-  const mine = (mgRooms["rooms"] ?? []).find((r) => typeof r["id"] === "string");
-  void mine;
   const mgFull0 = await call("model_get", { detail: "full" }) as { rooms2?: Record<string, unknown> };
   const room0 = roomStateOf(mgFull0);
   check(room0 !== null, `пробная комната найдена (${room0?.siteId ?? "?"})`);
   if (!room0) throw new Error("пробная комната не найдена");
   ownRoomIds.push(room0.siteId);
   journal();
-  const roomLabel = (await call("model_get", {}) as { rooms?: Array<{ id?: string; area?: number }> }).rooms?.find((r) => typeof r["id"] === "string")?.id ?? room0.siteId;
   check(room0.edges === 4, `грани до материализации: edges=${room0.edges} edges_prs=${room0.edgesPrs} (${room0.siteId})`);
+  const pidBottom0 = edgePidByY(room0, Y0 / 10);
+  check(pidBottom0 !== null && pidBottom0 !== "?", `нижняя стена до материализации найдена среди рёбер (${pidBottom0})`);
+  if (pidBottom0 === null || pidBottom0 === "?") throw new Error("нижняя стена пробной комнаты не распознана");
 
-  // ==== 1) материализация раскладки: wall_move w1 на 20 мм — редактор
+  // ==== 1) материализация раскладки: wall_move нижней стены на 20 мм — редактор
   // ==== пересчитывает комнаты (restorePrsChangeEdges → createEdgesPrs) ====
-  const moveMat = await call("wall_move", { wall_id: wallIds[0], offset_mm: 20 }) as { warnings?: unknown[] };
+  const moveMat = await call("wall_move", { wall_id: pidBottom0, offset_mm: 20 }) as { warnings?: unknown[] };
   console.log("wall_move (материализация) warnings:", JSON.stringify(((moveMat["warnings"] ?? []) as unknown[]).map(String)));
   await call("model_validate", {});
-  const saveMat = await gsave("wall_move w1 +20 (материализация раскладки)");
+  const saveMat = await gsave("wall_move нижней +20 (материализация раскладки)");
   check(saveMat["verified"] === true, "save материализации verified");
   // независимый GET — факт
   const gotMat = await loadModel(ctx.session(), ids.objectId, ids.planId);
@@ -283,19 +293,28 @@ try {
   );
   if (!oidsReal) throw new Error("раскладка развёрток не материализована — живой путь с реальными oid недоступен");
   // prs_set адресует комнату по site id пробной комнаты (не по общей метке:
-  // model_get rooms[] может начаться с чужой комнаты)
+  // model_get rooms[] может начаться с чужой комнаты); СКРЫВАЕМАЯ стена и
+  // СДВИГАЕМАЯ стена берутся из pids ТЕКУЩИХ рёбер комнаты (редактор при
+  // пересчёте может перерезать стены — исходные site_id не обязаны жить):
+  // скрытие — НЕТРОНУТАЯ верхняя стена (y = Y0+2600), сдвиг — нижняя (w1)
+  const pidTop = edgePidByY(matState, (Y0 + 2600) / 10);
+  const pidBottom = edgePidByY(matState, Y0 / 10);
+  console.log(`рёбра комнаты: ${JSON.stringify(matState.edgePids)}; скрытие — pidTop=${pidTop}, сдвиг — pidBottom=${pidBottom}`);
+  check(pidTop !== null && pidTop !== "?", `верхняя стена найдена среди рёбер (${pidTop})`);
+  check(pidBottom !== null && pidBottom !== "?", `нижняя стена найдена среди рёбер (${pidBottom})`);
+  if (pidTop === null || pidBottom === null || pidTop === "?" || pidBottom === "?") throw new Error("рёбра пробной комнаты не распознаны");
   const roomLabel2 = matState.siteId;
 
   // ==== 2) prs_set скрывает развёртку НЕТРОНУТОЙ стены (w3) — ключ обязан ====
   // ==== совпасть с oid из edges_prs (фикс A) ====
   let prsRes: Record<string, unknown>;
   try {
-    prsRes = await call("prs_set", { room: roomLabel2, hide_walls: [wallIds[2]] }) as Record<string, unknown>;
+    prsRes = await call("prs_set", { room: roomLabel2, hide_walls: [pidTop] }) as Record<string, unknown>;
   } catch (e) {
     check(false, `prs_set на комнате с edges_prs (${matState!.edgesPrs}) ОТКАЗАЛ: ${String((e as Error).message).slice(0, 300)}`);
     throw e;
   }
-  check(prsRes["hidden"] === false, `prs_set скрыл развёртку нетронутой стены w3 (disabled=${JSON.stringify(prsRes["disabled_edges"])})`);
+  check(prsRes["hidden"] === false, `prs_set скрыл развёртку нетронутой верхней стены ${pidTop} (disabled=${JSON.stringify(prsRes["disabled_edges"])})`);
   journal();
   await call("model_validate", {});
   await gsave("prs_set (скрыта развёртка нетронутой стены)");
@@ -308,32 +327,36 @@ try {
     `КЛЮЧ prs_disabled — реальный oid из edges_prs: keys=${JSON.stringify(stBefore?.disabledKeys)} oids=${JSON.stringify(stBefore?.oids)} (фикс A)`,
   );
   check(
-    stBefore !== null && stBefore.disabledWalls.length === 1 && stBefore.disabledWalls[0] === wallIds[2],
-    `скрытая развёртка на НЕТРОНУТОЙ стене: disabledWalls=${JSON.stringify(stBefore?.disabledWalls)} ожидалось [${wallIds[2]}]`,
+    stBefore !== null && stBefore.disabledWalls.length === 1 && stBefore.disabledWalls[0] === pidTop,
+    `скрытая развёртка на НЕТРОНУТОЙ верхней стене: disabledWalls=${JSON.stringify(stBefore?.disabledWalls)} ожидалось [${pidTop}]`,
   );
 
-  // ==== 3) сдвиг ДРУГОЙ стены (w2), save, reopen + независимый GET ====
-  const moveRes = await call("wall_move", { wall_id: wallIds[1], offset_mm: 20 }) as { warnings?: unknown[] };
+  // ==== 3) сдвиг ДРУГОЙ стены (нижняя), save, reopen + независимый GET ====
+  const moveRes = await call("wall_move", { wall_id: pidBottom, offset_mm: 20 }) as { warnings?: unknown[] };
   const moveWarn = ((moveRes["warnings"] ?? []) as unknown[]).map(String);
-  console.log("wall_move w2 warnings:", JSON.stringify(moveWarn));
+  console.log("wall_move (нижняя) warnings:", JSON.stringify(moveWarn));
   await call("model_validate", {});
-  const saveMove = await gsave("wall_move w2 +20 (сдвиг другой стены)");
-  check(saveMove["verified"] === true, "save wall_move w2 verified");
+  const saveMove = await gsave("wall_move нижней +20 (сдвиг другой стены)");
+  check(saveMove["verified"] === true, "save wall_move (сдвиг нижней) verified");
   // состояние «после»: reopen из сервера + независимый loadModel (не модель рабочей области)
   await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
   const gotAfter = await loadModel(ctx.session(), ids.objectId, ids.planId);
   const stAfter = roomStateOf({ rooms2: (gotAfter.model["rooms2"] ?? gotAfter.model["rooms1"]) as Record<string, unknown> });
-  check(stAfter !== null, `комната найдена после wall_move w2 (${stAfter?.siteId ?? "?"})`);
+  check(stAfter !== null, `комната найдена после wall_move нижней (${stAfter?.siteId ?? "?"})`);
   if (stAfter && !ownRoomIds.includes(stAfter.siteId)) { ownRoomIds.push(stAfter.siteId); journal(); }
   console.log(`грани до: edges=${stBefore?.edges} edges_prs=${stBefore?.edgesPrs}; после: edges=${stAfter?.edges} edges_prs=${stAfter?.edgesPrs} (room id: ${stBefore?.siteId} → ${stAfter?.siteId ?? "?"})`);
   console.log(`prs до: keys=${JSON.stringify(stBefore?.disabledKeys)} oids=${JSON.stringify(stBefore?.oids)}; после: keys=${JSON.stringify(stAfter?.disabledKeys)} oids=${JSON.stringify(stAfter?.oids)}`);
   const keysStillReal = stAfter !== null && stAfter.disabledKeysReal && stAfter.disabledKeys.length === stBefore!.disabledKeys.length;
   check(
     keysStillReal,
-    `после wall_move w2 ключи prs_disabled — по-прежнему oid из edges_prs: ${JSON.stringify(stAfter?.disabledKeys)}`,
+    `после wall_move (сдвиг нижней) ключи prs_disabled — по-прежнему oid из edges_prs: ${JSON.stringify(stAfter?.disabledKeys)}`,
   );
-  const sameWall = keysStillReal && stAfter!.disabledWalls.length === 1 && stAfter!.disabledWalls[0] === wallIds[2];
-  console.log(`disabledWalls после: ${JSON.stringify(stAfter?.disabledWalls)} (до: ${JSON.stringify(stBefore?.disabledWalls)})`);
+  // фактический перенос — по стене ребра и СТОРОНЕ (как sameState фикса D):
+  // скрытое ребро после пересчёта обязано лежать на верхней стене с той же
+  // стороной, что и до (редактор переносит по геометрии — restoreElementPrs)
+  const pidTopAfter = stAfter ? edgePidByY(stAfter, (Y0 + 2600) / 10) : null;
+  const sameWall = keysStillReal && pidTopAfter !== null && stAfter!.disabledWalls.length === 1 && stAfter!.disabledWalls[0] === pidTopAfter;
+  console.log(`disabledWalls после: ${JSON.stringify(stAfter?.disabledWalls)} (до: ${JSON.stringify(stBefore?.disabledWalls)}); pidTop после пересчёта: ${pidTopAfter}`);
   // предупреждение MCP соответствует факту: сверка состояния «до → после»
   // по стене ребра и стороне (как sameState фикса D) — здесь через полную
   // запись prs_disabled/prs_first/prs_hidden и стену скрытого ребра
