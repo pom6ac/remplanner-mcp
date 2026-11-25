@@ -201,6 +201,60 @@ export const PAGE = {
     }, waitMs);
   }))()`,
 
+  /**
+   * Раскладка развёрток комнаты (этап 406): $Project.restore(model) → draw({rooms:1})
+   * → ROOMS2[roomId].createEdgesPrs() → id_of_edges[e]=edges_prs[e].oid — тот же
+   * код редактора, что при открытии листа «Развёртки» (Projections.get:
+   * createEdgesPrs(getLines()) и id_of_edges[e]=lines[e].oid) и в serialize_room.
+   * Аргумент — window.__remplanner_arg = {model, roomId}: roomId — ключ rooms2
+   * модели, проверенный на стороне Node (данные, не код). Возвращает только
+   * edges_prs/id_of_edges комнаты; страница после вызова восстанавливается тем
+   * же restore (следующий normalize всё равно делает restore с reset).
+   *
+   * Ревью 407 №2 — почему без ожидания (в отличие от restoreDrawCopy), по бандлу
+   * 268-app.js: $Project.restore синхронно делает WALLS.restore, PILLARS.restore,
+   * ROOMS2.restore(e.rooms2) (конструктор Room2: this.edges=e.edges||[],
+   * PRS=new Projections(this)); асинхронны в нём только setTimeout(change_group,100)
+   * (переключение активного листа) и ветка isAdmin&&!isProd — на rooms2/edges не
+   * влияют. createEdgesPrs → getEdgesPrs → PRS.getLines(): читает только
+   * this.room.edges и id_of_edges (WALLS — в mapWallObjects, здесь не вызывается),
+   * PRS.mapPillars — PILLARS и room.polygon; всё синхронно. Ожидание restoreDrawCopy
+   * нужно для copy('server') после draw (save-пайплайн), а не для ROOMS2. Отказ
+   * безопасен (missing / «линий нет» → ошибка, модель не меняется); живая
+   * проверка — лог «407-№2» пробы 406.
+   */
+  prsLayout: `(() => {
+    const w = window;
+    const arg = w.__remplanner_arg || {};
+    const model = arg.model;
+    const roomId = arg.roomId;
+    try {
+      w.$Project.restore(model, { reset: 1 });
+      w.$Project.draw({ rooms: 1 });
+    } catch (e) {
+      return { layoutError: "restore", name: String((e && e.name) || "error").slice(0, 100) };
+    }
+    const rooms = w.ROOMS2 || {};
+    if (typeof roomId !== "string" || !Object.prototype.hasOwnProperty.call(rooms, roomId)) {
+      return { missing: true };
+    }
+    const room = rooms[roomId];
+    let out;
+    try {
+      room.createEdgesPrs();
+      room.id_of_edges = [];
+      for (let e = 0; e < room.edges_prs.length; e++) room.id_of_edges[e] = room.edges_prs[e].oid;
+      out = JSON.parse(JSON.stringify({ edges_prs: room.edges_prs, id_of_edges: room.id_of_edges }));
+    } catch (e) {
+      return { layoutError: "createEdgesPrs", name: String((e && e.name) || "error").slice(0, 100) };
+    }
+    try {
+      w.$Project.restore(model, { reset: 1 });
+      w.$Project.draw({ rooms: 1 });
+    } catch (e) { /* страница всё равно перезагрузит модель в следующем normalize */ }
+    return out;
+  })()`,
+
   /** Сохранение штатным project.save(false, true); ответ ловит адаптер по network. */
   savePlan: `(() => {
     const w = window;

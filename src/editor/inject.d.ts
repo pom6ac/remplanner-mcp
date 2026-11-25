@@ -4,6 +4,7 @@ export const PAGE: {
   compatInfo: string;
   currentIds: string;
   restoreDrawCopy: string;
+  prsLayout: string;
   savePlan: string;
   bundleNames: string;
 };

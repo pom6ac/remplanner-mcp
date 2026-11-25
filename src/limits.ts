@@ -80,4 +80,25 @@ export const SHIELD_MAX_COLLECTORS = 20;
  * запятая, пробел, #, ], кавычка в CSS-селектор не попадают — их отсекает
  * схема ещё до адаптера.
  */
-export const SHEET_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+export const SAFE_KEY_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+export const SHEET_NAME_PATTERN = SAFE_KEY_PATTERN;
+
+/**
+ * Ключ rooms2, передаваемый в страницу для раскладки развёрток (LIB.id и id
+ * прежних версий) — тот же узкий паттерн ключа (ревью 407 №5: одна регулярка).
+ */
+export const ROOM_ID_PATTERN = SAFE_KEY_PATTERN;
+
+/**
+ * Раскладка развёрток комнаты (этап 406, room_prs_layout): максимум линий
+ * развёрток одной комнаты, принимаемых от редактора (edges_prs/id_of_edges),
+ * и максимум записей pillars одной линии. Комната реальной квартиры — десятки
+ * рёбер; лимит отсекает аномальный ответ страницы до записи в модель.
+ */
+export const MAX_PRS_LAYOUT_LINES = 500;
+export const MAX_PRS_LINE_PILLARS = 100;
+/** Слой записи pillars (PRS.mapPillars: layer 1, 2, … — колонны «в глубину»). */
+export const MAX_PRS_PILLAR_LAYER = 100;
+
+/** Формат oid линии развёртки редактора (LIB.id: "_" + base36). */
+export const PRS_OID_PATTERN = /^[A-Za-z0-9_]{1,32}$/;

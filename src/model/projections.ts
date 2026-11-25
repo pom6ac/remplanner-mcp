@@ -3,6 +3,8 @@ export type { PrsFigureEntity };
 import { newId } from "./types.ts";
 import { McpError } from "../errors.ts";
 import { resolveRoom, type RoomRec } from "./finish.ts";
+import { MAX_PRS_LAYOUT_LINES, MAX_PRS_LINE_PILLARS, MAX_PRS_PILLAR_LAYER, MODEL_COORD_LIMIT_CM, PRS_OID_PATTERN, SAFE_KEY_PATTERN } from "../limits.ts";
+import { z } from "zod";
 
 /**
  * Развёртки (лист «Развёртки», режим «Стены») — этап 389.
@@ -133,9 +135,9 @@ export function prsEdgesOf(room: RoomRec): PrsEdge[] {
  * Находка 3 ревью 400: oid НЕ нестабильны — по бандлу раскладка, созданная
  * редактором, сериализуется (createEdgesPrs → serialize пишет edges_prs и
  * id_of_edges, @1018941), и назначенные oid стабильны до пересчёта линий.
- * Причина отказа не в нестабильности oid, а в том, что их ЕЩЁ НЕТ в модели:
- * MCP сам раскладку не создаёт — её создаёт открытие развёрток комнаты
- * пользователем в редакторе (лист «Развёртки») и save проекта.
+ * Причина отказа не в нестабильности oid, а в том, что их ЕЩЁ НЕТ в модели.
+ * Этап 406: раскладку создаёт room_prs_layout — настоящим кодом редактора
+ * (Workspace.prsLayout → адаптер → ROOMS2[id].createEdgesPrs()).
  */
 export function hasRealPrsLayout(room: RoomRec): boolean {
   const raw = Array.isArray(room["edges_prs"]) ? (room["edges_prs"] as Array<Record<string, unknown>>) : [];
@@ -233,10 +235,8 @@ export function setPrsSettings(model: Model, roomRef: string, params: PrsSetting
   if (!hasRealPrsLayout(room) && needsOid) {
     throw new McpError(
       "INVALID_ARGUMENT",
-      `у комнаты ${roomRef} нет раскладки развёрток (edges_prs пуст — раскладку создаёт редактор при первом ` +
-        `открытии листа «Развёртки»; MCP сам раскладку не создаёт, а oid, назначенные при её создании, ` +
-        `в модели ещё не известны): попросите пользователя открыть развёртки комнаты в редакторе ` +
-        `(лист «Развёртки») и сохранить проект, затем повторите`,
+      `у комнаты ${roomRef} нет раскладки развёрток (edges_prs пуст — идентификаторы развёрток назначает ` +
+        `редактор при создании раскладки): сначала вызовите room_prs_layout для этой комнаты, затем повторите prs_set`,
     );
   }
   const disabled = prsDisabledEdges(room);
@@ -890,4 +890,194 @@ export function setWallDecorAnchor(model: Model, params: WallAnchorParams): Wall
   delete part["custom_angle"];
   return { edge: target.edgeIndex, anchor, angle: num(part["angle"]) ?? 0, part: part["id"] !== undefined ? String(part["id"]) : undefined, layer: num(part["layer"]) ?? 1 };
 
+}
+
+// ---------- раскладка развёрток комнаты (этап 406, room_prs_layout) ----------
+
+/**
+ * Раскладка развёрток комнаты — настоящим кодом редактора (находка 3 ревью 400).
+ *
+ * Путь редактора (бандл 268-app.js): открытие листа «Развёртки» —
+ * Projections.get({force}) → this.lines=getLines() → room.createEdgesPrs(lines)
+ * → id_of_edges[e]=lines[e].oid. createEdgesPrs(e) = edges_prs=getEdgesPrs(e):
+ * {edge_index, p1:p1_orig, p2:p2_orig, oid, pillars:[]} + PRS.mapPillars.
+ * getLines: oid = id_of_edges[e] ? id_of_edges[e] : LIB.id(). serialize
+ * Room2 пишет edges_prs и id_of_edges как есть; конструктор Room2 их читает
+ * (oid стабильны до пересчёта линий). MCP вызывает в странице тот же
+ * room.createEdgesPrs() и синхронизирует id_of_edges с edges_prs (как
+ * restorePrs в конце), затем принимает ответ только после проверок ниже —
+ * формат редактора (oid, pc, p1/p2 в см) в публичный ответ не идёт.
+ */
+export type PrsLayoutRaw = { edges_prs: unknown; id_of_edges: unknown };
+
+export type PrsLayoutLine = {
+  edge_index: number;
+  /** Стена ребра: метка W<n> (порядок model_get); null — ребро не стены (колонна и т. п.). */
+  wall: string | null;
+  /** Сторона стены, обращённая в комнату (room_side ребра). */
+  side: "left" | "right" | null;
+  length_mm: number;
+};
+
+export type PrsLayoutResult = {
+  room: string;
+  site_id: string;
+  /** true — раскладка создана сейчас; false — уже была (no-op). */
+  created: boolean;
+  lines: PrsLayoutLine[];
+  message: string;
+};
+
+/**
+ * Ревью 407 №4: элемент pillars линии развёртки — схема по PRS.mapPillars
+ * бандла (268-app.js): `{xy, distance, width, height: total_height, pid,
+ * edge, edge_opposite, layer}`, где edge/edge_opposite — LIB.line
+ * `{p1, p2, c, length}`. Конечные числа в пределах MODEL_COORD_LIMIT_CM,
+ * pid — короткий ключ (SAFE_KEY_PATTERN), слой — целое 1..MAX_PRS_PILLAR_LAYER.
+ * Лишние поля отбрасываются (strip), неверный тип/вложенность — отказ
+ * (fail-closed): содержимое уходит на сайт при save.
+ */
+const prsCoord = z.number().finite().min(-MODEL_COORD_LIMIT_CM).max(MODEL_COORD_LIMIT_CM);
+const prsLen = z.number().finite().min(0).max(MODEL_COORD_LIMIT_CM);
+const prsPoint = z.object({ x: prsCoord, y: prsCoord });
+const prsLine = z.object({ p1: prsPoint, p2: prsPoint, c: prsPoint.optional(), length: prsLen.optional() });
+export const PrsPillarSchema = z.object({
+  xy: prsPoint,
+  distance: prsLen,
+  width: prsLen,
+  height: prsLen.nullable().optional(),
+  pid: z.string().regex(SAFE_KEY_PATTERN),
+  edge: prsLine,
+  edge_opposite: prsLine.optional(),
+  layer: z.number().int().min(1).max(MAX_PRS_PILLAR_LAYER),
+});
+const PrsPillarsSchema = z.array(PrsPillarSchema).max(MAX_PRS_LINE_PILLARS);
+
+/** Допуск «точка линии развёртки лежит на ребре комнаты», см. */
+const PRS_LAYOUT_TOL_CM = 1;
+
+function roomsMapOf(model: Model): Record<string, RoomRec> {
+  return (model.rooms2 ?? model.rooms1 ?? {}) as Record<string, RoomRec>;
+}
+
+/**
+ * Цель раскладки: комната rooms2 по id сайта или метке R<n>. Несуществующая
+ * комната, rooms1, терраса (Projections.get: "terrace"!==i.role) и комната без
+ * рёбер — INVALID_ARGUMENT до запуска редактора.
+ */
+export function prsLayoutTarget(model: Model, roomRef: string): { id: string; room: RoomRec; label: string } {
+  let id: string;
+  let room: RoomRec;
+  try {
+    ({ id, room } = resolveRoom(model, roomRef));
+  } catch {
+    throw new McpError("INVALID_ARGUMENT", `комната ${roomRef} не найдена (метка R<n> или id сайта из model_get)`);
+  }
+  const rooms2 = (model.rooms2 ?? {}) as Record<string, RoomRec>;
+  if (!Object.prototype.hasOwnProperty.call(rooms2, id)) {
+    throw new McpError("INVALID_ARGUMENT", `комната ${roomRef} ещё не перестроена редактором (нет в rooms2) — сначала project_save`);
+  }
+  if (room["role"] === "terrace") {
+    throw new McpError("INVALID_ARGUMENT", `у террасы ${roomRef} развёрток нет (редактор их не строит)`);
+  }
+  if (!Array.isArray(room.edges) || room.edges.length === 0) {
+    throw new McpError("INVALID_ARGUMENT", `у комнаты ${roomRef} нет рёбер — развёрток нет`);
+  }
+  const label = `R${Object.keys(roomsMapOf(model)).indexOf(id) + 1}`;
+  return { id, room, label };
+}
+
+function finitePoint(v: unknown): Point | null {
+  if (v === null || typeof v !== "object") return null;
+  const x = (v as Record<string, unknown>)["x"];
+  const y = (v as Record<string, unknown>)["y"];
+  if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+  if (Math.abs(x) > MODEL_COORD_LIMIT_CM || Math.abs(y) > MODEL_COORD_LIMIT_CM) return null;
+  return { x, y };
+}
+
+function pointOnSegment(p: Point, a: Point, b: Point, tol: number): boolean {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y) <= tol;
+  const t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  const tc = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + tc * dx), p.y - (a.y + tc * dy)) <= tol;
+}
+
+/**
+ * Проверка ответа редактора и запись раскладки в модель (rooms2[id].edges_prs,
+ * id_of_edges). Fail-closed: не массив, пусто, сверх лимита, oid не формата
+ * LIB.id или повторяется, edge_index вне рёбер комнаты, точка линии не на
+ * своём ребре (страница строила раскладку не по этой геометрии), id_of_edges
+ * не совпадает с oid — INTERNAL, модель не меняется (вызов внутри
+ * Workspace.apply — атомарно).
+ */
+export function applyPrsLayout(model: Model, roomId: string, raw: PrsLayoutRaw): void {
+  const room = ((model.rooms2 ?? {}) as Record<string, RoomRec>)[roomId];
+  if (!room) throw new McpError("INVALID_ARGUMENT", `комната ${roomId} не найдена в rooms2`);
+  const edges = Array.isArray(room.edges) ? room.edges : [];
+  const bad = (why: string): McpError => new McpError("INTERNAL", `редактор вернул некорректную раскладку развёрток: ${why} — модель не изменена`);
+  if (!Array.isArray(raw.edges_prs)) throw bad("edges_prs не массив");
+  if (raw.edges_prs.length === 0) throw bad("линий нет");
+  if (raw.edges_prs.length > MAX_PRS_LAYOUT_LINES) throw bad(`линий больше ${MAX_PRS_LAYOUT_LINES}`);
+  if (!Array.isArray(raw.id_of_edges) || raw.id_of_edges.length !== raw.edges_prs.length) throw bad("id_of_edges не совпадает с edges_prs по длине");
+  const seen = new Set<string>();
+  const lines: Array<Record<string, unknown>> = [];
+  for (let i = 0; i < raw.edges_prs.length; i++) {
+    const e = raw.edges_prs[i] as Record<string, unknown> | null;
+    if (e === null || typeof e !== "object" || Array.isArray(e)) throw bad(`линия ${i} не объект`);
+    const oid = e["oid"];
+    if (typeof oid !== "string" || !PRS_OID_PATTERN.test(oid)) throw bad(`oid линии ${i} не формата редактора`);
+    if (seen.has(oid)) throw bad(`oid линии ${i} повторяется`);
+    seen.add(oid);
+    if (raw.id_of_edges[i] !== oid) throw bad(`id_of_edges[${i}] не совпадает с oid линии`);
+    const idx = e["edge_index"];
+    if (typeof idx !== "number" || !Number.isInteger(idx) || idx < 0 || idx >= edges.length) throw bad(`edge_index линии ${i} вне рёбер комнаты`);
+    const p1 = finitePoint(e["p1"]);
+    const p2 = finitePoint(e["p2"]);
+    if (!p1 || !p2) throw bad(`координаты линии ${i} не конечны`);
+    const edge = edges[idx]!;
+    const a = finitePoint(edge.p1);
+    const b = finitePoint(edge.p2);
+    if (!a || !b || !pointOnSegment(p1, a, b, PRS_LAYOUT_TOL_CM) || !pointOnSegment(p2, a, b, PRS_LAYOUT_TOL_CM)) {
+      throw bad(`линия ${i} не лежит на ребре ${idx} комнаты (страница строила раскладку не по этой геометрии)`);
+    }
+    const pillarsRaw = e["pillars"] ?? [];
+    if (Array.isArray(pillarsRaw) && pillarsRaw.length > MAX_PRS_LINE_PILLARS) throw bad(`pillars линии ${i} сверх лимита`);
+    const parsed = PrsPillarsSchema.safeParse(pillarsRaw);
+    if (!parsed.success) throw bad(`pillars линии ${i} не формата редактора`);
+    lines.push({ edge_index: idx, p1, p2, oid, pillars: parsed.data });
+  }
+  room["edges_prs"] = lines;
+  room["id_of_edges"] = lines.map((l) => l["oid"] as string);
+}
+
+/** Линии раскладки в формате API (мм, W<n>, сторона) — без oid/см редактора. */
+export function prsLayoutLines(model: Model, roomId: string): PrsLayoutLine[] {
+  const room = roomsMapOf(model)[roomId];
+  if (!room) return [];
+  const edges = Array.isArray(room.edges) ? room.edges : [];
+  const raw = Array.isArray(room["edges_prs"]) ? (room["edges_prs"] as Array<Record<string, unknown>>) : [];
+  // метка W<n> — порядок Object.values(model.walls), как в model_get
+  const wallLabel = (pid: unknown): string | null => {
+    if (typeof pid !== "string") return null;
+    const i = Object.values(model.walls ?? {}).findIndex((w) => w.id === pid);
+    return i >= 0 ? `W${i + 1}` : null;
+  };
+  return raw.map((e) => {
+    const idx = typeof e["edge_index"] === "number" ? e["edge_index"] : -1;
+    const edge = (edges[idx] ?? {}) as Record<string, unknown>;
+    const p1 = finitePoint(e["p1"]) ?? { x: 0, y: 0 };
+    const p2 = finitePoint(e["p2"]) ?? { x: 0, y: 0 };
+    const sideRaw = edge["room_side"] ?? edge["side"];
+    const isWall = edge["parent"] === undefined || edge["parent"] === "wall";
+    return {
+      edge_index: idx,
+      wall: isWall ? wallLabel(edge["pid"]) : null,
+      side: sideRaw === "l" ? "left" : sideRaw === "r" ? "right" : null,
+      length_mm: Math.round(Math.hypot(p2.x - p1.x, p2.y - p1.y) * 10),
+    };
+  });
 }

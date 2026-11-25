@@ -147,6 +147,12 @@ export function prsSettingsMismatches(
     if (!ra) continue;
     const edgesB = Array.isArray(rb["edges_prs"]) ? (rb["edges_prs"] as unknown[]).length : 0;
     const edgesA = Array.isArray(ra["edges_prs"]) ? (ra["edges_prs"] as unknown[]).length : 0;
+    // этап 406: раскладка развёрток (room_prs_layout) у той же комнаты не теряется —
+    // редактор её не обнуляет (restorePrs/restorePrsChangeEdges всегда createEdgesPrs)
+    if (edgesB > 0 && edgesA === 0) {
+      out.push(`${rid}: раскладка развёрток потеряна после сохранения (линий ${edgesB} → 0)`);
+      continue;
+    }
     if (edgesB !== edgesA) continue;
     const hidB = rb["prs_hidden"] === 1;
     const hidA = ra["prs_hidden"] === 1;

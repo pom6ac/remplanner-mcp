@@ -81,10 +81,10 @@ test("399 A: prs_set (записи под oid) на комнате с пусты
     const err = throwsInvalid(() => setPrsSettings(m, "R1", p));
     assert.equal(err.code, "INVALID_ARGUMENT", `отказ для ${JSON.stringify(p)}: ${JSON.stringify(err)}`);
     assert.match(err.message ?? "", /раскладк/, `понятный текст: ${String(err.message)}`);
-    assert.match(err.message ?? "", /Развёртк/i, "подсказка — открыть развёртки в редакторе");
-    // находка 3 ревью 400: текст отказа адресован агенту — раскладку создаёт
-    // ПОЛЬЗОВАТЕЛЬ (MCP сам её не создаёт)
-    assert.match(err.message ?? "", /пользовател|попросите/, `текст для агента: ${String(err.message)}`);
+    // этап 406 (находка 3 ревью 400): текст отказа адресован агенту — указывает
+    // на инструмент раскладки room_prs_layout, а не на пользователя
+    assert.match(err.message ?? "", /room_prs_layout/, `текст для агента: ${String(err.message)}`);
+    assert.doesNotMatch(err.message ?? "", /попросите пользователя/, `без участия пользователя: ${String(err.message)}`);
     const room = roomOf(m);
     assert.deepEqual(Object.keys((room["prs_disabled"] as AnyRec) ?? {}), [], `prs_disabled не тронут (${JSON.stringify(p)})`);
     assert.equal(room["prs_first"], 0, `prs_first не тронут (${JSON.stringify(p)})`);

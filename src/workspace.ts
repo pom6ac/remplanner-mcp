@@ -23,7 +23,7 @@ import { prepareForRestore, findUnattachedEnds, expectedDanglingEndPoints, unmat
 import { dist } from "./model/geometry.ts";
 import { renderPlanToFile, type RenderedPlan, type RenderRevision } from "./render.ts";
 import { finishCompare, finishLossHint, matchRoomsByContour, roomHeirs } from "./model/finish.ts";
-import { prsFiguresAffectedByWalls } from "./model/projections.ts";
+import { prsFiguresAffectedByWalls, prsLayoutTarget, applyPrsLayout, prsLayoutLines, hasRealPrsLayout, type PrsLayoutRaw, type PrsLayoutResult } from "./model/projections.ts";
 import { prsSettingsResetWarnings } from "./verify/projections.ts";
 import { zoneDelimiterCompare, roomsWithChangedZoneCDividers, resurrectedZoneCDividers } from "./model/zone.ts";
 import { ceilingRigelCompare } from "./model/ceiling-rigels.ts";
@@ -104,6 +104,8 @@ export type EditorLike = {
   normalize(model: Record<string, unknown>, waitMs?: number): Promise<NormalizeResult>;
   save(timeoutMs?: number): Promise<EditorSaveResult>;
   renderPng(options?: RenderOptions): Promise<Buffer>;
+  /** Раскладка развёрток комнаты (этап 406); у старых моков может отсутствовать. */
+  prsLayout?(model: Record<string, unknown>, roomId: string): Promise<PrsLayoutRaw>;
   compatInfo(): Promise<CompatInfo>;
   close(): Promise<void>;
 };
@@ -1009,6 +1011,48 @@ export class Workspace {
       editor: seen as RenderRevision["editor"],
     };
     return { ...res, revision };
+  }
+
+  /**
+   * Раскладка развёрток комнаты (этап 406, room_prs_layout): oid линий
+   * развёрток назначает настоящий код редактора (ROOMS2[id].createEdgesPrs()
+   * через адаптер — тот же путь Chromium, что нормализация save: editor-guard,
+   * assertModelSafeForEditor). Атомарно: ответ страницы проверяется
+   * (applyPrsLayout) внутри apply — при любой ошибке рабочая модель не
+   * меняется; на сайт ничего не пишется до project_save. Раскладка уже есть —
+   * no-op (oid прежние, редактор их сохраняет до пересчёта линий).
+   */
+  async prsLayout(roomRef: string): Promise<PrsLayoutResult> {
+    if (!this.project) throw new McpError("INVALID_ARGUMENT", "проект не открыт — сначала project_open");
+    const base = this.modelInternal!;
+    const { id, room, label } = prsLayoutTarget(base, roomRef);
+    if (hasRealPrsLayout(room)) {
+      return {
+        room: label, site_id: id, created: false, lines: prsLayoutLines(base, id),
+        message: "раскладка развёрток уже есть — модель не изменена",
+      };
+    }
+    if (this.offline) {
+      throw new McpError("INVALID_ARGUMENT", "раскладку развёрток строит редактор — в офлайн-режиме она недоступна");
+    }
+    const editor = await this.ensureEditor();
+    if (typeof editor.prsLayout !== "function") {
+      throw new McpError("EDITOR_INCOMPATIBLE", "адаптер редактора не поддерживает раскладку развёрток");
+    }
+    const prepared = structuredClone(base);
+    prepareForRestore(prepared);
+    const raw = await editor.prsLayout(prepared as unknown as Record<string, unknown>, id);
+    // атомарность: за время работы страницы рабочая модель не должна смениться
+    if (this.modelInternal !== base) {
+      throw new McpError("INTERNAL", "рабочая модель изменилась во время раскладки развёрток — повторите");
+    }
+    return this.apply("room_prs_layout", (m) => {
+      applyPrsLayout(m, id, raw);
+      return {
+        room: label, site_id: id, created: true, lines: prsLayoutLines(m, id),
+        message: "раскладка развёрток создана редактором; теперь доступен prs_set; на сайт — project_save",
+      };
+    });
   }
 
   /** Ленивый запуск редактора (каталог, рендер, сохранение). */
