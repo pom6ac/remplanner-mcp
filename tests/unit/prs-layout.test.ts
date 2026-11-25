@@ -19,6 +19,7 @@ import { ServerContext } from "../../src/server/context.ts";
 import type { LoadedModel } from "../../src/api.ts";
 import type { Model } from "../../src/model/types.ts";
 import { McpError } from "../../src/errors.ts";
+import { ROOM_ID_PATTERN, SAFE_KEY_PATTERN, SHEET_NAME_PATTERN } from "../../src/limits.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 type AnyRec = Record<string, unknown>;
@@ -30,6 +31,14 @@ const REF = JSON.parse(readFileSync(join(here, "../fixtures/synthetic-prs-layout
   expected_lines: Array<{ edge_index: number; wall: string; side: string; length_mm: number }>;
 };
 const R1 = "_uwwgk";
+
+/** Элемент pillars формы PRS.mapPillars бандла 268-app.js (LIB.line: p1, p2, c, length). */
+const PILLAR = {
+  xy: { x: 150, y: 0 }, distance: 50, width: 30, height: 270, pid: "_pil01",
+  edge: { p1: { x: 135, y: 0 }, p2: { x: 165, y: 0 }, c: { x: 150, y: 0 }, length: 30 },
+  edge_opposite: { p1: { x: 135, y: 30 }, p2: { x: 165, y: 30 }, c: { x: 150, y: 30 }, length: 30 },
+  layer: 1,
+};
 
 function baseModel(): Model {
   return structuredClone(BASE.model);
@@ -159,16 +168,60 @@ test("406: некорректный ответ страницы — INTERNAL, р
     ["edge_index вне рёбер", { edges_prs: lines().map((e, i) => (i === 0 ? { ...e, edge_index: 9 } : e)), id_of_edges: ok.id_of_edges }],
     ["линия не на своём ребре", { edges_prs: lines().map((e, i) => (i === 0 ? { ...e, edge_index: 1 } : e)), id_of_edges: ok.id_of_edges }],
     ["координата не конечна", { edges_prs: lines().map((e, i) => (i === 0 ? { ...e, p1: { x: null, y: 0 } } : e)), id_of_edges: ok.id_of_edges }],
+    // ревью 407 №4: pillars — zod-схема по PRS.mapPillars, fail-closed
+    ["pillars не массив", { edges_prs: lines().map((e, i) => (i === 0 ? { ...e, pillars: { a: 1 } } : e)), id_of_edges: ok.id_of_edges }],
+    ["pillars: элемент — строка", { edges_prs: lines().map((e, i) => (i === 0 ? { ...e, pillars: ["<img src=x>"] } : e)), id_of_edges: ok.id_of_edges }],
+    ["pillars: distance строкой", { edges_prs: lines().map((e, i) => (i === 0 ? { ...e, pillars: [{ ...PILLAR, distance: "10" }] } : e)), id_of_edges: ok.id_of_edges }],
+    ["pillars: pid не формата", { edges_prs: lines().map((e, i) => (i === 0 ? { ...e, pillars: [{ ...PILLAR, pid: "<b onclick=x>" }] } : e)), id_of_edges: ok.id_of_edges }],
+    ["pillars: координата вне лимита", { edges_prs: lines().map((e, i) => (i === 0 ? { ...e, pillars: [{ ...PILLAR, xy: { x: 1e12, y: 0 } }] } : e)), id_of_edges: ok.id_of_edges }],
+    ["pillars: вложенный edge не линия", { edges_prs: lines().map((e, i) => (i === 0 ? { ...e, pillars: [{ ...PILLAR, edge: { p1: [[[1]]] } }] } : e)), id_of_edges: ok.id_of_edges }],
+    ["pillars: layer 0", { edges_prs: lines().map((e, i) => (i === 0 ? { ...e, pillars: [{ ...PILLAR, layer: 0 }] } : e)), id_of_edges: ok.id_of_edges }],
+    ["pillars сверх лимита", { edges_prs: lines().map((e, i) => (i === 0 ? { ...e, pillars: Array.from({ length: 101 }, () => PILLAR) } : e)), id_of_edges: ok.id_of_edges }],
   ];
   for (const [label, raw] of cases) {
     const { ws } = harness({ layout: () => raw });
     await ws.open("0", "1");
+    const ref = ws.model;
     const snap = JSON.stringify(ws.model);
     const steps = ws.historyInfo().steps;
     await assert.rejects(() => ws.prsLayout("R1"), isCode("INTERNAL"), label);
+    assert.equal(ws.model, ref, `${label}: рабочая модель — тот же объект (запись не выполнялась)`);
     assert.equal(JSON.stringify(ws.model), snap, `${label}: модель не изменена`);
     assert.equal(ws.historyInfo().steps, steps, `${label}: история не изменена`);
   }
+});
+
+// ревью 407 №3: модель сменилась, пока страница строила раскладку
+test("407 №3: рабочая модель изменилась во время раскладки — INTERNAL, чужая правка не перетёрта, раскладка не записана", async () => {
+  let wsRef: Workspace | null = null;
+  const { ws } = harness({
+    layout: () => {
+      // конкурентная правка во время await page.evaluate
+      wsRef!.apply("concurrent", (m) => { roomOf(m)["name"] = "concurrent-edit"; });
+      return structuredClone(REF.editor_layout);
+    },
+  });
+  wsRef = ws;
+  await ws.open("0", "1");
+  const steps = ws.historyInfo().steps;
+  await assert.rejects(() => ws.prsLayout("R1"), isCode("INTERNAL"));
+  const room = roomOf(ws.model);
+  assert.equal(room["name"], "concurrent-edit", "конкурентная правка сохранена");
+  assert.deepEqual(room["edges_prs"], [], "раскладка по устаревшей модели не записана");
+  assert.equal(hasRealPrsLayout(room as never), false);
+  assert.equal(ws.historyInfo().steps, steps + 1, "в истории только конкурентная правка");
+});
+
+test("407 №4: pillars формата mapPillars проходят схему; лишние поля отбрасываются", () => {
+  const m = baseModel();
+  const raw = structuredClone(REF.editor_layout) as { edges_prs: AnyRec[]; id_of_edges: string[] };
+  raw.edges_prs[0]!["pillars"] = [{ ...PILLAR, evil: "<script>" }, { ...PILLAR, height: undefined, edge_opposite: undefined, layer: 2 }];
+  applyPrsLayout(m, R1, raw);
+  const pillars = (roomOf(m)["edges_prs"] as AnyRec[])[0]!["pillars"] as AnyRec[];
+  assert.equal(pillars.length, 2);
+  assert.deepEqual(Object.keys(pillars[0]!).sort(), ["distance", "edge", "edge_opposite", "height", "layer", "pid", "width", "xy"]);
+  assert.ok(!JSON.stringify(pillars).includes("<script>"));
+  assert.equal(pillars[1]!["layer"], 2);
 });
 
 test("406: ответ страницы — только edges_prs/id_of_edges комнаты; лишние поля и pillars не протекают", () => {
@@ -240,6 +293,13 @@ test("406: save — редактор при нормализации потер�
 });
 
 // ---------- адаптер: гарды ----------
+
+test("407 №5: id комнаты и имя листа — одна общая регулярка limits.ts (поведение прежнее)", () => {
+  assert.equal(ROOM_ID_PATTERN, SAFE_KEY_PATTERN);
+  assert.equal(SHEET_NAME_PATTERN, SAFE_KEY_PATTERN);
+  for (const ok of [R1, "abc-DEF_09", "x".repeat(64)]) assert.ok(ROOM_ID_PATTERN.test(ok), ok);
+  for (const bad of ["", "x".repeat(65), "a b", "<b>", "a'b", "a,b"]) assert.ok(!ROOM_ID_PATTERN.test(bad), bad);
+});
 
 test("406: адаптер prsLayout — опасная модель и id комнаты не формата редактора — отказ до page.evaluate", async () => {
   let evalCalls = 0;

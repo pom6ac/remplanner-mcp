@@ -10,9 +10,7 @@ import { wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm } from "../mode
 import { assertModelSafeForEditor } from "../model/strings.ts";
 import type { Model } from "../model/types.ts";
 import type { PrsLayoutRaw } from "../model/projections.ts";
-
-/** Ключ rooms2, передаваемый в страницу для раскладки развёрток (LIB.id и id прежних версий). */
-const PRS_ROOM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+import { ROOM_ID_PATTERN } from "../limits.ts";
 import { readCompat, assertCompatible, trackVersion, type CompatInfo, type CompatPresent } from "./compat.ts";
 import type { SessionState } from "../session.ts";
 
@@ -529,7 +527,7 @@ export function buildHandle(
       assertModelSafeForEditor(model as unknown as Model);
       // roomId — только как данные (window-аргумент), не в коде/селекторах; формат
       // ключа rooms2 проверен и здесь (fail-closed)
-      if (!PRS_ROOM_ID_PATTERN.test(roomId)) {
+      if (!ROOM_ID_PATTERN.test(roomId)) {
         throw new McpError("INVALID_ARGUMENT", "id комнаты не формата редактора");
       }
       await page.evaluate(PAGE.clearFog);

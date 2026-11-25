@@ -10,6 +10,9 @@
 //      edges_prs не пуст, id_of_edges == oid edges_prs, ключ prs_disabled —
 //      oid из edges_prs и лежит на верхней стене;
 //   4) render_plan — PNG > 1000 байт.
+// Ревью 407 №2 (createEdgesPrs синхронно после restore): лог «407-№2 …» —
+// edges_prs не пуст и id_of_edges == oid сразу после room_prs_layout
+// (рабочая модель), после save и после save/reopen (независимый loadModel).
 // Гарды (канон 399/404): probe-guard (пара объект/план fail-closed,
 // READONLY-гард по корневому эталону БЕЗ REF_INIT, assertEditorPlanMatch),
 // assertUnchanged перед каждой записью; бэкап <корень репо>/.orca-reports/
@@ -128,6 +131,14 @@ const topPidOf = (st: RoomState): string | null => {
   return e ? e.pid : null;
 };
 const roomsOfModel = (m: Record<string, unknown>): Record<string, unknown> => (m["rooms2"] ?? m["rooms1"] ?? {}) as Record<string, unknown>;
+/** Рабочая модель MCP (без сети) — для проверки ревью 407 №2 сразу после вызова. */
+const workspaceRooms = (): Record<string, unknown> =>
+  roomsOfModel(((ctx as unknown as { workspaceOrNull: { model: Record<string, unknown> } | null }).workspaceOrNull?.model ?? {}));
+/** Ревью 407 №2: createEdgesPrs синхронно после restore — edges_prs не пуст в каждой точке. */
+const checkPrsNonEmpty = (where: string, st: RoomState | null): void => {
+  console.log(`407-№2 ${where}: edges_prs=${st?.oids.length ?? "нет комнаты"} id_of_edges=${JSON.stringify(st?.idOfEdges)}`);
+  check(st !== null && st.oids.length > 0 && JSON.stringify(st.idOfEdges) === JSON.stringify(st.oids), `407-№2 ${where}: edges_prs не пуст, id_of_edges == oid`);
+};
 
 let roGuard: Awaited<ReturnType<typeof readonlyGuard>> | null = null;
 try {
@@ -228,6 +239,8 @@ try {
   const lines = (lay["lines"] ?? []) as Array<Record<string, unknown>>;
   check(lay["created"] === true && lines.length === st0.edges.length, `раскладка создана: ${lines.length} линий`);
   check(!JSON.stringify(lay).includes("oid") && lines.every((l) => Number.isInteger(l["length_mm"]) && /^W\d+$/.test(String(l["wall"]))), "ответ — формат API (мм, W<n>, без oid)");
+  // ревью 407 №2: сразу после вызова (без пауз) — раскладка в рабочей модели
+  checkPrsNonEmpty("сразу после room_prs_layout (рабочая модель)", roomStateOf(workspaceRooms()));
   const again = await call("room_prs_layout", { room: st0.siteId });
   check(again["created"] === false, "повторный вызов — no-op (created:false)");
 
@@ -238,10 +251,12 @@ try {
 
   // ==== 3) save → reopen → независимый loadModel ====
   await gsave("room_prs_layout + prs_set");
+  checkPrsNonEmpty("после save (рабочая модель, до reopen)", roomStateOf(workspaceRooms()));
   await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
   await assertEditorPlanMatch(editorOf(), ids.planId);
   const got1 = await loadModel(ctx.session(), ids.objectId, ids.planId);
   const st1 = roomStateOf(roomsOfModel(got1.model));
+  checkPrsNonEmpty("после save/reopen (независимый loadModel)", st1);
   check(st1 !== null, `комната найдена после reopen (${st1?.siteId ?? "?"})`);
   if (st1 && !ownRoomIds.includes(st1.siteId)) { ownRoomIds.push(st1.siteId); journal(); }
   console.log(`edges_prs ПОСЛЕ: ${st1?.oids.length} oids=${JSON.stringify(st1?.oids)} id_of_edges=${JSON.stringify(st1?.idOfEdges)}`);

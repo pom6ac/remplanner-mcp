@@ -3,7 +3,8 @@ export type { PrsFigureEntity };
 import { newId } from "./types.ts";
 import { McpError } from "../errors.ts";
 import { resolveRoom, type RoomRec } from "./finish.ts";
-import { MAX_PRS_LAYOUT_LINES, MAX_PRS_LINE_PILLARS, MODEL_COORD_LIMIT_CM, PRS_OID_PATTERN } from "../limits.ts";
+import { MAX_PRS_LAYOUT_LINES, MAX_PRS_LINE_PILLARS, MAX_PRS_PILLAR_LAYER, MODEL_COORD_LIMIT_CM, PRS_OID_PATTERN, SAFE_KEY_PATTERN } from "../limits.ts";
+import { z } from "zod";
 
 /**
  * Развёртки (лист «Развёртки», режим «Стены») — этап 389.
@@ -927,6 +928,31 @@ export type PrsLayoutResult = {
   message: string;
 };
 
+/**
+ * Ревью 407 №4: элемент pillars линии развёртки — схема по PRS.mapPillars
+ * бандла (268-app.js): `{xy, distance, width, height: total_height, pid,
+ * edge, edge_opposite, layer}`, где edge/edge_opposite — LIB.line
+ * `{p1, p2, c, length}`. Конечные числа в пределах MODEL_COORD_LIMIT_CM,
+ * pid — короткий ключ (SAFE_KEY_PATTERN), слой — целое 1..MAX_PRS_PILLAR_LAYER.
+ * Лишние поля отбрасываются (strip), неверный тип/вложенность — отказ
+ * (fail-closed): содержимое уходит на сайт при save.
+ */
+const prsCoord = z.number().finite().min(-MODEL_COORD_LIMIT_CM).max(MODEL_COORD_LIMIT_CM);
+const prsLen = z.number().finite().min(0).max(MODEL_COORD_LIMIT_CM);
+const prsPoint = z.object({ x: prsCoord, y: prsCoord });
+const prsLine = z.object({ p1: prsPoint, p2: prsPoint, c: prsPoint.optional(), length: prsLen.optional() });
+export const PrsPillarSchema = z.object({
+  xy: prsPoint,
+  distance: prsLen,
+  width: prsLen,
+  height: prsLen.nullable().optional(),
+  pid: z.string().regex(SAFE_KEY_PATTERN),
+  edge: prsLine,
+  edge_opposite: prsLine.optional(),
+  layer: z.number().int().min(1).max(MAX_PRS_PILLAR_LAYER),
+});
+const PrsPillarsSchema = z.array(PrsPillarSchema).max(MAX_PRS_LINE_PILLARS);
+
 /** Допуск «точка линии развёртки лежит на ребре комнаты», см. */
 const PRS_LAYOUT_TOL_CM = 1;
 
@@ -1018,10 +1044,11 @@ export function applyPrsLayout(model: Model, roomId: string, raw: PrsLayoutRaw):
     if (!a || !b || !pointOnSegment(p1, a, b, PRS_LAYOUT_TOL_CM) || !pointOnSegment(p2, a, b, PRS_LAYOUT_TOL_CM)) {
       throw bad(`линия ${i} не лежит на ребре ${idx} комнаты (страница строила раскладку не по этой геометрии)`);
     }
-    const pillarsRaw = e["pillars"];
-    const pillars = Array.isArray(pillarsRaw) ? pillarsRaw : [];
-    if (pillars.length > MAX_PRS_LINE_PILLARS) throw bad(`pillars линии ${i} сверх лимита`);
-    lines.push({ edge_index: idx, p1, p2, oid, pillars: JSON.parse(JSON.stringify(pillars)) as unknown[] });
+    const pillarsRaw = e["pillars"] ?? [];
+    if (Array.isArray(pillarsRaw) && pillarsRaw.length > MAX_PRS_LINE_PILLARS) throw bad(`pillars линии ${i} сверх лимита`);
+    const parsed = PrsPillarsSchema.safeParse(pillarsRaw);
+    if (!parsed.success) throw bad(`pillars линии ${i} не формата редактора`);
+    lines.push({ edge_index: idx, p1, p2, oid, pillars: parsed.data });
   }
   room["edges_prs"] = lines;
   room["id_of_edges"] = lines.map((l) => l["oid"] as string);

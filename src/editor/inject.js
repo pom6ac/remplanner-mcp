@@ -210,6 +210,18 @@ export const PAGE = {
    * модели, проверенный на стороне Node (данные, не код). Возвращает только
    * edges_prs/id_of_edges комнаты; страница после вызова восстанавливается тем
    * же restore (следующий normalize всё равно делает restore с reset).
+   *
+   * Ревью 407 №2 — почему без ожидания (в отличие от restoreDrawCopy), по бандлу
+   * 268-app.js: $Project.restore синхронно делает WALLS.restore, PILLARS.restore,
+   * ROOMS2.restore(e.rooms2) (конструктор Room2: this.edges=e.edges||[],
+   * PRS=new Projections(this)); асинхронны в нём только setTimeout(change_group,100)
+   * (переключение активного листа) и ветка isAdmin&&!isProd — на rooms2/edges не
+   * влияют. createEdgesPrs → getEdgesPrs → PRS.getLines(): читает только
+   * this.room.edges и id_of_edges (WALLS — в mapWallObjects, здесь не вызывается),
+   * PRS.mapPillars — PILLARS и room.polygon; всё синхронно. Ожидание restoreDrawCopy
+   * нужно для copy('server') после draw (save-пайплайн), а не для ROOMS2. Отказ
+   * безопасен (missing / «линий нет» → ошибка, модель не меняется); живая
+   * проверка — лог «407-№2» пробы 406.
    */
   prsLayout: `(() => {
     const w = window;
