@@ -585,6 +585,10 @@ export function itemsRenderedInSvg(ids: string[]): boolean {
     });
     if (!el) return false;
     const r = el.getBoundingClientRect();
+    // ревью 413 F1: NaN/Infinity в getBoundingClientRect не встречается в реальном
+    // DOM, но такой прямоугольник нельзя считать нарисованным — нечисловые размеры
+    // отсекаются до всех проверок (Infinity, в отличие от NaN, проходит сравнения «> 0»)
+    if (!Number.isFinite(r.width) || !Number.isFinite(r.height)) return false;
     if (r.width < 1 || r.height < 1) {
       // этап 411: экранный прямоугольник < 1 px при НЕнулевой геометрии в
       // координатах SVG (getBBox) — предмет нарисован, но мал при текущем масштабе
@@ -639,6 +643,9 @@ export function itemsRenderDiagInPage(ids: string[]): RenderDiag {
     });
     if (!el) { statuses[id] = "absent"; continue; }
     const r = el.getBoundingClientRect();
+    // ревью 413 F1: та же конечность размеров, что в itemsRenderedInSvg —
+    // NaN/Infinity считается не нарисованным (zero_size), согласованность — тестом
+    if (!Number.isFinite(r.width) || !Number.isFinite(r.height)) { statuses[id] = "zero_size"; continue; }
     if (r.width < 1 || r.height < 1) {
       // этап 411: та же логика, что itemsRenderedInSvg — субпиксель при ненулевой
       // геометрии SVG (getBBox) считается нарисованным; размеры — в диагностику
