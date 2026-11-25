@@ -253,6 +253,9 @@ try {
     [{ x: X0, y: Y0 + H }, { x: X0, y: Y0 }],
   ];
   for (const [s, e] of segs) {
+    // ревью 413 F2: гард READONLY перед каждой записью, как заявлено в шапке пробы —
+    // wall_add в цикле шёл без assertUnchanged (поведение 45e504c)
+    await roGuard!.assertUnchanged("wall_add");
     journal();
     const r = await call("wall_add", { start: s, end: e }) as { entity?: { site_id?: string } | null };
     const site = r["entity"]?.["site_id"];
