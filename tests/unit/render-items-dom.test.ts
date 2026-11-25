@@ -15,6 +15,10 @@ type FakeEl = {
   h?: number;
   display?: string;
   visibility?: string;
+  /** этап 411: getBBox в координатах SVG; undefined — метода нет */
+  bbox?: { w: number; h: number };
+  /** этап 411: getScreenCTM().a */
+  ctmA?: number;
 };
 
 type Dom = { restore: () => void };
@@ -27,6 +31,8 @@ function installDom(children: FakeEl[]): Dom {
       getAttribute: (name: string) =>
         name === "id" ? (e.id ?? null) : name === "data-id" ? (e.dataId ?? null) : name === "class" ? (e.cls ?? null) : null,
       getBoundingClientRect: () => ({ width: e.w ?? 10, height: e.h ?? 10 }),
+      ...(e.bbox ? { getBBox: () => ({ width: e.bbox!.w, height: e.bbox!.h }) } : {}),
+      ...(e.ctmA !== undefined ? { getScreenCTM: () => ({ a: e.ctmA! }) } : {}),
     };
     byEl.set(el, e);
     return el;
@@ -167,3 +173,37 @@ test("render-items-dom (410): нет svg — все absent, svg=false", () => {
     else g["document"] = prevDoc;
   }
 });
+
+// Этап 411 (лог 406-2): стояк water_column_cold 10×10 см стабильно zero_size после
+// того, как проба добавила комнату за ~96 м от плана — редактор вписывает весь план
+// в окно, масштаб падает, и 10 см на экране < 1 px. Предмет нарисован (геометрия
+// SVG ненулевая) — это не рассинхрон. Проверка: субпиксель при ненулевом getBBox — ok;
+// без геометрии / 0×0 на экране / без getBBox — по-прежнему zero_size.
+test(
+  "render-items-dom (411): субпиксельный предмет с ненулевой геометрией SVG — нарисован",
+  withDom([{ id: "riser", w: 0.87, h: 0.87, bbox: { w: 10, h: 10 }, ctmA: 0.087 }], () => {
+    assert.equal(itemsRenderedInSvg(["riser"]), true);
+    const d = itemsRenderDiagInPage(["riser"]);
+    assert.deepEqual(d.statuses, { riser: "ok" });
+    assert.deepEqual(d.sizes, { riser: { rect: [0.87, 0.87], bbox: [10, 10], scale: 0.087 } });
+  }),
+);
+
+test(
+  "render-items-dom (411): без геометрии, 0×0 на экране или без getBBox — по-прежнему zero_size",
+  withDom([
+    { id: "empty", w: 0.5, h: 0.5, bbox: { w: 0, h: 0 } },
+    { id: "zero", w: 0, h: 0, bbox: { w: 10, h: 10 } },
+    { id: "nobbox", w: 0.5, h: 0.5 },
+    { id: "flat", w: 0.5, h: 0, bbox: { w: 10, h: 0 } },
+    { id: "hid", w: 0.5, h: 0.5, bbox: { w: 10, h: 10 }, display: "none" },
+  ], () => {
+    for (const id of ["empty", "zero", "nobbox", "flat"]) {
+      assert.equal(itemsRenderedInSvg([id]), false, id);
+    }
+    assert.equal(itemsRenderedInSvg(["hid"]), false, "скрытый субпиксельный — не виден");
+    const d = itemsRenderDiagInPage(["empty", "zero", "nobbox", "flat", "hid"]);
+    assert.deepEqual(d.statuses, { empty: "zero_size", zero: "zero_size", nobbox: "zero_size", flat: "zero_size", hid: "hidden" });
+    assert.deepEqual(d.sizes?.["nobbox"], { rect: [0.5, 0.5], bbox: null, scale: null });
+  }),
+);

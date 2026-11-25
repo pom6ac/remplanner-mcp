@@ -32,6 +32,9 @@
 // при существующем бэкапе (иначе стоп до записи); перед финальным render_plan —
 // лог «410 …»: plan/plan_, активный лист, ITEMS, статус каждого предмета init;
 // при RENDER_OUT_OF_SYNC — причина, пауза 5 с и один повтор (PNG по-прежнему обязателен).
+// Этап 411: диагностика «410» ещё в трёх точках ДО раскладки (после открытия, после
+// save стен, после reopen перед room_prs_layout) + размеры субпиксельных предметов
+// (экран, getBBox, масштаб) — отделяет масштаб вида/стены от room_prs_layout.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -167,7 +170,7 @@ const logRenderState = async (where: string): Promise<void> => {
     }).catch(() => null);
     const diag = await page.evaluate(itemsRenderDiagInPage, expected).catch(() => null);
     const notOk = diag ? Object.entries(diag.statuses).filter(([, st]) => st !== "ok") : [];
-    console.log(`410 ${where}: plan=${globals?.plan ?? "?"} plan_=${globals?.plan_ ?? "?"} активный лист=${diag?.activeSheet ?? "?"} ITEMS=${diag?.itemsInEditor ?? "?"} svg=${diag?.svg ?? "?"} предметов init в модели=${expected.length} видны=${diag ? expected.length - notOk.length : "?"} не видны=${JSON.stringify(notOk)}`);
+    console.log(`410 ${where}: plan=${globals?.plan ?? "?"} plan_=${globals?.plan_ ?? "?"} активный лист=${diag?.activeSheet ?? "?"} ITEMS=${diag?.itemsInEditor ?? "?"} svg=${diag?.svg ?? "?"} предметов init в модели=${expected.length} видны=${diag ? expected.length - notOk.length : "?"} не видны=${JSON.stringify(notOk)} субпиксель(411)=${JSON.stringify(diag?.sizes ?? null)}`);
   } catch (e) {
     console.log(`410 ${where}: диагностика недоступна (${String((e as Error).message).slice(0, 120)})`);
   }
@@ -239,6 +242,8 @@ try {
   await call("render_plan", {});
   await assertEditorPlanMatch(editorOf(), ids.planId);
   check(true, "открытие + render_plan + гард плана");
+  // этап 411: точка 1 — сразу после открытия (до записей; масштаб вида — по исходному плану)
+  await logRenderState("411 сразу после открытия");
 
   // ==== 0) пробная комната с пустым edges_prs ====
   const segs: Array<[Record<string, number>, Record<string, number>]> = [
@@ -256,6 +261,8 @@ try {
   }
   journal();
   await gsave("стены пробной комнаты");
+  // этап 411: точка 2 — после save стен (дальняя комната уже в плане; раскладки ещё нет)
+  await logRenderState("411 после save стен");
   const got0 = await loadModel(ctx.session(), ids.objectId, ids.planId);
   const st0 = roomStateOf(roomsOfModel(got0.model));
   check(st0 !== null, `пробная комната найдена (${st0?.siteId ?? "?"})`);
@@ -274,6 +281,11 @@ try {
   check(refusal !== null && /room_prs_layout/.test(refusal), `prs_set без раскладки — отказ с указанием на room_prs_layout: ${String(refusal).slice(0, 200)}`);
 
   // ==== 1) room_prs_layout ====
+  // этап 411: точка 3 — reopen (страница/модель с сервера) и диагностика ДО раскладки:
+  // если стояк уже zero_size/субпиксель здесь — раскладка ни при чём
+  await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
+  await assertEditorPlanMatch(editorOf(), ids.planId);
+  await logRenderState("411 после reopen перед room_prs_layout");
   journal();
   const lay = await call("room_prs_layout", { room: st0.siteId });
   console.log("room_prs_layout:", JSON.stringify({ ...lay, hint: undefined }));

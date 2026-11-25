@@ -585,7 +585,17 @@ export function itemsRenderedInSvg(ids: string[]): boolean {
     });
     if (!el) return false;
     const r = el.getBoundingClientRect();
-    if (r.width < 1 || r.height < 1) return false;
+    if (r.width < 1 || r.height < 1) {
+      // этап 411: экранный прямоугольник < 1 px при НЕнулевой геометрии в
+      // координатах SVG (getBBox) — предмет нарисован, но мал при текущем масштабе
+      // вида (редактор вписывает весь план в окно: дальняя комната пробы 406
+      // уменьшила масштаб, и стояк 10×10 см стал < 1 px). Пустой/не нарисованный
+      // элемент (0×0 на экране или без геометрии) по-прежнему не считается
+      if (!(r.width > 0 && r.height > 0)) return false;
+      let bb: { width: number; height: number } | null = null;
+      try { bb = (el as unknown as { getBBox?: () => { width: number; height: number } }).getBBox?.() ?? null; } catch { bb = null; }
+      if (!bb || !(bb.width > 0 && bb.height > 0)) return false;
+    }
     const cs = getComputedStyle(el);
     return cs.display !== "none" && cs.visibility !== "hidden";
   });
@@ -601,6 +611,10 @@ export type RenderDiag = {
   svg: boolean;
   activeSheet: string | null;
   itemsInEditor: number | null;
+  /** Этап 411: размеры найденных элементов с экранным прямоугольником < 1 px
+   *  (видимых «субпиксельных» и zero_size): экран [w,h], getBBox [w,h] в
+   *  координатах SVG (null — недоступен), масштаб экрана к SVG (getScreenCTM().a). */
+  sizes?: Record<string, { rect: [number, number]; bbox: [number, number] | null; scale: number | null }>;
 };
 
 /**
@@ -615,6 +629,7 @@ export type RenderDiag = {
 export function itemsRenderDiagInPage(ids: string[]): RenderDiag {
   const svg = document.querySelector("#canvas_v2_wrapper svg");
   const statuses: Record<string, ItemRenderStatus> = {};
+  const sizes: NonNullable<RenderDiag["sizes"]> = {};
   const all = svg ? [...svg.querySelectorAll("*")] : [];
   for (const id of ids) {
     const el = all.find((e) => {
@@ -624,7 +639,20 @@ export function itemsRenderDiagInPage(ids: string[]): RenderDiag {
     });
     if (!el) { statuses[id] = "absent"; continue; }
     const r = el.getBoundingClientRect();
-    if (r.width < 1 || r.height < 1) { statuses[id] = "zero_size"; continue; }
+    if (r.width < 1 || r.height < 1) {
+      // этап 411: та же логика, что itemsRenderedInSvg — субпиксель при ненулевой
+      // геометрии SVG (getBBox) считается нарисованным; размеры — в диагностику
+      let bb: { width: number; height: number } | null = null;
+      try { bb = (el as unknown as { getBBox?: () => { width: number; height: number } }).getBBox?.() ?? null; } catch { bb = null; }
+      let scale: number | null = null;
+      try {
+        const m = (el as unknown as { getScreenCTM?: () => { a: number } | null }).getScreenCTM?.() ?? null;
+        scale = m && Number.isFinite(m.a) ? Math.round(m.a * 1e4) / 1e4 : null;
+      } catch { scale = null; }
+      const rd = (v: number): number => Math.round(v * 1000) / 1000;
+      sizes[id] = { rect: [rd(r.width), rd(r.height)], bbox: bb ? [rd(bb.width), rd(bb.height)] : null, scale };
+      if (!(r.width > 0 && r.height > 0) || !bb || !(bb.width > 0 && bb.height > 0)) { statuses[id] = "zero_size"; continue; }
+    }
     const cs = getComputedStyle(el);
     statuses[id] = cs.display !== "none" && cs.visibility !== "hidden" ? "ok" : "hidden";
   }
@@ -639,7 +667,7 @@ export function itemsRenderDiagInPage(ids: string[]): RenderDiag {
     const items = (globalThis as unknown as { ITEMS?: Record<string, unknown> }).ITEMS;
     itemsInEditor = items && typeof items === "object" ? Object.keys(items).length : null;
   } catch { itemsInEditor = null; }
-  return { statuses, svg: Boolean(svg), activeSheet, itemsInEditor };
+  return { statuses, svg: Boolean(svg), activeSheet, itemsInEditor, sizes };
 }
 
 /**
@@ -677,6 +705,7 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
           svg: diag?.svg ?? null,
           active_sheet: diag?.activeSheet ?? null,
           items_in_editor: diag?.itemsInEditor ?? null,
+          sizes: diag?.sizes ?? null,
         },
       });
     }
