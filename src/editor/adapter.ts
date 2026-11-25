@@ -10,7 +10,7 @@ import { wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm } from "../mode
 import { assertModelSafeForEditor } from "../model/strings.ts";
 import type { Model } from "../model/types.ts";
 import type { PrsLayoutRaw } from "../model/projections.ts";
-import { ROOM_ID_PATTERN } from "../limits.ts";
+import { ROOM_ID_PATTERN, MAX_RENDER_MISSING_LISTED } from "../limits.ts";
 import { readCompat, assertCompatible, trackVersion, type CompatInfo, type CompatPresent } from "./compat.ts";
 import type { SessionState } from "../session.ts";
 
@@ -702,7 +702,12 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
       // (картинка снималась бы без повторного ожидания), список — все ожидаемые
       const listed = missing.length > 0 ? missing : itemIds;
       const why = diag ? listed.map((id) => `${id}: ${diag.statuses[id] ?? "absent"}`) : listed;
-      throw new McpError("RENDER_OUT_OF_SYNC", `предметы не отрисованы на листе «${sheet}» (не видны ${listed.length} из ${itemIds.length}: ${why.join(", ")}${diag ? `; активный лист: ${diag.activeSheet ?? "?"}` : ""}) — картинка не отдаётся`, {
+      // ревью 413 F5: в сообщении — не больше MAX_RENDER_MISSING_LISTED первых
+      // предметов, остальные — числом («и ещё K»); details.missing — полный список
+      const shown = why.slice(0, MAX_RENDER_MISSING_LISTED);
+      const more = why.length - shown.length;
+      const whyText = more > 0 ? `${shown.join(", ")}; и ещё ${more}` : shown.join(", ");
+      throw new McpError("RENDER_OUT_OF_SYNC", `предметы не отрисованы на листе «${sheet}» (не видны ${listed.length} из ${itemIds.length}: ${whyText}${diag ? `; активный лист: ${diag.activeSheet ?? "?"}` : ""}) — картинка не отдаётся`, {
         hint: "повторите render_plan; при повторении сверитесь с model_get и model_validate",
         details: {
           items: itemIds,
