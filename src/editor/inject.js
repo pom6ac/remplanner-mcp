@@ -219,8 +219,10 @@ export const PAGE = {
    * влияют. createEdgesPrs → getEdgesPrs → PRS.getLines(): читает только
    * this.room.edges и id_of_edges (WALLS — в mapWallObjects, здесь не вызывается),
    * PRS.mapPillars — PILLARS и room.polygon; всё синхронно. Ожидание restoreDrawCopy
-   * нужно для copy('server') после draw (save-пайплайн), а не для ROOMS2. Отказ
-   * безопасен (missing / «линий нет» → ошибка, модель не меняется); живая
+   * нужно для copy('server') после draw (save-пайплайн), а не для ROOMS2. Синхронен
+   * и вызываемый следом $Project.draw({rooms:1}) (ревью 409 F1): перестройка комнат
+   * кодом редактора без асинхронных шагов, поэтому отказ на комнате с новым id
+   * безопасен и без ожидания — `missing` → ошибка, модель не меняется. Живая
    * проверка — лог «407-№2» пробы 406.
    */
   prsLayout: `(() => {

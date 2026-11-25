@@ -17,6 +17,8 @@ type FakeEl = {
   visibility?: string;
   /** этап 411: getBBox в координатах SVG; undefined — метода нет */
   bbox?: { w: number; h: number };
+  /** ревью 413 F3: getBBox есть, но бросает исключение */
+  bboxThrows?: boolean;
   /** этап 411: getScreenCTM().a */
   ctmA?: number;
 };
@@ -31,7 +33,9 @@ function installDom(children: FakeEl[]): Dom {
       getAttribute: (name: string) =>
         name === "id" ? (e.id ?? null) : name === "data-id" ? (e.dataId ?? null) : name === "class" ? (e.cls ?? null) : null,
       getBoundingClientRect: () => ({ width: e.w ?? 10, height: e.h ?? 10 }),
-      ...(e.bbox ? { getBBox: () => ({ width: e.bbox!.w, height: e.bbox!.h }) } : {}),
+      ...(e.bboxThrows
+        ? { getBBox: () => { throw new Error("getBBox failed"); } }
+        : e.bbox ? { getBBox: () => ({ width: e.bbox!.w, height: e.bbox!.h }) } : {}),
       ...(e.ctmA !== undefined ? { getScreenCTM: () => ({ a: e.ctmA! }) } : {}),
     };
     byEl.set(el, e);
@@ -205,5 +209,52 @@ test(
     const d = itemsRenderDiagInPage(["empty", "zero", "nobbox", "flat", "hid"]);
     assert.deepEqual(d.statuses, { empty: "zero_size", zero: "zero_size", nobbox: "zero_size", flat: "zero_size", hid: "hidden" });
     assert.deepEqual(d.sizes?.["nobbox"], { rect: [0.5, 0.5], bbox: null, scale: null });
+  }),
+);
+
+// Ревью 413 F1: getBoundingClientRect с NaN/Infinity не встречается в реальном DOM,
+// но такой прямоугольник нельзя считать нарисованным: Number.isFinite отсекает
+// нечисловые размеры в обеих реализациях проверки (предикат и диагностика).
+test(
+  "render-items-dom (413 F1): NaN/Infinity в getBoundingClientRect — не нарисован (zero_size)",
+  withDom([
+    { id: "nan1", w: NaN, h: NaN, bbox: { w: 10, h: 10 } },
+    { id: "inf1", w: Infinity, h: 10, bbox: { w: 10, h: 10 } },
+  ], () => {
+    for (const id of ["nan1", "inf1"]) {
+      assert.equal(itemsRenderedInSvg([id]), false, id);
+    }
+    assert.equal(itemsRenderedInSvg(["nan1", "inf1"]), false, "и вместе — не нарисованы");
+    const d = itemsRenderDiagInPage(["nan1", "inf1"]);
+    assert.deepEqual(d.statuses, { nan1: "zero_size", inf1: "zero_size" });
+    assert.equal(d.sizes?.["nan1"], undefined, "для нечисловых rect размеры не записываются");
+    for (const id of ["nan1", "inf1"]) {
+      assert.equal(d.statuses[id] === "ok", itemsRenderedInSvg([id]), `согласованность: ${id}`);
+    }
+  }),
+);
+
+// Ревью 413 F3: adapter.ts ловит исключение getBBox (try/catch → bb=null → false),
+// юнит-теста на бросок не было — закрепляем обе стороны (предикат и диагностика).
+test(
+  "render-items-dom (413 F3): getBBox бросает исключение — не нарисован (zero_size)",
+  withDom([{ id: "boom", w: 0.5, h: 0.5, bboxThrows: true }], () => {
+    assert.equal(itemsRenderedInSvg(["boom"]), false, "исключение getBBox не делает предмет видимым");
+    const d = itemsRenderDiagInPage(["boom"]);
+    assert.deepEqual(d.statuses, { boom: "zero_size" });
+    assert.deepEqual(d.sizes?.["boom"], { rect: [0.5, 0.5], bbox: null, scale: null });
+  }),
+);
+
+// Ревью 413 F4: комбинация «субпиксельный rect + visibility:hidden» не была покрыта
+// явно (был только display:none); логика покрывает — проверка display/visibility
+// стоит после ветки субпикселя.
+test(
+  "render-items-dom (413 F4): субпиксельный rect + visibility:hidden — hidden",
+  withDom([{ id: "vishid", w: 0.5, h: 0.5, bbox: { w: 10, h: 10 }, visibility: "hidden" }], () => {
+    assert.equal(itemsRenderedInSvg(["vishid"]), false, "скрытый субпиксельный с геометрией — не виден");
+    const d = itemsRenderDiagInPage(["vishid"]);
+    assert.deepEqual(d.statuses, { vishid: "hidden" });
+    assert.deepEqual(d.sizes?.["vishid"], { rect: [0.5, 0.5], bbox: [10, 10], scale: null });
   }),
 );

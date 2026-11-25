@@ -45,6 +45,11 @@ export const MAX_POLYGON_VERTICES = 64;
 /** Инструменты: максимум ширины PNG рендера. */
 export const MAX_RENDER_WIDTH_PX = 4096;
 
+/** Рендер (ревью 413 F5): максимум предметов, перечисляемых ПО ИМЕНИ в сообщении
+ *  RENDER_OUT_OF_SYNC; остальные невидимые — только числом («и ещё K»). Полный
+ *  список по-прежнему уходит в details.missing. */
+export const MAX_RENDER_MISSING_LISTED = 20;
+
 /** Инструменты: максимум длины строки-названия (имя помещения, позиция каталога). */
 export const MAX_NAME_CHARS = 100;
 

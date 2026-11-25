@@ -5,6 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderPlan } from "../../src/editor/adapter.ts";
+import { MAX_RENDER_MISSING_LISTED } from "../../src/limits.ts";
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 
@@ -147,4 +148,41 @@ test("render-items (410): предметы появились после тай�
     return true;
   });
   assert.equal(calls.screenshots, 0);
+});
+
+// Ревью 413 F5: при большом числе невидимых предметов сообщение не разрастается —
+// в перечне не больше MAX_RENDER_MISSING_LISTED первых, остальные — «и ещё K».
+// details.missing остаётся полным (диагностика не теряется, режется только текст).
+test("render-items (413 F5): длинный список обрезается до лимита + «и ещё K»", async () => {
+  const ids = Array.from({ length: MAX_RENDER_MISSING_LISTED + 5 }, (_, i) => `_x${i}`);
+  const { page } = mockPage({ itemsAppear: false });
+  await assert.rejects(
+    renderPlan(page, { sheet: "init", itemIds: ids }),
+    (e: unknown) => {
+      const err = e as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(err.code, "RENDER_OUT_OF_SYNC");
+      assert.match(err.message, /не видны 25 из 25/);
+      assert.match(err.message, /_x0\b/, "первый предмет назван");
+      assert.match(err.message, new RegExp(`_x${MAX_RENDER_MISSING_LISTED - 1}\\b`), "последний из лимита назван");
+      assert.match(err.message, /и ещё 5\b/, "остаток — числом");
+      assert.doesNotMatch(err.message, new RegExp(`_x${MAX_RENDER_MISSING_LISTED}\\b`), "предмет сверх лимита в перечне не назван");
+      assert.deepEqual(err.details?.["missing"], ids, "details.missing — полный список");
+      return true;
+    },
+  );
+});
+
+test("render-items (413 F5): список не длиннее лимита — без «и ещё»", async () => {
+  const ids = Array.from({ length: MAX_RENDER_MISSING_LISTED }, (_, i) => `_y${i}`);
+  const { page } = mockPage({ itemsAppear: false });
+  await assert.rejects(
+    renderPlan(page, { sheet: "init", itemIds: ids }),
+    (e: unknown) => {
+      const err = e as Error & { code?: string };
+      assert.equal(err.code, "RENDER_OUT_OF_SYNC");
+      assert.doesNotMatch(err.message, /и ещё\b/, "уместившийся список не обрезается");
+      assert.match(err.message, new RegExp(`_y${MAX_RENDER_MISSING_LISTED - 1}\\b`), "последний предмет назван");
+      return true;
+    },
+  );
 });
