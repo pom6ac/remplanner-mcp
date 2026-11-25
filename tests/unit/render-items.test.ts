@@ -11,18 +11,26 @@ const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3
 type MockOpts = {
   /** waitForFunction: resolve (предметы отрисованы) или reject (таймаут). */
   itemsAppear: boolean;
+  /** Ответ диагностики страницы (этап 410); undefined — evaluate падает. */
+  diag?: unknown;
 };
 
 /** Mock Page для renderPlan: evaluate по исходнику функции, waitForFunction управляется тестом. */
 function mockPage(opts: MockOpts) {
-  const calls: { sheetSwitch: string[]; screenshots: number; waitForArgs: unknown[] } = {
+  const calls: { sheetSwitch: string[]; screenshots: number; waitForArgs: unknown[]; diagArgs: unknown[] } = {
     sheetSwitch: [],
     screenshots: 0,
     waitForArgs: [],
+    diagArgs: [],
   };
   const page = {
     async evaluate(fn: string | ((a?: unknown) => unknown), a?: unknown): Promise<unknown> {
       const src = String(fn);
+      if (src.includes("itemsRenderDiagInPage")) {
+        calls.diagArgs.push(a);
+        if (opts.diag === undefined) throw new Error("page closed");
+        return opts.diag;
+      }
       if (src.includes("planner_ui_message_fog")) return true;
       if (src.includes("groups_navi_item")) {
         calls.sheetSwitch.push(String(a));
@@ -84,4 +92,59 @@ test("render-items: без предметов ожидание не запуск
   const buf = await renderPlan(page, { sheet: "init" });
   assert.ok(Buffer.isBuffer(buf));
   assert.equal(calls.waitForArgs.length, 0, "waitForFunction не вызывался");
+});
+
+// Этап 410 (лог 406-1): RENDER_OUT_OF_SYNC перечислял ВСЕ ожидаемые id — по логу
+// нельзя было понять, какой предмет не виден. Проверка не ослаблена (PNG нет),
+// но ошибка называет только невидимые предметы с причиной и активный лист.
+test("render-items (410): ошибка называет только невидимые предметы, причину и активный лист", async () => {
+  const diag = {
+    statuses: { _a: "ok", _b: "absent", _c: "ok", _d: "hidden" },
+    svg: true,
+    activeSheet: "init",
+    itemsInEditor: 8,
+  };
+  const { page, calls } = mockPage({ itemsAppear: false, diag });
+  await assert.rejects(
+    renderPlan(page, { sheet: "init", itemIds: ["_a", "_b", "_c", "_d"] }),
+    (e: unknown) => {
+      const err = e as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(err.code, "RENDER_OUT_OF_SYNC");
+      assert.deepEqual(err.details?.["missing"], ["_b", "_d"], "missing — только невидимые");
+      assert.deepEqual(err.details?.["items"], ["_a", "_b", "_c", "_d"], "items — все ожидаемые (совместимость)");
+      assert.equal(err.details?.["active_sheet"], "init");
+      assert.equal(err.details?.["items_in_editor"], 8);
+      assert.match(err.message, /не видны 2 из 4/);
+      assert.match(err.message, /_b: absent/);
+      assert.match(err.message, /_d: hidden/);
+      assert.doesNotMatch(err.message, /_a:/, "видимый предмет не назван невидимым");
+      return true;
+    },
+  );
+  assert.deepEqual(calls.diagArgs[0], ["_a", "_b", "_c", "_d"]);
+  assert.equal(calls.screenshots, 0, "PNG по-прежнему не снимается");
+});
+
+test("render-items (410): диагностика недоступна — отказ сохраняется, перечислены все ожидаемые", async () => {
+  const { page, calls } = mockPage({ itemsAppear: false });
+  await assert.rejects(
+    renderPlan(page, { sheet: "init", itemIds: ["_a", "_b"] }),
+    (e: unknown) => {
+      const err = e as Error & { code?: string; details?: Record<string, unknown> };
+      assert.equal(err.code, "RENDER_OUT_OF_SYNC");
+      assert.deepEqual(err.details?.["missing"], ["_a", "_b"]);
+      assert.equal(err.details?.["statuses"], null);
+      return true;
+    },
+  );
+  assert.equal(calls.screenshots, 0);
+});
+
+test("render-items (410): предметы появились после таймаута (гонка) — всё равно отказ без PNG", async () => {
+  const { page, calls } = mockPage({ itemsAppear: false, diag: { statuses: { _a: "ok" }, svg: true, activeSheet: "init", itemsInEditor: 1 } });
+  await assert.rejects(renderPlan(page, { sheet: "init", itemIds: ["_a"] }), (e: unknown) => {
+    assert.equal((e as { code?: string }).code, "RENDER_OUT_OF_SYNC");
+    return true;
+  });
+  assert.equal(calls.screenshots, 0);
 });

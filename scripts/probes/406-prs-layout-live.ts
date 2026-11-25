@@ -28,6 +28,10 @@
 //   REMPLANNER_PROBE_READONLY_ID=… REMPLANNER_PROBE_READONLY_PLAN_ID=… \
 //   REMPLANNER_PROBE_RUN_N=1 [REMPLANNER_PROBE_WRITE_BACKUP=1] \
 //   node scripts/probes/406-prs-layout-live.ts run|cleanup
+// Этап 410: RUN_N≥2 — повторный прогон БЕЗ REMPLANNER_PROBE_WRITE_BACKUP и только
+// при существующем бэкапе (иначе стоп до записи); перед финальным render_plan —
+// лог «410 …»: plan/plan_, активный лист, ITEMS, статус каждого предмета init;
+// при RENDER_OUT_OF_SYNC — причина, пауза 5 с и один повтор (PNG по-прежнему обязателен).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -37,6 +41,10 @@ import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { gitRepoRoot } from "../../src/repo-root.ts";
+import { itemsRenderDiagInPage } from "../../src/editor/adapter.ts";
+import { itemIdsForSheet } from "../../src/workspace.ts";
+import type { Model } from "../../src/model/types.ts";
+import type { Page } from "playwright-core";
 import { sig } from "./probe-sig.ts";
 import { assertEditorPlanMatch, probeWriteEnv, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
 import { restoreByCaptured, type ProbeCreated } from "./probe-restore.ts";
@@ -140,6 +148,31 @@ const checkPrsNonEmpty = (where: string, st: RoomState | null): void => {
   check(st !== null && st.oids.length > 0 && JSON.stringify(st.idOfEdges) === JSON.stringify(st.oids), `407-№2 ${where}: edges_prs не пуст, id_of_edges == oid`);
 };
 
+/**
+ * Этап 410: состояние страницы редактора перед render (ТОЛЬКО чтение): глобалы
+ * plan/plan_, активный лист навигации, число ITEMS и статус каждого предмета листа
+ * init из рабочей модели (itemsRenderDiagInPage — та же проверка, что ожидание
+ * render). Ошибка чтения — в лог, сценарий не прерывает.
+ */
+const logRenderState = async (where: string): Promise<void> => {
+  try {
+    const ws = (ctx as unknown as { workspaceOrNull: { model: Model } | null }).workspaceOrNull;
+    const expected = ws ? itemIdsForSheet(ws.model, "init") : [];
+    const page = (editorOf() as unknown as { page?: Page } | null)?.page;
+    if (!page) { console.log(`410 ${where}: редактор не запущен; предметов init в модели ${expected.length}`); return; }
+    const globals = await page.evaluate(() => {
+      const w = window as unknown as Record<string, unknown>;
+      const s = (v: unknown): string | null => (typeof v === "string" || typeof v === "number" ? String(v).slice(0, 40) : null);
+      return { plan: s(w["plan"]), plan_: s(w["plan_"]) };
+    }).catch(() => null);
+    const diag = await page.evaluate(itemsRenderDiagInPage, expected).catch(() => null);
+    const notOk = diag ? Object.entries(diag.statuses).filter(([, st]) => st !== "ok") : [];
+    console.log(`410 ${where}: plan=${globals?.plan ?? "?"} plan_=${globals?.plan_ ?? "?"} активный лист=${diag?.activeSheet ?? "?"} ITEMS=${diag?.itemsInEditor ?? "?"} svg=${diag?.svg ?? "?"} предметов init в модели=${expected.length} видны=${diag ? expected.length - notOk.length : "?"} не видны=${JSON.stringify(notOk)}`);
+  } catch (e) {
+    console.log(`410 ${where}: диагностика недоступна (${String((e as Error).message).slice(0, 120)})`);
+  }
+};
+
 let roGuard: Awaited<ReturnType<typeof readonlyGuard>> | null = null;
 try {
   const ids = probeWriteEnv();
@@ -155,6 +188,14 @@ try {
     return r;
   };
   const backupPath = backupPathOf(ids.objectId);
+  // этап 410: повторные прогоны (RUN_N≥2) — только с УЖЕ существующим бэкапом и
+  // без REMPLANNER_PROBE_WRITE_BACKUP (перезапись/подмена эталона запрещена):
+  // иначе стоп ДО любой записи
+  if (runN !== "1" && (process.env["REMPLANNER_PROBE_WRITE_BACKUP"] === "1" || !existsSync(backupPath))) {
+    console.error(`RUN_N=${runN}: повторный прогон идёт без записи бэкапа и только при существующем ${backupPath} — уберите REMPLANNER_PROBE_WRITE_BACKUP / проверьте бэкап. СТОП`);
+    await closeBrowser().catch(() => {});
+    process.exit(1);
+  }
   if (existsSync(backupPath)) {
     console.log("backup exists — НЕ перезаписывается:", backupPath);
   } else if (phase === "run" && process.env["REMPLANNER_PROBE_WRITE_BACKUP"] === "1") {
@@ -241,6 +282,7 @@ try {
   check(!JSON.stringify(lay).includes("oid") && lines.every((l) => Number.isInteger(l["length_mm"]) && /^W\d+$/.test(String(l["wall"]))), "ответ — формат API (мм, W<n>, без oid)");
   // ревью 407 №2: сразу после вызова (без пауз) — раскладка в рабочей модели
   checkPrsNonEmpty("сразу после room_prs_layout (рабочая модель)", roomStateOf(workspaceRooms()));
+  await logRenderState("сразу после room_prs_layout (гипотеза А: состояние страницы)");
   const again = await call("room_prs_layout", { room: st0.siteId });
   check(again["created"] === false, "повторный вызов — no-op (created:false)");
 
@@ -267,8 +309,33 @@ try {
   check(st1 !== null && st1.disabledWalls.length === 1 && st1.disabledWalls[0]!.startsWith(`${pidTop}|`), `скрыта развёртка верхней стены (${JSON.stringify(st1?.disabledWalls)})`);
 
   // ==== 4) render PNG ====
-  const png = await call("render_plan", {});
-  check(typeof png["bytes"] === "number" && (png["bytes"] as number) > 1000, `render_plan PNG: ${String(png["bytes"])} байт`);
+  // этап 410: перед финальным render — активный лист/план и предметы, видимые
+  // редактором (только чтение страницы); model_validate; при RENDER_OUT_OF_SYNC —
+  // причина в лог, пауза, ОДИН повтор. Ожидание PNG не ослаблено: повтор тоже
+  // обязан вернуть PNG > 1000 байт, иначе FAIL.
+  await logRenderState("перед финальным render_plan");
+  const validate = await call("model_validate", {});
+  console.log("410 model_validate перед render:", JSON.stringify(validate).slice(0, 400));
+  let png: Record<string, unknown> | null = null;
+  try {
+    png = await call("render_plan", {});
+  } catch (re) {
+    const msg = String((re as Error).message);
+    if (!/RENDER_OUT_OF_SYNC/.test(msg)) throw re;
+    console.log("410 render_plan №1: RENDER_OUT_OF_SYNC —", msg.slice(0, 600));
+    await logRenderState("после отказа render_plan №1");
+    await delay(5000);
+    try {
+      png = await call("render_plan", {});
+      console.log("410 причина: повтор через 5 с прошёл — тайминг отрисовки (Б), не состояние страницы");
+    } catch (re2) {
+      console.log("410 render_plan №2 (через 5 с):", String((re2 as Error).message).slice(0, 600));
+      await logRenderState("после отказа render_plan №2");
+      console.log("410 причина: повтор не помог — устойчивое состояние страницы/модели; см. statuses/active_sheet выше");
+      throw re2;
+    }
+  }
+  check(png !== null && typeof png["bytes"] === "number" && (png["bytes"] as number) > 1000, `render_plan PNG: ${String(png?.["bytes"])} байт`);
 } catch (e) {
   console.error("ERROR:", String((e as Error).message).slice(0, 400));
   exitCode = 1;

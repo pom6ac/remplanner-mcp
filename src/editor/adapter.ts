@@ -591,6 +591,57 @@ export function itemsRenderedInSvg(ids: string[]): boolean {
   });
 }
 
+/** Состояние одного ожидаемого предмета в SVG листа (этап 410, диагностика). */
+export type ItemRenderStatus = "ok" | "absent" | "zero_size" | "hidden";
+
+/** Диагностика страницы при RENDER_OUT_OF_SYNC (этап 410): какие предметы и почему
+ *  не видны, какой лист активен в навигации, сколько предметов в ITEMS редактора. */
+export type RenderDiag = {
+  statuses: Record<string, ItemRenderStatus>;
+  svg: boolean;
+  activeSheet: string | null;
+  itemsInEditor: number | null;
+};
+
+/**
+ * Диагностика видимости предметов (этап 410): та же проверка, что
+ * itemsRenderedInSvg (точное совпадение id/data-id/токена класса, ненулевой
+ * прямоугольник, display/visibility), но по КАЖДОМУ id — с причиной. Раньше
+ * RENDER_OUT_OF_SYNC перечислял все ожидаемые id, и по логу нельзя было отличить
+ * «не отрисован один предмет» от «не отрисован ни один» (лог 406-1). Самодостаточна
+ * (исполняется через page.evaluate); совпадение с itemsRenderedInSvg — офлайн-тест
+ * render-items-dom. Только чтение DOM/глобалов, страницу не меняет.
+ */
+export function itemsRenderDiagInPage(ids: string[]): RenderDiag {
+  const svg = document.querySelector("#canvas_v2_wrapper svg");
+  const statuses: Record<string, ItemRenderStatus> = {};
+  const all = svg ? [...svg.querySelectorAll("*")] : [];
+  for (const id of ids) {
+    const el = all.find((e) => {
+      if (e.getAttribute("id") === id) return true;
+      if (e.getAttribute("data-id") === id) return true;
+      return (e.getAttribute("class") ?? "").split(/\s+/).some((tok) => tok === id || tok === `item_x_${id}`);
+    });
+    if (!el) { statuses[id] = "absent"; continue; }
+    const r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) { statuses[id] = "zero_size"; continue; }
+    const cs = getComputedStyle(el);
+    statuses[id] = cs.display !== "none" && cs.visibility !== "hidden" ? "ok" : "hidden";
+  }
+  let activeSheet: string | null = null;
+  const nav = document.querySelector(".groups_navi_item.active");
+  if (nav) {
+    const tok = (nav.getAttribute("class") ?? "").split(/\s+/).find((t) => t.startsWith("plan_"));
+    activeSheet = tok ? tok.slice("plan_".length).slice(0, 60) : null;
+  }
+  let itemsInEditor: number | null = null;
+  try {
+    const items = (globalThis as unknown as { ITEMS?: Record<string, unknown> }).ITEMS;
+    itemsInEditor = items && typeof items === "object" ? Object.keys(items).length : null;
+  } catch { itemsInEditor = null; }
+  return { statuses, svg: Boolean(svg), activeSheet, itemsInEditor };
+}
+
 /**
  * Рендер плана в PNG: переключение листа, скриншот элемента #canvas_v2_wrapper.
  * Публичные точки редактора ($Project.setPlanName / $Project.focus) опциональны:
@@ -605,12 +656,30 @@ export async function renderPlan(page: Page, options: RenderOptions): Promise<Bu
   // предмета на листе (ревью v0.1.1 №3); при таймауте PNG не отдаётся
   const itemIds = options.itemIds ?? [];
   if (itemIds.length > 0) {
-    await page.waitForFunction(itemsRenderedInSvg, itemIds, { timeout: BROWSER_TIMEOUT_MS, polling: 250 }).catch(() => {
-      throw new McpError("RENDER_OUT_OF_SYNC", `предметы не отрисованы на листе «${sheet}» (${itemIds.join(", ")}) — картинка не отдаётся`, {
+    const rendered = await page.waitForFunction(itemsRenderedInSvg, itemIds, { timeout: BROWSER_TIMEOUT_MS, polling: 250 })
+      .then(() => true, () => false);
+    if (!rendered) {
+      // этап 410: проверка не ослаблена (PNG не отдаётся), но ошибка называет
+      // именно НЕ видимые предметы с причиной и активный лист навигации
+      const diag = (await page.evaluate(itemsRenderDiagInPage, itemIds).catch(() => null)) as RenderDiag | null;
+      const missing = diag ? itemIds.filter((id) => diag.statuses[id] !== "ok") : itemIds;
+      // гонка: предметы появились между таймаутом и диагностикой — всё равно отказ
+      // (картинка снималась бы без повторного ожидания), список — все ожидаемые
+      const listed = missing.length > 0 ? missing : itemIds;
+      const why = diag ? listed.map((id) => `${id}: ${diag.statuses[id] ?? "absent"}`) : listed;
+      throw new McpError("RENDER_OUT_OF_SYNC", `предметы не отрисованы на листе «${sheet}» (не видны ${listed.length} из ${itemIds.length}: ${why.join(", ")}${diag ? `; активный лист: ${diag.activeSheet ?? "?"}` : ""}) — картинка не отдаётся`, {
         hint: "повторите render_plan; при повторении сверитесь с model_get и model_validate",
-        details: { items: itemIds, sheet },
+        details: {
+          items: itemIds,
+          missing: listed,
+          sheet,
+          statuses: diag?.statuses ?? null,
+          svg: diag?.svg ?? null,
+          active_sheet: diag?.activeSheet ?? null,
+          items_in_editor: diag?.itemsInEditor ?? null,
+        },
       });
-    });
+    }
   }
   if (options.dimensions === false) {
     await page.evaluate(() => {

@@ -5,7 +5,7 @@
 // свой видимый элемент.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { itemsRenderedInSvg } from "../../src/editor/adapter.ts";
+import { itemsRenderDiagInPage, itemsRenderedInSvg } from "../../src/editor/adapter.ts";
 
 type FakeEl = {
   id?: string;
@@ -129,6 +129,39 @@ test("render-items-dom: нет svg — false", () => {
   g["document"] = { querySelector: () => null };
   try {
     assert.equal(itemsRenderedInSvg(["sofa1"]), false);
+  } finally {
+    if (prevDoc === undefined) delete g["document"];
+    else g["document"] = prevDoc;
+  }
+});
+
+// Этап 410: диагностика itemsRenderDiagInPage — та же логика сопоставления и
+// видимости, что предикат ожидания; по каждому id — причина.
+test(
+  "render-items-dom (410): диагностика по каждому id совпадает с предикатом ожидания",
+  withDom([
+    { id: "ok1" }, { cls: "item_x__ok2" }, { id: "z1", w: 0, h: 0 }, { id: "h1", display: "none" },
+    { id: "h2", visibility: "hidden" }, { cls: "item_x_notabs1" }, { id: "sofa10" },
+  ], () => {
+    const ids = ["ok1", "_ok2", "z1", "h1", "h2", "abs1", "sofa1"];
+    const d = itemsRenderDiagInPage(ids);
+    assert.deepEqual(d.statuses, { ok1: "ok", _ok2: "ok", z1: "zero_size", h1: "hidden", h2: "hidden", abs1: "absent", sofa1: "absent" });
+    assert.equal(d.svg, true);
+    for (const id of ids) {
+      assert.equal(d.statuses[id] === "ok", itemsRenderedInSvg([id]), `согласованность с предикатом: ${id}`);
+    }
+  }),
+);
+
+test("render-items-dom (410): нет svg — все absent, svg=false", () => {
+  const g = globalThis as Record<string, unknown>;
+  const prevDoc = g["document"];
+  g["document"] = { querySelector: () => null };
+  try {
+    const d = itemsRenderDiagInPage(["a"]);
+    assert.deepEqual(d.statuses, { a: "absent" });
+    assert.equal(d.svg, false);
+    assert.equal(d.activeSheet, null);
   } finally {
     if (prevDoc === undefined) delete g["document"];
     else g["document"] = prevDoc;
