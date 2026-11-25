@@ -81,3 +81,15 @@ export const SHIELD_MAX_COLLECTORS = 20;
  * схема ещё до адаптера.
  */
 export const SHEET_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Раскладка развёрток комнаты (этап 406, room_prs_layout): максимум линий
+ * развёрток одной комнаты, принимаемых от редактора (edges_prs/id_of_edges),
+ * и максимум записей pillars одной линии. Комната реальной квартиры — десятки
+ * рёбер; лимит отсекает аномальный ответ страницы до записи в модель.
+ */
+export const MAX_PRS_LAYOUT_LINES = 500;
+export const MAX_PRS_LINE_PILLARS = 100;
+
+/** Формат oid линии развёртки редактора (LIB.id: "_" + base36). */
+export const PRS_OID_PATTERN = /^[A-Za-z0-9_]{1,32}$/;

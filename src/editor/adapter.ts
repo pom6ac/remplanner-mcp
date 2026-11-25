@@ -9,6 +9,10 @@ import { PAGE } from "./inject.js";
 import { wallAxisSegments, wallAxisSetsEqual, wallAxisCoverageCm } from "../model/walls.ts";
 import { assertModelSafeForEditor } from "../model/strings.ts";
 import type { Model } from "../model/types.ts";
+import type { PrsLayoutRaw } from "../model/projections.ts";
+
+/** Ключ rooms2, передаваемый в страницу для раскладки развёрток (LIB.id и id прежних версий). */
+const PRS_ROOM_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 import { readCompat, assertCompatible, trackVersion, type CompatInfo, type CompatPresent } from "./compat.ts";
 import type { SessionState } from "../session.ts";
 
@@ -84,6 +88,8 @@ export type EditorHandle = {
   normalize(model: Record<string, unknown>, waitMs?: number): Promise<NormalizeResult>;
   save(timeoutMs?: number): Promise<EditorSaveResult>;
   renderPng(options?: RenderOptions): Promise<Buffer>;
+  /** Раскладка развёрток комнаты настоящим кодом редактора (этап 406). */
+  prsLayout(model: Record<string, unknown>, roomId: string): Promise<PrsLayoutRaw>;
   compatInfo(): Promise<CompatInfo>;
   close(): Promise<void>;
 };
@@ -516,6 +522,32 @@ export function buildHandle(
     async renderPng(options?: RenderOptions): Promise<Buffer> {
       failIfUnsafe();
       return renderPlan(page, options ?? {});
+    },
+    async prsLayout(model, roomId): Promise<PrsLayoutRaw> {
+      failIfUnsafe();
+      // единая точка assertModelSafeForEditor — перед КАЖДОЙ передачей модели в Chromium
+      assertModelSafeForEditor(model as unknown as Model);
+      // roomId — только как данные (window-аргумент), не в коде/селекторах; формат
+      // ключа rooms2 проверен и здесь (fail-closed)
+      if (!PRS_ROOM_ID_PATTERN.test(roomId)) {
+        throw new McpError("INVALID_ARGUMENT", "id комнаты не формата редактора");
+      }
+      await page.evaluate(PAGE.clearFog);
+      await page.evaluate((arg) => {
+        (window as unknown as { __remplanner_arg?: unknown }).__remplanner_arg = arg;
+      }, { model, roomId });
+      const res = (await page.evaluate(PAGE.prsLayout)) as
+        | { missing: true }
+        | { layoutError: string; name: string }
+        | PrsLayoutRaw;
+      failIfUnsafe();
+      if ("missing" in res) {
+        throw new McpError("INVALID_ARGUMENT", "редактор не нашёл комнату после restore — перестройте комнаты (project_save) и повторите");
+      }
+      if ("layoutError" in res) {
+        throw new McpError("INTERNAL", `редактор не построил раскладку развёрток (${res.layoutError}: ${res.name})`);
+      }
+      return res;
     },
     async compatInfo(): Promise<CompatInfo> {
       failIfUnsafe();
