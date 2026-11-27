@@ -27,12 +27,19 @@
   `tests/fixtures/ui-ref-project-height.json`.
 - **`demolish`/`demolish_cancel` с `target:"item"`** (бэклог 418 §4 B):
   демонтаж предметов старого фонда как `break_radiator`/`break_electric_shield`
-  редактора — только `radiator_old`/`electric_shield_old` на листе «Демонтаж»
-  (`props.plan.b=1`), пишется `items[id].props.demount=1/0`. Прочие предметы —
-  `INVALID_ARGUMENT` с подсказкой `item_delete`, несуществующий id —
+  редактора — только `radiator_old`/`electric_shield_old`, **при любом
+  `props.plan`** (`props.plan.b` не требуется: `Item.isAvailable` бандла
+  ~2307088 пускает старый фонд на лист «Демонтаж» при любом плане, mousedown
+  ~2323811 его не читает — исправление по ревью 420 №1; реальный дамп
+  `tests/fixtures/ui-ref-comm-radiator_old.json`, план `{a:1}`), пишется
+  `items[id].props.demount=1/0` (`demount:0` сериализатор бандла удаляет —
+  после save/reopen поля нет, отсутствие поля = не демонтирован). Прочие
+  предметы — `INVALID_ARGUMENT` с подсказкой `item_delete`, несуществующий id —
   `NOT_FOUND`; новых инструментов в реестре нет. `props.demount` виден в
   `model_get` (поле `demount` предмета). Эталон — синтетический по бандлу
-  `tests/fixtures/ui-ref-demount-item.json`.
+  `tests/fixtures/ui-ref-demount-item.json`; живая проверка — проба
+  `scripts/probes/419-height-demount-live.ts`, прогоны 419-3/419-4 (demolish →
+  demount=1 → save/reopen → demolish_cancel → demount=0, restore, sig OK).
 - Сверка save: расхождение высот (`total_height`, `rooms2[*].height`,
   `walls[*].height` у стен не-balcony, **колонн `pillars[*].total_height` и
   дверей группы `doors`** — доработка) между нормализованным ожиданием и
