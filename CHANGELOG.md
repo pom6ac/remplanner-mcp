@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Проверено (этап 425 — стояки и ввод воды: живая проверка item_add against_wall)
+
+- **Стояки и ввод воды** (бэклог 418 §3 E): `water`, `water_column_hot`,
+  `water_column_cold`, `drainage_column`, `ceiling_water` через `item_add`
+  against_wall проверены живой пробой `scripts/probes/425-risers-live.ts` на
+  dev-объекте (бэкап fail-closed, READONLY-гард, restore в finally, sig OK —
+  прогоны 425-1/425-2/425-3): `id_wall`, план `{a:1}`, размеры/высота из
+  каталога, `dimensions.display` (у четырёх стояков `false`, у `ceiling_water`
+  `true`), pc на depth/2 от внутренней грани — в рабочей модели и после
+  save/reopen совпадают с эталонами `ui-ref-comm-*`; derived-поля кеша UI
+  (`projection`/`wall_line`) редактор пересчитывает при draw и на постановку не
+  влияют. Код item_add правок не потребовал — расхождений с редактором нет;
+  добавлен тест-контракт на каждый ключ `tests/unit/425-risers.test.ts`.
+  Строки «Коммуникации»/«Ввод водоснабжения» в `docs/coverage.md` — «да».
+
 ### Добавлено (этап 419 — высоты проекта, демонтаж предметов старого фонда; доработка — колонны, двери, раскладка обшивки)
 
 - **`project_set_height` v2** (бэклог 418 §4 A): семантика `$Project.setHeigth`
