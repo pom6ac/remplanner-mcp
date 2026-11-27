@@ -11,7 +11,10 @@
 //   ui-ref-comm-water_column_hot снят в промежуточном магнитe — там без
 //   wall_line, отсутствие/нестыковка derived-полей не FAIL) → render_plan →
 //   item_delete (только предмет пробы, по site_id; пользовательские предметы
-//   не трогаются); restore в finally: удалить оставшиеся предметы пробы,
+//   не трогаются); restore в finally: удалить предметы пробы ПО ЖУРНАЛУ и
+//   только вне бэкапа (страховка fail-closed, чистая функция
+//   425-risers-restore.ts: бэкап не загружен — НИЧЕГО не удалять, STOP, код ≠ 0;
+//   предмет вида KEYS вне бэкапа и журнала — не удалять, ручной разбор),
 //   save, sig == бэкап (канон probe-sig).
 // В dev-объекте УЖЕ есть предметы water/water_column_cold/ceiling_water (этап 57) —
 // проба ставит ВТОРОЙ экземпляр того же вида и различает свои предметы по id
@@ -47,6 +50,7 @@ import type { Model, Point, Wall } from "../../src/model/types.ts";
 import type { Page } from "playwright-core";
 import { sig } from "./probe-sig.ts";
 import { assertEditorPlanMatch, probeWriteEnv, assertTargetPair, readonlyGuard, readonlyRefPath } from "./probe-guard.ts";
+import { selectRestoreDeletes } from "./425-risers-restore.ts";
 
 const phase = process.argv[2] ?? "run";
 const ROOT_DIR = (): string => {
@@ -176,8 +180,9 @@ const checkItemFields = (tag: string, key: string, it: Record<string, unknown>, 
 };
 
 let roGuard: Awaited<ReturnType<typeof readonlyGuard>> | null = null;
-/** Модель бэкапа — для страховки restore (предметы, которых нет в бэкапе). */
-let bm: Record<string, unknown> = {};
+/** Модель бэкапа — для страховки restore. null = НЕ загружен (падение до
+ *  присвоения `bm = backup.model`): страховка fail-closed — НИЧЕГО не удаляет. */
+let bm: Record<string, unknown> | null = null;
 try {
   const ids = probeWriteEnv();
   await assertTargetPair(ctx.session(), ids.objectId, ids.planId);
@@ -281,34 +286,41 @@ try {
       const ids = probeWriteEnv();
       await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
       await assertEditorPlanMatch(editorOf(), ids.planId);
-      // restore: удалить оставшиеся предметы пробы — по site_id из журнала И
-      // страховкой: любой предмет вида KEYS, которого нет в бэкапе (остаток
-      // прерванного прогона, напр. 425-2: item_delete упал на пустом id).
-      // Пользовательские предметы (есть в бэкапе) не трогаются.
-      const backupIds = new Set(Object.keys((bm["items"] ?? {}) as Record<string, unknown>));
-      const ws = workspaceModel();
-      for (const pi of original?.probe_items ?? []) {
-        if ((ws.items ?? {} as Record<string, unknown>)[pi.site_id] !== undefined) {
+      // restore: выбор «что удалять» — чистая функция 425-risers-restore.ts
+      // (фикс M1 ревью 426, fail-closed): удалять можно ТОЛЬКО предметы ЭТОГО
+      // прогона (id из журнала, провалидированные до записи) и только если их
+      // НЕТ в бэкапе 425; пользовательские предметы бэкапа не трогаются;
+      // предмет вида KEYS вне бэкапа и журнала (чужой/остаток другого прогона) —
+      // НЕ удалять, перечислить для ручного разбора; бэкап не загружен —
+      // страховка НИЧЕГО не удаляет, STOP, код выхода ≠ 0.
+      const decision = selectRestoreDeletes({
+        backupItems: bm === null ? null : (bm["items"] ?? {}) as Record<string, { name?: unknown }>,
+        journal: original?.probe_items ?? [],
+        currentItems: (workspaceModel().items ?? {}) as Record<string, { name?: unknown }>,
+      });
+      if (!decision.ok) {
+        console.error("STOP: страховка пропущена — нет бэкапа");
+        exitCode = 1;
+      } else {
+        for (const d of decision.delete) {
           journal();
-          await roGuard.assertUnchanged(`restore:delete ${pi.key}`);
-          await call("item_delete", { item_id: pi.site_id });
-          console.log(`restore: item_delete ${pi.key} (${pi.site_id})`);
+          await roGuard.assertUnchanged(`restore:delete ${d.key}`);
+          await call("item_delete", { item_id: d.id });
+          console.log(`restore: item_delete ${d.key} (${d.id})`);
+        }
+        for (const m of decision.manual) {
+          console.error(`restore: РУЧНОЙ РАЗБОР — предмет вида KEYS вне бэкапа и журнала прогона: ${m.name} (${m.id}) — НЕ удалён страховкой`);
+          exitCode = 1;
         }
       }
-      for (const [iid, it] of Object.entries((workspaceModel().items ?? {}) as Record<string, Record<string, unknown>>)) {
-        if (!backupIds.has(iid) && (KEYS as readonly string[]).includes(String(it["name"]))) {
-          journal();
-          await roGuard.assertUnchanged(`restore:delete leftover ${iid}`);
-          await call("item_delete", { item_id: iid });
-          console.log(`restore: item_delete остаток прогона ${String(it["name"])} (${iid})`);
-        }
+      if (decision.ok && decision.delete.length > 0) {
+        journal();
+        await roGuard.assertUnchanged("restore:save");
+        const r = await call("project_save", {}) as { verified?: boolean };
+        console.log(`restore save: verified=${r["verified"]}`);
+        if (r["verified"] !== true) throw new Error("restore save не verified");
+        await delay(5500);
       }
-      journal();
-      await roGuard.assertUnchanged("restore:save");
-      const r = await call("project_save", {}) as { verified?: boolean };
-      console.log(`restore save: verified=${r["verified"]}`);
-      if (r["verified"] !== true) throw new Error("restore save не verified");
-      await delay(5500);
       const after = await loadModel(ctx.session(), ids.objectId, ids.planId);
       const backupPath = backupPathOf(ids.objectId);
       if (existsSync(backupPath)) {
