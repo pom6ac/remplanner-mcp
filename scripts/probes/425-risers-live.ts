@@ -32,7 +32,8 @@
 // RUN_N≥2 — повторный прогон БЕЗ REMPLANNER_PROBE_WRITE_BACKUP и только при
 // существующем бэкапе (как в 406/419).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { closeBrowser } from "../../src/browser.ts";
@@ -95,7 +96,10 @@ const workspaceModel = (): Model =>
 
 const KEYS = ["water", "water_column_hot", "water_column_cold", "drainage_column", "ceiling_water"] as const;
 type Ref = { menu_title: string; catalog_defaults_cm: Record<string, unknown>; model_object: Record<string, unknown> };
-const refOf = (key: string): Ref => JSON.parse(readFileSync(join(ROOT_DIR(), "tests/fixtures", `ui-ref-comm-${key}.json`), "utf8")) as Ref;
+// эталоны — из worktree пробы (относительно файла, НЕ от корня репо: в worktree
+// корень — основной checkout, там фикстур этой ветки нет)
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "tests", "fixtures");
+const refOf = (key: string): Ref => JSON.parse(readFileSync(join(FIXTURES, `ui-ref-comm-${key}.json`), "utf8")) as Ref;
 const distToAxis = (w: { p1: Point; p2: Point }, pc: Point): number => {
   const dx = w.p2.x - w.p1.x, dy = w.p2.y - w.p1.y;
   return Math.abs(dy * (pc.x - w.p1.x) - dx * (pc.y - w.p1.y)) / Math.hypot(dx, dy);
