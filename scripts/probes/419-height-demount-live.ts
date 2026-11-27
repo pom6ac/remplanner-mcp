@@ -299,9 +299,10 @@ try {
   check(Object.values(workA.rooms).every((h) => h === newCm), `рабочая модель: rooms2[].height=${JSON.stringify(workA.rooms)}`);
   check(Object.values(workA.walls).every((h) => h === newCm), `рабочая модель: walls[].height=${JSON.stringify(workA.walls)}`);
   check(JSON.stringify(workA.balcony) === JSON.stringify(roomsSnap.balcony), `рабочая модель: балкон без изменений ${JSON.stringify(workA.balcony)}`);
-  // доработка 419: колонны и двери в рабочей модели
+  // доработка 419: колонны и двери в рабочей модели (ожидание — ОДИН шаг бандла:
+  // после вызова новой высоты; двухшаговая симуляция restore — в предусловии выше)
   const workPillars = pillarsSnapshot(workspaceModel() as unknown as Record<string, unknown>);
-  const pillarsExpect = Object.fromEntries(Object.entries(pillars0).map(([pid, h]) => [pid, simulatePillar(pillarsRec[pid]?.["role"], h, totalCm, newCm)]));
+  const pillarsExpect = Object.fromEntries(Object.entries(pillars0).map(([pid, h]) => [pid, h === null ? null : (pillarsRec[pid]?.["role"] === "gypsum" ? (h === totalCm || h > newCm ? newCm : h) : newCm)]));
   check(JSON.stringify(workPillars) === JSON.stringify(pillarsExpect), `рабочая модель: колонны ${JSON.stringify(workPillars)} == ожидание веток бандла ${JSON.stringify(pillarsExpect)}`);
   const workDoors = doorsSnapshot(workspaceModel() as unknown as Record<string, unknown>);
   check(JSON.stringify(workDoors) === JSON.stringify(doors0), `рабочая модель: двери без изменений (${Object.keys(workDoors).length} шт.)`);
@@ -386,6 +387,10 @@ try {
       await delay(5500);
       const after = await loadModel(ctx.session(), ids.objectId, ids.planId);
       const backupPath = backupPathOf(ids.objectId);
+      if (original) {
+        check(JSON.stringify(pillarsSnapshot(after.model)) === JSON.stringify(original.pillars_heights), `restore: колонны вернулись к исходным ${JSON.stringify(pillarsSnapshot(after.model))}`);
+        check(JSON.stringify(doorsSnapshot(after.model)) === JSON.stringify(original.doors_heights), `restore: двери вернулись к исходным (${Object.keys(doorsSnapshot(after.model)).length} шт.)`);
+      }
       if (existsSync(backupPath)) {
         const same = sig(after.model) === sig((JSON.parse(readFileSync(backupPath, "utf8")) as LoadedModel).model);
         console.log("sig (итог) vs backup:", same ? "OK" : "РАСХОЖДЕНИЕ");
