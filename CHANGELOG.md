@@ -7,8 +7,10 @@
 - **Стояки и ввод воды** (бэклог 418 §3 E): `water`, `water_column_hot`,
   `water_column_cold`, `drainage_column`, `ceiling_water` через `item_add`
   against_wall проверены живой пробой `scripts/probes/425-risers-live.ts` на
-  dev-объекте (бэкап fail-closed, READONLY-гард, restore в finally, sig OK —
-  прогоны 425-1/425-2/425-3): `id_wall`, план `{a:1}`, размеры/высота из
+  dev-объекте (бэкап fail-closed, READONLY-гард, restore в finally; итоги
+  прогонов честно: 425-1 — ERROR (падение до записей модели), 425-2 — FAIL с
+  расхождением `sig` против бэкапа (остаток предмета прогона убран страховкой
+  restore в 425-3), 425-3 — PASS, `sig` (итог) == бэкап): `id_wall`, план `{a:1}`, размеры/высота из
   каталога, `dimensions.display` (у четырёх стояков `false`, у `ceiling_water`
   `true`), pc на depth/2 от внутренней грани — в рабочей модели и после
   save/reopen совпадают с эталонами `ui-ref-comm-*`; derived-поля кеша UI
