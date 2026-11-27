@@ -5,9 +5,10 @@
 //      рабочей модели (total_height, rooms2[].height, walls[].height, балкон — без
 //      изменений) → save → reopen → независимый loadModel: те же поля;
 //   B) demolish target:"item" на подходящем предмете dev-объекта (radiator_old/
-//      electric_shield_old, props.plan.b=1, demount≠1 — по бандлу break_radiator/
-//      break_electric_shield); если такого нет — B пропускается с записью причины,
-//      предмет НЕ создаётся (без эталона). → save/reopen → demount=1 →
+//      electric_shield_old, demount≠1 — имя решает; план не проверяется, ревью 420 №1:
+//      бандл демонтирует старый фонд при любом props.plan); если такого нет — B
+//      пропускается с записью причины, предмет НЕ создаётся (без эталона).
+//      → save/reopen → demount=1 →
 //      demolish_cancel → save/reopen → demount=0;
 //   → render_plan; restore в finally: cancel предмета (если остался), высота назад,
 //      save, итоговый sig == бэкап (канон probe-sig).
@@ -20,8 +21,9 @@
 // (<корень>/.orca-reports/tmp/419-captured-<N>-<n>.json, абсолютный путь, до каждой
 // записи); restore в finally; ≤30 запросов/мин (лимитер MCP), closeBrowser в finally.
 // Предусловия мутации высот (иначе STOP до записи — восстановление было бы неточным):
-//   - у всех комнат rooms2 высота отсутствует или == total_height;
-//   - у всех стен не-balcony высота == total_height;
+//   - у всех комнат rooms2 и всех стен не-balcony height присутствует и == total_height
+//     (строго, ревью 420 №3: project_set_height пишет height всем — запись в модель
+//     без height добавила бы поле, отсутствующее в бэкапе, и сломало бы sig);
 //   - исходный total_height < 999 см (новая высота выше — окна/балконные блоки не
 //     поджимаются, restore через project_set_height(исходная) точен);
 //   - доработка 419: колонны — симуляция веток gypsum бандла в обе стороны
@@ -44,7 +46,7 @@ import { buildServer } from "../../src/server.ts";
 import { ServerContext } from "../../src/server/context.ts";
 import { loadModel, type LoadedModel } from "../../src/api.ts";
 import { gitRepoRoot } from "../../src/repo-root.ts";
-import { DEMOUNTABLE_ITEM_NAMES, itemOnBreakPlan } from "../../src/model/demolition.ts";
+import { DEMOUNTABLE_ITEM_NAMES } from "../../src/model/demolition.ts";
 import type { Model } from "../../src/model/types.ts";
 import type { Page } from "playwright-core";
 import { sig } from "./probe-sig.ts";
@@ -116,10 +118,6 @@ const heightSnapshot = (m: Record<string, unknown>): HeightSnapshot => {
   }
   return { total: m["total_height"], rooms, walls, balcony };
 };
-const allEqual = (snap: HeightSnapshot, cm: number): boolean =>
-  snap.total === cm && Object.values(snap.rooms).every((h) => h === undefined || h === cm) &&
-  Object.values(snap.walls).every((h) => h === undefined || h === cm);
-
 /** Колонны: id → total_height (null, если поля нет). */
 const pillarsSnapshot = (m: Record<string, unknown>): Record<string, number | null> =>
   Object.fromEntries(Object.entries((m["pillars"] ?? {}) as Record<string, Record<string, unknown>>)
@@ -175,12 +173,11 @@ const hasPersistentDecorLayouts = (m: Record<string, unknown>): number => {
   return n;
 };
 
-/** Предмет для B: имя из DEMOUNTABLE_ITEM_NAMES, план b, demount≠1 (по бэкапу). */
+/** Предмет для B: имя из DEMOUNTABLE_ITEM_NAMES, demount≠1 (по бэкапу); план не проверяется — ревью 420 №1: бандл демонтирует radiator_old/electric_shield_old при любом props.plan. */
 const findDemountable = (m: Record<string, unknown>): { id: string; name: string; demount: number } | null => {
   for (const [id, it] of Object.entries((m["items"] ?? {}) as Record<string, Record<string, unknown>>)) {
     const name = String(it["name"] ?? "");
     if (!DEMOUNTABLE_ITEM_NAMES.has(name)) continue;
-    if (!itemOnBreakPlan({ plan: it["plan"] })) continue;
     const demount = it["demount"] === 1 ? 1 : 0;
     if (demount === 1) continue;
     return { id, name, demount };
@@ -237,12 +234,19 @@ try {
   const bm = backup.model;
   const totalCm = typeof bm["total_height"] === "number" ? (bm["total_height"] as number) : 270;
   const roomsSnap = heightSnapshot(bm);
-  // предусловия точного восстановления (иначе — STOP до записи)
-  const roomsOk = Object.values(roomsSnap.rooms).every((h) => h === undefined || h === totalCm);
-  const wallsOk = Object.values(roomsSnap.walls).every((h) => h === undefined || h === totalCm);
-  console.log(`предусловия: total_height=${totalCm} см; комнаты «своя высота»: ${JSON.stringify(roomsSnap.rooms)}; стены ≠ total: ${JSON.stringify(Object.entries(roomsSnap.walls).filter(([, h]) => h !== totalCm))}`);
+  // предусловия точного восстановления (иначе — STOP до записи).
+  // Строго (ревью 420 №3): project_set_height пишет height ВСЕМ комнатам и всем
+  // не-balcony стенам безусловно (src/model/height.ts: setHeigth бандла), а канон
+  // sig (probe-sig roundDeep) сохраняет поле height записи как есть. Комната/стена
+  // без height в бэкапе после restore получила бы поле, которого в бэкапе нет,
+  // → sig vs backup «РАСХОЖДЕНИЕ» при семантически точном restore (ложный FAIL).
+  // Поэтому требуем height === total_height уже в бэкапе и останавливаемся ДО
+  // первой записи — тогда sig vs backup остаётся точным по построению.
+  const roomsOk = Object.values(roomsSnap.rooms).every((h) => h === totalCm);
+  const wallsOk = Object.values(roomsSnap.walls).every((h) => h === totalCm);
+  console.log(`предусловия: total_height=${totalCm} см; комнаты height≠total: ${JSON.stringify(Object.entries(roomsSnap.rooms).filter(([, h]) => h !== totalCm))}; стены height≠total: ${JSON.stringify(Object.entries(roomsSnap.walls).filter(([, h]) => h !== totalCm))}`);
   if (!roomsOk || !wallsOk) {
-    throw new Error(`предусловия не выполнены (roomsOk=${roomsOk} wallsOk=${wallsOk}) — restore через project_set_height был бы неточным. СТОП до записи`);
+    throw new Error(`предусловия не выполнены (roomsOk=${roomsOk} wallsOk=${wallsOk}): у каждой комнаты/стены height должен быть равен total_height (restore через project_set_height записывает height всем, запись в модель без height дала бы поле, которого нет в бэкапе, и ложное расхождение sig). СТОП до записи`);
   }
   if (totalCm >= 999) {
     throw new Error(`исходная высота ${totalCm} см — выше максимума новой нет (клампинг окон сделал бы restore неточным). СТОП до записи`);
@@ -344,7 +348,7 @@ try {
     const demAfterCancel = ((gotB2.model["items"] ?? {}) as Record<string, Record<string, unknown>>)[item0.id]?.["demount"];
     check(demAfterCancel === 0, `независимый loadModel: demount=${String(demAfterCancel)}`);
   } else {
-    console.log("SKIP: B вживую не выполняется — в dev-объекте нет предмета radiator_old/electric_shield_old на листе «Демонтаж» (props.plan.b=1) с demount≠1; предмет не создаётся (без эталона из UI)");
+    console.log("SKIP: B вживую не выполняется — в dev-объекте нет предмета radiator_old/electric_shield_old с demount≠1; предмет не создаётся (без эталона из UI)");
   }
 
   // ==== render_plan ====

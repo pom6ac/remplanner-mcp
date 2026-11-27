@@ -291,12 +291,33 @@ test("419 B: предмет не того вида — INVALID_ARGUMENT с по�
   assert.equal(errOf(() => demolish(m, { target: "item", id: "sg1" })).code, "INVALID_ARGUMENT");
 });
 
-test("419 B: radiator_old вне листа «Демонтаж» (plan a) — INVALID_ARGUMENT", () => {
+test("419 B: radiator_old вне листа «Демонтаж» (plan a) — демонтируется, как в бандле (ревью 420 №1)", () => {
+  // бандл: isAvailable (~2307088) пускает radiator_old на лист «Демонтаж» при любом
+  // props.plan, mousedown (~2323811) ставит demount=1 без чтения props.plan.b
   const m = itemModel();
-  const err = errOf(() => demolish(m, { target: "item", id: "item3" }));
-  assert.equal(err.code, "INVALID_ARGUMENT");
-  assert.match(err.message ?? "", /Демонтаж/);
+  const r = demolish(m, { target: "item", id: "item3" });
+  assert.equal(r.itemId, "item3");
+  assert.equal(m.items["item3"]!.demount, 1);
+  // обратно (eraser бандла)
+  demolishCancel(m, { target: "item", id: "item3" });
   assert.equal(m.items["item3"]!.demount, 0);
+});
+
+test("419 B: реальный дамп ui-ref-comm-radiator_old (plan {a:1}) — demount=1 и обратно (регресс ревью 420 №1)", () => {
+  // источник: клик по UI dev-проекта, проба 57-comm-ui3; план {"a":1} — до исправления
+  // demolish отказывал с INVALID_ARGUMENT item_not_on_break_plan (тест был зелёным
+  // на ошибке), редактор же демонтирует такой предмет
+  const dump = JSON.parse(readFileSync(`${ROOT}tests/fixtures/ui-ref-comm-radiator_old.json`, "utf8")) as {
+    model_object: { name: string; plan: Record<string, number>; id: string };
+  };
+  const m = { items: { ["r1"]: { ...structuredClone(dump.model_object), id: "r1", demount: 0 } } } as unknown as Model;
+  assert.equal(dump.model_object.plan["b"], undefined);
+  const r = demolish(m, { target: "item", id: "r1" });
+  assert.equal(r.itemId, "r1");
+  assert.equal((m.items["r1"] as { demount?: number }).demount, 1);
+  const c = demolishCancel(m, { target: "item", id: "r1" });
+  assert.equal(c.itemId, "r1");
+  assert.equal((m.items["r1"] as { demount?: number }).demount, 0);
 });
 
 test("419 B: несуществующий предмет — NOT_FOUND", () => {
