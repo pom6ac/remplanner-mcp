@@ -176,6 +176,8 @@ const checkItemFields = (tag: string, key: string, it: Record<string, unknown>, 
 };
 
 let roGuard: Awaited<ReturnType<typeof readonlyGuard>> | null = null;
+/** Модель бэкапа — для страховки restore (предметы, которых нет в бэкапе). */
+let bm: Record<string, unknown> = {};
 try {
   const ids = probeWriteEnv();
   await assertTargetPair(ctx.session(), ids.objectId, ids.planId);
@@ -221,7 +223,7 @@ try {
     process.exit(1);
   }
 
-  const bm = backup.model as Record<string, unknown>;
+  bm = backup.model as Record<string, unknown>;
   const wall = chooseWall(bm);
   const backupItemNames = new Set(Object.values((bm["items"] ?? {}) as Record<string, Record<string, unknown>>).map((it) => String(it["name"])));
   original = { wall_id: wall.wallId, offset_mm: wall.offsetMm, probe_items: [] };
@@ -241,7 +243,10 @@ try {
       name: key,
       position: { against_wall: { wall_id: wall.wallId, offset_mm: wall.offsetMm, gap_mm: 0 } },
     });
-    const siteId = String(addRes["site_id"] ?? "");
+    // ответ item_add: {hint, entity: CompactItem | null} — site_id = ключ в model.items
+    const entity = addRes["entity"] as Record<string, unknown> | null | undefined;
+    const siteId = String((entity as { site_id?: unknown } | null | undefined)?.["site_id"] ?? "");
+    if (siteId === "") throw new Error(`item_add ${key}: в ответе нет site_id (${JSON.stringify(addRes).slice(0, 200)}) — СТОП до save (иначе предмет остался бы на сервере)`);
     check(siteId !== "", `item_add ${key}: site_id=${siteId}`);
     original.probe_items.push({ key, site_id: siteId });
     journal();
@@ -276,7 +281,11 @@ try {
       const ids = probeWriteEnv();
       await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
       await assertEditorPlanMatch(editorOf(), ids.planId);
-      // restore: удалить оставшиеся предметы пробы (по site_id из журнала)
+      // restore: удалить оставшиеся предметы пробы — по site_id из журнала И
+      // страховкой: любой предмет вида KEYS, которого нет в бэкапе (остаток
+      // прерванного прогона, напр. 425-2: item_delete упал на пустом id).
+      // Пользовательские предметы (есть в бэкапе) не трогаются.
+      const backupIds = new Set(Object.keys((bm["items"] ?? {}) as Record<string, unknown>));
       const ws = workspaceModel();
       for (const pi of original?.probe_items ?? []) {
         if ((ws.items ?? {} as Record<string, unknown>)[pi.site_id] !== undefined) {
@@ -284,6 +293,14 @@ try {
           await roGuard.assertUnchanged(`restore:delete ${pi.key}`);
           await call("item_delete", { item_id: pi.site_id });
           console.log(`restore: item_delete ${pi.key} (${pi.site_id})`);
+        }
+      }
+      for (const [iid, it] of Object.entries((workspaceModel().items ?? {}) as Record<string, Record<string, unknown>>)) {
+        if (!backupIds.has(iid) && (KEYS as readonly string[]).includes(String(it["name"]))) {
+          journal();
+          await roGuard.assertUnchanged(`restore:delete leftover ${iid}`);
+          await call("item_delete", { item_id: iid });
+          console.log(`restore: item_delete остаток прогона ${String(it["name"])} (${iid})`);
         }
       }
       journal();
