@@ -96,6 +96,10 @@ export type ItemProps = {
   plan: Record<string, number>;
   id_room?: string | null;
   id_wall?: string | null;
+  /** Пометка демонтажа предмета старого фонда (лист «Демонтаж», этап 419):
+   *  1 — демонтирован, 0/отсутствие — нет; пишут break_radiator/break_electric_shield
+   *  (только radiator_old/electric_shield_old на плане b) и eraser бандла. */
+  demount?: number;
   /** Вертикальный блок пристенной электрики («друг над другом»): 2/3 — слои
    *  над стеной (get_offset_layer2 бандла), null/отсутствие — слой у стены. */
   layer?: number | string | null;

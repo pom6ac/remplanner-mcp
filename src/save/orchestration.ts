@@ -63,6 +63,7 @@ import {
   type SubsItemSig,
 } from "../verify/index.ts";
 import { prsFigureUserMismatches, prsSettingsMismatches, wallDecorAnchorMismatches } from "../verify/projections.ts";
+import { roomHeightMismatches, totalHeightMismatch, wallHeightMismatches } from "../verify/heights.ts";
 import type { EditorLike, OpenProject, WorkspaceDeps } from "../workspace.ts";
 
 export type SaveOutcome = {
@@ -952,6 +953,20 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     const prsAfterCheck = prsSettingsMismatches(expectedPrsRooms, ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {}, wallsOf(norm.model as Model), wallsOf(after.model));
     warnings.push(...prsAfterCheck.warnings);
     const prsAfter = prsAfterCheck.problems;
+    // этап 419: высоты после save — нормализованное ожидание против сервера,
+    // строго (total_height, rooms2[*].height, walls[*].height у стен не-balcony;
+    // ограждения сверяет balconyWallPropertyMismatches)
+    const heightsAfter = [
+      ...totalHeightMismatch((norm.model as Record<string, unknown>)["total_height"], after.model["total_height"]),
+      ...wallHeightMismatches(
+        ((norm.model as Record<string, unknown>)["walls"] ?? {}) as Record<string, { height?: unknown; role?: unknown }>,
+        (after.model["walls"] ?? {}) as Record<string, { height?: unknown; role?: unknown }>,
+      ),
+      ...roomHeightMismatches(
+        ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined,
+        ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {},
+      ),
+    ];
     const anchorAfter = wallDecorAnchorMismatches(expectedPrsRooms, ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {});
     const roomsLost = normRooms > 0 && roomsAfter === 0;
     // этап 126: комнаты после save — строго (по каноническому контуру и
@@ -974,7 +989,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
         ),
       },
     ).problems;
-    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && ceilingRigelAfter.length === 0 && sheetsAfter.length === 0 && freelinesAfter.length === 0 && thickLinesAfter.length === 0 && figuresAfter.length === 0 && picturesAfter.length === 0 && moldingsAfter.length === 0 && nichesAfter.length === 0 && prsAfter.length === 0 && anchorAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
+    if (wallAxisSetsEqual(segmentsAfter, expected.segments) && pillarMismatch.length === 0 && rigelMismatch.length === 0 && itemMismatch.length === 0 && gasMismatch.length === 0 && pipeMismatch.length === 0 && pipeConnAfter.length === 0 && borderMismatch.length === 0 && holeMismatch.length === 0 && wallRoleMismatch.length === 0 && wallPropMismatch.length === 0 && ledMismatch.length === 0 && stripesMismatch.length === 0 && lineStripsMismatch.length === 0 && cablesMismatch.length === 0 && cablesConnAfter.length === 0 && cableFormAfter.length === 0 && subsAfter.length === 0 && subsDerivedAfter.length === 0 && finishAfter.length === 0 && demolitionAfter.length === 0 && dimsAfter.length === 0 && climateAfter.length === 0 && roomsAfterCheck.length === 0 && shieldsAfter.length === 0 && zoneAfter.length === 0 && warmAfter.length === 0 && ceilingRigelAfter.length === 0 && sheetsAfter.length === 0 && freelinesAfter.length === 0 && thickLinesAfter.length === 0 && figuresAfter.length === 0 && picturesAfter.length === 0 && moldingsAfter.length === 0 && nichesAfter.length === 0 && prsAfter.length === 0 && anchorAfter.length === 0 && heightsAfter.length === 0 && !roomsLost && elecAfter.every((e) => e.graph.length === 0 && e.conn.length === 0)) {
       verified = true;
       finalSaveId = after.save_id || saveRes.saveId || finalSaveId;
       host.onVerified(toModel(structuredClone(after.model)));
@@ -1038,6 +1053,7 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
           wall_niche_mismatches: nichesAfter,
         prs_mismatches: prsAfter,
         wall_anchor_mismatches: anchorAfter,
+        height_mismatches: heightsAfter,
           ...Object.fromEntries(elecAfter.flatMap((e) => [
             [`${e.coll}_mismatches`, e.graph],
             [`${e.coll}_connection_mismatches`, e.conn],

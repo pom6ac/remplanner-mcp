@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Добавлено (этап 419 — высоты проекта и демонтаж предметов старого фонда)
+
+- **`project_set_height` v2** (бэклог 418 §4 A): семантика `$Project.setHeigth`
+  бандла — пишутся `params.total_height`, `rooms2[*].height` (сохранённая
+  высота комнаты побеждает общую при reopen — раньше MCP-значение молча
+  игнорировалось комнатами со своей высотой) и `walls[*].height` у всех стен,
+  кроме ограждений балконов (`role:"balcony"`). Проёмы поджимаются под новую
+  высоту, как в редакторе: окна — до `round(new_total − floor_height)`, но не
+  ниже 300 мм; у балконных блоков (`window_balcony`) окно и дверь — до
+  `new_total`. Диапазон редактора 500..9990 мм: вне его — `INVALID_ARGUMENT`
+  (редактор обрезает молча, MCP отклоняет). Эталон — синтетический по бандлу
+  `tests/fixtures/ui-ref-project-height.json`.
+- **`demolish`/`demolish_cancel` с `target:"item"`** (бэклог 418 §4 B):
+  демонтаж предметов старого фонда как `break_radiator`/`break_electric_shield`
+  редактора — только `radiator_old`/`electric_shield_old` на листе «Демонтаж»
+  (`props.plan.b=1`), пишется `items[id].props.demount=1/0`. Прочие предметы —
+  `INVALID_ARGUMENT` с подсказкой `item_delete`, несуществующий id —
+  `NOT_FOUND`; новых инструментов в реестре нет. `props.demount` виден в
+  `model_get` (поле `demount` предмета). Эталон — синтетический по бандлу
+  `tests/fixtures/ui-ref-demount-item.json`.
+- Сверка save: расхождение высот (`total_height`, `rooms2[*].height`,
+  `walls[*].height` у стен не-balcony) между нормализованным ожиданием и
+  сервером после записи — не `verified` (`height_mismatches` в деталях ошибки;
+  `src/verify/heights.ts`). Живая проверка — проба
+  `scripts/probes/419-height-demount-live.ts` (dev-объект по env, бэкап
+  fail-closed, READONLY-гард, restore в finally).
+
 ### Добавлено (этап 406 — раскладка развёрток комнаты)
 
 - **`room_prs_layout`** (находка 3 ревью 400): создаёт раскладку развёрток

@@ -1,0 +1,81 @@
+{
+ "_source": "синтетический эталон по бандлу редактора (офлайн-копия .orca-reports/tmp/268-app.js, app.3.0___683___…, global_version 757; этап 419). Семантика $Project.setHeigth(e): params.total_height=e; ROOMS2[i].height=e; WALLS[t].height=e при role!=='balcony' с клампингом проёмов этой стены: окно (group:'windows', type:'window') при l.height>Math.round(total−floor_height) → l.height=Math.max(Math.round(total−floor_height),30); балконный блок (type:'windoor') — window_height>total → total, door_height>total → total. Диапазон меню «Высота» (#cm-room2--zone-height): LIB.correctValue(e,50,999) см — 500..9990 мм; сохранённая высота комнаты побеждает общую при reopen (конструктор Room2: height=e.height||params.total_height). Ожидания (expected) — результат этих веток для setHeigth(300) (3000 мм). Геометрия синтетическая, круглая: прямоугольник 400×300 см, ограждение балкона — отдельный отрезок; id обезличены (0, w1…w4, r1, r2, win1, balc1).",
+ "model": {
+  "v": 3,
+  "id": "0",
+  "plan_id": "0",
+  "walls": {
+   "w1": {
+    "id": "w1", "plan": "a", "role": "wall", "child": 0, "archive": 0, "demount": 0,
+    "depth": 20, "height": 270,
+    "p1": { "x": 0, "y": 0 }, "p2": { "x": 400, "y": 0 },
+    "p1st": 0, "p2st": 0, "material": "a_block", "color": 0, "level": "1", "show_dls": true,
+    "holes": {
+     "win1": {
+      "id": "win1", "plan": "a", "type": "window", "group": "windows",
+      "pc": { "x": 200, "y": 0 }, "width": 120, "height": 240, "depth": 10, "floor_height": 85
+     },
+     "door1": {
+      "id": "door1", "plan": "a", "type": "door", "group": "doors",
+      "pc": { "x": 330, "y": 0 }, "width": 80, "height": 210, "depth": 10
+     }
+    }
+   },
+   "w2": {
+    "id": "w2", "plan": "a", "role": "wall", "child": 0, "archive": 0, "demount": 0,
+    "depth": 20, "height": 270,
+    "p1": { "x": 400, "y": 0 }, "p2": { "x": 400, "y": 300 },
+    "p1st": 0, "p2st": 0, "material": "a_block", "color": 0, "level": "1", "show_dls": true,
+    "holes": {
+     "balc1": {
+      "id": "balc1", "plan": "a", "type": "windoor", "group": "windows",
+      "pc": { "x": 400, "y": 150 }, "width": 180, "depth": 10,
+      "window_height": 320, "door_height": 250
+     }
+    }
+   },
+   "w3": {
+    "id": "w3", "plan": "a", "role": "wall", "child": 0, "archive": 0, "demount": 0,
+    "depth": 20, "height": 270,
+    "p1": { "x": 400, "y": 300 }, "p2": { "x": 0, "y": 300 },
+    "p1st": 0, "p2st": 0, "material": "a_block", "color": 0, "level": "1", "show_dls": true,
+    "holes": {}
+   },
+   "w4": {
+    "id": "w4", "plan": "a", "role": "balcony", "child": 0, "archive": 0, "demount": 0,
+    "depth": 10, "height": 100,
+    "p1": { "x": 500, "y": 0 }, "p2": { "x": 500, "y": 100 },
+    "p1st": 0, "p2st": 0, "material": "a_balcon", "color": 0, "level": "1", "show_dls": true,
+    "holes": {}
+   }
+  },
+  "items": {},
+  "pillars": {},
+  "total_height": 270,
+  "final": true,
+  "rooms2": {
+   "r1": {
+    "height": 250,
+    "polygon": [{ "x": 10, "y": 10 }, { "x": 390, "y": 10 }, { "x": 390, "y": 290 }, { "x": 10, "y": 290 }],
+    "area": 11.44
+   },
+   "r2": {
+    "height": 270,
+    "polygon": [{ "x": 390, "y": 10 }, { "x": 490, "y": 10 }, { "x": 490, "y": 290 }, { "x": 390, "y": 290 }],
+    "area": 9.6
+   }
+  }
+ },
+ "expected_after_set_height_mm_3000": {
+  "total_height": 300,
+  "rooms2_height": { "r1": 300, "r2": 300 },
+  "walls_height": { "w1": 300, "w2": 300, "w3": 300, "w4": 100 },
+  "holes": {
+   "win1": { "height": 215 },
+   "door1": { "height": 210 },
+   "balc1": { "window_height": 300, "door_height": 250 }
+  },
+  "windows_clamped": 1,
+  "windoors_clamped": 1
+ }
+}

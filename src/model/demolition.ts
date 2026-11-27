@@ -1,4 +1,4 @@
-import type { Model, Wall, Hole, Point } from "./types.ts";
+import type { Model, Wall, Hole, Point, ItemProps } from "./types.ts";
 import { newId } from "./types.ts";
 import { mmToCm, roundTenthMm as r2 } from "./units.ts";
 import { holeRange, holeOffsetCm, replacementPairOf } from "./openings.ts";
@@ -66,18 +66,79 @@ export function partitionMaterialCode(material: string | undefined): string {
 }
 
 export type DemolishParams = {
-  target: "wall" | "opening";
+  target: "wall" | "opening" | "item";
   id: string;
   /** Участок стены: отступ от края и длина, мм (без — демонтаж целиком). */
   range?: { from: "start" | "end"; offset_mm: number; length_mm: number };
 };
 
 export type DemolishCancelParams = {
-  target: "wall" | "opening";
+  target: "wall" | "opening" | "item";
   id: string;
   /** Отмена демонтажа одного участка (sectors[sid]); без — отмена всей стены. */
   sector_id?: string;
 };
+
+/**
+ * Демонтаж предметов старого фонда (этап 419, бэклог 418 §4 B): инструменты листа
+ * «Демонтаж» break_radiator/break_electric_shield работают ТОЛЬКО с предметами
+ * radiator_old/electric_shield_old, лежащими на листе «Демонтаж» (props.plan.b=1):
+ * бандл (268-app.js, mousedown Item):
+ *   "break_radiator"===tool && "radiator_old"===props.name && "b"===plan → props.demount=1
+ *   "break_electric_shield"===tool && "electric_shield_old"===props.name && "b"===plan → props.demount=1
+ *   eraser: "b"===plan && 1===props.demount → props.demount=0
+ * Предмет виден/кликабелен только на листах из props.plan (Item.isAvailable:
+ * return !!props.plan[plan] || …), поэтому вне plan.b инструмент до предмета не достаёт.
+ * Обычные предметы (в т.ч. современные радиаторы) демонтажу не подлежат — удаляются
+ * item_delete; PRO-гейта нет (break-инструменты не is_pro).
+ */
+export const DEMOUNTABLE_ITEM_NAMES: ReadonlySet<string> = new Set(["radiator_old", "electric_shield_old"]);
+
+/** Виден ли предмет на листе «Демонтаж» (props.plan.b=1, Item.isAvailable бандла). */
+export function itemOnBreakPlan(item: { plan?: unknown }): boolean {
+  const plan = item.plan;
+  return plan !== null && typeof plan === "object" && !Array.isArray(plan) && (plan as Record<string, unknown>)["b"] === 1;
+}
+
+export function isDemountableItem(item: ItemProps): boolean {
+  return DEMOUNTABLE_ITEM_NAMES.has(item.name) && itemOnBreakPlan(item);
+}
+
+type DemountItem = ItemProps;
+
+function itemOf(model: Model, id: string): DemountItem {
+  const item = model.items[id];
+  if (!item) {
+    throw new McpError("NOT_FOUND", `предмет ${id} не найден`, {
+      hint: "id предмета — site_id из model_get",
+      details: { kind: "item_not_found", item_id: id },
+    });
+  }
+  return item;
+}
+
+function assertDemountable(item: DemountItem): void {
+  if (!DEMOUNTABLE_ITEM_NAMES.has(item.name)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `предмет ${item.id} (${item.name}) не демонтируется: инструменты листа «Демонтаж» (break_radiator/break_electric_shield) работают только с radiator_old и electric_shield_old`,
+      {
+        hint: "обычные предметы (в т.ч. современные радиаторы) удаляются item_delete",
+        details: { kind: "item_not_demountable", item_id: item.id, item_name: item.name },
+      },
+    );
+  }
+  if (!itemOnBreakPlan(item)) {
+    throw new McpError(
+      "INVALID_ARGUMENT",
+      `предмет ${item.id} (${item.name}) не лежит на листе «Демонтаж» (props.plan.b) — редактор демонтирует только предметы этого листа`,
+      {
+        hint: "разместите предмет на листе «Демонтаж» в редакторе; обычные предметы удаляются item_delete",
+        details: { kind: "item_not_on_break_plan", item_id: item.id, item_name: item.name },
+      },
+    );
+  }
+}
 
 function wallOf(model: Model, id: string): Wall {
   const wall = model.walls[id];
@@ -192,10 +253,18 @@ function busyIntervals(wall: Wall): Array<[number, number]> {
 }
 
 /**
- * demolish: демонтаж стены целиком, участка (range) или проёма (этап 103).
- * Атомарность обеспечивает обёртка atomic(): при ошибке модель не меняется.
+ * demolish: демонтаж стены целиком, участка (range), проёма или предмета старого
+ * фонда (target:"item", этап 419). Атомарность обеспечивает обёртка atomic():
+ * при ошибке модель не меняется.
  */
-export function demolish(model: Model, params: DemolishParams): { wallId: string; sectorId?: string; holeId?: string } {
+export function demolish(model: Model, params: DemolishParams): { wallId?: string; sectorId?: string; holeId?: string; itemId?: string } {
+  if (params.target === "item") {
+    const item = itemOf(model, params.id);
+    assertDemountable(item);
+    // бандл: props.demount=1 (повторный клик по уже демонтированному — no-op)
+    item.demount = 1;
+    return { itemId: item.id };
+  }
   if (params.target === "wall") {
     const wall = wallOf(model, params.id);
     assertDemolishable(wall);
@@ -273,10 +342,22 @@ export function demolish(model: Model, params: DemolishParams): { wallId: string
 }
 
 /**
- * demolish_cancel: отмена демонтажа стены/участка/проёма (эталон remove_break:
- * demount=0, p1/p2.demount=0, участок удаляется из sectors).
+ * demolish_cancel: отмена демонтажа стены/участка/проёма/предмета (эталон remove_break:
+ * demount=0, p1/p2.demount=0, участок удаляется из sectors; предмет — props.demount=0,
+ * бандл: eraser "b"===plan && 1===props.demount → props.demount=0).
  */
-export function demolishCancel(model: Model, params: DemolishCancelParams): { wallId: string; sectorId?: string; holeId?: string } {
+export function demolishCancel(model: Model, params: DemolishCancelParams): { wallId?: string; sectorId?: string; holeId?: string; itemId?: string } {
+  if (params.target === "item") {
+    const item = itemOf(model, params.id);
+    assertDemountable(item);
+    if (item.demount !== 1) {
+      throw new McpError("INVALID_ARGUMENT", `предмет ${item.id} не демонтирован`, {
+        details: { kind: "not_demolished", item_id: item.id },
+      });
+    }
+    item.demount = 0;
+    return { itemId: item.id };
+  }
   if (params.target === "wall") {
     const wall = wallOf(model, params.id);
     if (params.sector_id !== undefined) {

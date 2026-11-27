@@ -114,6 +114,7 @@
       "freelines_mismatches",
       "gas_line_mismatches",
       "got_walls",
+      "height_mismatches",
       "item_mismatches",
       "led_strip_mismatches",
       "level_hole_mismatches",

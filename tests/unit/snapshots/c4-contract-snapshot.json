@@ -812,7 +812,7 @@
   },
   {
    "name": "demolish",
-   "description": "Пометка демонтажа (лист «Демонтаж», план «до/после») — стена и проёмы остаются в модели с флагами, комнаты «после» редактор перестраивает сам. target=wall: без range — стена целиком (demount=1, участки сбрасываются); с range {from: start|end, offset_mm, length_mm} — участок стены (sectors); range не должен пересекать проёмы и другие участки. target=opening: id проёма — пометка demount на проёме (заменённый hasReplacement и проём листа «Перегородок» plan:c не демонтируются). Перегородки (plan:c) и ограждения (balcony/terrace_fence) не демонтируются. Отмена — demolish_cancel. После правок: model_validate → render_plan break_walls → project_save.",
+   "description": "Пометка демонтажа (лист «Демонтаж», план «до/после») — стена, проём или предмет остаются в модели с флагами, комнаты «после» редактор перестраивает сам. target=wall: без range — стена целиком (demount=1, участки сбрасываются); с range {from: start|end, offset_mm, length_mm} — участок стены (sectors); range не должен пересекать проёмы и другие участки. target=opening: id проёма — пометка demount на проёме (заменённый hasReplacement и проём листа «Перегородок» plan:c не демонтируются). target=item: демонтаж предмета старого фонда — только radiator_old или electric_shield_old на листе «Демонтаж» (props.plan.b, как break_radiator/break_electric_shield редактора): props.demount=1; остальные предметы — INVALID_ARGUMENT (обычные предметы, в т.ч. современные радиаторы, удаляются item_delete), несуществующий id — NOT_FOUND. Перегородки (plan:c) и ограждения (balcony/terrace_fence) не демонтируются. Отмена — demolish_cancel. После правок: model_validate → render_plan break_walls → project_save.",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -820,13 +820,14 @@
       "type": "string",
       "enum": [
        "wall",
-       "opening"
+       "opening",
+       "item"
       ]
      },
      "id": {
       "type": "string",
       "minLength": 1,
-      "description": "id стены (W<n>/site_id) или проёма (site_id из model_get)"
+      "description": "id стены (W<n>/site_id), проёма или предмета (site_id из model_get)"
      },
      "range": {
       "description": "только target=wall: демонтаж участка вместо всей стены",
@@ -867,7 +868,7 @@
   },
   {
    "name": "demolish_cancel",
-   "description": "Отменить пометку демонтажа: стены целиком (target=wall, без sector_id — вместе со всеми участками), одного участка (target=wall + sector_id) или проёма (target=opening). Не демонтированный объект — INVALID_ARGUMENT (нечего отменять).",
+   "description": "Отменить пометку демонтажа: стены целиком (target=wall, без sector_id — вместе со всеми участками), одного участка (target=wall + sector_id), проёма (target=opening) или предмета старого фонда (target=item — только radiator_old/electric_shield_old на листе «Демонтаж», props.demount=0, как eraser в редакторе). Не демонтированный объект — INVALID_ARGUMENT (нечего отменять).",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -875,13 +876,14 @@
       "type": "string",
       "enum": [
        "wall",
-       "opening"
+       "opening",
+       "item"
       ]
      },
      "id": {
       "type": "string",
       "minLength": 1,
-      "description": "id стены (W<n>/site_id) или проёма"
+      "description": "id стены (W<n>/site_id), проёма или предмета"
      },
      "sector_id": {
       "description": "только target=wall: отменить один участок демонтажа",
@@ -3825,7 +3827,7 @@
   },
   {
    "name": "project_set_height",
-   "description": "Общая высота стен и потолков проекта (мм, по умолчанию 2700).",
+   "description": "Высота стен и потолков проекта (мм, по умолчанию 2700). Пишется как в редакторе ($Project.setHeigth): params.total_height, высота каждой комнаты rooms2[*].height (сохранённая высота комнаты при reopen побеждает общую — поэтому без этой операции комнаты держали бы старую высоту) и высота каждой стены walls[*].height, кроме ограждений балконов (role:balcony). Проёмы поджимаются под новую высоту, как в редакторе: окна (окно выше new_total − подоконник) — до new_total − подоконник, но не ниже 300 мм; у балконных блоков (window_balcony) окно и дверь — до new_total. Вне диапазона редактора 500..9990 мм — INVALID_ARGUMENT (редактор молча обрезает, MCP отклоняет). После правки вызывайте model_validate и project_save.",
    "inputSchema": {
     "type": "object",
     "properties": {

@@ -9,6 +9,7 @@ import {
 import { addOpening, updateOpening, deleteOpening, OPENING_KINDS, KIND_BY_HOLE_TYPE } from "../model/openings.ts";
 import { addPillar, updatePillar, deletePillar } from "../model/pillars.ts";
 import { demolish, demolishCancel } from "../model/demolition.ts";
+import { projectSetHeight } from "../model/height.ts";
 import { McpError } from "../errors.ts";
 import { addRigel, updateRigel, deleteRigel } from "../model/rigels.ts";
 import { addGasLine, updateGasLine, deleteGasLine, addPipe, updatePipe, deletePipe, MAX_PIPE_PATH_NODES, type PipeKind, type ClimatePipeKind } from "../model/pipes.ts";
@@ -576,16 +577,20 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     // ---------- Перепланировка: демонтаж (этап 103) ----------
     demolish: tool(
-      "Пометка демонтажа (лист «Демонтаж», план «до/после») — стена и проёмы остаются в модели с флагами, " +
+      "Пометка демонтажа (лист «Демонтаж», план «до/после») — стена, проём или предмет остаются в модели с флагами, " +
         "комнаты «после» редактор перестраивает сам. target=wall: без range — стена целиком " +
         "(demount=1, участки сбрасываются); с range {from: start|end, offset_mm, length_mm} — участок стены " +
         "(sectors); range не должен пересекать проёмы и другие участки. target=opening: id проёма — " +
         "пометка demount на проёме (заменённый hasReplacement и проём листа «Перегородок» plan:c не демонтируются). " +
+        "target=item: демонтаж предмета старого фонда — только radiator_old или electric_shield_old " +
+        "на листе «Демонтаж» (props.plan.b, как break_radiator/break_electric_shield редактора): " +
+        "props.demount=1; остальные предметы — INVALID_ARGUMENT (обычные предметы, в т.ч. современные " +
+        "радиаторы, удаляются item_delete), несуществующий id — NOT_FOUND. " +
         "Перегородки (plan:c) и ограждения (balcony/terrace_fence) не демонтируются. " +
         "Отмена — demolish_cancel. После правок: model_validate → render_plan break_walls → project_save.",
       {
-        target: z.enum(["wall", "opening"]),
-        id: z.string().min(1).describe("id стены (W<n>/site_id) или проёма (site_id из model_get)"),
+        target: z.enum(["wall", "opening", "item"]),
+        id: z.string().min(1).describe("id стены (W<n>/site_id), проёма или предмета (site_id из model_get)"),
         range: z.object({
           from: z.enum(["start", "end"]).optional(),
           offset_mm: mmInt.describe("отступ участка от края стены, мм"),
@@ -594,9 +599,14 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
       },
       async (a) => {
         const ws = wsOf();
+        const target = a["target"] as "wall" | "opening" | "item";
         const { result, warnings } = await ws.applyWalls("demolish", (m) => {
-          const id = a["target"] === "wall" ? resolveWall(m, a["id"] as string).id : (a["id"] as string);
-          return demolish(m, { target: a["target"] as "wall" | "opening", id, range: a["range"] as { from: "start" | "end"; offset_mm: number; length_mm: number } | undefined });
+          const id = target === "wall"
+            ? resolveWall(m, a["id"] as string).id
+            : target === "item"
+              ? resolveItem(m, a["id"] as string).id
+              : (a["id"] as string);
+          return demolish(m, { target, id, range: a["range"] as { from: "start" | "end"; offset_mm: number; length_mm: number } | undefined });
         });
         return ok({ ...result, hint: SCENARIO_HINT, ...(warnings.length ? { warnings } : {}) });
       },
@@ -604,18 +614,24 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
 
     demolish_cancel: tool(
       "Отменить пометку демонтажа: стены целиком (target=wall, без sector_id — вместе со всеми участками), " +
-        "одного участка (target=wall + sector_id) или проёма (target=opening). " +
-        "Не демонтированный объект — INVALID_ARGUMENT (нечего отменять).",
+        "одного участка (target=wall + sector_id), проёма (target=opening) или предмета старого фонда " +
+        "(target=item — только radiator_old/electric_shield_old на листе «Демонтаж», props.demount=0, " +
+        "как eraser в редакторе). Не демонтированный объект — INVALID_ARGUMENT (нечего отменять).",
       {
-        target: z.enum(["wall", "opening"]),
-        id: z.string().min(1).describe("id стены (W<n>/site_id) или проёма"),
+        target: z.enum(["wall", "opening", "item"]),
+        id: z.string().min(1).describe("id стены (W<n>/site_id), проёма или предмета"),
         sector_id: z.string().optional().describe("только target=wall: отменить один участок демонтажа"),
       },
       async (a) => {
         const ws = wsOf();
+        const target = a["target"] as "wall" | "opening" | "item";
         const { result, warnings } = await ws.applyWalls("demolish_cancel", (m) => {
-          const id = a["target"] === "wall" ? resolveWall(m, a["id"] as string).id : (a["id"] as string);
-          return demolishCancel(m, { target: a["target"] as "wall" | "opening", id, sector_id: a["sector_id"] as string | undefined });
+          const id = target === "wall"
+            ? resolveWall(m, a["id"] as string).id
+            : target === "item"
+              ? resolveItem(m, a["id"] as string).id
+              : (a["id"] as string);
+          return demolishCancel(m, { target, id, sector_id: a["sector_id"] as string | undefined });
         });
         return ok({ ...result, hint: SCENARIO_HINT, ...(warnings.length ? { warnings } : {}) });
       },
@@ -670,12 +686,20 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     ),
 
     project_set_height: tool(
-      "Общая высота стен и потолков проекта (мм, по умолчанию 2700).",
+      "Высота стен и потолков проекта (мм, по умолчанию 2700). Пишется как в редакторе " +
+        "($Project.setHeigth): params.total_height, высота каждой комнаты rooms2[*].height " +
+        "(сохранённая высота комнаты при reopen побеждает общую — поэтому без этой операции " +
+        "комнаты держали бы старую высоту) и высота каждой стены walls[*].height, кроме " +
+        "ограждений балконов (role:balcony). Проёмы поджимаются под новую высоту, как в " +
+        "редакторе: окна (окно выше new_total − подоконник) — до new_total − подоконник, " +
+        "но не ниже 300 мм; у балконных блоков (window_balcony) окно и дверь — до new_total. " +
+        "Вне диапазона редактора 500..9990 мм — INVALID_ARGUMENT (редактор молча обрезает, " +
+        "MCP отклоняет). После правки вызывайте model_validate и project_save.",
       { height_mm: mmInt },
       async (a) => {
         const ws = wsOf();
-        ws.apply("project_set_height", (m) => { m["total_height"] = (a["height_mm"] as number) / 10; return true; });
-        return ok({ height_mm: a["height_mm"], hint: SCENARIO_HINT });
+        const res = ws.apply("project_set_height", (m) => projectSetHeight(m, a["height_mm"] as number));
+        return ok({ height_mm: a["height_mm"], rooms: res.rooms, walls: res.walls, windows_clamped: res.windows_clamped, windoors_clamped: res.windoors_clamped, hint: SCENARIO_HINT });
       },
     ),
 
