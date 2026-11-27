@@ -340,7 +340,7 @@ try {
     check(afterDem === 1, `независимый loadModel: demount=${String(afterDem)}`);
     const cres = await guardedCall("cancel item", "demolish_cancel", { target: "item", id: item0.id });
     check(cres["itemId"] === item0.id, `demolish_cancel target:item → itemId=${String(cres["itemId"])}`);
-    // бандл 268-app.js, Item.serialize (~2232892): 0===i.demount && delete i.demount —
+    // бандл 268-app.js, Item.serialize (~2234430): 0===i.demount && delete i.demount —
     // demount=0 (значение по умолчанию) НЕ персистится ни нормализатором в рабочей
     // модели, ни сервером; в бэкапе у предмета поля demount нет вовсе. Отсутствие
     // поля семантически равно demount=0 (доказательство: независимый loadModel 419-3)
@@ -351,7 +351,7 @@ try {
     await assertEditorPlanMatch(editorOf(), ids.planId);
     const gotB2 = await loadModel(ctx.session(), ids.objectId, ids.planId);
     const demAfterCancel = ((gotB2.model["items"] ?? {}) as Record<string, Record<string, unknown>>)[item0.id]?.["demount"];
-    // бандл (~2232892): serialize удаляет demount:0 — после save/reopen поля нет;
+    // бандл (~2234430): serialize удаляет demount:0 — после save/reopen поля нет;
     // это и есть demount=0 (независимый loadModel, 419-3)
     check(demAfterCancel === 0 || demAfterCancel === undefined, `независимый loadModel: demount=${String(demAfterCancel)} (0 или поле отсутствует — serialize бандла удаляет 0)`);
   } else {

@@ -583,7 +583,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "(sectors); range не должен пересекать проёмы и другие участки. target=opening: id проёма — " +
         "пометка demount на проёме (заменённый hasReplacement и проём листа «Перегородок» plan:c не демонтируются). " +
         "target=item: демонтаж предмета старого фонда — только radiator_old или electric_shield_old " +
-        "на листе «Демонтаж» (props.plan.b, как break_radiator/break_electric_shield редактора): " +
+        "(при любом props.plan, как break_radiator/break_electric_shield редактора): " +
         "props.demount=1; остальные предметы — INVALID_ARGUMENT (обычные предметы, в т.ч. современные " +
         "радиаторы, удаляются item_delete), несуществующий id — NOT_FOUND. " +
         "Перегородки (plan:c) и ограждения (balcony/terrace_fence) не демонтируются. " +
@@ -615,7 +615,7 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
     demolish_cancel: tool(
       "Отменить пометку демонтажа: стены целиком (target=wall, без sector_id — вместе со всеми участками), " +
         "одного участка (target=wall + sector_id), проёма (target=opening) или предмета старого фонда " +
-        "(target=item — только radiator_old/electric_shield_old на листе «Демонтаж», props.demount=0, " +
+        "(target=item — только radiator_old/electric_shield_old (при любом props.plan), props.demount=0, " +
         "как eraser в редакторе). Не демонтированный объект — INVALID_ARGUMENT (нечего отменять).",
       {
         target: z.enum(["wall", "opening", "item"]),
