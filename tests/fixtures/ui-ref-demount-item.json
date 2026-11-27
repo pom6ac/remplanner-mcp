@@ -1,0 +1,38 @@
+{
+ "_source": "синтетический эталон по бандлу редактора (офлайн-копия .orca-reports/tmp/268-app.js, app.3.0___683___…, global_version 757; этап 419). Демонтаж предметов старого фонда: mousedown Item — «break_radiator»===tool && «radiator_old»===props.name && «b»===plan → props.demount=1; «break_electric_shield»===tool && «electric_shield_old»===props.name && «b»===plan → props.demount=1; eraser: «b»===plan && 1===props.demount → props.demount=0. Предмет кликабелен только на листах из props.plan (Item.isAvailable: return !!this.props.plan[plan] || …), поэтому демонтаж применим только к предметам листа «Демонтаж» (plan.b=1); обычные предметы (современный радиатор radiator) инструмент не берёт — удаляются item_delete. item_add ставит demount:0. В модели: radiator_old и electric_shield_old на листе «Демонтаж» (plan {b:1}, demount 0), тот же radiator_old на листе init (plan {a:1}) и современный radiator на листе b — оба вне демонтажа. id обезличены (0, item1…item4).",
+ "model": {
+  "v": 3,
+  "id": "0",
+  "plan_id": "0",
+  "walls": {},
+  "items": {
+   "item1": {
+    "id": "item1", "name": "radiator_old",
+    "pc": { "x": 100, "y": 100 }, "angle": 0, "width": 80, "height": 12, "self_height": 60,
+    "plan": { "b": 1 }, "id_room": null, "id_wall": null, "layer": null,
+    "demount": 0, "comment": { "id": "" }
+   },
+   "item2": {
+    "id": "item2", "name": "electric_shield_old",
+    "pc": { "x": 200, "y": 100 }, "angle": 0, "width": 30, "height": 20, "self_height": 0,
+    "plan": { "b": 1 }, "id_room": null, "id_wall": null, "layer": null,
+    "demount": 0, "comment": { "id": "" }
+   },
+   "item3": {
+    "id": "item3", "name": "radiator_old",
+    "pc": { "x": 100, "y": 200 }, "angle": 0, "width": 80, "height": 12, "self_height": 60,
+    "plan": { "a": 1 }, "id_room": null, "id_wall": null, "layer": null,
+    "demount": 0, "comment": { "id": "" }
+   },
+   "item4": {
+    "id": "item4", "name": "radiator",
+    "pc": { "x": 300, "y": 100 }, "angle": 0, "width": 80, "height": 12, "self_height": 60,
+    "plan": { "b": 1 }, "id_room": null, "id_wall": null, "layer": null,
+    "demount": 0, "comment": { "id": "" }
+   }
+  },
+  "pillars": {},
+  "total_height": 270,
+  "final": true
+ }
+}

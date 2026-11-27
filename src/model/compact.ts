@@ -124,6 +124,9 @@ export type CompactItem = {
   /** Электрика ч.3: слой вертикального блока («друг над другом»), 2/3 — только
    *  когда задан (аддитивное поле; CHANGELOG/README этапа 370). */
   layer?: number;
+  /** Пометка демонтажа предмета старого фонда (лист «Демонтаж», этап 419):
+   *  true — props.demount=1 (radiator_old/electric_shield_old на плане b). */
+  demount?: boolean;
 };
 
 /** Под-розетка группы socket_group в компактном виде (ревью 90 R5). */
@@ -716,6 +719,8 @@ export function compactModel(model: Model, rooms?: RoomPolygon[]): CompactModel 
         : {}),
       // электрика ч.3: слой вертикального блока — только когда задан (2/3)
       ...(typeof item.layer === "number" && (item.layer === 2 || item.layer === 3) ? { layer: item.layer } : {}),
+      // этап 419: пометка демонтажа предмета старого фонда — только когда задана
+      ...(item.demount === 1 ? { demount: true } : {}),
     };
   });
 
