@@ -692,14 +692,23 @@ export function planTools(ctx: ServerContext): Record<string, ToolDefLike> {
         "комнаты держали бы старую высоту) и высота каждой стены walls[*].height, кроме " +
         "ограждений балконов (role:balcony). Проёмы поджимаются под новую высоту, как в " +
         "редакторе: окна (окно выше new_total − подоконник) — до new_total − подоконник, " +
-        "но не ниже 300 мм; у балконных блоков (window_balcony) окно и дверь — до new_total. " +
+        "но не ниже 300 мм; у балконных блоков (window_balcony) окно и дверь — до new_total; " +
+        "двери (группа doors) выше new_total — до new_total. Колонны (pillars) получают новую " +
+        "высоту, кроме ГКЛ-коробов (role:gypsum) со «своей» меньшей высотой — как в редакторе. " +
+        "Раскладка обшивки стен (wall_tile/wall_woodbatten с type_laying) сбрасывается — " +
+        "редактор пересобирает её при сохранении под новую высоту (замена rebuildDecorPrs). " +
         "Вне диапазона редактора 500..9990 мм — INVALID_ARGUMENT (редактор молча обрезает, " +
         "MCP отклоняет). После правки вызывайте model_validate и project_save.",
       { height_mm: mmInt },
       async (a) => {
         const ws = wsOf();
         const res = ws.apply("project_set_height", (m) => projectSetHeight(m, a["height_mm"] as number));
-        return ok({ height_mm: a["height_mm"], rooms: res.rooms, walls: res.walls, windows_clamped: res.windows_clamped, windoors_clamped: res.windoors_clamped, hint: SCENARIO_HINT });
+        return ok({
+          height_mm: a["height_mm"], rooms: res.rooms, walls: res.walls,
+          windows_clamped: res.windows_clamped, windoors_clamped: res.windoors_clamped,
+          doors_clamped: res.doors_clamped, pillars: res.pillars, decors_layouts_reset: res.decors_layouts_reset,
+          hint: SCENARIO_HINT,
+        });
       },
     ),
 

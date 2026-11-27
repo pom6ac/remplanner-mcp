@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Добавлено (этап 419 — высоты проекта и демонтаж предметов старого фонда)
+### Добавлено (этап 419 — высоты проекта, демонтаж предметов старого фонда; доработка — колонны, двери, раскладка обшивки)
 
 - **`project_set_height` v2** (бэклог 418 §4 A): семантика `$Project.setHeigth`
   бандла — пишутся `params.total_height`, `rooms2[*].height` (сохранённая
@@ -11,7 +11,18 @@
   кроме ограждений балконов (`role:"balcony"`). Проёмы поджимаются под новую
   высоту, как в редакторе: окна — до `round(new_total − floor_height)`, но не
   ниже 300 мм; у балконных блоков (`window_balcony`) окно и дверь — до
-  `new_total`. Диапазон редактора 500..9990 мм: вне его — `INVALID_ARGUMENT`
+  `new_total`; **двери (группа `doors`) выше новой высоты — до новой**
+  (доработка, счётчик `doors_clamped`). **Колонны** (`pillars`) получают новую
+  высоту, кроме ГКЛ-коробов (`role:"gypsum"`) со «своей» меньшей высотой —
+  ветки бандла дословно (доработка). **Раскладка обшивки стен**
+  (`wall_tile`/`wall_woodbatten` с `type_laying`) сбрасывается на пересчёт
+  редактором при save — замена `rebuildDecorPrs()`: раскладка зависит от высоты
+  (`DecorLine.buildLayouts`: `r=params.total_height`), персистится только у этих
+  двух типов (`DecorLine.serialize`), а при restore редактор пересчитывает её
+  только при пустой `polygons_layout` (`Rooms2.get`) — поэтому MCP удаляет
+  `polygons_layout`/`polygons_layout_points`, и раскладку пересобирает код
+  редактора уже с новой высотой (доработка, счётчик `decors_layouts_reset`).
+  Диапазон редактора 500..9990 мм: вне его — `INVALID_ARGUMENT`
   (редактор обрезает молча, MCP отклоняет). Эталон — синтетический по бандлу
   `tests/fixtures/ui-ref-project-height.json`.
 - **`demolish`/`demolish_cancel` с `target:"item"`** (бэклог 418 §4 B):
@@ -23,11 +34,13 @@
   `model_get` (поле `demount` предмета). Эталон — синтетический по бандлу
   `tests/fixtures/ui-ref-demount-item.json`.
 - Сверка save: расхождение высот (`total_height`, `rooms2[*].height`,
-  `walls[*].height` у стен не-balcony) между нормализованным ожиданием и
+  `walls[*].height` у стен не-balcony, **колонн `pillars[*].total_height` и
+  дверей группы `doors`** — доработка) между нормализованным ожиданием и
   сервером после записи — не `verified` (`height_mismatches` в деталях ошибки;
   `src/verify/heights.ts`). Живая проверка — проба
   `scripts/probes/419-height-demount-live.ts` (dev-объект по env, бэкап
-  fail-closed, READONLY-гард, restore в finally).
+  fail-closed, READONLY-гард, restore в finally; предусловия точности restore —
+  в т.ч. симуляция веток колонн бандла в обе стороны).
 
 ### Добавлено (этап 406 — раскладка развёрток комнаты)
 

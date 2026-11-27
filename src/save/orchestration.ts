@@ -63,7 +63,7 @@ import {
   type SubsItemSig,
 } from "../verify/index.ts";
 import { prsFigureUserMismatches, prsSettingsMismatches, wallDecorAnchorMismatches } from "../verify/projections.ts";
-import { roomHeightMismatches, totalHeightMismatch, wallHeightMismatches } from "../verify/heights.ts";
+import { doorHeightMismatches, pillarHeightMismatches, roomHeightMismatches, totalHeightMismatch, wallHeightMismatches } from "../verify/heights.ts";
 import type { EditorLike, OpenProject, WorkspaceDeps } from "../workspace.ts";
 
 export type SaveOutcome = {
@@ -954,7 +954,8 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
     warnings.push(...prsAfterCheck.warnings);
     const prsAfter = prsAfterCheck.problems;
     // этап 419: высоты после save — нормализованное ожидание против сервера,
-    // строго (total_height, rooms2[*].height, walls[*].height у стен не-balcony;
+    // строго (total_height, rooms2[*].height, walls[*].height у стен не-balcony,
+    // колонны PILLARS[*].total_height и двери группы "doors" — доработка 419;
     // ограждения сверяет balconyWallPropertyMismatches)
     const heightsAfter = [
       ...totalHeightMismatch((norm.model as Record<string, unknown>)["total_height"], after.model["total_height"]),
@@ -965,6 +966,14 @@ export async function runSave(host: SaveHost, options: { force?: boolean } = {})
       ...roomHeightMismatches(
         ((norm.model as Record<string, unknown>)["rooms2"] ?? (norm.model as Record<string, unknown>)["rooms1"]) as Record<string, Record<string, unknown>> | undefined,
         ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {},
+      ),
+      ...pillarHeightMismatches(
+        ((norm.model as Record<string, unknown>)["pillars"] ?? {}) as Record<string, { total_height?: unknown }>,
+        ((after.model["pillars"] ?? {}) as Record<string, { total_height?: unknown }>),
+      ),
+      ...doorHeightMismatches(
+        ((norm.model as Record<string, unknown>)["walls"] ?? {}) as Record<string, { holes?: Record<string, { group?: unknown; height?: unknown }> }>,
+        (after.model["walls"] ?? {}) as Record<string, { holes?: Record<string, { group?: unknown; height?: unknown }> }>,
       ),
     ];
     const anchorAfter = wallDecorAnchorMismatches(expectedPrsRooms, ((after.model["rooms2"] ?? after.model["rooms1"]) as Record<string, Record<string, unknown>> | undefined) ?? {});

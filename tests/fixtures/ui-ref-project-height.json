@@ -1,5 +1,5 @@
 {
- "_source": "синтетический эталон по бандлу редактора (офлайн-копия .orca-reports/tmp/268-app.js, app.3.0___683___…, global_version 757; этап 419). Семантика $Project.setHeigth(e): params.total_height=e; ROOMS2[i].height=e; WALLS[t].height=e при role!=='balcony' с клампингом проёмов этой стены: окно (group:'windows', type:'window') при l.height>Math.round(total−floor_height) → l.height=Math.max(Math.round(total−floor_height),30); балконный блок (type:'windoor') — window_height>total → total, door_height>total → total. Диапазон меню «Высота» (#cm-room2--zone-height): LIB.correctValue(e,50,999) см — 500..9990 мм; сохранённая высота комнаты побеждает общую при reopen (конструктор Room2: height=e.height||params.total_height). Ожидания (expected) — результат этих веток для setHeigth(300) (3000 мм). Геометрия синтетическая, круглая: прямоугольник 400×300 см, ограждение балкона — отдельный отрезок; id обезличены (0, w1…w4, r1, r2, win1, balc1).",
+ "_source": "синтетический эталон по бандлу редактора (офлайн-копия .orca-reports/tmp/268-app.js, app.3.0___683___…, global_version 757; этап 419 + доработка). Семантика $Project.setHeigth(e): params.total_height=e; ROOMS2[i].height=e; WALLS[t].height=e при role!=='balcony' с клампингом проёмов этой стены: окно (group:'windows', type:'window') при l.height>Math.round(total−floor_height) → l.height=Math.max(Math.round(total−floor_height),30); балконный блок (type:'windoor') — window_height>total → total, door_height>total → total; иначе группа 'doors' — l.height>total → l.height=total. Колонны (PILLARS): не-gypsum — total_height=e всегда; role:'gypsum' — только при a.total_height==n (старая высота проекта) или a.total_height>new (кламп вниз), «своя» меньшая высота ГКЛ-короба сохраняется. Диапазон меню «Высота» (#cm-room2--zone-height): LIB.correctValue(e,50,999) см — 500..9990 мм; сохранённая высота комнаты побеждает общую при reopen (конструктор Room2: height=e.height||params.total_height). Ожидания (expected) — результат этих веток для setHeigth(300) (3000 мм). Геометрия синтетическая, круглая: прямоугольник 400×300 см, ограждение балкона — отдельный отрезок; id обезличены (0, w1…w4, r1, r2, win1, door1, door2, balc1, p1…p4).",
  "model": {
   "v": 3,
   "id": "0",
@@ -18,6 +18,10 @@
      "door1": {
       "id": "door1", "plan": "a", "type": "door", "group": "doors",
       "pc": { "x": 330, "y": 0 }, "width": 80, "height": 210, "depth": 10
+     },
+     "door2": {
+      "id": "door2", "plan": "a", "type": "door", "group": "doors",
+      "pc": { "x": 60, "y": 0 }, "width": 90, "height": 320, "depth": 10
      }
     }
    },
@@ -50,14 +54,70 @@
    }
   },
   "items": {},
-  "pillars": {},
+  "pillars": {
+   "p1": {
+    "id": "p1", "plan": "a", "role": "pillar", "inRoom": 1,
+    "width": 40, "height": 40, "total_height": 270, "angle": 0, "f0offset": 0,
+    "pc": { "x": 450, "y": 50 }, "p1": { "x": 430, "y": 30 }, "p2": { "x": 470, "y": 30 }, "p3": { "x": 470, "y": 70 }, "p4": { "x": 430, "y": 70 },
+    "show_dls": true
+   },
+   "p2": {
+    "id": "p2", "plan": "c", "role": "gypsum", "inRoom": 1,
+    "width": 30, "height": 30, "total_height": 270, "angle": 0, "f0offset": 0,
+    "pc": { "x": 200, "y": 150 }, "p1": { "x": 185, "y": 135 }, "p2": { "x": 215, "y": 135 }, "p3": { "x": 215, "y": 165 }, "p4": { "x": 185, "y": 165 },
+    "show_dls": true
+   },
+   "p3": {
+    "id": "p3", "plan": "c", "role": "gypsum", "inRoom": 1,
+    "width": 30, "height": 30, "total_height": 200, "angle": 0, "f0offset": 0,
+    "pc": { "x": 300, "y": 150 }, "p1": { "x": 285, "y": 135 }, "p2": { "x": 315, "y": 135 }, "p3": { "x": 315, "y": 165 }, "p4": { "x": 285, "y": 165 },
+    "show_dls": true
+   },
+   "p4": {
+    "id": "p4", "plan": "c", "role": "gypsum", "inRoom": 1,
+    "width": 30, "height": 30, "total_height": 320, "angle": 0, "f0offset": 0,
+    "pc": { "x": 350, "y": 150 }, "p1": { "x": 335, "y": 135 }, "p2": { "x": 365, "y": 135 }, "p3": { "x": 365, "y": 165 }, "p4": { "x": 335, "y": 165 },
+    "show_dls": true
+   }
+  },
   "total_height": 270,
   "final": true,
   "rooms2": {
    "r1": {
     "height": 250,
     "polygon": [{ "x": 10, "y": 10 }, { "x": 390, "y": 10 }, { "x": 390, "y": 290 }, { "x": 10, "y": 290 }],
-    "area": 11.44
+    "area": 11.44,
+    "decors": [
+     {
+      "exist": true,
+      "parts": {
+       "_wt1": {
+        "id": "_wt1", "type": "wall_tile", "layer": 1,
+        "line": { "p1": { "x": 10, "y": 10 }, "p2": { "x": 390, "y": 10 } },
+        "line_wall": { "p1": { "x": 10, "y": 10 }, "p2": { "x": 390, "y": 10 } },
+        "distance": 380, "height": 0, "height_from_floor": 0,
+        "type_laying": "straight", "anchor": { "p": { "x": 100, "y": 10 } },
+        "polygons_layout": [{ "polygon": [{ "x": 0, "y": 0 }, { "x": 100, "y": 0 }, { "x": 100, "y": 50 }], "index": 0 }],
+        "polygons_layout_points": [{ "x": 0, "y": 0 }]
+       },
+       "_wt2": {
+        "id": "_wt2", "type": "wall_tile", "layer": 2,
+        "line": { "p1": { "x": 10, "y": 10 }, "p2": { "x": 390, "y": 10 } },
+        "line_wall": { "p1": { "x": 10, "y": 10 }, "p2": { "x": 390, "y": 10 } },
+        "distance": 380, "height": 0, "height_from_floor": 120,
+        "polygons_layout": [{ "polygon": [{ "x": 0, "y": 0 }, { "x": 50, "y": 0 }, { "x": 50, "y": 30 }], "index": 0 }]
+       },
+       "_pw1": {
+        "id": "_pw1", "type": "paint_wall", "layer": 1,
+        "line": { "p1": { "x": 390, "y": 10 }, "p2": { "x": 390, "y": 290 } },
+        "line_wall": { "p1": { "x": 390, "y": 10 }, "p2": { "x": 390, "y": 290 } },
+        "distance": 280, "height": 0, "height_from_floor": 0,
+        "polygons_layout": [{ "polygon": [{ "x": 0, "y": 0 }, { "x": 80, "y": 0 }, { "x": 80, "y": 40 }], "index": 0 }]
+       }
+      }
+     },
+     { "exist": false }
+    ]
    },
    "r2": {
     "height": 270,
@@ -73,9 +133,19 @@
   "holes": {
    "win1": { "height": 215 },
    "door1": { "height": 210 },
+   "door2": { "height": 300 },
    "balc1": { "window_height": 300, "door_height": 250 }
   },
+  "pillars_total_height": { "p1": 300, "p2": 300, "p3": 200, "p4": 300 },
+  "decors": {
+   "reset_parts": ["_wt1"],
+   "kept_parts": ["_wt2", "_pw1"],
+   "kept_fields": { "_wt1": ["id", "type", "layer", "line", "line_wall", "distance", "height", "height_from_floor", "type_laying", "anchor"] }
+  },
   "windows_clamped": 1,
-  "windoors_clamped": 1
+  "windoors_clamped": 1,
+  "doors_clamped": 1,
+  "pillars_updated": 3,
+  "decors_layouts_reset": 1
  }
 }

@@ -63,3 +63,48 @@ export function totalHeightMismatch(expected: unknown, got: unknown): string[] {
   if (typeof expected !== "number" || typeof got !== "number") return [];
   return near(expected, got) ? [] : [`total_height изменилась (на сервере ${String(got)}; ожидалось ${String(expected)})`];
 }
+
+/**
+ * Высоты колонн (PILLARS[*].total_height, см): у колонны с числовой высотой
+ * в ожидании — та же высота на сервере (доработка 419: setHeigth патчит колонны,
+ * ветки role:"gypsum" — с сохранением «своей» меньшей высоты).
+ */
+export function pillarHeightMismatches(
+  expected: Record<string, { total_height?: unknown }>,
+  got: Record<string, { total_height?: unknown }>,
+): string[] {
+  const out: string[] = [];
+  for (const [pid, e] of Object.entries(expected)) {
+    if (typeof e.total_height !== "number") continue;
+    const g = got[pid];
+    if (!g) continue; // исчезновение колонны — pillarVerificationMismatches
+    if (!near(e.total_height, g.total_height)) {
+      out.push(`колонна ${pid}: total_height изменилась (на сервере ${String(g.total_height)}; ожидалось ${String(e.total_height)})`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Высоты дверей (holes группы "doors", см): у проёма с числовой высотой в
+ * ожидании — та же высота на сервере (доработка 419: setHeigth поджимает
+ * l.height > total → total; потери поджима после save молча проходить не должны).
+ */
+export function doorHeightMismatches(
+  expected: Record<string, { holes?: Record<string, { group?: unknown; height?: unknown }> }>,
+  got: Record<string, { holes?: Record<string, { group?: unknown; height?: unknown }> }>,
+): string[] {
+  const out: string[] = [];
+  for (const [wid, w] of Object.entries(expected)) {
+    const gotHoles = got[wid]?.holes ?? {};
+    for (const [hid, h] of Object.entries(w.holes ?? {})) {
+      if (h.group !== "doors" || typeof h.height !== "number") continue;
+      const g = gotHoles[hid];
+      if (!g) continue; // исчезновение проёма — holeMismatch
+      if (!near(h.height, g.height)) {
+        out.push(`стена ${wid}: дверь ${hid}: height изменилась (на сервере ${String(g.height)}; ожидалось ${String(h.height)})`);
+      }
+    }
+  }
+  return out;
+}

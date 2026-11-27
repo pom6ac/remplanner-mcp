@@ -24,6 +24,10 @@
 //   - у всех стен не-balcony высота == total_height;
 //   - исходный total_height < 999 см (новая высота выше — окна/балконные блоки не
 //     поджимаются, restore через project_set_height(исходная) точен);
+//   - доработка 419: колонны — симуляция веток gypsum бандла в обе стороны
+//     идентична исходным значениям; двери — нет дверей выше новой высоты
+//     (кламп бандла безвозвратен); раскладок wall_tile/wall_woodbatten нет
+//     (MCP сбрасывает их на пересчёт редактором, точность restore не проверяется);
 //   - предмет для B (если есть) с demount≠1.
 //   REMPLANNER_PROBE_OBJECT_ID=… REMPLANNER_PROBE_PLAN_ID=… \
 //   REMPLANNER_PROBE_READONLY_ID=… REMPLANNER_PROBE_READONLY_PLAN_ID=… \
@@ -79,12 +83,14 @@ const capturedPath = (n: number): string => join(ROOT_DIR(), ".orca-reports/tmp"
 let capturedN = 0;
 while (existsSync(capturedPath(capturedN))) capturedN++;
 const CAPTURED = capturedPath(capturedN);
-/** Журнал исходных значений (до мутаций): высоты и предмет. */
+/** Журнал исходных значений (до мутаций): высоты, колонны, двери и предмет. */
 type Original = {
   total_height_cm: number;
   new_height_mm: number;
   rooms2_heights: Record<string, number | null>;
   walls_heights: Record<string, number | null>;
+  pillars_heights: Record<string, number | null>;
+  doors_heights: Record<string, number | null>;
   item: { id: string; demount: number } | null;
 };
 let original: Original | null = null;
@@ -113,6 +119,61 @@ const heightSnapshot = (m: Record<string, unknown>): HeightSnapshot => {
 const allEqual = (snap: HeightSnapshot, cm: number): boolean =>
   snap.total === cm && Object.values(snap.rooms).every((h) => h === undefined || h === cm) &&
   Object.values(snap.walls).every((h) => h === undefined || h === cm);
+
+/** Колонны: id → total_height (null, если поля нет). */
+const pillarsSnapshot = (m: Record<string, unknown>): Record<string, number | null> =>
+  Object.fromEntries(Object.entries((m["pillars"] ?? {}) as Record<string, Record<string, unknown>>)
+    .map(([pid, p]) => [pid, typeof p["total_height"] === "number" ? p["total_height"] as number : null]));
+
+/** Двери (группа doors) всех стен не-balcony: "wall/hole" → height. */
+const doorsSnapshot = (m: Record<string, unknown>): Record<string, number | null> => {
+  const out: Record<string, number | null> = {};
+  for (const [wid, w] of Object.entries((m["walls"] ?? {}) as Record<string, Record<string, unknown>>)) {
+    if (w["role"] === "balcony") continue;
+    for (const [hid, h] of Object.entries((w["holes"] ?? {}) as Record<string, Record<string, unknown>>)) {
+      if (h["group"] !== "doors") continue;
+      out[`${wid}/${hid}`] = typeof h["height"] === "number" ? h["height"] as number : null;
+    }
+  }
+  return out;
+};
+
+/**
+ * Модель ветки колонн бандла (setHeigth): возвращает total_height колонны после
+ * двух вызовов — новая высота (newCm) и restore к исходной (origCm). Идентичность
+ * — предусловие точного restore.
+ */
+const simulatePillar = (role: unknown, h0: number | null, origCm: number, newCm: number): number | null => {
+  const step = (h: number | null, prevTotal: number, e: number): number | null => {
+    if (role !== "gypsum") return e;
+    if (h === prevTotal || (h !== null && h > e)) return e;
+    return h;
+  };
+  return step(step(h0, origCm, newCm), newCm, origCm);
+};
+
+/**
+ * Есть ли в decors частей wall_tile/wall_woodbatten с type_laying и заполненной
+ * раскладкой (их точность restore раскладки редактором в пробе не проверяется —
+ * см. шапку; при наличии — STOP до записи).
+ */
+const hasPersistentDecorLayouts = (m: Record<string, unknown>): number => {
+  let n = 0;
+  for (const r of Object.values((m["rooms2"] ?? {}) as Record<string, Record<string, unknown>>)) {
+    const decors = r["decors"];
+    if (!Array.isArray(decors)) continue;
+    for (const d of decors as Array<Record<string, unknown>>) {
+      const parts = d?.["parts"];
+      if (!d || d["exist"] !== true || !parts || typeof parts !== "object") continue;
+      for (const part of Object.values(parts as Record<string, Record<string, unknown>>)) {
+        const t = part?.["type"];
+        if ((t === "wall_tile" || t === "wall_woodbatten") && part["type_laying"] &&
+          part["polygons_layout"] !== undefined && !(Array.isArray(part["polygons_layout"]) && (part["polygons_layout"] as unknown[]).length === 0)) n++;
+      }
+    }
+  }
+  return n;
+};
 
 /** Предмет для B: имя из DEMOUNTABLE_ITEM_NAMES, план b, demount≠1 (по бэкапу). */
 const findDemountable = (m: Record<string, unknown>): { id: string; name: string; demount: number } | null => {
@@ -187,6 +248,25 @@ try {
     throw new Error(`исходная высота ${totalCm} см — выше максимума новой нет (клампинг окон сделал бы restore неточным). СТОП до записи`);
   }
   const newHeightMm = Math.min(999, totalCm + 30) * 10;
+  const newCm = newHeightMm / 10;
+  // доработка 419: предусловия колонн, дверей и раскладок обшивки (точность restore)
+  const pillars0 = pillarsSnapshot(bm);
+  const pillarsRec = (bm["pillars"] ?? {}) as Record<string, Record<string, unknown>>;
+  const pillarsBad = Object.entries(pillars0).filter(([pid, h]) => simulatePillar(
+    pillarsRec[pid]?.["role"], h, totalCm, newCm) !== h);
+  const doors0 = doorsSnapshot(bm);
+  const doorsBad = Object.entries(doors0).filter(([, h]) => h !== null && (h as number) > newCm);
+  const decorLayouts = hasPersistentDecorLayouts(bm);
+  console.log(`предусловия доработки: колонны ${JSON.stringify(pillars0)}; двери ≠null и >new: ${JSON.stringify(doorsBad)}; раскладок wall_tile/wall_woodbatten: ${decorLayouts}`);
+  if (pillarsBad.length > 0) {
+    throw new Error(`колонны с неточным restore (ветка gypsum бандла): ${JSON.stringify(pillarsBad)} — СТОП до записи`);
+  }
+  if (doorsBad.length > 0) {
+    throw new Error(`двери выше новой высоты ${newCm} см поджались бы безвозвратно (бандл не распрямляет): ${JSON.stringify(doorsBad)} — СТОП до записи`);
+  }
+  if (decorLayouts > 0) {
+    throw new Error(`в dev-объекте ${decorLayouts} раскладок wall_tile/wall_woodbatten — MCP сбросит их на пересчёт редактором, точность restore раскладки в пробе не проверяется — СТОП до записи`);
+  }
   const item0 = findDemountable(bm);
   original = {
     total_height_cm: totalCm,
@@ -196,10 +276,12 @@ try {
       ...Object.fromEntries(Object.entries(roomsSnap.walls).map(([k, v]) => [k, typeof v === "number" ? v : null])),
       ...Object.fromEntries(Object.entries(roomsSnap.balcony).map(([k, v]) => [k, typeof v === "number" ? v : null])),
     } as Record<string, number | null>,
+    pillars_heights: pillars0,
+    doors_heights: doors0,
     item: item0 ? { id: item0.id, demount: item0.demount } : null,
   };
   journal();
-  console.log(`план: высота ${totalCm} см → ${newHeightMm / 10} см (${newHeightMm} мм); предмет для B: ${item0 ? `${item0.name} (${item0.id})` : "нет — B пропускается"}`);
+  console.log(`план: высота ${totalCm} см → ${newCm} см (${newHeightMm} мм); предмет для B: ${item0 ? `${item0.name} (${item0.id})` : "нет — B пропускается"}`);
 
   await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
   await call("render_plan", {});
@@ -208,23 +290,36 @@ try {
 
   // ==== A) project_set_height ====
   const setRes = await guardedCall("новая высота", "project_set_height", { height_mm: newHeightMm });
-  console.log("project_set_height:", JSON.stringify({ height_mm: setRes["height_mm"], rooms: setRes["rooms"], walls: setRes["walls"], windows_clamped: setRes["windows_clamped"], windoors_clamped: setRes["windoors_clamped"] }));
-  check(setRes["height_mm"] === newHeightMm && setRes["windows_clamped"] === 0 && setRes["windoors_clamped"] === 0, `project_set_height: новая высота ${newHeightMm} мм, клампинга нет (выше исходной)`);
+  console.log("project_set_height:", JSON.stringify({ height_mm: setRes["height_mm"], rooms: setRes["rooms"], walls: setRes["walls"], windows_clamped: setRes["windows_clamped"], windoors_clamped: setRes["windoors_clamped"], doors_clamped: setRes["doors_clamped"], pillars: setRes["pillars"], decors_layouts_reset: setRes["decors_layouts_reset"] }));
+  check(setRes["height_mm"] === newHeightMm && setRes["windows_clamped"] === 0 && setRes["windoors_clamped"] === 0, `project_set_height: новая высота ${newHeightMm} мм, клампинга окон нет (выше исходной)`);
+  check(setRes["doors_clamped"] === 0, `project_set_height: doors_clamped=${String(setRes["doors_clamped"])} (предусловие: двери ≤ ${newCm} см)`);
+  check(Number(setRes["pillars"]) === Object.keys(pillars0).length, `project_set_height: колонны обновлены (${String(setRes["pillars"])}/${Object.keys(pillars0).length})`);
   const workA = heightSnapshot(workspaceModel() as unknown as Record<string, unknown>);
-  check(workA.total === newHeightMm / 10, `рабочая модель: total_height=${String(workA.total)} см`);
-  check(Object.values(workA.rooms).every((h) => h === newHeightMm / 10), `рабочая модель: rooms2[].height=${JSON.stringify(workA.rooms)}`);
-  check(Object.values(workA.walls).every((h) => h === newHeightMm / 10), `рабочая модель: walls[].height=${JSON.stringify(workA.walls)}`);
+  check(workA.total === newCm, `рабочая модель: total_height=${String(workA.total)} см`);
+  check(Object.values(workA.rooms).every((h) => h === newCm), `рабочая модель: rooms2[].height=${JSON.stringify(workA.rooms)}`);
+  check(Object.values(workA.walls).every((h) => h === newCm), `рабочая модель: walls[].height=${JSON.stringify(workA.walls)}`);
   check(JSON.stringify(workA.balcony) === JSON.stringify(roomsSnap.balcony), `рабочая модель: балкон без изменений ${JSON.stringify(workA.balcony)}`);
+  // доработка 419: колонны и двери в рабочей модели
+  const workPillars = pillarsSnapshot(workspaceModel() as unknown as Record<string, unknown>);
+  const pillarsExpect = Object.fromEntries(Object.entries(pillars0).map(([pid, h]) => [pid, simulatePillar(pillarsRec[pid]?.["role"], h, totalCm, newCm)]));
+  check(JSON.stringify(workPillars) === JSON.stringify(pillarsExpect), `рабочая модель: колонны ${JSON.stringify(workPillars)} == ожидание веток бандла ${JSON.stringify(pillarsExpect)}`);
+  const workDoors = doorsSnapshot(workspaceModel() as unknown as Record<string, unknown>);
+  check(JSON.stringify(workDoors) === JSON.stringify(doors0), `рабочая модель: двери без изменений (${Object.keys(workDoors).length} шт.)`);
   await call("model_validate", {});
   await gsave("новая высота");
   await call("project_open", { object_id: ids.objectId, plan_id: ids.planId });
   await assertEditorPlanMatch(editorOf(), ids.planId);
   const gotA = await loadModel(ctx.session(), ids.objectId, ids.planId);
   const snapA = heightSnapshot(gotA.model);
-  check(snapA.total === newHeightMm / 10, `независимый loadModel: total_height=${String(snapA.total)} см`);
-  check(Object.values(snapA.rooms).every((h) => h === newHeightMm / 10), `независимый loadModel: rooms2[].height=${JSON.stringify(snapA.rooms)}`);
-  check(Object.values(snapA.walls).every((h) => h === newHeightMm / 10), `независимый loadModel: walls[].height=${JSON.stringify(snapA.walls)}`);
+  check(snapA.total === newCm, `независимый loadModel: total_height=${String(snapA.total)} см`);
+  check(Object.values(snapA.rooms).every((h) => h === newCm), `независимый loadModel: rooms2[].height=${JSON.stringify(snapA.rooms)}`);
+  check(Object.values(snapA.walls).every((h) => h === newCm), `независимый loadModel: walls[].height=${JSON.stringify(snapA.walls)}`);
   check(JSON.stringify(snapA.balcony) === JSON.stringify(roomsSnap.balcony), `независимый loadModel: балкон без изменений ${JSON.stringify(snapA.balcony)}`);
+  // доработка 419: колонны и двери после save/reopen (независимый loadModel)
+  const gotPillars = pillarsSnapshot(gotA.model);
+  check(JSON.stringify(gotPillars) === JSON.stringify(pillarsExpect), `независимый loadModel: колонны ${JSON.stringify(gotPillars)} == ожидание ${JSON.stringify(pillarsExpect)}`);
+  const gotDoors = doorsSnapshot(gotA.model);
+  check(JSON.stringify(gotDoors) === JSON.stringify(doors0), `независимый loadModel: двери без изменений (${JSON.stringify(gotDoors)})`);
 
   // ==== B) demolish target:"item" ====
   if (item0) {

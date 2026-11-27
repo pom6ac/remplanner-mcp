@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import type { Model } from "../../src/model/types.ts";
 import { MAX_HEIGHT_MM, MIN_HEIGHT_MM, projectSetHeight } from "../../src/model/height.ts";
 import { demolish, demolishCancel, isDemountableItem } from "../../src/model/demolition.ts";
-import { wallHeightMismatches, roomHeightMismatches, totalHeightMismatch } from "../../src/verify/heights.ts";
+import { wallHeightMismatches, roomHeightMismatches, totalHeightMismatch, pillarHeightMismatches, doorHeightMismatches } from "../../src/verify/heights.ts";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer } from "../../src/server.ts";
@@ -25,8 +25,13 @@ const HEIGHT_FIXTURE = JSON.parse(readFileSync(`${ROOT}tests/fixtures/ui-ref-pro
     rooms2_height: Record<string, number>;
     walls_height: Record<string, number>;
     holes: Record<string, Record<string, number>>;
+    pillars_total_height: Record<string, number>;
+    decors: { reset_parts: string[]; kept_parts: string[]; kept_fields: Record<string, string[]> };
     windows_clamped: number;
     windoors_clamped: number;
+    doors_clamped: number;
+    pillars_updated: number;
+    decors_layouts_reset: number;
   };
 };
 const ITEM_FIXTURE = JSON.parse(readFileSync(`${ROOT}tests/fixtures/ui-ref-demount-item.json`, "utf8")) as { model: Model };
@@ -59,9 +64,106 @@ test("419 A: setHeigth пишет total_height, rooms2[*].height и walls[*].hei
   }
   // счётчики ответа
   assert.deepEqual(
-    { rooms: res.rooms, walls: res.walls, windows_clamped: res.windows_clamped, windoors_clamped: res.windoors_clamped },
-    { rooms: 2, walls: 3, windows_clamped: exp.windows_clamped, windoors_clamped: exp.windoors_clamped },
+    {
+      rooms: res.rooms, walls: res.walls,
+      windows_clamped: res.windows_clamped, windoors_clamped: res.windoors_clamped,
+      doors_clamped: res.doors_clamped, pillars: res.pillars, decors_layouts_reset: res.decors_layouts_reset,
+    },
+    {
+      rooms: 2, walls: 3,
+      windows_clamped: exp.windows_clamped, windoors_clamped: exp.windoors_clamped,
+      doors_clamped: exp.doors_clamped, pillars: exp.pillars_updated, decors_layouts_reset: exp.decors_layouts_reset,
+    },
   );
+});
+
+// ---- доработка 419: колонны (PILLARS, ветки бандла дословно) ----
+
+test("419 A+: колонны по эталону — не-gypsum всегда, gypsum «штатная» следует, «своя» меньшая сохраняется, выше новой — кламп вниз", () => {
+  const m = heightModel();
+  projectSetHeight(m, 3000);
+  const exp = HEIGHT_FIXTURE.expected_after_set_height_mm_3000.pillars_total_height;
+  for (const [pid, h] of Object.entries(exp)) {
+    assert.equal(m.pillars[pid]!.total_height, h, `pillars[${pid}].total_height`);
+  }
+});
+
+test("419 A+: gypsum без total_height — ветка не срабатывает (undefined==n и undefined>e ложны в бандле)", () => {
+  const m = heightModel();
+  delete (m.pillars["p2"] as { total_height?: number }).total_height;
+  const res = projectSetHeight(m, 3000);
+  assert.equal((m.pillars["p2"] as { total_height?: number }).total_height, undefined);
+  assert.equal(res.pillars, 2, "обновлены только p1 (не-gypsum) и p4 (кламп); p3 «своя», p2 без значения");
+});
+
+test("419 A+: туда-обратно setHeigth(300)→setHeigth(270) — штатные колонны восстанавливаются, «своя» высота не трогается, двери не распрямляются", () => {
+  const m = heightModel();
+  projectSetHeight(m, 3000);
+  projectSetHeight(m, 2700);
+  assert.equal(m.pillars["p1"]!.total_height, 270, "не-gypsum вернулась к высоте проекта");
+  assert.equal(m.pillars["p2"]!.total_height, 270, "gypsum «штатная» вернулась");
+  assert.equal(m.pillars["p3"]!.total_height, 200, "«своя» высота ГКЛ-короба не менялась ни разу");
+  assert.equal(m.pillars["p4"]!.total_height, 270, "gypsum выше новой — кламп, затем к высоте проекта");
+  // дверь, поджатая при 300, вторым вызовом поджимается дальше до 270 — бандл
+  // распрямления не делает (задокументированное поведение, как в UI)
+  assert.equal(m.walls["w1"]!.holes["door2"]!.height, 270);
+});
+
+// ---- доработка 419: двери группы doors ----
+
+test("419 A+: дверь выше новой высоты поджимается до new total, дверь ниже — не трогается (по эталону)", () => {
+  const m = heightModel();
+  projectSetHeight(m, 3000);
+  assert.equal(m.walls["w1"]!.holes["door2"]!.height, 300, "320 > 300 → 300");
+  assert.equal(m.walls["w1"]!.holes["door1"]!.height, 210, "210 ≤ 300 — не трогается");
+});
+
+// ---- доработка 419: раскладка обшивки (замена rebuildDecorPrs) ----
+
+test("419 A+: раскладка wall_tile/wall_woodbatten с type_laying сброшена, прочие поля и части — нетронуты", () => {
+  const m = heightModel();
+  const before = structuredClone(m.rooms2?.["r1"]);
+  const res = projectSetHeight(m, 3000);
+  const decors = (m.rooms2?.["r1"] as Record<string, unknown>)["decors"] as Array<Record<string, unknown>>;
+  const parts = (decors[0]!["parts"] as Record<string, Record<string, unknown>>);
+  // _wt1: wall_tile + type_laying + заполненная раскладка — сброс, прочие поля нетронуты
+  assert.equal(parts["_wt1"]!["polygons_layout"], undefined);
+  assert.equal(parts["_wt1"]!["polygons_layout_points"], undefined);
+  const beforeDecors = ((before ?? {}) as Record<string, unknown>)["decors"] as Array<Record<string, unknown>> | undefined;
+  const beforeParts = (beforeDecors?.[0]?.["parts"] ?? {}) as Record<string, Record<string, unknown>>;
+  const beforeWt1 = { ...((beforeParts["_wt1"] ?? {}) as Record<string, unknown>) };
+  delete beforeWt1["polygons_layout"];
+  delete beforeWt1["polygons_layout_points"];
+  const afterWt1 = { ...parts["_wt1"]! };
+  assert.deepEqual(afterWt1, beforeWt1, "кроме раскладки часть _wt1 не изменилась");
+  // _wt2: wall_tile БЕЗ type_laying — buildLayouts раскладку не строит, не трогаем
+  assert.ok(parts["_wt2"]!["polygons_layout"], "раскладка без type_laying сохранена");
+  // _pw1: paint_wall — раскладка не персистится (DecorLine.serialize), не трогаем
+  assert.ok(parts["_pw1"]!["polygons_layout"], "часть не-раскладочного типа не тронута");
+  assert.deepEqual(structuredClone(parts["_pw1"]), beforeParts["_pw1"]);
+  assert.equal(res.decors_layouts_reset, 1);
+});
+
+test("419 A+: комнаты и decors_slopes вне decors не трогаются; повторный вызов с пустой раскладкой — счётчик 0", () => {
+  const m = heightModel();
+  projectSetHeight(m, 3000);
+  const res2 = projectSetHeight(m, 3000);
+  assert.equal(res2.decors_layouts_reset, 0, "раскладка уже сброшена — повторных сбросов нет");
+});
+
+// ---- сверка save видит колонны и двери ----
+
+test("419 A+: сверка save (verify/heights) видит колонны и двери", () => {
+  const expected = heightModel();
+  projectSetHeight(expected, 3000);
+  const got = heightModel();
+  assert.ok(pillarHeightMismatches(expected.pillars as never, got.pillars as never).some((p) => /колонна p1/.test(p)));
+  assert.ok(doorHeightMismatches(expected.walls as never, got.walls as never).some((p) => /дверь door2/.test(p)));
+  // «своя» высота p3 совпадает — не расхождение
+  const partial = pillarHeightMismatches(expected.pillars as never, structuredClone(expected.pillars) as never);
+  assert.deepEqual(partial, []);
+  const doorsOk = doorHeightMismatches(expected.walls as never, structuredClone(expected.walls) as never);
+  assert.deepEqual(doorsOk, []);
 });
 
 test("419 A: ограждение балкона (role:balcony) не трогается, его проёмы не клампятся", () => {
